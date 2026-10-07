@@ -329,11 +329,18 @@ Spec: §3.10 (second-level cache), §3.7 (Bean Validation).
 - [ ] `Cache` API, `SharedCacheMode`, `@Cacheable`, `CacheRetrieveMode` / `CacheStoreMode`;
       homegrown, opt-in, virtual-thread friendly (no external cache library).
       Until delivered the runner sets `persistence.second.level.caching.supported=false`.
-- [ ] Bean Validation: no Vidocq implementation exists. `ValidationMode.AUTO` is a no-op when no
-      provider is present; `CALLBACK` without a provider raises `PersistenceException` (spec).
-      Whether a validator is ever brought to the TCK classpath is a decision recorded below.
+- [ ] Bean Validation: no implementation is available, so the Vidocq ecosystem will get its own
+      (Jakarta Validation 3.1, a sibling building block inside Mansart — see D6).
+      `mansart-persistence` only consumes it through the `jakarta.validation` API (no dependency
+      on the implementation module): `ValidationMode.AUTO` is a no-op when no
+      provider is present; `CALLBACK` without a provider raises `PersistenceException` (spec);
+      with a provider, validation runs on `PrePersist` / `PreUpdate` / `PreRemove` (§3.7).
+      This item is **blocked** until that brick delivers a usable `ValidatorFactory`; the
+      Mansart side can be written against the API alone and tested with the provider-less paths.
 
-**TCK gate**: `core.cache.*`, `se.cache.*`, the two `entityManagerFactory` validation tests.
+**TCK gate**: `core.cache.*`, `se.cache.*`, the two `entityManagerFactory` validation tests
+(the provider-less one runs in the second failsafe execution; the other needs the validation
+brick on the TCK classpath).
 
 ### P12 — Certification, performance, ecosystem ⏳
 
@@ -356,7 +363,7 @@ Recorded before implementation; each entry: date, decision, reason.
 | D3 | 2026-10-07 | No `ClassTransformer` / no instrumentation: lazy loading and dirty checking without enhancement. | Actioned |
 | D4 | — | Extension of `mansart-data-dialect-spi` for JPA needs (joins, locking, DDL, procedures) vs a JPA-private SQL AST lowering to the existing SPI. | Open — maintainer |
 | D5 | — | `TABLE_PER_CLASS` inheritance (optional in the spec). | Open |
-| D6 | — | Bean Validation on the TCK classpath (no Vidocq implementation exists). | Open |
+| D6 | 2026-10-07 | Bean Validation is not available, so a Vidocq implementation (Jakarta Validation 3.1) will be created as a new building block **inside Mansart** (Mansart is the data character of the ecosystem; no new repository, no new `mani.yaml` / `GestionProjet` entry). It is put on the persistence TCK classpath. `mansart-persistence` depends only on `jakarta.validation-api`. Its own TCK runs both **out of the Vidocq reactor** (standalone runner, authoritative for the building block) and **inside it** (`vidocq-runtime-integration-tests`, `tck` profile, certifying the assembled runtime). Named `mansart-validation`, roadmap in [`../mansart-validation/ROADMAP.md`](../mansart-validation/ROADMAP.md). | Decided |
 
 ## Out of Scope
 
