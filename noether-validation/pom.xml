@@ -91,22 +91,4 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
-
-    <build>
-        <pluginManagement>
-            <plugins>
-                <!--
-                    Surefire 3.5.2 (pinned by mansart-root) silently falls back to the CLASS PATH on
-                    Java 25 module descriptors, so the module-path tests would run on the class path
-                    without any warning. 3.5.5 runs them on the module path. Strict Java Modules is
-                    the primary path of this building block: do not downgrade.
-                -->
-                <plugin>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-surefire-plugin</artifactId>
-                    <version>3.5.5</version>
-                </plugin>
-            </plugins>
-        </pluginManagement>
-    </build>
 </project>
