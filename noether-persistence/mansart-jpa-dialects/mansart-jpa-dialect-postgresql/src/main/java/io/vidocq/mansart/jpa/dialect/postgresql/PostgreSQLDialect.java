@@ -20,11 +20,19 @@
 package io.vidocq.mansart.jpa.dialect.postgresql;
 
 import io.vidocq.mansart.jpa.dialect.StandardDialect;
+import io.vidocq.mansart.jpa.dialect.sql.Identifier;
+import java.util.Locale;
 
 /** The PostgreSQL dialect: ANSI rendering, overridden where PostgreSQL differs. */
 public final class PostgreSQLDialect extends StandardDialect {
 
     PostgreSQLDialect() {
+    }
+
+    /** PostgreSQL folds unquoted names to lower case. */
+    @Override
+    public String generatedKeyName(Identifier column) {
+        return column.quoted() ? column.name() : column.name().toLowerCase(Locale.ROOT);
     }
 
     @Override

@@ -22,6 +22,7 @@ package io.vidocq.mansart.jpa.core.mapping;
 import io.vidocq.mansart.jpa.core.access.Accesses;
 import io.vidocq.mansart.jpa.core.jdbc.type.ValueBinder;
 import io.vidocq.mansart.jpa.core.jdbc.type.ValueBinders;
+import io.vidocq.mansart.jpa.core.model.AssociationAttribute;
 import io.vidocq.mansart.jpa.core.model.AttributeModel;
 import io.vidocq.mansart.jpa.core.model.BasicAttribute;
 import io.vidocq.mansart.jpa.core.model.EmbeddableModel;
@@ -36,10 +37,13 @@ import jakarta.persistence.PersistenceException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.ServiceConfigurationError;
+import java.util.Set;
 
 /**
  * A persistence unit ready to run: its entity model, the generated access of every entity and embeddable, and the
@@ -100,7 +104,46 @@ public final class MappedUnit {
             mapped.put(entity.javaType(), new MappedEntity(entity, entities.get(entity.javaType()), root(model, entity), embeddedId,
                 state, m -> EntityStatements.of(m, MappedEntity.idIndexes(m), binders::get, embeddables::get)));
         }
+        rank(model, mapped);
         return new MappedUnit(model, entities, embeddables, binders, mapped);
+    }
+
+    /**
+     * Orders the entities for inserts (Kahn): an entity after those its owned to-one relationships reference. Entities
+     * of a cycle keep the order of the unit, after the others; the database then needs deferred constraints.
+     */
+    private static void rank(PersistenceUnitModel model, Map<Class<?>, MappedEntity> mapped) {
+        Map<Class<?>, Set<Class<?>>> references = new LinkedHashMap<>();
+        for (EntityModel entity : model.entities()) {
+            Set<Class<?>> targets = new LinkedHashSet<>();
+            for (AttributeModel attribute : entity.attributes()) {
+                if (attribute instanceof AssociationAttribute association && association.mappedBy() == null
+                        && (association.kind() == AssociationAttribute.Kind.MANY_TO_ONE
+                        || association.kind() == AssociationAttribute.Kind.ONE_TO_ONE)
+                        && mapped.containsKey(association.javaType()) && association.javaType() != entity.javaType()) {
+                    targets.add(association.javaType());
+                }
+            }
+            references.put(entity.javaType(), targets);
+        }
+        int rank = 0;
+        Set<Class<?>> placed = new LinkedHashSet<>();
+        boolean progress = true;
+        while (placed.size() < references.size() && progress) {
+            progress = false;
+            for (Map.Entry<Class<?>, Set<Class<?>>> entry : references.entrySet()) {
+                if (!placed.contains(entry.getKey()) && placed.containsAll(entry.getValue())) {
+                    mapped.get(entry.getKey()).rank(rank++);
+                    placed.add(entry.getKey());
+                    progress = true;
+                }
+            }
+        }
+        for (Class<?> remaining : references.keySet()) {
+            if (placed.add(remaining)) {
+                mapped.get(remaining).rank(rank++);
+            }
+        }
     }
 
     /** The topmost entity class of the hierarchy of {@code entity}. */

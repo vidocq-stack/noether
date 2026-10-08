@@ -52,4 +52,18 @@ class H2DialectFactoryTest {
         assertThat(new H2DialectFactory().create(2, 3).render(new Delete(Table.of("BOOK"), List.of(Identifier.of("ID")))))
             .isEqualTo("DELETE FROM BOOK WHERE ID = ?");
     }
+
+    @Test
+    void generatedKeysAreAskedForAsTheDatabaseFoldsTheirNames() {
+        var dialect = new H2DialectFactory().create(2, 3);
+        assertThat(dialect.generatedKeyName(Identifier.of("Id"))).isEqualTo("ID");
+        assertThat(dialect.generatedKeyName(Identifier.quoted("Id"))).isEqualTo("Id");
+    }
+
+    @Test
+    void aUniqueViolationIsADuplicateKey() {
+        var dialect = new H2DialectFactory().create(2, 3);
+        assertThat(dialect.isDuplicateKey(new java.sql.SQLException("duplicate", "23505"))).isTrue();
+        assertThat(dialect.isDuplicateKey(new java.sql.SQLException("not null", "23502"))).isFalse();
+    }
 }

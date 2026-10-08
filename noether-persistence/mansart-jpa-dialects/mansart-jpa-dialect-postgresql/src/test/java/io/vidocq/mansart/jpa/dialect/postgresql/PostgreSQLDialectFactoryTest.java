@@ -52,4 +52,18 @@ class PostgreSQLDialectFactoryTest {
         assertThat(new PostgreSQLDialectFactory().create(17, 0).render(new Delete(Table.of("BOOK"), List.of(Identifier.of("ID")))))
             .isEqualTo("DELETE FROM BOOK WHERE ID = ?");
     }
+
+    @Test
+    void generatedKeysAreAskedForAsTheDatabaseFoldsTheirNames() {
+        var dialect = new PostgreSQLDialectFactory().create(17, 0);
+        assertThat(dialect.generatedKeyName(Identifier.of("Id"))).isEqualTo("id");
+        assertThat(dialect.generatedKeyName(Identifier.quoted("Id"))).isEqualTo("Id");
+    }
+
+    @Test
+    void aUniqueViolationIsADuplicateKey() {
+        var dialect = new PostgreSQLDialectFactory().create(17, 0);
+        assertThat(dialect.isDuplicateKey(new java.sql.SQLException("duplicate", "23505"))).isTrue();
+        assertThat(dialect.isDuplicateKey(new java.sql.SQLException("not null", "23502"))).isFalse();
+    }
 }

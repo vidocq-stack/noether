@@ -19,7 +19,9 @@
  */
 package io.vidocq.mansart.jpa.dialect;
 
+import io.vidocq.mansart.jpa.dialect.sql.Identifier;
 import io.vidocq.mansart.jpa.dialect.sql.Statement;
+import java.sql.SQLException;
 
 /**
  * Renders the statements of Mansart JPA for one database. A dialect is immutable and shared by every entity manager
@@ -38,6 +40,24 @@ public interface Dialect {
      * ({@code getGeneratedKeys} after {@code executeBatch}). If not, inserts with a generated key run one by one.
      */
     default boolean batchesGeneratedKeys() {
+        return false;
+    }
+
+    /**
+     * The name under which the driver returns a generated key column ({@code prepareStatement(sql, columnNames)}): a
+     * quoted name as written, an unquoted one as the database folds it.
+     */
+    default String generatedKeyName(Identifier column) {
+        return column.name();
+    }
+
+    /** Whether {@code failure} reports a duplicate key: the identity of an insert already exists (§3.2.2). */
+    default boolean isDuplicateKey(SQLException failure) {
+        for (SQLException current = failure; current != null; current = current.getNextException()) {
+            if ("23505".equals(current.getSQLState())) {
+                return true;
+            }
+        }
         return false;
     }
 }

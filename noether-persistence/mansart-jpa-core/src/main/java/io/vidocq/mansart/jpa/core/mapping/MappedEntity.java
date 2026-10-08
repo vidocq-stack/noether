@@ -41,6 +41,7 @@ public final class MappedEntity {
     private final ManagedAccess embeddedId;
     private final StatePolicy state;
     private final EntityStatements statements;
+    private int rank;
 
     MappedEntity(EntityModel model, ManagedAccess access, Class<?> root, ManagedAccess embeddedId, StatePolicy state,
             Function<EntityModel, EntityStatements> statements) {
@@ -51,6 +52,18 @@ public final class MappedEntity {
         this.embeddedId = embeddedId;
         this.idAttributes = idIndexes(model);
         this.statements = statements.apply(model);
+    }
+
+    /**
+     * Its place in the insert order of the unit: an entity comes after the entities its owned to-one relationships
+     * reference, so that foreign keys are satisfied; deletes go in reverse order.
+     */
+    public int rank() {
+        return rank;
+    }
+
+    void rank(int rank) {
+        this.rank = rank;
     }
 
     /** Its insert, update, delete and select by identifier, and their parameters. */

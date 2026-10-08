@@ -22,6 +22,9 @@
  * and the dialect SPI that renders it ({@code io.vidocq.mansart.jpa.dialect}), implemented by one module per database.
  */
 module io.vidocq.mansart.jpa.dialect.spi {
+    // the SPI speaks JDBC: SQLException in isDuplicateKey
+    requires transitive java.sql;
+
     exports io.vidocq.mansart.jpa.dialect;
     exports io.vidocq.mansart.jpa.dialect.sql;
 }

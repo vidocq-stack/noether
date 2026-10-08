@@ -38,12 +38,14 @@ import java.util.concurrent.atomic.AtomicReference;
 final class ResourceLocalTransaction implements EntityTransaction {
 
     private final EntityManagerFactoryImpl factory;
+    private final TransactionListener listener;
     private final AtomicReference<Connection> connection = new AtomicReference<>();
     private volatile boolean rollbackOnly;
     private Integer timeout;
 
-    ResourceLocalTransaction(EntityManagerFactoryImpl factory) {
+    ResourceLocalTransaction(EntityManagerFactoryImpl factory, TransactionListener listener) {
         this.factory = factory;
+        this.listener = listener;
     }
 
     @Override
@@ -76,8 +78,25 @@ final class ResourceLocalTransaction implements EntityTransaction {
 
     @Override
     public void commit() {
+        if (!rollbackOnly) {
+            try {
+                listener.beforeCommit(activeConnection());
+            } catch (IllegalStateException e) {
+                throw e; // no active transaction
+            } catch (RuntimeException e) {
+                Connection current = takeConnection();
+                try {
+                    current.rollback();
+                } catch (SQLException rollbackFailure) {
+                    e.addSuppressed(rollbackFailure);
+                }
+                listener.afterRollback();
+                throw end(current, new RollbackException("The flush before the commit failed: " + e.getMessage(), e));
+            }
+        }
         Connection current = takeConnection();
         if (rollbackOnly) {
+            listener.afterRollback();
             try {
                 current.rollback();
             } catch (SQLException e) {
@@ -93,6 +112,7 @@ final class ResourceLocalTransaction implements EntityTransaction {
             } catch (SQLException rollbackFailure) {
                 e.addSuppressed(rollbackFailure);
             }
+            listener.afterRollback();
             throw end(current, new RollbackException("The commit failed: " + e.getMessage(), e));
         }
         end(current, null);
@@ -101,6 +121,7 @@ final class ResourceLocalTransaction implements EntityTransaction {
     @Override
     public void rollback() {
         Connection current = takeConnection();
+        listener.afterRollback();
         try {
             current.rollback();
         } catch (SQLException e) {

@@ -21,7 +21,10 @@ package io.vidocq.mansart.jpa.core.session;
 
 import io.vidocq.mansart.jpa.core.bootstrap.UnitSettings;
 import io.vidocq.mansart.jpa.core.jdbc.ConnectionSource;
+import io.vidocq.mansart.jpa.core.flush.Dialects;
+import io.vidocq.mansart.jpa.core.flush.FlushEngine;
 import io.vidocq.mansart.jpa.core.mapping.MappedUnit;
+import io.vidocq.mansart.jpa.dialect.Dialect;
 import jakarta.persistence.Cache;
 import jakarta.persistence.EntityGraph;
 import jakarta.persistence.EntityManager;
@@ -36,10 +39,12 @@ import jakarta.persistence.SynchronizationType;
 import jakarta.persistence.TypedQueryReference;
 import jakarta.persistence.criteria.CriteriaBuilder;
 import jakarta.persistence.metamodel.Metamodel;
+import java.sql.Connection;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -52,6 +57,7 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     private final UnitSettings settings;
     private final ConnectionSource connections;
     private final MappedUnit mapping;
+    private final AtomicReference<FlushEngine> flushEngine = new AtomicReference<>();
     private final Cache cache = new NoSecondLevelCache();
     private final AtomicBoolean open = new AtomicBoolean(true);
     private final Set<ResourceLocalTransaction> activeTransactions = ConcurrentHashMap.newKeySet();
@@ -60,6 +66,30 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
         this.settings = settings;
         this.connections = connections;
         this.mapping = mapping;
+    }
+
+    /** The batch size of the flush, {@value #DEFAULT_BATCH_SIZE} unless the unit sets {@value #BATCH_SIZE}. */
+    public static final String BATCH_SIZE = "io.vidocq.mansart.jpa.jdbc.batch-size";
+    private static final int DEFAULT_BATCH_SIZE = 50;
+
+    /**
+     * The flush engine of the factory, created at first use with the dialect of the database behind
+     * {@code connection} (or the one the unit names), then shared by every entity manager.
+     */
+    FlushEngine flushEngine(Connection connection) {
+        FlushEngine engine = flushEngine.get();
+        if (engine == null) {
+            ClassLoader loader = settings.definition().classLoader() != null ? settings.definition().classLoader()
+                : Thread.currentThread().getContextClassLoader();
+            Dialect dialect = Dialects.resolve(connection, settings.string(Dialects.PROPERTY), loader);
+            String batchSize = settings.string(BATCH_SIZE);
+            FlushEngine created = new FlushEngine(dialect, batchSize == null ? DEFAULT_BATCH_SIZE : Integer.parseInt(batchSize.strip()));
+            engine = flushEngine.compareAndExchange(null, created);
+            if (engine == null) {
+                engine = created;
+            }
+        }
+        return engine;
     }
 
     /** The mapped persistence unit: entity model, generated access and binders. */

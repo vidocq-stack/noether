@@ -20,11 +20,19 @@
 package io.vidocq.mansart.jpa.dialect.h2;
 
 import io.vidocq.mansart.jpa.dialect.StandardDialect;
+import io.vidocq.mansart.jpa.dialect.sql.Identifier;
+import java.util.Locale;
 
 /** The H2 dialect: ANSI rendering, overridden where H2 differs. */
 public final class H2Dialect extends StandardDialect {
 
     H2Dialect() {
+    }
+
+    /** H2 folds unquoted names to upper case. */
+    @Override
+    public String generatedKeyName(Identifier column) {
+        return column.quoted() ? column.name() : column.name().toUpperCase(Locale.ROOT);
     }
 
     @Override

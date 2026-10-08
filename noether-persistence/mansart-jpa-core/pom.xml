@@ -38,5 +38,10 @@
             <artifactId>h2</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>io.vidocq.mansart</groupId>
+            <artifactId>mansart-jpa-dialect-h2</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>

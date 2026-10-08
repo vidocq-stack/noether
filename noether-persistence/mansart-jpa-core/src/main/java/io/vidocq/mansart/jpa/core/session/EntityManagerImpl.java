@@ -20,6 +20,7 @@
 package io.vidocq.mansart.jpa.core.session;
 
 import io.vidocq.mansart.jpa.core.bootstrap.UnitSettings;
+import io.vidocq.mansart.jpa.core.context.PersistenceContext;
 import jakarta.persistence.CacheRetrieveMode;
 import jakarta.persistence.CacheStoreMode;
 import jakarta.persistence.ConnectionConsumer;
@@ -68,6 +69,7 @@ final class EntityManagerImpl implements EntityManager {
     private final EntityManagerFactoryImpl factory;
     private final Map<String, Object> properties = new LinkedHashMap<>();
     private final ResourceLocalTransaction transaction;
+    private final PersistenceContext context = new PersistenceContext();
     private boolean closed;
     private FlushModeType flushMode = FlushModeType.AUTO;
     private CacheRetrieveMode cacheRetrieveMode = CacheRetrieveMode.USE;
@@ -75,7 +77,17 @@ final class EntityManagerImpl implements EntityManager {
 
     EntityManagerImpl(EntityManagerFactoryImpl factory, Map<?, ?> map) {
         this.factory = factory;
-        this.transaction = new ResourceLocalTransaction(factory);
+        this.transaction = new ResourceLocalTransaction(factory, new TransactionListener() {
+            @Override
+            public void beforeCommit(Connection connection) {
+                flush(connection);
+            }
+
+            @Override
+            public void afterRollback() {
+                context.clear(); // §3.3.2: the instances become detached
+            }
+        });
         if (map != null) {
             map.forEach((key, value) -> {
                 if (key != null) {
@@ -294,19 +306,37 @@ final class EntityManagerImpl implements EntityManager {
 
     // ---- persistence context (P3) -------------------------------------------------------------------------
 
-    /** Nothing to flush before the persistence context exists (P3), but a transaction is required (§3.3.4). */
+    /** §3.2.4: writes the changes of the persistence context in the transaction, which a flush requires (§3.3.4). */
     @Override
     public void flush() {
         checkOpen();
         if (!transaction.isActive()) {
             throw failed(new TransactionRequiredException("flush() needs an active transaction"));
         }
+        try {
+            flush(transaction.connection());
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
     }
 
-    /** Nothing is managed before the persistence context exists (P3). */
+    /** An empty persistence context has nothing to write: no flush engine, hence no dialect, is needed for it. */
+    private void flush(Connection connection) {
+        if (context.size() > 0) {
+            factory.flushEngine(connection).flush(context, connection);
+        }
+    }
+
+    /** §3.2.7: detaches every managed instance; changes not flushed are lost. */
     @Override
     public void clear() {
         checkOpen();
+        context.clear();
+    }
+
+    /** The persistence context of this entity manager (the entity operations of P4 drive it). */
+    PersistenceContext context() {
+        return context;
     }
 
     @Override
