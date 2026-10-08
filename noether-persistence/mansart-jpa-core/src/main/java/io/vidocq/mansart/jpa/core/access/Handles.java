@@ -60,7 +60,7 @@ public final class Handles {
     public static <T> T newInstance(Class<T> type) {
         try {
             return type.cast(lookupIn(type).findConstructor(type, MethodType.methodType(void.class)).invoke());
-        } catch (PersistenceException | Error e) {
+        } catch (PersistenceException | Error e) { // an Error is not an instantiation failure
             throw e;
         } catch (Throwable e) {
             throw new PersistenceException("Mansart cannot instantiate " + type.getName() + " through its no-arg constructor", e);

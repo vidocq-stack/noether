@@ -28,6 +28,7 @@ import io.vidocq.mansart.jpa.core.model.build.fixtures.Customer;
 import io.vidocq.mansart.jpa.core.model.build.fixtures.OrderLine;
 import io.vidocq.mansart.jpa.core.model.build.fixtures.Ticket;
 import io.vidocq.mansart.jpa.core.model.build.fixtures.TicketKey;
+import io.vidocq.mansart.jpa.core.model.build.fixtures.Twin;
 import io.vidocq.mansart.jpa.core.spi.ManagedAccess;
 import jakarta.persistence.EntityExistsException;
 import java.util.List;
@@ -160,5 +161,28 @@ class PersistenceContextTest {
         Object b = line.access().instantiate();
         line.access().write(b, new Object[] {7L, 1, 9});
         assertThat(line.id(a)).isEqualTo(line.id(b));
+    }
+
+    @Test
+    void entriesKeepTheOrderTheContextMetTheirInstances() { // the flush order of the inserts
+        Object first = customer(10);
+        Object second = customer(11);
+        Object third = customer(12);
+        context.persist(first, type(Customer.class));
+        context.persist(second, type(Customer.class));
+        context.persist(third, type(Customer.class));
+        context.detach(second);
+        context.persist(second, type(Customer.class));
+        assertThat(context.entries()).extracting(ManagedEntity::instance).containsExactly(first, third, second);
+    }
+
+    @Test
+    void instancesAreComparedByIdentityNotByEquals() { // Twin.equals compares identifiers
+        MappedUnit unit = MappedUnit.of(List.of(Twin.class.getName()), PersistenceContextTest.class.getClassLoader());
+        Twin twin = new Twin(13);
+        context.persist(twin, unit.entity(Twin.class).orElseThrow());
+        assertThat(new Twin(13)).isEqualTo(twin);
+        assertThat(context.contains(new Twin(13))).isFalse();
+        assertThat(context.contains(twin)).isTrue();
     }
 }

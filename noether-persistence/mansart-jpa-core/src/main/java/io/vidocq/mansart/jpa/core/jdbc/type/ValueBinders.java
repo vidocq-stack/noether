@@ -388,6 +388,8 @@ public final class ValueBinders {
             Object value;
             try {
                 value = getter.invokeExact(constant);
+            } catch (VirtualMachineError e) {
+                throw e;
             } catch (Throwable e) {
                 throw new PersistenceException("Mansart cannot read the enumerated value of " + constant, e);
             }

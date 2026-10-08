@@ -104,8 +104,8 @@ final class AccessGenerator {
             MethodHandles.Lookup hidden = Handles.own().defineHiddenClassWithClassData(bytes, List.copyOf(handles), true);
             return (ManagedAccess) hidden.findConstructor(hidden.lookupClass(),
                 MethodType.methodType(void.class, Class.class, List.class)).invoke(type, Accesses.descriptor(attributes));
-        } catch (PersistenceException e) {
-            throw e;
+        } catch (PersistenceException | VirtualMachineError e) {
+            throw e; // a mapping error is already one; a VirtualMachineError is not a mapping error
         } catch (ReflectiveOperationException e) {
             throw new PersistenceException("Mansart cannot reach a persistent attribute of " + type.getName() + ": " + e.getMessage(), e);
         } catch (Throwable e) {
