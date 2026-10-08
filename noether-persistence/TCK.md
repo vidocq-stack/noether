@@ -13,6 +13,51 @@ Official suite: **Jakarta Persistence 3.2.1** TCK (bundle from eclipse.org, SHA-
 | P2a — entity model and generated access, mapped at bootstrap | 2026-10-08 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 220 | 1911 | 4 |
 | P2b — accesses generated at build time (the TCK compiles nothing with the processor: runtime path unchanged) | 2026-10-08 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 220 | 1911 | 4 |
 | P3 — persistence context and flush engine (flush at every commit, PostgreSQL dialect on the class path) | 2026-10-08 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 220 | 1911 | 4 |
+| P4 — entity operations, identifier generation, callbacks, locking, secondary tables, native updates | 2026-10-08 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 609 | 1522 | 4 |
+
+## P4 — the entity operations open the suite: 220 → 609
+
+P4 delivers `find` / `persist` / `merge` / `remove` / `refresh` / `detach` with their cascades, identifier generation,
+callbacks and entity listeners, optimistic and pessimistic locks, the exception contract, secondary tables and native
+`executeUpdate` (brought forward from P7: the TCK cleans its tables with it between tests). Final run, 2026-10-08:
+**609 pass, 1522 fail, 4 skipped**.
+
+Failures by the first milestone they meet (the reports name it, or the area does: mapping files, the cache):
+
+| Count | Milestone | What the tests need |
+|---:|---|---|
+| 599 | P8 | the metamodel, the Criteria API, entity graphs |
+| 451 | P6 | entity inheritance — mostly query and Criteria tests whose test data persist a `HardwareProduct` (they need P7 / P8 next) |
+| 333 | P7 | Jakarta Persistence queries, native query results, stored procedures |
+| 69 | P10 | mapping files: default listeners and `callback.xml`, `core.override.*`, entities declared in `orm.xml` |
+| 41 | P5 | relationship columns, collections, element collections, map keys, ordering, derived identities |
+| 27 | P9 | schema generation |
+| 2 | P11 | the second-level cache (`core.cache.basicTests` evictions) |
+
+None is P4's. The gate areas, pass / fail: `core.entityManager` 67 / 20, `core.entitytest` 140 / 16,
+`core.callback` 21 / 45 (33 mapping files, 9 queries, 3 inheritance), `core.lock` 11 / 7, `core.versioning` 0 / 1,
+`core.annotations.version` 14 / 0, `core.exceptions` 16 / 1, `se.entityManager` 53 / 50 — every failure a query,
+the Criteria API, an entity graph, a mapping file, inheritance or a relationship. The P2 areas, which persist and read back,
+opened too: `core.types` 45 / 7, `core.enums` 51 / 2, `core.annotations.{id,lob,temporal}` all pass.
+
+What the runs found on the way (each fixed test first, then confirmed by the TCK):
+
+- the runner set `persistence.second.level.caching.supported=false` (P0: no cache before P11). The TCK's
+  `PMClientBase.clearCache()` only clears the persistence context (`em.clear()`) when the property is `true`, its
+  default, and 63 test classes count on that detachment: the runner now leaves it `true`. The `se.cache` tests that
+  check the cache itself (10, which passed vacuously) fail honestly until P11;
+- a loaded instance keeps the identifier object it was found with (`detach.basic` compares `String` identifiers
+  with `==`, as other providers allow);
+- §3.2.4 applies to every relationship from X, the inverse side included; the remove of a new instance still
+  cascades (§3.2.3);
+- `@Lob byte[]` maps to a PostgreSQL large object (the DDL's `BYTEARRAYDATA OID`): bound through a JDBC `Blob`, which
+  unlocked about 60 tests of `core.types` and `core.annotations.access`;
+- `@Convert(attributeName = …)` on an embedded attribute and on the entity for an inherited one, auto-applied
+  converters of `char[]`, converter exceptions wrapped in a `PersistenceException`;
+- a `UUID` identifier stored in a `VARCHAR(96)` column: PostgreSQL refuses `character varying = uuid`, so its
+  dialect binds UUIDs as untyped literals.
+
+Bean Validation neutrality (2026-10-08, final P4 state): NEUTRAL, 2135 tests, 609 / 1522 / 4 both ways.
 
 ## D7 — the TCK runs on a mansart-pool pool
 

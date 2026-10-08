@@ -250,8 +250,8 @@ reaches entities, never what it sees.
 - [x] Module-path integration test (`mansart-jpa-module-it`): entities in a named application module, with and
       without the `opens` clause (the unit tests run inside the provider module and cannot exercise the refusal).
 - [ ] Quoting rules (`<delimited-identifiers/>`, §2.13) — with the SQL generation of P3/P4.
-- *Moved to P4:* executing the generation strategies (`IDENTITY`, `SEQUENCE`, `TABLE`, `UUID`, `AUTO` honouring
-  `db.supports.sequence`): they need the insert path and the dialect (D4). The model above carries their metadata.
+- *Moved to P4 (done there):* executing the generation strategies (`IDENTITY`, `SEQUENCE`, `TABLE`, `UUID`,
+  `AUTO`): they need the insert path and the dialect (D4). The model above carries their metadata.
 
 **P2b — build-time path** ✅ — required for AOT: GraalVM native-image cannot define hidden classes at run time and
 Leyden does not archive them, so the P2a path stays the fallback for archives nobody compiled with Mansart.
@@ -324,25 +324,51 @@ relies on, and it is fully testable without the TCK.
 
 **TCK gate**: none on its own — closed by unit tests on H2 (the TCK still passes 220 / 2135 with the flush at commit); the TCK delta appears with P4.
 
-### P4 — Entity operations, callbacks, locking ⏳
+### P4 — Entity operations, callbacks, locking ✅
 
 Spec: ch. 3 (entity operations), §3.6 (callbacks), §3.5 (optimistic / pessimistic locking).
 
-- [ ] `persist`, `find` (incl. 3.2 `FindOption`s), `getReference`, `merge`, `remove`, `refresh`,
-      `detach`, `clear`, `contains`, `flush`, `FlushModeType`, cascade on these operations.
-- [ ] Identifier generation (*from P2*): `IDENTITY` (generated keys), `SEQUENCE` and `TABLE` (pooled by
-      `allocationSize`, no lock held across the database round trip), `UUID`, `AUTO` honouring
-      `db.supports.sequence`; SQL rendered by the dialect (D4).
-- [ ] Lifecycle callbacks and entity listeners (`@PrePersist` … `@PostLoad`), default and
-      excluded listeners (annotation part).
-- [ ] `@Version` optimistic locking, `OptimisticLockException`; `LockModeType` incl. pessimistic
-      locks rendered by the dialect (`SELECT … FOR UPDATE`), `PessimisticLockException`,
-      `LockTimeoutException`, lock timeout hint.
-- [ ] Exception contract (§3.12 summary of exceptions, rollback marking, `EntityExistsException`, `EntityNotFoundException`, …).
+- [x] `find` (every overload, 3.2 `FindOption`s), `getReference` (the instance itself, no proxy: §3.2.8 lets it
+      throw `EntityNotFoundException` at that call), `persist`, `merge`, `remove`, `refresh`, `detach`, `clear`,
+      `contains`, `flush`, `FlushModeType` (`session.EntityOperations`): rows read by `flush.EntityLoader`, the
+      identifier normalised (`MappedEntity.key`), each operation cascading through the relationships naming it, over
+      to-one values, collection elements and map values. The flush rules of §3.2.4: the persist cascades again at
+      every flush, and a new instance reached without cascade persist, through any relationship (owning or inverse),
+      is an `IllegalStateException`; the remove of a new instance still cascades (§3.2.3).
+- [x] Identifier generation (*from P2*, `generation.IdGenerators`): `IDENTITY` (generated keys), `SEQUENCE` and
+      `TABLE` pooled by `allocationSize` in immutable blocks swapped by compare-and-set (the round trip outside any
+      critical section; `TABLE` in a transaction of its own), `UUID`, `AUTO` (UUID for a UUID identifier, else the
+      named generator, else a table generator on the reference implementation's defaults: table `SEQUENCE`,
+      `SEQ_NAME` / `SEQ_COUNT`, row `SEQ_GEN`, blocks of 50); SQL rendered by the dialect (D4: `NextValue`,
+      `Increment`). `db.supports.sequence` is a runner property telling the TCK whether to run its sequence tests,
+      not something the provider reads.
+- [x] Lifecycle callbacks and entity listeners (`@PrePersist` … `@PostLoad`), invoked where §3.6.3 says, in the order
+      of §3.6.4 (listeners, superclass ones first unless `@ExcludeSuperclassListeners`, then the lifecycle methods,
+      superclasses first, an override called once), through the generated accesses — no `opens` needed. Default
+      listeners come with mapping files (P10).
+- [x] `@Version` optimistic locking, `OptimisticLockException`; `LockModeType` (`OPTIMISTIC`, the two
+      `FORCE_INCREMENT`s, `PESSIMISTIC_READ` / `WRITE` rendered `FOR SHARE` / `FOR UPDATE` by the dialect),
+      `PessimisticLockException`, `LockTimeoutException` (SQLSTATE classified by the dialect), the lock timeout hint
+      and the 3.2 `Timeout` option (`NOWAIT` at 0, `SET LOCAL lock_timeout` on PostgreSQL).
+- [x] Exception contract (§3.12): every exception of an entity manager method marks the transaction for rollback,
+      `LockTimeoutException` excepted; a failed flush at commit rolls back (`RollbackException`);
+      `EntityExistsException` on a duplicate key, `EntityNotFoundException`, `TransactionRequiredException`; what a
+      converter throws is wrapped in a `PersistenceException` (§3.9).
+- [x] *Brought forward from P7 (decided with the maintainer):* native `executeUpdate` — the TCK cleans its tables
+      with `createNativeQuery("DELETE …").executeUpdate()` between tests; without it the rows of one test collide
+      with the next and mask P4. Reading native results stays in P7.
+- [x] *Added (decided with the maintainer):* secondary tables (§11.1.46), which no milestone held — one row per
+      table, keyed by the identifier, one select per table (a single join when the AST gains joins, P7).
+- [x] *Opened by P4 in the P2 gate areas:* `@Lob` binary values through JDBC `Blob`s (PostgreSQL large objects, the
+      `oid` column of the TCK DDL); `@Convert(attributeName = …)` on an `@Embedded` attribute (dotted paths for
+      nested embeddables) and on the entity for an inherited attribute (§11.1.10); auto-applied converters of a
+      primitive array type (`AttributeConverter<char[], String>`); `UUID` bound by the dialect (an untyped literal on
+      PostgreSQL, typed by its column, `uuid` or text) and read back from either.
 
 **TCK gate**: `core.entityManager*`, `core.entitytest.{persist,remove,detach,cascadeall,apitests,…}`,
 `core.callback` (non-XML), `core.lock`, `core.versioning`, `core.annotations.version`,
-`core.exceptions`, `se.entityManager`.
+`core.exceptions`, `se.entityManager`. Closed at 609 / 2135 on 2026-10-08 (P3: 220); no failure of the gate areas is P4's (see
+[`TCK.md`](TCK.md)).
 
 ### P5 — Relationships and collections ⏳
 
@@ -386,7 +412,8 @@ Spec: ch. 4 (query language), §3.11 (query APIs), §3.11.11 (SQL queries), §3.
       `CAST`, `ID()`, `VERSION()`, implicit identification variable).
 - [ ] `Query` / `TypedQuery`: parameters, pagination, hints, lock modes, `getResultStream`,
       `getSingleResultOrNull`, bulk `UPDATE`/`DELETE`, named queries (`@NamedQuery`).
-- [ ] Native queries and `@SqlResultSetMapping` (entity, constructor, column results).
+- [ ] Native queries and `@SqlResultSetMapping` (entity, constructor, column results). Native `executeUpdate`
+      was brought forward to P4 (`query.NativeQuery`); this milestone adds the result side.
 - [ ] `StoredProcedureQuery` / `@NamedStoredProcedureQuery` (IN / OUT / INOUT, ref cursors as
       the dialect allows).
 
@@ -441,7 +468,9 @@ Spec: §3.10 (second-level cache), §3.7 (Bean Validation).
 
 - [ ] `Cache` API, `SharedCacheMode`, `@Cacheable`, `CacheRetrieveMode` / `CacheStoreMode`;
       homegrown, opt-in, virtual-thread friendly (no external cache library).
-      Until delivered the runner sets `persistence.second.level.caching.supported=false`.
+      The runner leaves `persistence.second.level.caching.supported` at `true` (changed in P4): the TCK's
+      `clearCache()` only clears the persistence context when it is `true`, and 63 test classes count on that; the
+      `se.cache` tests that check the cache itself fail until this milestone.
 - [ ] Bean Validation: no implementation is available, so the Vidocq ecosystem will get its own
       (Jakarta Validation 3.1, a sibling building block inside Mansart — see D6).
       `mansart-persistence` only consumes it through the `jakarta.validation` API (no dependency
