@@ -21,7 +21,9 @@ package io.vidocq.mansart.jpa.dialect;
 
 import io.vidocq.mansart.jpa.dialect.sql.Identifier;
 import io.vidocq.mansart.jpa.dialect.sql.Statement;
+import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.util.UUID;
 
 /**
  * Renders the statements of Mansart JPA for one database. A dialect is immutable and shared by every entity manager
@@ -81,6 +83,15 @@ public interface Dialect {
      */
     default String lockTimeout(int milliseconds) {
         return null;
+    }
+
+    /**
+     * Binds a {@link UUID} (§2.8) to the parameter {@code index}: by default as a JDBC object, which a driver maps to
+     * its native type. A database whose native type does not compare with the character column an application may
+     * store it in overrides this.
+     */
+    default void bindUuid(PreparedStatement statement, int index, UUID value) throws SQLException {
+        statement.setObject(index, value);
     }
 
     /** Whether {@code failure} reports a duplicate key: the identity of an insert already exists (§3.2.2). */

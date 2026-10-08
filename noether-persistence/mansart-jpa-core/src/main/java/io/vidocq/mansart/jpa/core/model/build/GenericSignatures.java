@@ -23,6 +23,7 @@ import io.vidocq.mansart.jpa.core.model.source.ClassFileSource;
 import io.vidocq.mansart.jpa.core.model.source.ClassInfo;
 import java.lang.classfile.ClassSignature;
 import java.lang.classfile.Signature;
+import java.lang.constant.ClassDesc;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -86,7 +87,7 @@ final class GenericSignatures {
             case Signature.ClassTypeSig c -> Types.load(c.className().replace('/', '.'), loader);
             case Signature.ArrayTypeSig a -> erasure(a.componentSignature(), bindings, loader).arrayType();
             case Signature.TypeVarSig v -> bindings.getOrDefault(v.identifier(), Object.class);
-            default -> Object.class;
+            case Signature.BaseTypeSig b -> Types.load(ClassDesc.ofDescriptor(String.valueOf(b.baseType())), loader); // char of char[]
         };
     }
 }

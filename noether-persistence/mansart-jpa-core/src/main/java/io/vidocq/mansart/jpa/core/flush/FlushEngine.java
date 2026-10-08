@@ -319,13 +319,13 @@ public final class FlushEngine {
         return state;
     }
 
-    private static void bind(PreparedStatement statement, List<EntityStatements.Parameter> parameters, EntityStatements statements,
+    private void bind(PreparedStatement statement, List<EntityStatements.Parameter> parameters, EntityStatements statements,
             Object[] values, Object[] snapshot) throws SQLException {
         for (int i = 0; i < parameters.size(); i++) {
             EntityStatements.Parameter parameter = parameters.get(i);
             EntityStatements.Column column = statements.columns().get(parameter.column());
             Object value = parameter.previous() ? snapshot[column.attribute()] : values[parameter.column()];
-            column.binder().bind(statement, i + 1, value);
+            column.binder().bind(dialect, statement, i + 1, value);
         }
     }
 

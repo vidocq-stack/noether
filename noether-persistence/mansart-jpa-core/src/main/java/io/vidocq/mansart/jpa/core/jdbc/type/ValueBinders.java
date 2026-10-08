@@ -22,6 +22,7 @@ package io.vidocq.mansart.jpa.core.jdbc.type;
 import io.vidocq.mansart.jpa.core.access.Handles;
 import io.vidocq.mansart.jpa.core.model.BasicAttribute;
 import io.vidocq.mansart.jpa.core.model.ValueConversion;
+import io.vidocq.mansart.jpa.dialect.Dialect;
 import jakarta.persistence.AttributeConverter;
 import jakarta.persistence.PersistenceException;
 import jakarta.persistence.TemporalType;
@@ -36,6 +37,7 @@ import java.io.Serializable;
 import java.lang.invoke.MethodHandle;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.sql.Blob;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -54,6 +56,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 
 /**
  * The {@link ValueBinder}s of the basic attributes of one persistence unit (§2.8 and the 3.2 additions, §3.9
@@ -77,7 +80,7 @@ public final class ValueBinders {
     /** A JDBC mapping: {@code NULL} is bound with {@code sqlType}, any other value through {@code writer}. */
     private record Simple(int sqlType, Writer writer, Reader reader) implements ValueBinder {
         @Override
-        public void bind(PreparedStatement statement, int index, Object value) throws SQLException {
+        public void bind(Dialect dialect, PreparedStatement statement, int index, Object value) throws SQLException {
             if (value == null) {
                 statement.setNull(index, sqlType);
             } else {
@@ -91,17 +94,36 @@ public final class ValueBinders {
         }
     }
 
-    /** A converted attribute: the converter stands between the attribute and the binder of its database type. */
+    /**
+     * A converted attribute: the converter stands between the attribute and the binder of its database type. What a
+     * conversion method throws is wrapped in a {@link PersistenceException} (§3.9), which marks the transaction.
+     */
     @SuppressWarnings({"rawtypes", "unchecked"})
     private record Converted(AttributeConverter converter, ValueBinder column) implements ValueBinder {
         @Override
-        public void bind(PreparedStatement statement, int index, Object value) throws SQLException {
-            column.bind(statement, index, converter.convertToDatabaseColumn(value));
+        public void bind(Dialect dialect, PreparedStatement statement, int index, Object value) throws SQLException {
+            Object converted;
+            try {
+                converted = converter.convertToDatabaseColumn(value);
+            } catch (RuntimeException e) {
+                throw failed("convertToDatabaseColumn", e);
+            }
+            column.bind(dialect, statement, index, converted);
         }
 
         @Override
         public Object read(ResultSet results, int column) throws SQLException {
-            return converter.convertToEntityAttribute(this.column.read(results, column));
+            Object value = this.column.read(results, column);
+            try {
+                return converter.convertToEntityAttribute(value);
+            } catch (RuntimeException e) {
+                throw failed("convertToEntityAttribute", e);
+            }
+        }
+
+        private PersistenceException failed(String method, RuntimeException cause) {
+            return new PersistenceException("The converter " + converter.getClass().getName() + " failed in " + method + ": "
+                + cause.getMessage(), cause);
         }
     }
 
@@ -109,8 +131,8 @@ public final class ValueBinders {
     private record ByEnumeratedValue(Class<?> type, Map<Object, Object> valueOf, Map<Object, Object> constantOf, ValueBinder column)
             implements ValueBinder {
         @Override
-        public void bind(PreparedStatement statement, int index, Object value) throws SQLException {
-            column.bind(statement, index, value == null ? null : valueOf.get(value));
+        public void bind(Dialect dialect, PreparedStatement statement, int index, Object value) throws SQLException {
+            column.bind(dialect, statement, index, value == null ? null : valueOf.get(value));
         }
 
         @Override
@@ -127,6 +149,30 @@ public final class ValueBinders {
             return constant;
         }
     }
+
+    /**
+     * A {@link UUID}, bound as the dialect stores it; read back from the driver's native type or from text, which an
+     * application may store it as (the TCK does: {@code VARCHAR}).
+     */
+    private static final ValueBinder UUID_BINDER = new ValueBinder() {
+        @Override
+        public void bind(Dialect dialect, PreparedStatement statement, int index, Object value) throws SQLException {
+            if (value == null) {
+                statement.setNull(index, Types.OTHER);
+            } else {
+                dialect.bindUuid(statement, index, (UUID) value);
+            }
+        }
+
+        @Override
+        public Object read(ResultSet results, int column) throws SQLException {
+            return switch (results.getObject(column)) {
+                case null -> null;
+                case UUID uuid -> uuid;
+                case Object other -> UUID.fromString(other.toString().trim());
+            };
+        }
+    };
 
     private final ClassLoader loader;
     private final Map<Class<?>, AttributeConverter<?, ?>> converters = new ConcurrentHashMap<>();
@@ -145,7 +191,7 @@ public final class ValueBinders {
             case ValueConversion.EnumString() -> byName(type);
             case ValueConversion.EnumByValue(String field, Class<?> valueType) -> byEnumeratedValue(type, field, valueType);
             case ValueConversion.Temporal(TemporalType temporal) -> legacyTemporal(type, temporal);
-            case ValueConversion.None() -> of(type);
+            case ValueConversion.None() -> attribute.lob() ? lob(type) : of(type);
         };
     }
 
@@ -260,7 +306,7 @@ public final class ValueBinders {
             return object(Types.TIME_WITH_TIMEZONE, OffsetTime.class);
         }
         if (type == UUID.class) {
-            return object(Types.OTHER, UUID.class);
+            return UUID_BINDER;
         }
         if (type == Instant.class) {
             // not a JDBC 4.2 type: a timestamp, read back in the same time zone as it was written
@@ -399,6 +445,44 @@ public final class ValueBinders {
             }
         }
         return new ByEnumeratedValue(type, Map.copyOf(valueOf), Map.copyOf(constantOf), of(boxed(valueType)));
+    }
+
+    // ---- large objects (§11.1.30) -----------------------------------------------------------------------
+
+    /**
+     * A {@code @Lob}: a binary one ({@code byte[]}, {@code Byte[]}, a serialized value) goes through a JDBC
+     * {@link Blob} — on PostgreSQL a large object, the {@code oid} column of a {@code BLOB}; a character one stays a
+     * string, which every driver binds to its {@code CLOB} or {@code TEXT} column.
+     */
+    private ValueBinder lob(Class<?> type) {
+        if (type == byte[].class) {
+            return blob(value -> (byte[]) value, bytes -> bytes);
+        }
+        if (type == Byte[].class) {
+            return blob(value -> unboxed((Byte[]) value), ValueBinders::boxed);
+        }
+        if (type == String.class || type == char[].class || type == Character[].class || standard(type) != null
+                || !Serializable.class.isAssignableFrom(type)) {
+            return of(type);
+        }
+        return blob(ValueBinders::serialize, bytes -> type.cast(deserialize(bytes)));
+    }
+
+    private static ValueBinder blob(Function<Object, byte[]> toBytes, Function<byte[], Object> fromBytes) {
+        return new Simple(Types.BLOB, (s, i, v) -> {
+            byte[] bytes = toBytes.apply(v);
+            s.setBlob(i, new ByteArrayInputStream(bytes), bytes.length);
+        }, (r, c) -> {
+            Blob blob = r.getBlob(c);
+            if (blob == null) {
+                return null;
+            }
+            try {
+                return fromBytes.apply(blob.getBytes(1, Math.toIntExact(blob.length())));
+            } finally {
+                blob.free();
+            }
+        });
     }
 
     // ---- serialized values (§2.8) -----------------------------------------------------------------------

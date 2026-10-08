@@ -22,8 +22,11 @@ package io.vidocq.mansart.jpa.dialect.postgresql;
 import io.vidocq.mansart.jpa.dialect.StandardDialect;
 import io.vidocq.mansart.jpa.dialect.sql.Identifier;
 import io.vidocq.mansart.jpa.dialect.sql.NextValue;
+import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.sql.Types;
 import java.util.Locale;
+import java.util.UUID;
 
 /** The PostgreSQL dialect: ANSI rendering, overridden where PostgreSQL differs. */
 public final class PostgreSQLDialect extends StandardDialect {
@@ -62,6 +65,15 @@ public final class PostgreSQLDialect extends StandardDialect {
             }
         }
         return LockFailure.NONE;
+    }
+
+    /**
+     * An untyped literal ({@code Types.OTHER}): PostgreSQL types it from where it is used, a {@code uuid} column or a
+     * character one, which a {@code uuid} parameter would not compare with ({@code character varying = uuid}).
+     */
+    @Override
+    public void bindUuid(PreparedStatement statement, int index, UUID value) throws SQLException {
+        statement.setObject(index, value.toString(), Types.OTHER);
     }
 
     @Override

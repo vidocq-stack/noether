@@ -161,11 +161,11 @@ public final class Locks {
         };
     }
 
-    private static void bindKey(EntityStatements statements, Object id, PreparedStatement select) throws SQLException {
+    private void bindKey(EntityStatements statements, Object id, PreparedStatement select) throws SQLException {
         Object[] key = statements.keyValues(id);
         List<EntityStatements.Parameter> parameters = statements.selectParameters();
         for (int i = 0; i < parameters.size(); i++) {
-            statements.columns().get(parameters.get(i).column()).binder().bind(select, i + 1, key[i]);
+            statements.columns().get(parameters.get(i).column()).binder().bind(engine.dialect(), select, i + 1, key[i]);
         }
     }
 

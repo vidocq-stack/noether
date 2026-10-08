@@ -27,6 +27,7 @@ import io.vidocq.mansart.jpa.core.model.AssociationAttribute;
 import io.vidocq.mansart.jpa.core.model.AttributeModel;
 import io.vidocq.mansart.jpa.core.model.BasicAttribute;
 import io.vidocq.mansart.jpa.core.model.ElementCollectionAttribute;
+import io.vidocq.mansart.jpa.core.model.EmbeddableModel;
 import io.vidocq.mansart.jpa.core.model.EmbeddedAttribute;
 import io.vidocq.mansart.jpa.core.model.ConverterModel;
 import io.vidocq.mansart.jpa.core.model.EntityModel;
@@ -288,6 +289,27 @@ class EntityModelBuilderTest {
         assertThat(basic(invoice, "code").conversion()).isEqualTo(new ValueConversion.Converted(UpperCaseConverter.class, String.class));
         assertThat(basic(invoice, "free").conversion()).isEqualTo(new ValueConversion.None());
         assertThat(basic(invoice, "raw").conversion()).isEqualTo(new ValueConversion.None());
+    }
+
+    @Test
+    void aConvertNamesTheAttributeItConvertsOnTheEntityOrOnAnEmbedded() { // §11.1.10
+        EntityModel letter = entity(Letter.class, Postal.class, Geo.class);
+        assertThat(basic(letter, "signature").conversion()) // inherited from a mapped superclass
+            .isEqualTo(new ValueConversion.Converted(UpperCaseConverter.class, String.class));
+        EmbeddableModel address = ((EmbeddedAttribute) letter.attribute("address").orElseThrow()).embeddable();
+        assertThat(((BasicAttribute) address.attribute("street").orElseThrow()).conversion())
+            .isEqualTo(new ValueConversion.Converted(UpperCaseConverter.class, String.class));
+        assertThat(((BasicAttribute) address.attribute("city").orElseThrow()).conversion()).isEqualTo(new ValueConversion.None());
+        EmbeddableModel geo = ((EmbeddedAttribute) address.attribute("geo").orElseThrow()).embeddable();
+        assertThat(((BasicAttribute) geo.attribute("lat").orElseThrow()).conversion())
+            .isEqualTo(new ValueConversion.Converted(HalfConverter.class, Double.class));
+        assertThat(((BasicAttribute) geo.attribute("lon").orElseThrow()).conversion()).isEqualTo(new ValueConversion.None());
+    }
+
+    @Test
+    void aConverterOfAPrimitiveArrayAppliesAutomatically() { // its signature reads AttributeConverter<[C, String>
+        EntityModel letter = entity(Letter.class, Postal.class, Geo.class, CharsConverter.class);
+        assertThat(basic(letter, "initials").conversion()).isEqualTo(new ValueConversion.Converted(CharsConverter.class, String.class));
     }
 
     @Test

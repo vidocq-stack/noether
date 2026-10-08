@@ -31,6 +31,8 @@ import io.vidocq.mansart.jpa.core.model.build.fixtures.Level;
 import io.vidocq.mansart.jpa.core.model.build.fixtures.Money;
 import io.vidocq.mansart.jpa.core.model.build.fixtures.MoneyConverter;
 import io.vidocq.mansart.jpa.core.model.build.fixtures.UpperCaseConverter;
+import io.vidocq.mansart.jpa.dialect.Dialect;
+import io.vidocq.mansart.jpa.dialect.StandardDialect;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.PersistenceException;
 import jakarta.persistence.TemporalType;
@@ -43,6 +45,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -57,11 +60,23 @@ import org.junit.jupiter.api.Test;
 
 class ValueBindersTest {
 
+    private static final Dialect ANSI = new StandardDialect() {
+        @Override
+        public String name() {
+            return "ansi";
+        }
+    };
+
     private final ValueBinders binders = new ValueBinders(getClass().getClassLoader());
 
     private static BasicAttribute attribute(Class<?> type, ValueConversion conversion) {
         return new BasicAttribute("v", type, AccessKind.FIELD, Object.class, ColumnModel.defaultFor("v"), !type.isPrimitive(),
             FetchType.EAGER, false, conversion, false);
+    }
+
+    private static BasicAttribute lob(Class<?> type) {
+        return new BasicAttribute("v", type, AccessKind.FIELD, Object.class, ColumnModel.defaultFor("v"), true, FetchType.EAGER,
+            true, new ValueConversion.None(), false);
     }
 
     private Object roundTrip(String sqlType, Class<?> type, Object value) throws SQLException {
@@ -73,7 +88,7 @@ class ValueBindersTest {
         try (Connection connection = DriverManager.getConnection("jdbc:h2:mem:"); Statement statement = connection.createStatement()) {
             statement.execute("create table t (v " + sqlType + ")");
             try (PreparedStatement insert = connection.prepareStatement("insert into t values (?)")) {
-                binder.bind(insert, 1, value);
+                binder.bind(ANSI, insert, 1, value);
                 insert.executeUpdate();
             }
             try (ResultSet results = statement.executeQuery("select v from t")) {
@@ -88,7 +103,7 @@ class ValueBindersTest {
         try (Connection connection = DriverManager.getConnection("jdbc:h2:mem:"); Statement statement = connection.createStatement()) {
             statement.execute("create table t (v " + sqlType + ")");
             try (PreparedStatement insert = connection.prepareStatement("insert into t values (?)")) {
-                binders.of(attribute).bind(insert, 1, value);
+                binders.of(attribute).bind(ANSI, insert, 1, value);
                 insert.executeUpdate();
             }
             try (ResultSet results = statement.executeQuery("select v from t")) {
@@ -140,6 +155,16 @@ class ValueBindersTest {
     }
 
     @Test
+    void binaryLobsGoThroughBlobs() throws SQLException { // §11.1.30: on PostgreSQL, a large object (oid column)
+        assertThat(roundTrip("blob", lob(byte[].class), new byte[] {1, 2, 3})).isEqualTo(new byte[] {1, 2, 3});
+        assertThat(roundTrip("blob", lob(Byte[].class), new Byte[] {4, 5})).isEqualTo(new Byte[] {4, 5});
+        assertThat(roundTrip("blob", lob(Duration.class), Duration.ofSeconds(42))).isEqualTo(Duration.ofSeconds(42)); // serialized
+        assertThat(roundTrip("blob", lob(byte[].class), null)).isNull();
+        assertThat(roundTrip("blob", lob(Byte[].class), null)).isNull();
+        assertThat(roundTrip("clob", lob(String.class), "Vidocq")).isEqualTo("Vidocq"); // a character lob stays a string
+    }
+
+    @Test
     void javaTimeTypesYearAndUuid() throws SQLException {
         LocalDate date = LocalDate.of(1811, 10, 8);
         LocalTime time = LocalTime.of(23, 59, 58);
@@ -155,6 +180,7 @@ class ValueBindersTest {
         assertThat(roundTrip("timestamp(6)", Instant.class, instant)).isEqualTo(instant);
         assertThat(roundTrip("int", Year.class, Year.of(1775))).isEqualTo(Year.of(1775));
         assertThat(roundTrip("uuid", UUID.class, uuid)).isEqualTo(uuid);
+        assertThat(roundTrip("varchar(96)", UUID.class, uuid)).isEqualTo(uuid); // stored as text, as the TCK does
     }
 
     @Test

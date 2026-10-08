@@ -19,6 +19,7 @@
  */
 package io.vidocq.mansart.jpa.core.jdbc.type;
 
+import io.vidocq.mansart.jpa.dialect.Dialect;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -26,8 +27,8 @@ import java.sql.SQLException;
 /** Writes the value of a basic attribute to a statement parameter, and reads it back from a result column. */
 public interface ValueBinder {
 
-    /** Binds {@code value}, {@code null} included, to the parameter {@code index}. */
-    void bind(PreparedStatement statement, int index, Object value) throws SQLException;
+    /** Binds {@code value}, {@code null} included, to the parameter {@code index}, as {@code dialect} stores it. */
+    void bind(Dialect dialect, PreparedStatement statement, int index, Object value) throws SQLException;
 
     /** The attribute value of the column {@code column}; SQL {@code NULL} gives the default value of a primitive. */
     Object read(ResultSet results, int column) throws SQLException;

@@ -120,7 +120,7 @@ public final class EntityLoader {
                 try (PreparedStatement select = connection.prepareStatement(text)) {
                     List<EntityStatements.Parameter> parameters = table.selectParameters();
                     for (int i = 0; i < parameters.size(); i++) {
-                        columns.get(parameters.get(i).column()).binder().bind(select, i + 1, key[i]);
+                        columns.get(parameters.get(i).column()).binder().bind(engine.dialect(), select, i + 1, key[i]);
                     }
                     try (ResultSet row = select.executeQuery()) {
                         if (!row.next()) {

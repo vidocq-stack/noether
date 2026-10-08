@@ -155,12 +155,14 @@ public final class EntityModelBuilder {
         List<ClassInfo> hierarchy = planner.hierarchy(info);
         AccessKind access = planner.defaultAccess(info, hierarchy);
         Map<String, AnnotationInfo> overrides = overrides(info);
+        Map<String, AnnotationInfo> converts = converts(info);
 
         List<AttributeModel> attributes = new ArrayList<>();
         Map<AttributeModel, Member> members = new LinkedHashMap<>();
         for (ClassInfo declaring : hierarchy) {
             for (Member member : planner.members(declaring, AccessPlanner.classAccess(declaring, access))) {
-                AttributeModel attribute = attribute(member, declaring == info ? Map.of() : overrides);
+                boolean inherited = declaring != info;
+                AttributeModel attribute = attribute(member, inherited ? overrides : Map.of(), inherited ? converts : Map.of());
                 attributes.add(attribute);
                 members.put(attribute, member);
             }
@@ -223,12 +225,17 @@ public final class EntityModelBuilder {
 
     // ---- persistent attributes (§2.2, §2.3) -------------------------------------------------------------
 
-    private AttributeModel attribute(Member member, Map<String, AnnotationInfo> entityOverrides) {
+    /**
+     * @param entityOverrides the {@code @AttributeOverride}s of the entity, for an attribute it inherits
+     * @param entityConverts the {@code @Convert}s of the entity naming an attribute, for an attribute it inherits
+     */
+    private AttributeModel attribute(Member member, Map<String, AnnotationInfo> entityOverrides,
+            Map<String, AnnotationInfo> entityConverts) {
         Annotated element = member.element();
         Class<?> type = Types.load(member.type(), loader);
         Class<?> declaring = Types.load(member.owner().name(), loader);
         if (element.isAnnotated(EMBEDDED_ID)) {
-            return embedded(member, type, declaring);
+            return embedded(member, type, declaring, Map.of());
         }
         for (Map.Entry<String, AssociationAttribute.Kind> association : ASSOCIATIONS.entrySet()) {
             Optional<AnnotationInfo> annotation = element.annotation(association.getKey());
@@ -246,9 +253,11 @@ public final class EntityModelBuilder {
             return new ElementCollectionAttribute(member.name(), type, member.access(), declaring, member.signature());
         }
         if (planner.embedded(member).isPresent()) {
-            return embedded(member, type, declaring);
+            return embedded(member, type, declaring, prefixed(entityConverts, member.name() + "."));
         }
-        ValueConversion conversion = conversion(member, type);
+        AnnotationInfo entityConvert = entityConverts.get(member.name());
+        ValueConversion conversion = entityConvert == null ? conversion(member, type)
+            : explicit(entityConvert).orElseGet(() -> conversion(member, type));
         if (!(conversion instanceof ValueConversion.Converted) && !Types.isBasic(type) && !Serializable.class.isAssignableFrom(type)) {
             if (mappingFiles) {
                 return new PendingAttribute(member.name(), type, member.access(), declaring, member.signature());
@@ -283,18 +292,9 @@ public final class EntityModelBuilder {
 
     /** §3.9 converters (explicit, then auto-applied), then enums (§11.1.18, @EnumeratedValue), then legacy temporals. */
     private ValueConversion conversion(Member member, Class<?> type) {
-        Optional<AnnotationInfo> convert = member.element().annotation(JPA + "Convert");
-        if (convert.isPresent()) {
-            if (convert.get().bool("disableConversion")) {
-                return new ValueConversion.None();
-            }
-            ClassDesc converter = convert.get().type("converter");
-            if (converter != null && !converter.descriptorString().equals("Ljakarta/persistence/AttributeConverter;")) {
-                Class<?> converterClass = Types.load(converter, loader);
-                ConverterModel known = converters.stream().filter(c -> c.converterClass() == converterClass).findFirst()
-                    .orElseGet(() -> converter(source.read(converterClass.getName()).orElseThrow()));
-                return new ValueConversion.Converted(converterClass, known.databaseType());
-            }
+        Optional<ValueConversion> explicit = member.element().annotation(JPA + "Convert").flatMap(this::explicit);
+        if (explicit.isPresent()) {
+            return explicit.get();
         }
         Class<?> boxed = Types.box(type);
         for (ConverterModel candidate : converters) {
@@ -321,10 +321,54 @@ public final class EntityModelBuilder {
         return new ValueConversion.None();
     }
 
+    /** The conversion a {@code @Convert} asks for: its converter, or none; empty if it names neither. */
+    private Optional<ValueConversion> explicit(AnnotationInfo convert) {
+        if (convert.bool("disableConversion")) {
+            return Optional.of(new ValueConversion.None());
+        }
+        ClassDesc converter = convert.type("converter");
+        if (converter == null || converter.descriptorString().equals("Ljakarta/persistence/AttributeConverter;")) {
+            return Optional.empty();
+        }
+        Class<?> converterClass = Types.load(converter, loader);
+        ConverterModel known = converters.stream().filter(c -> c.converterClass() == converterClass).findFirst()
+            .orElseGet(() -> converter(source.read(converterClass.getName()).orElseThrow()));
+        return Optional.of(new ValueConversion.Converted(converterClass, known.databaseType()));
+    }
+
+    /** §11.1.10: the {@code @Convert}s written on an element that name the attribute they convert, by name or dotted path. */
+    private static Map<String, AnnotationInfo> converts(Annotated element) {
+        Map<String, AnnotationInfo> converts = new LinkedHashMap<>();
+        List<AnnotationInfo> declared = new ArrayList<>();
+        element.annotation(JPA + "Convert").ifPresent(declared::add);
+        element.annotation(JPA + "Converts").ifPresent(container -> declared.addAll(container.annotations("value")));
+        for (AnnotationInfo convert : declared) {
+            String attributeName = convert.has("attributeName") ? nonEmpty(convert.string("attributeName")) : null;
+            if (attributeName != null) {
+                converts.put(attributeName, convert);
+            }
+        }
+        return converts;
+    }
+
+    /** The entries of {@code byPath} under {@code prefix}, the prefix removed. */
+    private static Map<String, AnnotationInfo> prefixed(Map<String, AnnotationInfo> byPath, String prefix) {
+        Map<String, AnnotationInfo> inner = new LinkedHashMap<>();
+        byPath.forEach((path, value) -> {
+            if (path.startsWith(prefix)) {
+                inner.put(path.substring(prefix.length()), value);
+            }
+        });
+        return inner;
+    }
+
     // ---- embeddables (§2.6) ------------------------------------------------------------------------------
 
-    private EmbeddedAttribute embedded(Member member, Class<?> type, Class<?> declaring) {
-        EmbeddableModel embeddable = embeddable(type, member.access());
+    /** @param entityConverts the {@code @Convert}s of the entity naming attributes of this one, by path inside it */
+    private EmbeddedAttribute embedded(Member member, Class<?> type, Class<?> declaring, Map<String, AnnotationInfo> entityConverts) {
+        Map<String, AnnotationInfo> converts = new LinkedHashMap<>(entityConverts);
+        converts.putAll(converts(member.element())); // the attribute's own win
+        EmbeddableModel embeddable = converted(embeddable(type, member.access()), converts);
         Map<String, ColumnModel> columns = new LinkedHashMap<>();
         flatten(embeddable, "", columns);
         overrides(member.element()).forEach((path, override) -> {
@@ -333,6 +377,30 @@ public final class EntityModelBuilder {
             }
         });
         return new EmbeddedAttribute(member.name(), type, member.access(), declaring, embeddable, columns);
+    }
+
+    /**
+     * The embeddable as its owner sees it: the basic attributes the owner's {@code @Convert}s name (by dotted path for
+     * nested embeddables) take the conversion they ask for. The shared model is kept when nothing is converted.
+     */
+    private EmbeddableModel converted(EmbeddableModel embeddable, Map<String, AnnotationInfo> converts) {
+        if (converts.isEmpty()) {
+            return embeddable;
+        }
+        List<AttributeModel> attributes = new ArrayList<>();
+        for (AttributeModel attribute : embeddable.attributes()) {
+            AnnotationInfo convert = converts.get(attribute.name());
+            Optional<ValueConversion> conversion = convert == null ? Optional.empty() : explicit(convert);
+            attributes.add(switch (attribute) {
+                case BasicAttribute basic when conversion.isPresent() -> new BasicAttribute(basic.name(), basic.javaType(),
+                    basic.access(), basic.declaringClass(), basic.column(), basic.optional(), basic.fetch(), basic.lob(),
+                    conversion.get(), basic.version());
+                case EmbeddedAttribute nested -> new EmbeddedAttribute(nested.name(), nested.javaType(), nested.access(),
+                    nested.declaringClass(), converted(nested.embeddable(), prefixed(converts, nested.name() + ".")), nested.columns());
+                default -> attribute;
+            });
+        }
+        return new EmbeddableModel(embeddable.javaType(), embeddable.access(), embeddable.isRecord(), attributes);
     }
 
     private static void flatten(EmbeddableModel embeddable, String prefix, Map<String, ColumnModel> into) {
@@ -359,7 +427,7 @@ public final class EntityModelBuilder {
         }
         List<AttributeModel> attributes = new ArrayList<>();
         for (Member member : planner.members(info, access)) {
-            attributes.add(attribute(member, Map.of()));
+            attributes.add(attribute(member, Map.of(), Map.of()));
         }
         EmbeddableModel model = new EmbeddableModel(type, access, info.isRecord(), attributes);
         embeddables.put(key, model);
