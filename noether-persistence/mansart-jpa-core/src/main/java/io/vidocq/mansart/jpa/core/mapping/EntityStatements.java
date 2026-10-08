@@ -63,7 +63,18 @@ public final class EntityStatements {
      * @param accesses the access of each embeddable along {@code path}
      */
     public record Column(Identifier name, ValueBinder binder, int attribute, int[] path, ManagedAccess[] accesses, boolean id,
-            boolean version, boolean insertable, boolean updatable) {
+            boolean version, boolean insertable, boolean updatable, int table) {
+    }
+
+    /**
+     * The statements of one table of the entity: the primary table first, then its secondary tables (§11.1.46), whose
+     * rows are keyed by the identifier.
+     *
+     * @param update {@code null} when nothing in the table can change
+     * @param selected the indexes, in {@link #columns()}, of the columns the select reads, in its order
+     */
+    public record TableStatements(Insert insert, List<Parameter> insertParameters, Update update, List<Parameter> updateParameters,
+            Delete delete, List<Parameter> deleteParameters, Select select, List<Parameter> selectParameters, int[] selected) {
     }
 
     /**
@@ -78,30 +89,14 @@ public final class EntityStatements {
     private final String entity;
     private final String unsupported;
     private final List<Column> columns;
-    private final Insert insert;
-    private final List<Parameter> insertParameters;
-    private final Update update;
-    private final List<Parameter> updateParameters;
-    private final Delete delete;
-    private final List<Parameter> deleteParameters;
-    private final Select select;
-    private final List<Parameter> selectParameters;
+    private final List<TableStatements> tables;
     private final Integer version;
 
-    private EntityStatements(String entity, String unsupported, List<Column> columns, Insert insert, List<Parameter> insertParameters,
-            Update update, List<Parameter> updateParameters, Delete delete, List<Parameter> deleteParameters, Select select,
-            List<Parameter> selectParameters, Integer version) {
+    private EntityStatements(String entity, String unsupported, List<Column> columns, List<TableStatements> tables, Integer version) {
         this.entity = entity;
         this.unsupported = unsupported;
         this.columns = columns;
-        this.insert = insert;
-        this.insertParameters = insertParameters;
-        this.update = update;
-        this.updateParameters = updateParameters;
-        this.delete = delete;
-        this.deleteParameters = deleteParameters;
-        this.select = select;
-        this.selectParameters = selectParameters;
+        this.tables = tables;
         this.version = version;
     }
 
@@ -119,51 +114,89 @@ public final class EntityStatements {
         Identifier generated = model.id() instanceof IdModel.Single single
             && single.generation().map(g -> g.strategy() == GenerationType.IDENTITY).orElse(false)
             ? Identifier.of(single.attribute().column().name()) : null;
+        List<String> tableNames = new ArrayList<>();
+        tableNames.add(model.table().name());
+        model.secondaryTables().forEach(t -> tableNames.add(t.table().name()));
         List<Column> columns = new ArrayList<>();
         List<AttributeModel> attributes = model.attributes();
         for (int i = 0; i < attributes.size(); i++) {
             boolean id = ids.contains(i);
             switch (attributes.get(i)) {
                 case BasicAttribute basic -> columns.add(new Column(Identifier.of(basic.column().name()), binders.apply(basic), i,
-                    new int[0], new ManagedAccess[0], id, basic.version(), basic.column().insertable(), basic.column().updatable()));
+                    new int[0], new ManagedAccess[0], id, basic.version(), basic.column().insertable(), basic.column().updatable(),
+                    tableIndex(basic.column().table(), tableNames)));
                 case EmbeddedAttribute embedded -> flatten(embedded, embedded.embeddable(), "", i, new int[0], new ManagedAccess[0], id,
-                    binders, embeddables, columns);
+                    binders, embeddables, tableNames, columns);
                 default -> {
                     // relationship columns come with P5, element collections with their own tables (P5)
                 }
             }
         }
-        Table table = table(model.table());
-        List<Parameter> insertParameters = new ArrayList<>();
-        List<Identifier> insertColumns = new ArrayList<>();
-        List<Parameter> keyParameters = new ArrayList<>();
-        List<Identifier> keyColumns = new ArrayList<>();
-        List<Parameter> setParameters = new ArrayList<>();
-        List<Identifier> setColumns = new ArrayList<>();
-        List<Identifier> allColumns = new ArrayList<>();
+        for (Column column : columns) {
+            if (column.table() < 0) {
+                return unsupported(model, "P10", "a column of a table that no @SecondaryTable declares (a mapping file may)");
+            }
+        }
+        List<Integer> keys = new ArrayList<>();
         Integer version = null;
         for (int c = 0; c < columns.size(); c++) {
+            if (columns.get(c).id()) {
+                keys.add(c);
+            }
+            if (columns.get(c).version()) {
+                version = c;
+            }
+        }
+        if (keys.isEmpty()) {
+            return unsupported(model, "P5", "identifiers without a column of their own");
+        }
+        List<TableStatements> tables = new ArrayList<>();
+        for (int t = 0; t < tableNames.size(); t++) {
+            TableModel tableModel = t == 0 ? model.table() : model.secondaryTables().get(t - 1).table();
+            List<String> joinNames = t == 0 ? List.of() : model.secondaryTables().get(t - 1).joinColumns();
+            List<Identifier> keyNames = new ArrayList<>();
+            for (int k = 0; k < keys.size(); k++) {
+                keyNames.add(joinNames.size() == keys.size() ? Identifier.of(joinNames.get(k)) : columns.get(keys.get(k)).name());
+            }
+            TableStatements statements = table(table(tableModel), t, columns, keys, keyNames, t == 0 ? version : null, generated);
+            if (statements != null) {
+                tables.add(statements);
+            }
+        }
+        return new EntityStatements(model.entityName(), null, List.copyOf(columns), List.copyOf(tables), version);
+    }
+
+    /** The statements of table {@code t}; {@code null} for a secondary table no column is mapped to. */
+    private static TableStatements table(Table table, int t, List<Column> columns, List<Integer> keys, List<Identifier> keyNames,
+            Integer version, Identifier generated) {
+        List<Parameter> keyParameters = keys.stream().map(c -> new Parameter(c, false)).toList();
+        List<Identifier> insertColumns = new ArrayList<>(t == 0 ? List.of() : keyNames);
+        List<Parameter> insertParameters = new ArrayList<>(t == 0 ? List.of() : keyParameters);
+        List<Identifier> setColumns = new ArrayList<>();
+        List<Parameter> setParameters = new ArrayList<>();
+        List<Identifier> selectColumns = new ArrayList<>();
+        List<Integer> selected = new ArrayList<>();
+        for (int c = 0; c < columns.size(); c++) {
             Column column = columns.get(c);
-            allColumns.add(column.name());
+            boolean mine = t == 0 ? column.id() || column.table() == 0 : !column.id() && column.table() == t;
+            if (!mine) {
+                continue;
+            }
+            selectColumns.add(column.name());
+            selected.add(c);
             if (column.insertable() && !column.name().equals(generated)) {
                 insertColumns.add(column.name());
                 insertParameters.add(new Parameter(c, false));
             }
-            if (column.id()) {
-                keyColumns.add(column.name());
-                keyParameters.add(new Parameter(c, false));
-            } else if (column.updatable()) {
+            if (!column.id() && column.updatable()) {
                 setColumns.add(column.name());
                 setParameters.add(new Parameter(c, false));
             }
-            if (column.version()) {
-                version = c;
-            }
         }
-        if (keyColumns.isEmpty()) {
-            return unsupported(model, "P5", "identifiers without a column of their own");
+        if (t > 0 && selected.isEmpty()) {
+            return null;
         }
-        List<Identifier> conditions = new ArrayList<>(keyColumns);
+        List<Identifier> conditions = new ArrayList<>(keyNames);
         List<Parameter> conditionParameters = new ArrayList<>(keyParameters);
         if (version != null) {
             conditions.add(columns.get(version).name());
@@ -177,14 +210,27 @@ public final class EntityStatements {
             parameters.addAll(conditionParameters);
             updateParameters = List.copyOf(parameters);
         }
-        return new EntityStatements(model.entityName(), null, List.copyOf(columns), new Insert(table, insertColumns, generated),
-            List.copyOf(insertParameters), update, updateParameters, new Delete(table, conditions), List.copyOf(conditionParameters),
-            new Select(table, allColumns, keyColumns), List.copyOf(keyParameters), version);
+        return new TableStatements(new Insert(table, insertColumns, t == 0 ? generated : null), List.copyOf(insertParameters), update,
+            updateParameters, new Delete(table, conditions), List.copyOf(conditionParameters), new Select(table, selectColumns, keyNames),
+            keyParameters, selected.stream().mapToInt(Integer::intValue).toArray());
+    }
+
+    /** The table a column belongs to: 0 for the primary one, else its secondary table; -1 if no table has that name. */
+    private static int tableIndex(String table, List<String> tableNames) {
+        if (table == null || table.isBlank()) {
+            return 0;
+        }
+        for (int t = 0; t < tableNames.size(); t++) {
+            if (tableNames.get(t).equalsIgnoreCase(table)) {
+                return t;
+            }
+        }
+        return -1;
     }
 
     private static void flatten(EmbeddedAttribute owner, EmbeddableModel embeddable, String prefix, int attribute, int[] path,
             ManagedAccess[] accesses, boolean id, Function<BasicAttribute, ValueBinder> binders,
-            Function<EmbeddableModel, ManagedAccess> embeddableAccess, List<Column> columns) {
+            Function<EmbeddableModel, ManagedAccess> embeddableAccess, List<String> tableNames, List<Column> columns) {
         ManagedAccess access = embeddableAccess.apply(embeddable);
         List<AttributeModel> attributes = embeddable.attributes();
         for (int i = 0; i < attributes.size(); i++) {
@@ -196,10 +242,10 @@ public final class EntityStatements {
                 case BasicAttribute basic -> {
                     ColumnModel column = owner.column(prefix + basic.name()).orElse(basic.column());
                     columns.add(new Column(Identifier.of(column.name()), binders.apply(basic), attribute, nested, along, id, false,
-                        column.insertable(), column.updatable()));
+                        column.insertable(), column.updatable(), tableIndex(column.table(), tableNames)));
                 }
                 case EmbeddedAttribute inner -> flatten(owner, inner.embeddable(), prefix + inner.name() + ".", attribute, nested,
-                    along, id, binders, embeddableAccess, columns);
+                    along, id, binders, embeddableAccess, tableNames, columns);
                 default -> {
                     // relationships of embeddables come with P5
                 }
@@ -213,8 +259,7 @@ public final class EntityStatements {
     }
 
     private static EntityStatements unsupported(EntityModel model, String milestone, String feature) {
-        return new EntityStatements(model.entityName(), milestone + ":" + feature, List.of(), null, List.of(), null, List.of(), null,
-            List.of(), null, List.of(), null);
+        return new EntityStatements(model.entityName(), milestone + ":" + feature, List.of(), List.of(), null);
     }
 
     private void check() {
@@ -311,43 +356,49 @@ public final class EntityStatements {
 
     public Insert insert() {
         check();
-        return insert;
+        return tables.getFirst().insert();
     }
 
     public List<Parameter> insertParameters() {
         check();
-        return insertParameters;
+        return tables.getFirst().insertParameters();
     }
 
     /** The update of the attributes that can change; {@code null} if the identifier is the only column. */
     public Update update() {
         check();
-        return update;
+        return tables.getFirst().update();
     }
 
     public List<Parameter> updateParameters() {
         check();
-        return updateParameters;
+        return tables.getFirst().updateParameters();
     }
 
     public Delete delete() {
         check();
-        return delete;
+        return tables.getFirst().delete();
     }
 
     public List<Parameter> deleteParameters() {
         check();
-        return deleteParameters;
+        return tables.getFirst().deleteParameters();
     }
 
     public Select select() {
         check();
-        return select;
+        return tables.getFirst().select();
     }
 
     public List<Parameter> selectParameters() {
         check();
-        return selectParameters;
+        return tables.getFirst().selectParameters();
+    }
+
+    /** The statements of each table: the primary table first, then the secondary tables that columns are mapped to. */
+    public List<TableStatements> tables() {
+        check();
+        return tables;
     }
 
     /** The index of the version column in {@link #columns()} (§3.4.2), if the entity is versioned. */

@@ -27,6 +27,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -77,24 +78,35 @@ public final class EntityLoader {
     private Row row(MappedEntity type, Object id, Connection connection) {
         EntityStatements statements = type.statements();
         List<EntityStatements.Column> columns = statements.columns();
-        try (PreparedStatement select = connection.prepareStatement(engine.sql(type).select())) {
-            Object[] key = statements.keyValues(id);
-            List<EntityStatements.Parameter> parameters = statements.selectParameters();
-            for (int i = 0; i < parameters.size(); i++) {
-                columns.get(parameters.get(i).column()).binder().bind(select, i + 1, key[i]);
-            }
-            try (ResultSet row = select.executeQuery()) {
-                if (!row.next()) {
-                    return null;
+        Object[] key = statements.keyValues(id);
+        Object[] values = new Object[columns.size()];
+        boolean[] nulls = new boolean[values.length];
+        Arrays.fill(nulls, true); // a missing secondary row reads as NULL columns
+        FlushEngine.Sql sql = engine.sql(type);
+        try {
+            for (int t = 0; t < statements.tables().size(); t++) {
+                EntityStatements.TableStatements table = statements.tables().get(t);
+                try (PreparedStatement select = connection.prepareStatement(sql.tables().get(t).select())) {
+                    List<EntityStatements.Parameter> parameters = table.selectParameters();
+                    for (int i = 0; i < parameters.size(); i++) {
+                        columns.get(parameters.get(i).column()).binder().bind(select, i + 1, key[i]);
+                    }
+                    try (ResultSet row = select.executeQuery()) {
+                        if (!row.next()) {
+                            if (t == 0) {
+                                return null;
+                            }
+                            continue;
+                        }
+                        int[] selected = table.selected();
+                        for (int i = 0; i < selected.length; i++) {
+                            values[selected[i]] = columns.get(selected[i]).binder().read(row, i + 1);
+                            nulls[selected[i]] = row.wasNull(); // the binder's last read is this column's
+                        }
+                    }
                 }
-                Object[] values = new Object[columns.size()];
-                boolean[] nulls = new boolean[values.length];
-                for (int c = 0; c < values.length; c++) {
-                    values[c] = columns.get(c).binder().read(row, c + 1);
-                    nulls[c] = row.wasNull(); // the binder's last read is this column's
-                }
-                return new Row(values, nulls);
             }
+            return new Row(values, nulls);
         } catch (SQLException e) {
             throw new PersistenceException("The read of " + type.model().entityName() + " " + id + " failed: " + e.getMessage(), e);
         }

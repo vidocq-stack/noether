@@ -117,4 +117,20 @@ class EntityStatementsTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(statements::insert).isInstanceOf(UnsupportedOperationException.class)
             .hasMessageContaining("P5");
     }
+
+    @Test
+    void columnsOfSecondaryTablesAreWrittenAndReadInTheirOwnTables() { // §11.1.46
+        MappedUnit unit = MappedUnit.of(List.of(io.vidocq.mansart.jpa.core.model.build.fixtures.Gadget.class.getName()),
+            EntityStatementsTest.class.getClassLoader());
+        EntityStatements gadget = unit.entity(io.vidocq.mansart.jpa.core.model.build.fixtures.Gadget.class).orElseThrow().statements();
+        assertThat(ANSI.render(gadget.insert())).isEqualTo("INSERT INTO Gadget (id, name) VALUES (?, ?)");
+        assertThat(gadget.tables()).hasSize(3);
+        EntityStatements.TableStatements details = gadget.tables().get(1);
+        assertThat(ANSI.render(details.insert())).isEqualTo("INSERT INTO GADGET_DETAILS (GADGET_ID, WAREHOUSE) VALUES (?, ?)");
+        assertThat(ANSI.render(details.update())).isEqualTo("UPDATE GADGET_DETAILS SET WAREHOUSE = ? WHERE GADGET_ID = ?");
+        assertThat(ANSI.render(details.delete())).isEqualTo("DELETE FROM GADGET_DETAILS WHERE GADGET_ID = ?");
+        assertThat(ANSI.render(details.select())).isEqualTo("SELECT WAREHOUSE FROM GADGET_DETAILS WHERE GADGET_ID = ?");
+        EntityStatements.TableStatements notes = gadget.tables().get(2);
+        assertThat(ANSI.render(notes.insert())).isEqualTo("INSERT INTO GADGET_NOTES (id, note) VALUES (?, ?)"); // default join
+    }
 }

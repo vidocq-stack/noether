@@ -33,6 +33,7 @@ import io.vidocq.mansart.jpa.core.model.GenerationModel;
 import io.vidocq.mansart.jpa.core.model.IdModel;
 import io.vidocq.mansart.jpa.core.model.PendingAttribute;
 import io.vidocq.mansart.jpa.core.model.PersistenceUnitModel;
+import io.vidocq.mansart.jpa.core.model.SecondaryTableModel;
 import io.vidocq.mansart.jpa.core.model.SequenceGeneratorModel;
 import io.vidocq.mansart.jpa.core.model.TableGeneratorModel;
 import io.vidocq.mansart.jpa.core.model.TableModel;
@@ -59,6 +60,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
@@ -171,7 +173,7 @@ public final class EntityModelBuilder {
         Optional<Class<?>> superEntity = hierarchy.stream().filter(c -> c != info && c.isAnnotated(ENTITY))
             .reduce((first, second) -> second).map(c -> Types.load(c.name(), loader));
         return new EntityModel(type, entityName, table(info, entityName), AccessPlanner.classAccess(info, access), id, attributes, version,
-            superEntity);
+            superEntity, secondaryTables(info));
     }
 
     private void checkEntityClass(ClassInfo info) {
@@ -187,6 +189,21 @@ public final class EntityModelBuilder {
             throw new PersistenceException("The entity class " + info.name()
                 + " must have a public or protected no-arg constructor (§2.1)");
         }
+    }
+
+    /** §11.1.46: the {@code @SecondaryTable}s of the entity, with their {@code @PrimaryKeyJoinColumn} names. */
+    private static List<SecondaryTableModel> secondaryTables(ClassInfo info) {
+        List<AnnotationInfo> declared = new ArrayList<>();
+        info.annotation(JPA + "SecondaryTable").ifPresent(declared::add);
+        info.annotation(JPA + "SecondaryTables").ifPresent(container -> declared.addAll(container.annotations("value")));
+        List<SecondaryTableModel> tables = new ArrayList<>();
+        for (AnnotationInfo table : declared) {
+            List<String> joinColumns = table.annotations("pkJoinColumns").stream().map(c -> nonEmpty(c.string("name")))
+                .filter(Objects::nonNull).toList();
+            tables.add(new SecondaryTableModel(new TableModel(table.string("name"), nonEmpty(table.string("schema")),
+                nonEmpty(table.string("catalog"))), joinColumns));
+        }
+        return tables;
     }
 
     private TableModel table(ClassInfo info, String entityName) {

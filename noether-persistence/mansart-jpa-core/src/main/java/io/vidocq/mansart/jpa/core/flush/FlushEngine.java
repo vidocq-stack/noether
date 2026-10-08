@@ -54,8 +54,15 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class FlushEngine {
 
-    /** The SQL of an entity, rendered once by the dialect. */
-    record Sql(String insert, String update, String delete, String select, String[] generatedKey) {
+    /** The SQL of a table of an entity, rendered once by the dialect. */
+    record TableSql(String insert, String update, String delete, String select) {
+    }
+
+    /** The SQL of an entity, its primary table first. */
+    record Sql(List<TableSql> tables, String[] generatedKey) {
+        String select() {
+            return tables.getFirst().select();
+        }
     }
 
     /** An instance to write, with the state read from it. */
@@ -132,7 +139,7 @@ public final class FlushEngine {
                 int id = type.idAttributes()[0];
                 EntityStatements.Column idColumn = statements.columns().stream().filter(EntityStatements.Column::id).findFirst()
                     .orElseThrow();
-                try (PreparedStatement statement = connection.prepareStatement(sql.insert(), sql.generatedKey())) {
+                try (PreparedStatement statement = connection.prepareStatement(sql.tables().getFirst().insert(), sql.generatedKey())) {
                     for (Work work : group) {
                         initialVersion(type, work, version);
                         bind(statement, statements.insertParameters(), statements, statements.values(work.state()), null);
@@ -149,7 +156,7 @@ public final class FlushEngine {
                     }
                 }
             } else {
-                try (PreparedStatement statement = connection.prepareStatement(sql.insert())) {
+                try (PreparedStatement statement = connection.prepareStatement(sql.tables().getFirst().insert())) {
                     int pending = 0;
                     for (Work work : group) {
                         initialVersion(type, work, version);
@@ -163,6 +170,17 @@ public final class FlushEngine {
                     if (pending > 0) {
                         statement.executeBatch();
                     }
+                }
+            }
+            // the rows of the secondary tables, keyed by the identifier now known
+            for (int t = 1; t < sql.tables().size(); t++) {
+                EntityStatements.TableStatements table = statements.tables().get(t);
+                try (PreparedStatement statement = connection.prepareStatement(sql.tables().get(t).insert())) {
+                    for (Work work : group) {
+                        bind(statement, table.insertParameters(), statements, statements.values(work.state()), null);
+                        statement.addBatch();
+                    }
+                    statement.executeBatch();
                 }
             }
         } catch (SQLException e) {
@@ -183,21 +201,31 @@ public final class FlushEngine {
         MappedEntity type = group.getFirst().type();
         EntityStatements statements = type.statements();
         Sql sql = sql(type);
-        if (sql.update() == null) {
-            return; // only identifier columns: nothing an update could change
-        }
         int version = versionAttribute(type);
-        try (PreparedStatement statement = connection.prepareStatement(sql.update())) {
-            for (Work work : group) {
-                if (version >= 0) {
-                    Object next = nextVersion(type, work.entry().snapshot()[version]);
-                    type.access().set(work.entry().instance(), version, next);
-                    work.state()[version] = next;
-                }
-                bind(statement, statements.updateParameters(), statements, statements.values(work.state()), work.entry().snapshot());
-                statement.addBatch();
+        for (Work work : group) {
+            if (version >= 0) {
+                Object next = nextVersion(type, work.entry().snapshot()[version]);
+                type.access().set(work.entry().instance(), version, next);
+                work.state()[version] = next;
             }
-            check(statement.executeBatch(), group, version >= 0, "updated");
+        }
+        try {
+            for (int t = 0; t < sql.tables().size(); t++) {
+                EntityStatements.TableStatements table = statements.tables().get(t);
+                if (sql.tables().get(t).update() == null) {
+                    continue; // nothing in that table can change
+                }
+                try (PreparedStatement statement = connection.prepareStatement(sql.tables().get(t).update())) {
+                    for (Work work : group) {
+                        bind(statement, table.updateParameters(), statements, statements.values(work.state()), work.entry().snapshot());
+                        statement.addBatch();
+                    }
+                    int[] counts = statement.executeBatch();
+                    if (t == 0) {
+                        check(counts, group, version >= 0, "updated"); // the version lives in the primary row
+                    }
+                }
+            }
         } catch (SQLException e) {
             throw failure("update", type, e);
         }
@@ -212,12 +240,21 @@ public final class FlushEngine {
         MappedEntity type = group.getFirst().type();
         EntityStatements statements = type.statements();
         Sql sql = sql(type);
-        try (PreparedStatement statement = connection.prepareStatement(sql.delete())) {
-            for (Work work : group) {
-                bind(statement, statements.deleteParameters(), statements, statements.values(work.state()), work.entry().snapshot());
-                statement.addBatch();
+        try {
+            // the rows of the secondary tables first: they reference the primary row
+            for (int t = sql.tables().size() - 1; t >= 0; t--) {
+                EntityStatements.TableStatements table = statements.tables().get(t);
+                try (PreparedStatement statement = connection.prepareStatement(sql.tables().get(t).delete())) {
+                    for (Work work : group) {
+                        bind(statement, table.deleteParameters(), statements, statements.values(work.state()), work.entry().snapshot());
+                        statement.addBatch();
+                    }
+                    int[] counts = statement.executeBatch();
+                    if (t == 0) {
+                        check(counts, group, versionAttribute(type) >= 0, "deleted");
+                    }
+                }
             }
-            check(statement.executeBatch(), group, versionAttribute(type) >= 0, "deleted");
         } catch (SQLException e) {
             throw failure("delete", type, e);
         }
@@ -243,10 +280,13 @@ public final class FlushEngine {
     Sql sql(MappedEntity type) {
         return sql.computeIfAbsent(type, t -> {
             EntityStatements statements = t.statements();
+            List<TableSql> tables = new ArrayList<>();
+            for (EntityStatements.TableStatements table : statements.tables()) {
+                tables.add(new TableSql(dialect.render(table.insert()), table.update() == null ? null : dialect.render(table.update()),
+                    dialect.render(table.delete()), dialect.render(table.select())));
+            }
             var key = statements.insert().generatedKey();
-            return new Sql(dialect.render(statements.insert()),
-                statements.update() == null ? null : dialect.render(statements.update()), dialect.render(statements.delete()),
-                dialect.render(statements.select()), key == null ? null : new String[] {dialect.generatedKeyName(key)});
+            return new Sql(List.copyOf(tables), key == null ? null : new String[] {dialect.generatedKeyName(key)});
         });
     }
 

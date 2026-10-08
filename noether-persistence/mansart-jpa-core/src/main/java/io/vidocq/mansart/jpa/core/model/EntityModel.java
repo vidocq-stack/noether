@@ -27,12 +27,15 @@ import java.util.Optional;
  * superclasses and entity superclasses first.
  *
  * @param superEntity the closest entity superclass, if any (its mapping strategy is milestone P6)
+ * @param secondaryTables the secondary tables of the entity (§11.1.46), in declaration order
  */
 public record EntityModel(Class<?> javaType, String entityName, TableModel table, AccessKind access, IdModel id,
-        List<AttributeModel> attributes, Optional<BasicAttribute> version, Optional<Class<?>> superEntity) {
+        List<AttributeModel> attributes, Optional<BasicAttribute> version, Optional<Class<?>> superEntity,
+        List<SecondaryTableModel> secondaryTables) {
 
     public EntityModel {
         attributes = List.copyOf(attributes);
+        secondaryTables = List.copyOf(secondaryTables);
     }
 
     public Optional<AttributeModel> attribute(String name) {
