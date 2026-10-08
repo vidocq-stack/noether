@@ -26,7 +26,7 @@ import java.lang.invoke.MethodType;
 
 /**
  * Creates components from their class, through method handles rather than {@code Constructor.newInstance}.
- * A public class in an exported package needs nothing; any other class must be reachable through
+ * A public class in a package exported to this module needs nothing; any other class must be reachable through
  * {@code privateLookupIn}, i.e. its package must be opened to this module (always true on the class path).
  */
 final class Instantiator {
@@ -73,7 +73,7 @@ final class Instantiator {
     private static MethodHandle constructor(Class<?> clazz) {
         MethodType noArg = MethodType.methodType(void.class);
         try {
-            return MethodHandles.publicLookup().findConstructor(clazz, noArg);
+            return MethodHandles.lookup().findConstructor(clazz, noArg);
         } catch (NoSuchMethodException e) {
             throw new ValidationException(clazz.getName() + " has no no-arg constructor", e);
         } catch (IllegalAccessException notPublic) {
