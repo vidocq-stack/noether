@@ -14,6 +14,14 @@ Official suite: **Jakarta Persistence 3.2.1** TCK (bundle from eclipse.org, SHA-
 | P2b — accesses generated at build time (the TCK compiles nothing with the processor: runtime path unchanged) | 2026-10-08 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 220 | 1911 | 4 |
 | P3 — persistence context and flush engine (flush at every commit, PostgreSQL dialect on the class path) | 2026-10-08 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 220 | 1911 | 4 |
 
+## D7 — the TCK runs on a mansart-pool pool
+
+From 2026-10-08 the TCK units, configured by `jakarta.persistence.jdbc.*`, get their connections from a
+`mansart-pool` pool (decision D7). Run that day: 220 / 2135, the same split, no exhausted database connections. The
+TCK writes little before P4; if the pool ever changes results, `io.vidocq.mansart.jpa.pool=false` in the runner's
+provider properties tells the pool from the provider. The runner installs `mansart-jpa-core` with `-am`, which builds
+`mansart-pool` too.
+
 ## P3 — the flush runs at every commit, the counts do not move
 
 Every TCK commit now flushes the persistence context of its entity manager, with the PostgreSQL dialect detected from

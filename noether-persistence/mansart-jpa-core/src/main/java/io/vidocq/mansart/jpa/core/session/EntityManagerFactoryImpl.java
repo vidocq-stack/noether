@@ -119,6 +119,11 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
         return settings;
     }
 
+    /** Where the connections of the unit come from: its pool, its data source, or the driver (decision D7). */
+    public ConnectionSource connectionSource() {
+        return connections;
+    }
+
     ConnectionSource connections() {
         return connections;
     }
@@ -193,6 +198,8 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
                     "Unable to release a transaction of persistence unit " + settings.unitName(), e);
             }
         }
+        // after the transactions: their connections are back in the pool (or closed) before it closes
+        connections.close();
     }
 
     @Override

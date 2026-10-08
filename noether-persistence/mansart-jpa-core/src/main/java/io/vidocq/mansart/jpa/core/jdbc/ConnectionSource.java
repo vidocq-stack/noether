@@ -25,6 +25,10 @@ import java.sql.SQLException;
 /** Where the JDBC connections of a persistence unit come from. Implementations are thread-safe. */
 public interface ConnectionSource {
 
-    /** A new connection; the caller closes it. */
+    /** A connection; the caller closes it, which returns a pooled connection to its pool. */
     Connection acquire() throws SQLException;
+
+    /** Releases what the source holds (the connections of its pool) when the factory closes. */
+    default void close() {
+    }
 }

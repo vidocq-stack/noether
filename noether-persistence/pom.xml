@@ -99,6 +99,12 @@
                 <artifactId>mansart-jpa-processor</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <!-- Decision D7: the default connection pool of jakarta.persistence.jdbc.* units in Java SE. -->
+            <dependency>
+                <groupId>io.vidocq.mansart</groupId>
+                <artifactId>mansart-pool-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
             <dependency>
                 <groupId>io.vidocq.mansart</groupId>
                 <artifactId>mansart-jpa-dialect-spi</artifactId>
