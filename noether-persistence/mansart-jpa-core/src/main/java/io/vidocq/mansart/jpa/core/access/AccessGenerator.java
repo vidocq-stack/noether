@@ -63,7 +63,6 @@ import java.util.function.IntConsumer;
  */
 final class AccessGenerator {
 
-    private static final MethodHandles.Lookup LOOKUP = MethodHandles.lookup();
     private static final ClassDesc CD_MANAGED_ACCESS = ClassDesc.of(ManagedAccess.class.getName());
     private static final ClassDesc CD_OUT_OF_BOUNDS = ClassDesc.of(IndexOutOfBoundsException.class.getName());
     private static final MethodTypeDesc CONSTRUCTOR = MethodTypeDesc.of(CD_void, CD_Class);
@@ -80,7 +79,7 @@ final class AccessGenerator {
     static ManagedAccess generate(Class<?> type, boolean record, List<AttributeModel> attributes) {
         List<MethodHandle> handles = new ArrayList<>();
         try {
-            MethodHandles.Lookup lookup = lookupIn(type);
+            MethodHandles.Lookup lookup = Handles.lookupIn(type);
             int creator = -1;
             if (record) {
                 creator = add(handles, canonicalConstructor(lookup, type, attributes));
@@ -92,7 +91,7 @@ final class AccessGenerator {
             int[] setters = new int[record ? 0 : attributes.size()];
             for (int i = 0; i < attributes.size(); i++) {
                 AttributeModel attribute = attributes.get(i);
-                MethodHandles.Lookup declaring = lookupIn(attribute.declaringClass());
+                MethodHandles.Lookup declaring = Handles.lookupIn(attribute.declaringClass());
                 getters[i] = add(handles, getter(declaring, attribute).asType(MethodType.methodType(Object.class, Object.class)));
                 if (!record) {
                     setters[i] = add(handles, setter(declaring, attribute)
@@ -100,7 +99,7 @@ final class AccessGenerator {
                 }
             }
             byte[] bytes = bytes(type, record, creator, getters, setters);
-            MethodHandles.Lookup hidden = LOOKUP.defineHiddenClassWithClassData(bytes, List.copyOf(handles), true);
+            MethodHandles.Lookup hidden = Handles.own().defineHiddenClassWithClassData(bytes, List.copyOf(handles), true);
             return (ManagedAccess) hidden.findConstructor(hidden.lookupClass(), MethodType.methodType(void.class, Class.class))
                 .invoke(type);
         } catch (PersistenceException e) {
@@ -115,19 +114,6 @@ final class AccessGenerator {
     private static int add(List<MethodHandle> handles, MethodHandle handle) {
         handles.add(handle);
         return handles.size() - 1;
-    }
-
-    /** A private lookup in {@code type}; the package of {@code type} must be opened to this module. */
-    private static MethodHandles.Lookup lookupIn(Class<?> type) {
-        Module module = AccessGenerator.class.getModule();
-        module.addReads(type.getModule());
-        try {
-            return MethodHandles.privateLookupIn(type, LOOKUP);
-        } catch (IllegalAccessException e) {
-            throw new PersistenceException("Mansart cannot access the managed class " + type.getName() + ": its module must "
-                + "open the package " + type.getPackageName() + " to " + module.getName() + " ('opens " + type.getPackageName()
-                + " to " + module.getName() + ";' in its module-info.java)", e);
-        }
     }
 
     private static MethodHandle canonicalConstructor(MethodHandles.Lookup lookup, Class<?> type, List<AttributeModel> components)
