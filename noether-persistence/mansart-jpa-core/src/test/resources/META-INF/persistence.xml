@@ -2,6 +2,7 @@
 <!-- Persistence units of the mansart-jpa-core unit tests. -->
 <persistence xmlns="https://jakarta.ee/xml/ns/persistence" version="3.2">
     <persistence-unit name="h2">
+        <exclude-unlisted-classes/>
         <properties>
             <property name="jakarta.persistence.jdbc.url" value="jdbc:h2:mem:core-tests;DB_CLOSE_DELAY=-1"/>
             <property name="jakarta.persistence.jdbc.user" value="sa"/>
@@ -12,12 +13,43 @@
     </persistence-unit>
     <persistence-unit name="other-provider">
         <provider>com.acme.OtherProvider</provider>
+        <exclude-unlisted-classes/>
     </persistence-unit>
     <persistence-unit name="ours-by-name">
         <provider>io.vidocq.mansart.jpa.core.MansartPersistenceProvider</provider>
+        <exclude-unlisted-classes/>
     </persistence-unit>
-    <persistence-unit name="jta" transaction-type="JTA"/>
+    <persistence-unit name="jta" transaction-type="JTA">
+        <exclude-unlisted-classes/>
+    </persistence-unit>
     <persistence-unit name="callback">
+        <exclude-unlisted-classes/>
         <validation-mode>CALLBACK</validation-mode>
+    </persistence-unit>
+    <persistence-unit name="mapped">
+        <class>io.vidocq.mansart.jpa.core.model.build.fixtures.Customer</class>
+        <class>io.vidocq.mansart.jpa.core.model.build.fixtures.Account</class>
+        <class>io.vidocq.mansart.jpa.core.model.build.fixtures.Note</class>
+        <class>io.vidocq.mansart.jpa.core.model.build.fixtures.Shop</class>
+        <class>io.vidocq.mansart.jpa.core.model.build.fixtures.Invoice</class>
+        <class>io.vidocq.mansart.jpa.core.model.build.fixtures.MoneyConverter</class>
+        <class>io.vidocq.mansart.jpa.core.model.build.fixtures.UpperCaseConverter</class>
+        <exclude-unlisted-classes/>
+        <properties>
+            <property name="jakarta.persistence.jdbc.url" value="jdbc:h2:mem:core-tests;DB_CLOSE_DELAY=-1"/>
+        </properties>
+    </persistence-unit>
+    <persistence-unit name="unmappable">
+        <class>io.vidocq.mansart.jpa.core.model.build.fixtures.NoId</class>
+        <exclude-unlisted-classes/>
+        <properties>
+            <property name="jakarta.persistence.jdbc.url" value="jdbc:h2:mem:core-tests;DB_CLOSE_DELAY=-1"/>
+        </properties>
+    </persistence-unit>
+    <!-- no exclude-unlisted-classes: the test classes are scanned, invalid fixtures included -->
+    <persistence-unit name="scanned">
+        <properties>
+            <property name="jakarta.persistence.jdbc.url" value="jdbc:h2:mem:core-tests;DB_CLOSE_DELAY=-1"/>
+        </properties>
     </persistence-unit>
 </persistence>

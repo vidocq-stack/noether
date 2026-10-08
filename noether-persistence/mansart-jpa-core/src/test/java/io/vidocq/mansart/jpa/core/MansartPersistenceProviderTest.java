@@ -38,6 +38,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import javax.sql.DataSource;
+import io.vidocq.mansart.jpa.core.model.PersistenceUnitModel;
+import io.vidocq.mansart.jpa.core.model.build.fixtures.Customer;
+import io.vidocq.mansart.jpa.core.session.EntityManagerFactoryImpl;
 import org.junit.jupiter.api.Test;
 
 /** Jakarta Persistence 3.2, chapter 9: the provider contracts, and §7.3 for the factory life cycle. */
@@ -132,6 +135,36 @@ class MansartPersistenceProviderTest {
             cache.evict(Object.class);
             cache.evictAll();
             assertThat(cache.unwrap(Cache.class)).isSameAs(cache);
+        }
+    }
+
+    @Test
+    void theManagedClassesAreMappedWhenTheFactoryIsCreated() { // §8.2.1.6, ch. 2
+        try (EntityManagerFactory emf = Persistence.createEntityManagerFactory("mapped")) {
+            PersistenceUnitModel model = emf.unwrap(EntityManagerFactoryImpl.class).mapping().model();
+            assertThat(model.entities()).extracting(e -> e.javaType().getSimpleName())
+                .containsExactly("Customer", "Account", "Note", "Shop", "Invoice");
+            assertThat(model.converters()).hasSize(2);
+        }
+    }
+
+    @Test
+    void aMappingErrorFailsTheCreationOfTheFactory() { // §2.4: an entity needs an identifier
+        assertThatThrownBy(() -> Persistence.createEntityManagerFactory("unmappable")).isInstanceOf(PersistenceException.class)
+            .hasMessageContaining("NoId");
+    }
+
+    @Test
+    void withoutExcludeUnlistedClassesTheRootIsScanned() { // §8.2.1.6: the test classes hold invalid entities on purpose
+        assertThatThrownBy(() -> Persistence.createEntityManagerFactory("scanned")).isInstanceOf(PersistenceException.class);
+    }
+
+    @Test
+    void aConfigurationMapsItsManagedClasses() { // §9.2: PersistenceConfiguration
+        PersistenceConfiguration configuration = new PersistenceConfiguration("configured").provider(PROVIDER)
+            .managedClass(Customer.class).property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:configured");
+        try (EntityManagerFactory emf = configuration.createEntityManagerFactory()) {
+            assertThat(emf.unwrap(EntityManagerFactoryImpl.class).mapping().model().entity(Customer.class)).isPresent();
         }
     }
 

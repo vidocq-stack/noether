@@ -21,6 +21,7 @@ package io.vidocq.mansart.jpa.core.session;
 
 import io.vidocq.mansart.jpa.core.bootstrap.UnitSettings;
 import io.vidocq.mansart.jpa.core.jdbc.ConnectionSource;
+import io.vidocq.mansart.jpa.core.mapping.MappedUnit;
 import jakarta.persistence.Cache;
 import jakarta.persistence.EntityGraph;
 import jakarta.persistence.EntityManager;
@@ -50,13 +51,20 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
 
     private final UnitSettings settings;
     private final ConnectionSource connections;
+    private final MappedUnit mapping;
     private final Cache cache = new NoSecondLevelCache();
     private final AtomicBoolean open = new AtomicBoolean(true);
     private final Set<ResourceLocalTransaction> activeTransactions = ConcurrentHashMap.newKeySet();
 
-    public EntityManagerFactoryImpl(UnitSettings settings, ConnectionSource connections) {
+    public EntityManagerFactoryImpl(UnitSettings settings, ConnectionSource connections, MappedUnit mapping) {
         this.settings = settings;
         this.connections = connections;
+        this.mapping = mapping;
+    }
+
+    /** The mapped persistence unit: entity model, generated access and binders. */
+    public MappedUnit mapping() {
+        return mapping;
     }
 
     UnitSettings settings() {
