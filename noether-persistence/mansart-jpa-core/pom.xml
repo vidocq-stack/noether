@@ -17,6 +17,11 @@
             <groupId>jakarta.persistence</groupId>
             <artifactId>jakarta.persistence-api</artifactId>
         </dependency>
+        <!-- Decision D4: the SQL AST and dialect SPI of Mansart JPA (JDK only). -->
+        <dependency>
+            <groupId>io.vidocq.mansart</groupId>
+            <artifactId>mansart-jpa-dialect-spi</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.junit.jupiter</groupId>

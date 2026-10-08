@@ -26,6 +26,7 @@ import io.vidocq.mansart.jpa.core.session.NotYet;
 import io.vidocq.mansart.jpa.core.spi.ManagedAccess;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Function;
 
 /**
  * An entity of a mapped unit, as the persistence context and the flush engine use it: its model, its access, the root
@@ -39,13 +40,26 @@ public final class MappedEntity {
     private final int[] idAttributes;
     private final ManagedAccess embeddedId;
     private final StatePolicy state;
+    private final EntityStatements statements;
 
-    MappedEntity(EntityModel model, ManagedAccess access, Class<?> root, ManagedAccess embeddedId, StatePolicy state) {
+    MappedEntity(EntityModel model, ManagedAccess access, Class<?> root, ManagedAccess embeddedId, StatePolicy state,
+            Function<EntityModel, EntityStatements> statements) {
         this.model = model;
         this.state = state;
         this.access = access;
         this.root = root;
         this.embeddedId = embeddedId;
+        this.idAttributes = idIndexes(model);
+        this.statements = statements.apply(model);
+    }
+
+    /** Its insert, update, delete and select by identifier, and their parameters. */
+    public EntityStatements statements() {
+        return statements;
+    }
+
+    /** The indexes, in {@link EntityModel#attributes()}, of the attributes that make the identifier of {@code model}. */
+    static int[] idIndexes(EntityModel model) {
         List<AttributeModel> parts = switch (model.id()) {
             case IdModel.Single single -> List.of(single.attribute());
             case IdModel.Embedded embedded -> List.of(embedded.attribute());
@@ -56,7 +70,7 @@ public final class MappedEntity {
         for (AttributeModel part : parts) {
             indexes.add(model.attributes().indexOf(part));
         }
-        this.idAttributes = indexes.stream().mapToInt(Integer::intValue).toArray();
+        return indexes.stream().mapToInt(Integer::intValue).toArray();
     }
 
     public EntityModel model() {

@@ -98,7 +98,7 @@ public final class MappedUnit {
                 ? embeddables.get(embedded.attribute().embeddable()) : null;
             StatePolicy state = StatePolicy.of(entity.attributes(), embeddables::get, valueBinders);
             mapped.put(entity.javaType(), new MappedEntity(entity, entities.get(entity.javaType()), root(model, entity), embeddedId,
-                state));
+                state, m -> EntityStatements.of(m, MappedEntity.idIndexes(m), binders::get, embeddables::get)));
         }
         return new MappedUnit(model, entities, embeddables, binders, mapped);
     }
