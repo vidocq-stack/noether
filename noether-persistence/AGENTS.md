@@ -28,11 +28,13 @@
 
 ## Real Code State to Know Before Modifying
 
-- Modules in the reactor: `mansart-jpa-core` (provider, bootstrap, entity model, accesses, JDBC binders),
+- Modules in the reactor: `mansart-jpa-dialects` (`-spi`: the SQL AST and dialect SPI of decision D4; `-h2`,
+  `-postgresql`), `mansart-jpa-core` (provider, bootstrap, entity model, accesses, JDBC binders, persistence
+  context, flush engine),
   `mansart-jpa-processor` (APT, entity accesses at build time) and two module-path test vehicles,
   `mansart-jpa-module-it` (runtime path, `opens`) and `mansart-jpa-processor-module-it` (build-time path,
   `provides`). `mansart-jpa-tck` stays out of the reactor.
-- Milestones P0, P1 and P2 are delivered: read `ROADMAP.md` (status per item) and `TCK.md`
+- Milestones P0 to P3 are delivered: read `ROADMAP.md` (status per item) and `TCK.md`
   (measured score, failures attributed per milestone) before starting.
 - The entity model is built at bootstrap from the class files; which members are persistent, and in which order, is
   decided by `AccessPlanner`, shared with the processor. Never duplicate that logic.
