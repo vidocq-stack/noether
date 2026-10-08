@@ -160,8 +160,11 @@ public final class EntityModelBuilder {
             }
         }
         IdModel id = id(info, hierarchy, members);
-        Optional<BasicAttribute> version = attributes.stream()
-            .filter(a -> a instanceof BasicAttribute b && b.version()).map(a -> (BasicAttribute) a).findFirst();
+        Optional<BasicAttribute> version = attributes.stream().<BasicAttribute>mapMulti((attribute, versions) -> {
+            if (attribute instanceof BasicAttribute basic && basic.version()) {
+                versions.accept(basic);
+            }
+        }).findFirst();
         Optional<Class<?>> superEntity = hierarchy.stream().filter(c -> c != info && c.isAnnotated(ENTITY))
             .reduce((first, second) -> second).map(c -> Types.load(c.name(), loader));
         return new EntityModel(type, entityName, table(info, entityName), AccessPlanner.classAccess(info, access), id, attributes, version,

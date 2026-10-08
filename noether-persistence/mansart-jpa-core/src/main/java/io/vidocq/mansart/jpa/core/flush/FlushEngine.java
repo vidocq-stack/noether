@@ -300,6 +300,8 @@ public final class FlushEngine {
      */
     private static Object nextVersion(MappedEntity type, Object current) {
         Class<?> versionType = type.model().version().orElseThrow().javaType();
+        // numbers wrap around rather than Math.addExact: optimistic locking only compares the version for equality,
+        // and an exception would stop an entity updated 2^31 times
         if (versionType == int.class || versionType == Integer.class) {
             return current == null ? 0 : (Integer) current + 1;
         }

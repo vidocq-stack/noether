@@ -133,15 +133,16 @@ public final class MappedEntity {
         };
     }
 
+    /** A generated integral identifier still 0 is a primitive the database has not assigned yet. */
     private static Object assigned(Object value, boolean generated) {
-        if (value == null) {
-            return null;
-        }
-        if (generated && value instanceof Number number && number.longValue() == 0
-                && (value instanceof Long || value instanceof Integer || value instanceof Short || value instanceof Byte)) {
-            return null; // a generated primitive identifier the database has not assigned yet
-        }
-        return value;
+        return switch (value) {
+            case null -> null;
+            case Long l when generated && l == 0L -> null;
+            case Integer i when generated && i == 0 -> null;
+            case Short s when generated && s == 0 -> null;
+            case Byte b when generated && b == 0 -> null;
+            default -> value;
+        };
     }
 
     private static CompositeId parts(Object[] parts) {
