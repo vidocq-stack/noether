@@ -36,7 +36,7 @@ for mode in off on; do
     rm -rf "$REPORTS"
     # A red TCK is normal before certification: only the comparison matters here.
     TCK_VALIDATION="$mode" "$RUNNER" "$@" || echo "(the runner exited with status $?, continuing)"
-    if ! ls "$REPORTS"/TEST-*.xml > /dev/null 2>&1; then
+    if [ -z "$(find "$REPORTS" -name 'TEST-*.xml' -print -quit 2>/dev/null)" ]; then
         echo "No failsafe report in $REPORTS after the run with validation $mode" >&2
         exit 2
     fi
@@ -50,9 +50,10 @@ import xml.etree.ElementTree as ET
 
 def results(directory):
     found = {}
-    for report in sorted(glob.glob(os.path.join(directory, "TEST-*.xml"))):
+    for report in sorted(glob.glob(os.path.join(directory, "**", "TEST-*.xml"), recursive=True)):
+        execution = os.path.relpath(os.path.dirname(report), directory)
         for case in ET.parse(report).getroot().iter("testcase"):
-            ident = f"{case.get('classname')}#{case.get('name')}"
+            ident = f"{execution}/{case.get('classname')}#{case.get('name')}"
             if case.find("failure") is not None or case.find("error") is not None:
                 status = "fail"
             elif case.find("skipped") is not None:

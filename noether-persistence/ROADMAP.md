@@ -5,6 +5,10 @@
 > reflection on entities, no runtime bytecode library — APT and the Class-File API instead.
 > Rules for contributors and agents: [`AGENTS.md`](AGENTS.md). Mansart-wide vision:
 > [`../PLAN.md`](../PLAN.md) and [`../ROADMAP.md`](../ROADMAP.md).
+>
+> **Ambition**: a complete, certified implementation that follows every Vidocq standard and aims at the best
+> performance of its class (measured against Hibernate ORM and EclipseLink in `BENCH.md`). This is the opposite of
+> `mansart-validation`, a stopgap that only has to run for this TCK.
 
 ## Guiding Principles
 
@@ -122,32 +126,34 @@ mansart-jpa-tck           (out of reactor — standalone Model 4.0.0 POM)
 Status legend: ⏳ not started · 🚧 in progress · ✅ delivered. Every milestone records its TCK
 delta in `TCK.md` when it closes.
 
-### P0 — The TCK instrument ⏳
+### P0 — The TCK instrument ✅
 
 **Goal**: a runner that executes the official suite against *our* (still absent) provider and
-prints a counter. PASS = 0 is the expected, correct outcome.
+prints a counter. PASS = 0 is the expected, correct outcome — 17 pass anyway, none of them thanks to a provider
+(see `TCK.md`).
 
-- [ ] Install the TCK artifacts in the local M2 with the bundle's `artifacts/artifact-install.sh`;
-      document the procedure in the runner README.
-- [ ] `mansart-jpa-tck/` — standalone Model 4.0.0 POM, **out of the reactor**, copied from
-      `mansart-data-tck` / `mansart-transactions-tck` then adapted (every reference to the other
-      spec replaced).
-- [ ] Dependency on `jakarta.tck:persistence-tck-spec-tests:3.2.1` and on nothing that does not
-      exist yet; failsafe with the two executions of the reference runner, `dependenciesToScan`,
-      `**/*Client*.*` + `**/*JPASigTest*.*` includes.
-- [ ] Standalone calibration: system properties above, `persistence.xml` declaring `JPATCK` and
-      `JPATCK2` (`RESOURCE_LOCAL`) taken from the `persistence-tck-common` standalone template,
-      **no `<provider>`** until P1.
-- [ ] PostgreSQL via Testcontainers; DDL + stored procedures applied before the run.
-- [ ] `run-official-tck-persistence-3.2.sh` (executable), per-area filter (`-Dit.test=…`).
-- [ ] Bean Validation switch for the first failsafe execution: `TCK_VALIDATION=off|on` (environment variable read
-      by the script and the POM). `on` adds `jakarta.validation-api` and `mansart-validation-core` to the
-      additional class path of execution 1, `off` adds neither; execution 2 never has them. Failsafe XML reports
-      stay in `target/failsafe-reports`. [`check-validation-neutrality.sh`](check-validation-neutrality.sh) runs
-      the suite both ways and compares the results test by test: it must report NEUTRAL (the TCK uses no Bean
-      Validation, see P11). Until this runner exists the script exits with status 78.
-- [ ] `TCK.md` with the baseline: executed count, and every test failing *for the right reason*
-      (no persistence provider), not on setup or wiring.
+- [x] Install the TCK artifacts in the local M2: `mansart-jpa-tck/install-tck.sh` downloads the bundle, checks
+      its published SHA-256, installs the jars with their POMs (`-DpomFile`, unlike the bundle's own
+      `artifact-install.sh`) and unpacks it in `.tck-cache/` for the SQL scripts.
+- [x] `mansart-jpa-tck/` — standalone Model 4.0.0 POM, **out of the reactor**, no Java.
+- [x] `jakarta.tck:persistence-tck-spec-tests:3.2.1`, every transitive dependency excluded (its POM lists
+      Hibernate ORM) and the run-time needs listed explicitly; failsafe with the two executions of the reference
+      runner, `dependenciesToScan`, one reports directory per execution.
+- [x] Standalone calibration: every system property the TCK reads is set (a missing one is a
+      `NullPointerException` in its setup). **No `persistence.xml` in the runner**: in standalone mode the TCK
+      builds its deployment jar and `persistence.xml` itself, from the template of `persistence-tck-common`; the
+      provider is named by `jakarta.persistence.provider` (`io.vidocq.mansart.jpa.core.MansartPersistenceProvider`).
+- [x] PostgreSQL 17 in a throw-away Docker container started by the script (or an external database), DDL and
+      stored procedures applied with `psql`, every table checked. *Deviation:* not Testcontainers — that would
+      need Java code in the runner; the Docker CLI keeps P0 Java-free.
+- [x] `run-official-tck-persistence-3.2.sh` (executable), per-area filter (`--area core.lock`).
+- [x] `TCK.md` with the baseline: 2135 tests (2134 + 1), 17 pass, 2114 fail, 4 skipped; every failure is
+      "No Persistence provider for EntityManager named JPATCK".
+- [x] Bean Validation switch for the first failsafe execution: `TCK_VALIDATION=off|on` (environment variable read
+      by the script, `-Dtck.validation=on` for the POM). `on` adds `jakarta.validation-api` and
+      `mansart-validation-core` to the additional class path of execution 1, `off` adds neither; execution 2 never
+      has them. [`check-validation-neutrality.sh`](check-validation-neutrality.sh) runs the suite both ways and
+      compares the results test by test: NEUTRAL on 2026-10-08.
 
 **Done when**: the run prints a counter for `ee.jakarta.tck.persistence.*` and the baseline is in
 `TCK.md`.
@@ -161,10 +167,13 @@ prints a counter. PASS = 0 is the expected, correct outcome.
   `Tests run: 0`.
 - Without `platform.mode=standalone` every test fails at setup asking for an injected
   `EntityManager` — errors that no implementation progress would ever move.
-- The standalone `persistence.xml` template: `unzip -p
-  ~/.m2/repository/jakarta/tck/persistence-tck-common/3.2.1/persistence-tck-common-3.2.1.jar
-  ee/jakarta/tck/persistence/common/template/standalone/persistence.xml`. Declaring another
-  vendor's `<provider>` would measure that vendor, not Mansart.
+- The standalone `persistence.xml` is built by the TCK from the template in
+  `persistence-tck-common` (`ee/jakarta/tck/persistence/common/template/standalone/persistence.xml`):
+  the runner provides none. Putting another vendor on the class path would measure that vendor.
+- Every system property the TCK reads must be set: it stores them in a `java.util.Properties`, so a
+  missing one is a `NullPointerException` in the setup of every test.
+- Both failsafe executions run `se.entityManagerFactory.Client2`: with a shared reports directory, the
+  second overwrites the first and a test disappears from the count.
 
 ### P1 — Bootstrap, provider SPI, resource-local transactions ⏳
 
