@@ -27,6 +27,7 @@ import io.vidocq.mansart.jpa.core.model.BasicAttribute;
 import io.vidocq.mansart.jpa.core.model.EmbeddableModel;
 import io.vidocq.mansart.jpa.core.model.EmbeddedAttribute;
 import io.vidocq.mansart.jpa.core.model.EntityModel;
+import io.vidocq.mansart.jpa.core.model.IdModel;
 import io.vidocq.mansart.jpa.core.model.PersistenceUnitModel;
 import io.vidocq.mansart.jpa.core.model.build.EntityModelBuilder;
 import io.vidocq.mansart.jpa.core.spi.ManagedAccess;
@@ -54,13 +55,16 @@ public final class MappedUnit {
     private final Map<Class<?>, ManagedAccess> entities;
     private final Map<EmbeddableModel, ManagedAccess> embeddables;
     private final Map<BasicAttribute, ValueBinder> binders;
+    private final Map<Class<?>, MappedEntity> mapped;
 
     private MappedUnit(PersistenceUnitModel model, Map<Class<?>, ManagedAccess> entities,
-            Map<EmbeddableModel, ManagedAccess> embeddables, Map<BasicAttribute, ValueBinder> binders) {
+            Map<EmbeddableModel, ManagedAccess> embeddables, Map<BasicAttribute, ValueBinder> binders,
+            Map<Class<?>, MappedEntity> mapped) {
         this.model = model;
         this.entities = entities;
         this.embeddables = embeddables;
         this.binders = binders;
+        this.mapped = mapped;
     }
 
     /** Maps the managed classes named {@code classNames}, loaded with {@code loader}. */
@@ -88,7 +92,26 @@ public final class MappedUnit {
                 .orElseGet(() -> Accesses.of(entity)));
             prepare(entity.attributes(), valueBinders, generated, embeddables, binders);
         }
-        return new MappedUnit(model, entities, embeddables, binders);
+        Map<Class<?>, MappedEntity> mapped = new IdentityHashMap<>();
+        for (EntityModel entity : model.entities()) {
+            ManagedAccess embeddedId = entity.id() instanceof IdModel.Embedded embedded
+                ? embeddables.get(embedded.attribute().embeddable()) : null;
+            mapped.put(entity.javaType(), new MappedEntity(entity, entities.get(entity.javaType()), root(model, entity), embeddedId));
+        }
+        return new MappedUnit(model, entities, embeddables, binders, mapped);
+    }
+
+    /** The topmost entity class of the hierarchy of {@code entity}. */
+    private static Class<?> root(PersistenceUnitModel model, EntityModel entity) {
+        EntityModel current = entity;
+        while (current.superEntity().isPresent()) {
+            Optional<EntityModel> parent = model.entity(current.superEntity().get());
+            if (parent.isEmpty()) {
+                return current.superEntity().get();
+            }
+            current = parent.get();
+        }
+        return current.javaType();
     }
 
     /** The accesses generated at build time, by managed class. */
@@ -155,6 +178,11 @@ public final class MappedUnit {
 
     public PersistenceUnitModel model() {
         return model;
+    }
+
+    /** The entity {@code type} as the persistence context and the flush engine use it. */
+    public Optional<MappedEntity> entity(Class<?> type) {
+        return Optional.ofNullable(mapped.get(type));
     }
 
     /** The access of {@code entity}. */

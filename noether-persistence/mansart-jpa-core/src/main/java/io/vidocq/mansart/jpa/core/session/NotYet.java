@@ -20,12 +20,12 @@
 package io.vidocq.mansart.jpa.core.session;
 
 /** The exception of an operation a later milestone of the roadmap delivers: it says which, instead of misbehaving. */
-final class NotYet {
+public final class NotYet {
 
     private NotYet() {
     }
 
-    static UnsupportedOperationException milestone(String milestone, String operation) {
+    public static UnsupportedOperationException milestone(String milestone, String operation) {
         return new UnsupportedOperationException("Mansart JPA does not support " + operation + " yet (milestone " + milestone
             + " of mansart-persistence/ROADMAP.md)");
     }
