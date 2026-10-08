@@ -26,7 +26,9 @@ import io.vidocq.mansart.jpa.core.session.NotYet;
 import io.vidocq.mansart.jpa.core.spi.ManagedAccess;
 import java.lang.invoke.MethodType;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Function;
 
 /**
@@ -44,6 +46,7 @@ public final class MappedEntity {
     private final StatePolicy state;
     private final EntityStatements statements;
     private final int rank;
+    private final Map<String, int[]> callbacks;
 
     MappedEntity(EntityModel model, ManagedAccess access, Class<?> root, ManagedAccess embeddedId, ManagedAccess idClass,
             StatePolicy state, Function<EntityModel, EntityStatements> statements, int rank) {
@@ -56,6 +59,13 @@ public final class MappedEntity {
         this.idAttributes = idIndexes(model);
         this.statements = statements.apply(model);
         this.rank = rank;
+        Map<String, List<Integer>> byKind = new HashMap<>();
+        for (int i = 0; i < model.callbacks().size(); i++) {
+            byKind.computeIfAbsent(model.callbacks().get(i).kind(), k -> new ArrayList<>()).add(i);
+        }
+        Map<String, int[]> indexes = new HashMap<>();
+        byKind.forEach((kind, list) -> indexes.put(kind, list.stream().mapToInt(Integer::intValue).toArray()));
+        this.callbacks = Map.copyOf(indexes);
     }
 
     /**
@@ -92,6 +102,16 @@ public final class MappedEntity {
 
     public ManagedAccess access() {
         return access;
+    }
+
+    /** Invokes the lifecycle callbacks of {@code kind} on {@code instance}, in the order of §3.6.4. */
+    public void callback(String kind, Object instance) {
+        int[] indexes = callbacks.get(kind);
+        if (indexes != null) {
+            for (int index : indexes) {
+                access.callback(instance, index);
+            }
+        }
     }
 
     /** How its state is kept in snapshots and compared at flush. */

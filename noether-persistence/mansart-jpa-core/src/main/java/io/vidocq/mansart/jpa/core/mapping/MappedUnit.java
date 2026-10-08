@@ -26,6 +26,7 @@ import io.vidocq.mansart.jpa.core.model.AccessKind;
 import io.vidocq.mansart.jpa.core.model.AssociationAttribute;
 import io.vidocq.mansart.jpa.core.model.AttributeModel;
 import io.vidocq.mansart.jpa.core.model.BasicAttribute;
+import io.vidocq.mansart.jpa.core.model.CallbackModel;
 import io.vidocq.mansart.jpa.core.model.ColumnModel;
 import io.vidocq.mansart.jpa.core.model.EmbeddableModel;
 import io.vidocq.mansart.jpa.core.model.EmbeddedAttribute;
@@ -97,7 +98,8 @@ public final class MappedUnit {
         Map<EmbeddableModel, ManagedAccess> embeddables = new IdentityHashMap<>();
         Map<BasicAttribute, ValueBinder> binders = new IdentityHashMap<>();
         for (EntityModel entity : model.entities()) {
-            entities.put(entity.javaType(), generated.find(entity.javaType(), entity.attributes())
+            List<String> callbacks = entity.callbacks().stream().map(CallbackModel::descriptor).toList();
+            entities.put(entity.javaType(), generated.find(entity.javaType(), entity.attributes(), callbacks)
                 .orElseGet(() -> Accesses.of(entity)));
             prepare(entity.attributes(), valueBinders, generated, embeddables, binders);
         }
@@ -216,13 +218,14 @@ public final class MappedUnit {
             }
         }
 
-        Optional<ManagedAccess> find(Class<?> type, List<AttributeModel> attributes) {
+        Optional<ManagedAccess> find(Class<?> type, List<AttributeModel> attributes, List<String> callbacks) {
             List<ManagedAccess> candidates = byType.getOrDefault(type, List.of());
             if (candidates.isEmpty()) {
                 return Optional.empty();
             }
             List<String> descriptor = Accesses.descriptor(attributes);
-            Optional<ManagedAccess> fitting = candidates.stream().filter(a -> a.attributes().equals(descriptor)).findFirst();
+            Optional<ManagedAccess> fitting = candidates.stream()
+                .filter(a -> a.attributes().equals(descriptor) && a.callbacks().equals(callbacks)).findFirst();
             if (fitting.isEmpty()) {
                 LOGGER.log(System.Logger.Level.WARNING, "The access generated for {0} lists {1}, but the class maps {2}: it "
                     + "was compiled from another version of the class; Mansart generates its access at bootstrap instead",
@@ -240,7 +243,7 @@ public final class MappedUnit {
                 case EmbeddedAttribute embedded -> {
                     EmbeddableModel embeddable = embedded.embeddable();
                     if (!embeddables.containsKey(embeddable)) {
-                        embeddables.put(embeddable, generated.find(embeddable.javaType(), embeddable.attributes())
+                        embeddables.put(embeddable, generated.find(embeddable.javaType(), embeddable.attributes(), List.of())
                             .orElseGet(() -> Accesses.of(embeddable)));
                         prepare(embeddable.attributes(), valueBinders, generated, embeddables, binders);
                     }

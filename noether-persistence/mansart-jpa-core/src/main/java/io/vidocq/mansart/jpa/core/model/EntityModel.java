@@ -28,14 +28,16 @@ import java.util.Optional;
  *
  * @param superEntity the closest entity superclass, if any (its mapping strategy is milestone P6)
  * @param secondaryTables the secondary tables of the entity (§11.1.46), in declaration order
+ * @param callbacks its lifecycle callbacks, in the order §3.6.4 invokes those of a same event
  */
 public record EntityModel(Class<?> javaType, String entityName, TableModel table, AccessKind access, IdModel id,
         List<AttributeModel> attributes, Optional<BasicAttribute> version, Optional<Class<?>> superEntity,
-        List<SecondaryTableModel> secondaryTables) {
+        List<SecondaryTableModel> secondaryTables, List<CallbackModel> callbacks) {
 
     public EntityModel {
         attributes = List.copyOf(attributes);
         secondaryTables = List.copyOf(secondaryTables);
+        callbacks = List.copyOf(callbacks);
     }
 
     public Optional<AttributeModel> attribute(String name) {

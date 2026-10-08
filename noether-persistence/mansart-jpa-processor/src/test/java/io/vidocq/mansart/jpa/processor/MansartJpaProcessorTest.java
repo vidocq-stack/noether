@@ -151,6 +151,23 @@ class MansartJpaProcessorTest {
     }
 
     @Test
+    void callbacksAreListedAsTheModelDoesAndInvoked() throws Throwable { // §3.6
+        EntityModel item = entity("shop.Item");
+        ManagedAccess access = accesses.get(type("shop.Item"));
+        assertThat(access.callbacks()).isEqualTo(item.callbacks().stream().map(c -> c.descriptor()).toList())
+            .containsExactly("PrePersist:shop.ItemListener#shop.ItemListener.prePersist", "PostLoad:shop.Item.loaded");
+        Object instance = access.instantiate();
+        access.set(instance, access.attributes().indexOf("name:FIELD"), "lamp");
+        @SuppressWarnings("unchecked")
+        java.util.List<String> seen = (java.util.List<String>) MethodHandles.publicLookup()
+            .findStaticGetter(type("shop.ItemListener"), "SEEN", java.util.List.class).invoke();
+        access.callback(instance, 0);
+        access.callback(instance, 1);
+        assertThat(seen).containsExactly("ItemListener.prePersist lamp", "Item.loaded lamp");
+        assertThat(shop.source("shop/Item$$MansartAccess.java")).contains("LISTENER_0.prePersist(");
+    }
+
+    @Test
     void propertiesGoThroughTheirAccessors() throws Exception {
         ManagedAccess access = accesses.get(type("shop.Purchase"));
         Object purchase = access.instantiate();

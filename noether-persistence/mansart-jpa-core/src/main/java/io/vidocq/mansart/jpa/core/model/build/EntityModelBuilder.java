@@ -23,6 +23,7 @@ import io.vidocq.mansart.jpa.core.model.AccessKind;
 import io.vidocq.mansart.jpa.core.model.AssociationAttribute;
 import io.vidocq.mansart.jpa.core.model.AttributeModel;
 import io.vidocq.mansart.jpa.core.model.BasicAttribute;
+import io.vidocq.mansart.jpa.core.model.CallbackModel;
 import io.vidocq.mansart.jpa.core.model.ColumnModel;
 import io.vidocq.mansart.jpa.core.model.ConverterModel;
 import io.vidocq.mansart.jpa.core.model.ElementCollectionAttribute;
@@ -173,7 +174,7 @@ public final class EntityModelBuilder {
         Optional<Class<?>> superEntity = hierarchy.stream().filter(c -> c != info && c.isAnnotated(ENTITY))
             .reduce((first, second) -> second).map(c -> Types.load(c.name(), loader));
         return new EntityModel(type, entityName, table(info, entityName), AccessPlanner.classAccess(info, access), id, attributes, version,
-            superEntity, secondaryTables(info));
+            superEntity, secondaryTables(info), callbacks(info));
     }
 
     private void checkEntityClass(ClassInfo info) {
@@ -189,6 +190,13 @@ public final class EntityModelBuilder {
             throw new PersistenceException("The entity class " + info.name()
                 + " must have a public or protected no-arg constructor (§2.1)");
         }
+    }
+
+    /** §3.6: the lifecycle callbacks planned by {@link AccessPlanner}, with their classes loaded. */
+    private List<CallbackModel> callbacks(ClassInfo info) {
+        return planner.callbacks(info).stream().map(c -> new CallbackModel(c.kind(), Types.load(c.owner(), loader), c.method(),
+            c.listener() == null ? null : Types.load(c.listener(), loader),
+            c.parameter() == null ? null : Types.load(c.parameter(), loader))).toList();
     }
 
     /** §11.1.46: the {@code @SecondaryTable}s of the entity, with their {@code @PrimaryKeyJoinColumn} names. */

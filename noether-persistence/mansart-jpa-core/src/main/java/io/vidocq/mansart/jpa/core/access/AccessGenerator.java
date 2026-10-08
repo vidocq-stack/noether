@@ -28,6 +28,7 @@ import static java.lang.constant.ConstantDescs.INIT_NAME;
 
 import io.vidocq.mansart.jpa.core.model.AccessKind;
 import io.vidocq.mansart.jpa.core.model.AttributeModel;
+import io.vidocq.mansart.jpa.core.model.CallbackModel;
 import io.vidocq.mansart.jpa.core.spi.ManagedAccess;
 import jakarta.persistence.PersistenceException;
 import java.lang.classfile.ClassFile;
@@ -43,7 +44,9 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.lang.reflect.AccessFlag;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.IntConsumer;
 
 /**
@@ -66,7 +69,10 @@ final class AccessGenerator {
 
     private static final ClassDesc CD_MANAGED_ACCESS = ClassDesc.of(ManagedAccess.class.getName());
     private static final ClassDesc CD_OUT_OF_BOUNDS = ClassDesc.of(IndexOutOfBoundsException.class.getName());
-    private static final MethodTypeDesc CONSTRUCTOR = MethodTypeDesc.of(CD_void, CD_Class, ClassDesc.of(List.class.getName()));
+    private static final MethodTypeDesc CONSTRUCTOR = MethodTypeDesc.of(CD_void, CD_Class, ClassDesc.of(List.class.getName()),
+        ClassDesc.of(List.class.getName()));
+    private static final MethodTypeDesc CALLBACK = MethodTypeDesc.of(CD_void, CD_Object, CD_int);
+    private static final MethodTypeDesc INVOKE = MethodTypeDesc.of(CD_void, CD_Object);
     private static final MethodTypeDesc INSTANTIATE = MethodTypeDesc.of(CD_Object);
     private static final MethodTypeDesc CONSTRUCT = MethodTypeDesc.of(CD_Object, CD_Object.arrayType());
     private static final MethodTypeDesc GET = MethodTypeDesc.of(CD_Object, CD_Object, CD_int);
@@ -78,7 +84,7 @@ final class AccessGenerator {
     private AccessGenerator() {
     }
 
-    static ManagedAccess generate(Class<?> type, boolean record, List<AttributeModel> attributes) {
+    static ManagedAccess generate(Class<?> type, boolean record, List<AttributeModel> attributes, List<CallbackModel> callbackModels) {
         List<MethodHandle> handles = new ArrayList<>();
         try {
             MethodHandles.Lookup lookup = Handles.lookupIn(type);
@@ -100,10 +106,27 @@ final class AccessGenerator {
                         .asType(MethodType.methodType(void.class, Object.class, Object.class)));
                 }
             }
-            byte[] bytes = bytes(type, record, creator, getters, setters);
+            int[] callbacks = new int[callbackModels.size()];
+            Map<Class<?>, Object> listeners = new HashMap<>();
+            for (int i = 0; i < callbackModels.size(); i++) {
+                CallbackModel callback = callbackModels.get(i);
+                MethodHandles.Lookup owner = Handles.lookupIn(callback.owner());
+                MethodHandle handle;
+                if (callback.listener() == null) {
+                    handle = owner.findVirtual(callback.owner(), callback.method(), MethodType.methodType(void.class));
+                } else {
+                    // one instance per listener class and access (§3.6.1: a public no-arg constructor)
+                    Object listener = listeners.computeIfAbsent(callback.listener(), Handles::newInstance);
+                    handle = owner.findVirtual(callback.owner(), callback.method(), MethodType.methodType(void.class,
+                        callback.parameter())).bindTo(listener);
+                }
+                callbacks[i] = add(handles, handle.asType(MethodType.methodType(void.class, Object.class)));
+            }
+            byte[] bytes = bytes(type, record, creator, getters, setters, callbacks);
             MethodHandles.Lookup hidden = Handles.own().defineHiddenClassWithClassData(bytes, List.copyOf(handles), true);
             return (ManagedAccess) hidden.findConstructor(hidden.lookupClass(),
-                MethodType.methodType(void.class, Class.class, List.class)).invoke(type, Accesses.descriptor(attributes));
+                MethodType.methodType(void.class, Class.class, List.class, List.class))
+                .invoke(type, Accesses.descriptor(attributes), callbackModels.stream().map(CallbackModel::descriptor).toList());
         } catch (PersistenceException | VirtualMachineError e) {
             throw e; // a mapping error is already one; a VirtualMachineError is not a mapping error
         } catch (ReflectiveOperationException e) {
@@ -171,13 +194,13 @@ final class AccessGenerator {
 
     // ---- bytecode ---------------------------------------------------------------------------------------
 
-    private static byte[] bytes(Class<?> type, boolean record, int creator, int[] getters, int[] setters) {
+    private static byte[] bytes(Class<?> type, boolean record, int creator, int[] getters, int[] setters, int[] callbacks) {
         ClassDesc self = ClassDesc.of(AccessGenerator.class.getPackageName(), "Access_" + type.getSimpleName());
         return ClassFile.of().build(self, cb -> {
             cb.withFlags(ClassFile.ACC_FINAL | ClassFile.ACC_SUPER | ClassFile.ACC_SYNTHETIC);
             cb.withSuperclass(CD_MANAGED_ACCESS);
             cb.withMethodBody(INIT_NAME, CONSTRUCTOR, ClassFile.ACC_PUBLIC, code -> code
-                .aload(0).aload(1).aload(2).invokespecial(CD_MANAGED_ACCESS, INIT_NAME, CONSTRUCTOR).return_());
+                .aload(0).aload(1).aload(2).aload(3).invokespecial(CD_MANAGED_ACCESS, INIT_NAME, CONSTRUCTOR).return_());
             if (creator >= 0 && record) {
                 cb.withMethodBody("construct", CONSTRUCT, ClassFile.ACC_PUBLIC | ClassFile.ACC_VARARGS, code -> code
                     .ldc(handle(creator)).aload(1).invokevirtual(CD_MethodHandle, "invokeExact", CONSTRUCT).areturn());
@@ -190,6 +213,10 @@ final class AccessGenerator {
             if (!record) {
                 cb.withMethodBody("set", SET, ClassFile.ACC_PUBLIC, code -> dispatch(code, setters, index -> code
                     .ldc(handle(index)).aload(1).aload(3).invokevirtual(CD_MethodHandle, "invokeExact", SETTER).return_()));
+            }
+            if (callbacks.length > 0) {
+                cb.withMethodBody("callback", CALLBACK, ClassFile.ACC_PUBLIC, code -> dispatch(code, callbacks, index -> code
+                    .ldc(handle(index)).aload(1).invokevirtual(CD_MethodHandle, "invokeExact", INVOKE).return_()));
             }
             // straight-line bulk copies: state[i] = getter(instance), setter(instance, state[i])
             cb.withMethodBody("read", BULK, ClassFile.ACC_PUBLIC, code -> {

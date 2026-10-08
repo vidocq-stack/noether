@@ -20,6 +20,7 @@
 package io.vidocq.mansart.jpa.processor;
 
 import io.vidocq.mansart.jpa.core.model.AccessKind;
+import io.vidocq.mansart.jpa.core.model.build.AccessPlanner.Callback;
 import io.vidocq.mansart.jpa.core.model.build.AccessPlanner.Member;
 import io.vidocq.mansart.jpa.core.model.source.ClassInfo;
 import io.vidocq.mansart.jpa.core.model.source.FieldInfo;
@@ -63,8 +64,8 @@ final class AccessWriter {
         %2$s@java.lang.SuppressWarnings({"unchecked", "rawtypes"})
         final class %3$s extends io.vidocq.mansart.jpa.core.spi.ManagedAccess {
 
-        %4$s    %3$s() {
-                super(%1$s.class, java.util.List.of(%5$s));
+        %4$s%8$s    %3$s() {
+                super(%1$s.class, java.util.List.of(%5$s), java.util.List.of(%7$s));
             }
         %6$s}
         """;
@@ -75,6 +76,7 @@ final class AccessWriter {
                 java.lang.invoke.MethodHandles.Lookup own = java.lang.invoke.MethodHandles.lookup();
                 java.lang.invoke.MethodType getter = java.lang.invoke.MethodType.methodType(java.lang.Object.class, java.lang.Object.class);
                 java.lang.invoke.MethodType setter = java.lang.invoke.MethodType.methodType(void.class, java.lang.Object.class, java.lang.Object.class);
+                java.lang.invoke.MethodType invoker = java.lang.invoke.MethodType.methodType(void.class, java.lang.Object.class);
                 try {
         %2$s        } catch (java.lang.ReflectiveOperationException failure) {
                     throw new java.lang.ExceptionInInitializerError(failure);
@@ -133,6 +135,21 @@ final class AccessWriter {
             }
         """;
 
+    private static final String CALLBACK = """
+
+            @java.lang.Override
+            public void callback(java.lang.Object instance, int callback) {
+                %1$s entity = (%1$s) instance;
+                try {
+                    switch (callback) {
+        %2$s                default -> throw new java.lang.IndexOutOfBoundsException(callback);
+                    }
+                } catch (java.lang.Throwable failure) {
+                    throw rethrow(failure);
+                }
+            }
+        """;
+
     private static final String READ = """
 
             @java.lang.Override
@@ -165,6 +182,16 @@ final class AccessWriter {
         this.infos = infos;
     }
 
+    /**
+     * One lifecycle callback and how the generated code calls it.
+     *
+     * @param call the statement that calls it directly, or {@code null} when it goes through a handle
+     * @param handle the expression that looks the handle up, or {@code null}
+     * @param depth the superclass depth of the lookup a handle needs, or -1 when it needs none
+     */
+    private record CallbackSlot(Callback callback, String call, String handle, int depth) {
+    }
+
     /** One persistent member and how the generated code reaches it. */
     private record Slot(Member member, String type, boolean directGet, boolean directSet, String getter, String setter, int depth,
             String typeLiteral, String setterReturnLiteral) {
@@ -176,7 +203,8 @@ final class AccessWriter {
      * @param className the simple name of the generated class
      * @param record whether {@code type} is a record, built through its canonical constructor
      */
-    String write(TypeElement type, String className, List<Member> members, boolean record) throws Unsupported {
+    String write(TypeElement type, String className, List<Member> members, boolean record, List<Callback> callbacks)
+            throws Unsupported {
         String pkg = packageOf(type);
         String self = qualified(type);
         if (!referenceable(type, pkg)) {
@@ -185,6 +213,24 @@ final class AccessWriter {
         List<Slot> slots = new ArrayList<>();
         for (Member member : members) {
             slots.add(slot(type, member, pkg, record));
+        }
+        List<String> listeners = new ArrayList<>();
+        List<CallbackSlot> callbackSlots = new ArrayList<>();
+        for (Callback callback : callbacks) {
+            callbackSlots.add(callbackSlot(type, callback, pkg, listeners));
+        }
+        StringBuilder listenerFields = new StringBuilder();
+        for (int k = 0; k < listeners.size(); k++) {
+            // §3.6.1: a listener class has a public no-arg constructor; one instance per access
+            listenerFields.append("    private static final ").append(listeners.get(k)).append(" LISTENER_").append(k).append(" = new ")
+                .append(listeners.get(k)).append("();\n");
+        }
+        if (!listeners.isEmpty()) {
+            listenerFields.append('\n');
+        }
+        StringBuilder callbackDescriptors = new StringBuilder();
+        for (Callback callback : callbacks) {
+            callbackDescriptors.append(callbackDescriptors.isEmpty() ? "" : ", ").append('"').append(callback.descriptor()).append('"');
         }
         StringBuilder attributes = new StringBuilder();
         for (int i = 0; i < slots.size(); i++) {
@@ -197,14 +243,23 @@ final class AccessWriter {
         } else {
             methods.append(instantiate(type, self));
         }
+        if (!callbackSlots.isEmpty()) {
+            StringBuilder cases = new StringBuilder();
+            for (int i = 0; i < callbackSlots.size(); i++) {
+                CallbackSlot slot = callbackSlots.get(i);
+                cases.append("                case ").append(i).append(" -> ")
+                    .append(slot.call() != null ? slot.call() : "CALLBACK_" + i + ".invokeExact(instance)").append(";\n");
+            }
+            methods.append(CALLBACK.formatted(self, cases));
+        }
         methods.append(GET.formatted(self, lines(slots, (slot, i) -> "                case " + i + " -> " + value(slot, i) + ";")));
         methods.append(READ.formatted(self, lines(slots, (slot, i) -> "            state[" + i + "] = " + value(slot, i) + ";")));
         if (!record) {
             methods.append(SET.formatted(self, lines(slots, (slot, i) -> "                case " + i + " -> " + assignment(slot, i, "value") + ";")));
             methods.append(WRITE.formatted(self, lines(slots, (slot, i) -> "            " + assignment(slot, i, "state[" + i + "]") + ";")));
         }
-        return CLASS.formatted(self, pkg.isEmpty() ? "" : "package " + pkg + ";\n\n", className, handles(type, slots, record), attributes,
-            methods);
+        return CLASS.formatted(self, pkg.isEmpty() ? "" : "package " + pkg + ";\n\n", className,
+            handles(type, slots, record, callbackSlots), attributes, methods, callbackDescriptors, listenerFields);
     }
 
     /** One line per slot, each ended by a new line. */
@@ -266,6 +321,52 @@ final class AccessWriter {
             classLiteral(setter.type().returnType()));
     }
 
+    /** How the generated access calls {@code callback}: directly when the language allows it, else through a handle. */
+    private CallbackSlot callbackSlot(TypeElement type, Callback callback, String pkg, List<String> listeners) throws Unsupported {
+        ClassInfo owner = infos.read(callback.owner())
+            .orElseThrow(() -> new Unsupported("the class " + callback.owner() + " of a callback cannot be read"));
+        TypeElement ownerElement = infos.element(callback.owner());
+        boolean sameModule = elements.getModuleOf(ownerElement).equals(elements.getModuleOf(type));
+        String ownerPackage = owner.name().contains(".") ? owner.name().substring(0, owner.name().lastIndexOf('.')) : "";
+        int parameters = callback.listener() == null ? 0 : 1;
+        MethodInfo method = owner.methods().stream().filter(m -> m.name().equals(callback.method())
+            && m.type().parameterCount() == parameters).findFirst()
+            .orElseThrow(() -> new Unsupported("the callback " + callback.descriptor() + " cannot be read"));
+        boolean direct = visible(method.flags(), ownerPackage.equals(pkg));
+        if (callback.listener() == null) {
+            if (direct) {
+                return new CallbackSlot(callback, "entity." + callback.method() + "()", null, -1);
+            }
+            if (!sameModule) {
+                throw new Unsupported("the callback " + callback.descriptor() + " belongs to another module");
+            }
+            int depth = depth(type, owner);
+            return new CallbackSlot(callback, null, "in" + depth + ".findVirtual(" + classOf(qualified(type), depth) + ", \""
+                + callback.method() + "\", java.lang.invoke.MethodType.methodType(void.class)).asType(invoker)", depth);
+        }
+        TypeElement listener = infos.element(callback.listener());
+        if (listener == null || !referenceable(listener, pkg) || ElementFilter.constructorsIn(listener.getEnclosedElements()).stream()
+                .noneMatch(c -> c.getParameters().isEmpty() && c.getModifiers().contains(Modifier.PUBLIC))) {
+            throw new Unsupported("the listener " + callback.listener() + " cannot be instantiated from " + pkg);
+        }
+        String listenerName = qualified(listener);
+        if (!listeners.contains(listenerName)) {
+            listeners.add(listenerName);
+        }
+        String field = "LISTENER_" + listeners.indexOf(listenerName);
+        String parameter = sourceName(callback.parameter(), pkg);
+        if (direct) {
+            return new CallbackSlot(callback, field + "." + callback.method() + "((" + parameter + ") instance)", null, -1);
+        }
+        if (!sameModule || !referenceable(ownerElement, pkg)) {
+            throw new Unsupported("the listener method " + callback.descriptor() + " cannot be reached from " + pkg);
+        }
+        String ownerClass = qualified(ownerElement) + ".class";
+        return new CallbackSlot(callback, null, "java.lang.invoke.MethodHandles.privateLookupIn(" + ownerClass + ", own).findVirtual("
+            + ownerClass + ", \"" + callback.method() + "\", java.lang.invoke.MethodType.methodType(void.class, "
+            + classLiteral(callback.parameter()) + ")).bindTo(" + field + ").asType(invoker)", -1);
+    }
+
     /** Whether the field {@code name}, or the getter's return or setter's parameter, is typed by a type variable. */
     private static boolean typeVariable(TypeElement owner, String name, String setter) {
         if (setter == null) {
@@ -320,9 +421,10 @@ final class AccessWriter {
     }
 
     /** The method handles of the members the generated class cannot reach directly, and their static initialiser. */
-    private String handles(TypeElement type, List<Slot> slots, boolean record) {
+    private String handles(TypeElement type, List<Slot> slots, boolean record, List<CallbackSlot> callbacks) {
         boolean constructor = !record && privateConstructor(type);
-        boolean any = !record && (slots.stream().anyMatch(s -> !s.directGet() || !s.directSet()) || constructor);
+        boolean any = !record && (slots.stream().anyMatch(s -> !s.directGet() || !s.directSet()) || constructor)
+            || callbacks.stream().anyMatch(c -> c.handle() != null);
         if (!any) {
             return "";
         }
@@ -340,6 +442,11 @@ final class AccessWriter {
         if (constructor) {
             fields.append("    private static final java.lang.invoke.MethodHandle NEW;\n");
         }
+        for (int i = 0; i < callbacks.size(); i++) {
+            if (callbacks.get(i).handle() != null) {
+                fields.append("    private static final java.lang.invoke.MethodHandle CALLBACK_").append(i).append(";\n");
+            }
+        }
         StringBuilder body = new StringBuilder();
         SortedSet<Integer> depths = new TreeSet<>();
         for (Slot slot : slots) {
@@ -350,6 +457,7 @@ final class AccessWriter {
         if (constructor) {
             depths.add(0);
         }
+        callbacks.stream().filter(c -> c.handle() != null && c.depth() >= 0).forEach(c -> depths.add(c.depth()));
         for (int depth : depths) {
             body.append("            java.lang.invoke.MethodHandles.Lookup in").append(depth)
                 .append(" = java.lang.invoke.MethodHandles.privateLookupIn(").append(classOf(self, depth)).append(", own);\n");
@@ -380,6 +488,11 @@ final class AccessWriter {
         if (constructor) {
             body.append("            NEW = in0.findConstructor(").append(self).append(".class, java.lang.invoke.MethodType.methodType(void.class))")
                 .append(".asType(java.lang.invoke.MethodType.methodType(java.lang.Object.class));\n");
+        }
+        for (int i = 0; i < callbacks.size(); i++) {
+            if (callbacks.get(i).handle() != null) {
+                body.append("            CALLBACK_").append(i).append(" = ").append(callbacks.get(i).handle()).append(";\n");
+            }
         }
         return STATIC.formatted(fields, body);
     }

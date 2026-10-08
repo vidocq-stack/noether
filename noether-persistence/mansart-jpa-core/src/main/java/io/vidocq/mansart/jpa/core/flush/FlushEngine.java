@@ -102,7 +102,9 @@ public final class FlushEngine {
                     if (!entry.inserted()) {
                         inserts.add(new Work(entry, state));
                     } else if (type.state().dirty(entry.snapshot(), state)) {
-                        updates.add(new Work(entry, state));
+                        // §3.6.3: PreUpdate may change the instance, its changes are written with the others
+                        type.callback("PreUpdate", entry.instance());
+                        updates.add(new Work(entry, read(type, entry.instance())));
                     }
                 }
                 case REMOVED -> {
@@ -110,6 +112,7 @@ public final class FlushEngine {
                         deletes.add(new Work(entry, read(type, entry.instance())));
                     } else {
                         context.deleted(entry); // removed before its insert: the database never saw it
+                        type.callback("PostRemove", entry.instance());
                     }
                 }
             }
@@ -192,6 +195,7 @@ public final class FlushEngine {
         }
         for (Work work : group) {
             context.inserted(work.entry(), type.id(work.entry().instance()), type.state().snapshot(work.state()));
+            type.callback("PostPersist", work.entry().instance());
         }
     }
 
@@ -231,6 +235,7 @@ public final class FlushEngine {
         }
         for (Work work : group) {
             context.updated(work.entry(), type.state().snapshot(work.state()));
+            type.callback("PostUpdate", work.entry().instance());
         }
     }
 
@@ -260,6 +265,7 @@ public final class FlushEngine {
         }
         for (Work work : group) {
             context.deleted(work.entry());
+            type.callback("PostRemove", work.entry().instance());
         }
     }
 

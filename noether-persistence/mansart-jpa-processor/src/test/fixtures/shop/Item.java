@@ -10,6 +10,7 @@ import shop.base.Audited;
 
 /** Field access: private fields through handles, package-private ones directly; a protected constructor. */
 @Entity
+@jakarta.persistence.EntityListeners(ItemListener.class)
 public class Item extends Audited {
     @Id
     private long id;
@@ -26,5 +27,11 @@ public class Item extends Audited {
 
     public String name() {
         return name;
+    }
+
+    /** A private lifecycle method: reached through a handle of the generated class's own lookup. */
+    @jakarta.persistence.PostLoad
+    private void loaded() {
+        ItemListener.SEEN.add("Item.loaded " + name);
     }
 }

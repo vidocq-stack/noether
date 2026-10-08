@@ -30,6 +30,7 @@ import jakarta.persistence.PersistenceException;
 import java.lang.constant.ClassDesc;
 import java.lang.constant.ConstantDescs;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -62,6 +63,27 @@ public final class AccessPlanner {
      * @param signature the generic signature of the field or the getter, or {@code null}
      */
     public record Member(String name, AccessKind access, ClassInfo owner, Annotated element, ClassDesc type, String signature) {
+    }
+
+    /** The lifecycle callback annotations (§3.6.2), in the order a descriptor lists them. */
+    public static final List<String> CALLBACKS = List.of("PrePersist", "PostPersist", "PreRemove", "PostRemove", "PreUpdate",
+        "PostUpdate", "PostLoad");
+
+    /**
+     * A lifecycle callback (§3.6): a method of the entity or of one of its mapped or entity superclasses (no
+     * parameter), or a method of an entity listener class (one parameter, the entity), annotated with {@code kind}.
+     *
+     * @param kind the simple name of the annotation, {@code PrePersist} … {@code PostLoad}
+     * @param owner the class that declares the method
+     * @param listener the listener class, or {@code null} for a method of the entity
+     * @param parameter the parameter type of a listener method, or {@code null}
+     */
+    public record Callback(String kind, String owner, String method, String listener, ClassDesc parameter) {
+
+        /** {@code kind:[listener#]owner.method}, as {@code ManagedAccess.callbacks()} lists it. */
+        public String descriptor() {
+            return kind + ":" + (listener == null ? "" : listener + "#") + owner + "." + method;
+        }
     }
 
     private final ClassInfos source;
@@ -183,6 +205,63 @@ public final class AccessPlanner {
         }
         Optional<ClassInfo> info = source.read(name);
         return explicit ? info : info.filter(i -> i.isAnnotated(EMBEDDABLE));
+    }
+
+    /**
+     * The lifecycle callbacks of an entity, in the order §3.6.4 invokes those of a same event: the methods of its entity
+     * listeners, the listeners of its superclasses first (unless a class excludes them with
+     * {@code @ExcludeSuperclassListeners}), then its own lifecycle methods, superclasses first; an overridden method
+     * keeps the place of the superclass method and is called once, the override (virtual dispatch). Default listeners
+     * come from mapping files (P10).
+     */
+    public List<Callback> callbacks(ClassInfo entity) {
+        List<ClassInfo> hierarchy = hierarchy(entity);
+        List<String> listeners = new ArrayList<>();
+        for (ClassInfo info : hierarchy) {
+            if (info.isAnnotated(JPA + "ExcludeSuperclassListeners")) {
+                listeners.clear();
+            }
+            info.annotation(JPA + "EntityListeners").ifPresent(a -> a.types("value")
+                .forEach(type -> listeners.add(ClassFileSource.binaryName(type))));
+        }
+        List<Callback> callbacks = new ArrayList<>();
+        for (String listener : listeners) {
+            List<ClassInfo> chain = new ArrayList<>();
+            for (Optional<ClassInfo> current = source.read(listener); current.isPresent(); ) {
+                chain.addFirst(current.get());
+                String superclass = current.get().superclassName();
+                current = superclass == null || superclass.startsWith("java.") ? Optional.empty() : source.read(superclass);
+            }
+            Set<String> seen = new HashSet<>();
+            for (ClassInfo info : chain) {
+                for (MethodInfo method : info.methods()) {
+                    String kind = kind(method);
+                    if (kind != null && !method.isStatic() && method.type().parameterCount() == 1 && seen.add(kind + method.name())) {
+                        callbacks.add(new Callback(kind, info.name(), method.name(), listener, method.type().parameterType(0)));
+                    }
+                }
+            }
+        }
+        Set<String> seen = new HashSet<>();
+        for (ClassInfo info : hierarchy) {
+            for (MethodInfo method : info.methods()) {
+                String kind = kind(method);
+                if (kind != null && !method.isStatic() && method.type().parameterCount() == 0 && seen.add(kind + method.name())) {
+                    callbacks.add(new Callback(kind, info.name(), method.name(), null, null));
+                }
+            }
+        }
+        return callbacks;
+    }
+
+    /** The callback annotation of {@code method}, if it has one. */
+    private static String kind(MethodInfo method) {
+        for (String kind : CALLBACKS) {
+            if (method.isAnnotated(JPA + kind)) {
+                return kind;
+            }
+        }
+        return null;
     }
 
     /** JavaBeans: {@code getX()}, or {@code isX()} for a {@code boolean}; {@code null} if not a getter. */

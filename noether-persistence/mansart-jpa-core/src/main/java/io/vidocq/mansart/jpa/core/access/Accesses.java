@@ -33,17 +33,17 @@ public final class Accesses {
 
     /** The access of an entity, attributes of its mapped superclasses and entity superclasses included. */
     public static ManagedAccess of(EntityModel entity) {
-        return AccessGenerator.generate(entity.javaType(), false, entity.attributes());
+        return AccessGenerator.generate(entity.javaType(), false, entity.attributes(), entity.callbacks());
     }
 
     /** The access of an embeddable, as one owner sees it. */
     public static ManagedAccess of(EmbeddableModel embeddable) {
-        return AccessGenerator.generate(embeddable.javaType(), embeddable.isRecord(), embeddable.attributes());
+        return AccessGenerator.generate(embeddable.javaType(), embeddable.isRecord(), embeddable.attributes(), List.of());
     }
 
     /** The access of a class that is neither an entity nor an embeddable of the model (an {@code @IdClass}). */
     public static ManagedAccess of(Class<?> type, boolean record, List<AttributeModel> attributes) {
-        return AccessGenerator.generate(type, record, attributes);
+        return AccessGenerator.generate(type, record, attributes, List.of());
     }
 
     /** The attributes as {@link ManagedAccess#attributes()} lists them: {@code name:FIELD} or {@code name:PROPERTY}. */

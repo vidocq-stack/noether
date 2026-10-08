@@ -193,7 +193,7 @@ public final class MansartJpaProcessor extends AbstractProcessor {
                 from.add(element);
             }
         }
-        if (access(type, "$$MansartAccess", members, false, from)) {
+        if (access(type, "$$MansartAccess", members, false, from, planner.callbacks(info))) {
             for (Member member : members) {
                 embedded(type, member, from);
             }
@@ -232,7 +232,7 @@ public final class MansartJpaProcessor extends AbstractProcessor {
             // the access type of an embeddable may come from its owner: the owner is an origin of its access too
             Set<Element> from = new LinkedHashSet<>(ownerOrigins);
             from.add(type);
-            if (access(type, suffix, members, record, from)) {
+            if (access(type, suffix, members, record, from, List.of())) {
                 for (Member nested : members) {
                     embedded(type, nested, from);
                 }
@@ -250,7 +250,8 @@ public final class MansartJpaProcessor extends AbstractProcessor {
     }
 
     /** Writes the access of {@code type} once; {@code false} if it cannot be generated. */
-    private boolean access(TypeElement type, String suffix, List<Member> members, boolean record, Set<Element> from) {
+    private boolean access(TypeElement type, String suffix, List<Member> members, boolean record, Set<Element> from,
+            List<AccessPlanner.Callback> callbacks) {
         String pkg = AccessWriter.packageOf(type);
         String className = elements.getBinaryName(type).toString().substring(pkg.isEmpty() ? 0 : pkg.length() + 1) + suffix;
         String qualified = qualified(pkg, className);
@@ -263,7 +264,7 @@ public final class MansartJpaProcessor extends AbstractProcessor {
         }
         String source;
         try {
-            source = writer.write(type, className, members, record);
+            source = writer.write(type, className, members, record, callbacks);
         } catch (AccessWriter.Unsupported e) {
             note(type, e.getMessage());
             return false;

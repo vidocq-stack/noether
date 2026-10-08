@@ -89,9 +89,11 @@ final class EntityOperations {
         MappedEntity type = type(entity);
         Optional<ManagedEntity> known = context.entry(entity);
         if (known.isEmpty()) {
+            type.callback("PrePersist", entity); // §3.6.3: before the persist operation, so before the identifier
             generateId(type, entity);
             context.persist(entity, type); // a detached instance fails at flush: its identity exists (§3.2.2)
         } else if (known.get().status() == ManagedEntity.Status.REMOVED) {
+            type.callback("PrePersist", entity);
             context.persist(entity, type);
         }
         cascade(entity, type, CascadeType.PERSIST, target -> persist(target, visited));
@@ -119,6 +121,7 @@ final class EntityOperations {
         Optional<ManagedEntity> known = context.entry(entity);
         if (known.isPresent()) {
             if (known.get().status() == ManagedEntity.Status.MANAGED) {
+                type.callback("PreRemove", entity);
                 context.remove(entity);
                 cascade(entity, type, CascadeType.REMOVE, target -> remove(target, visited));
             }
@@ -172,6 +175,7 @@ final class EntityOperations {
             // a new instance: a new managed copy (§3.2.7.1)
             managed = type.access().instantiate();
             copy(type, entity, managed);
+            type.callback("PrePersist", managed); // §3.6.3: the managed copy is the instance persisted
             generateId(type, managed);
             context.persist(managed, type);
         } else {

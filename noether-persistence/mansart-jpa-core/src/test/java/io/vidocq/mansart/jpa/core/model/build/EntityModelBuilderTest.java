@@ -370,4 +370,35 @@ class EntityModelBuilderTest {
         assertThat(unit.entity(Object.class)).isEmpty();
         assertThat(unit.entities()).hasSize(2);
     }
+
+    // ---- callbacks (§3.6) ---------------------------------------------------------------------------------------
+
+    private static List<String> callbacks(Class<?> entity) {
+        var source = new io.vidocq.mansart.jpa.core.model.source.ClassFileSource(entity.getClassLoader());
+        var planner = new AccessPlanner(source);
+        return planner.callbacks(source.read(entity.getName()).orElseThrow()).stream().map(AccessPlanner.Callback::descriptor).toList();
+    }
+
+    @Test
+    void listenersComeFirstSuperclassesFirstThenLifecycleMethods() { // §3.6.4
+        String fixtures = "io.vidocq.mansart.jpa.core.model.build.fixtures.callbacks.";
+        assertThat(callbacks(io.vidocq.mansart.jpa.core.model.build.fixtures.callbacks.Record.class)).containsExactly(
+            "PrePersist:" + fixtures + "AuditListener#" + fixtures + "AuditListener.prePersist",
+            "PostLoad:" + fixtures + "AuditListener#" + fixtures + "AuditListener.postLoad",
+            "PrePersist:" + fixtures + "StampListener#" + fixtures + "StampListener.prePersist",
+            "PreUpdate:" + fixtures + "StampListener#" + fixtures + "StampListener.preUpdate",
+            "PrePersist:" + fixtures + "Tracked.onPersist", // overridden: called once, through the override
+            "PostPersist:" + fixtures + "Tracked.persisted",
+            "PreRemove:" + fixtures + "Record.removing",
+            "PostRemove:" + fixtures + "Record.removed",
+            "PostUpdate:" + fixtures + "Record.updated",
+            "PostLoad:" + fixtures + "Record.loaded");
+    }
+
+    @Test
+    void excludedSuperclassListenersAreNotCalledButLifecycleMethodsAre() { // §3.6.4 @ExcludeSuperclassListeners
+        String fixtures = "io.vidocq.mansart.jpa.core.model.build.fixtures.callbacks.";
+        assertThat(callbacks(io.vidocq.mansart.jpa.core.model.build.fixtures.callbacks.Quiet.class)).containsExactly(
+            "PrePersist:" + fixtures + "Tracked.onPersist", "PostPersist:" + fixtures + "Tracked.persisted");
+    }
 }

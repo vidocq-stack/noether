@@ -36,14 +36,24 @@ public abstract class ManagedAccess {
 
     private final Class<?> type;
     private final List<String> attributes;
+    private final List<String> callbacks;
 
     /**
      * @param type the managed class
      * @param attributes the attributes, as {@code name:FIELD} or {@code name:PROPERTY}, in index order
      */
     protected ManagedAccess(Class<?> type, List<String> attributes) {
+        this(type, attributes, List.of());
+    }
+
+    /**
+     * @param callbacks the lifecycle callbacks of an entity (§3.6), as {@code kind:[listener#]owner.method}, in index
+     *        order
+     */
+    protected ManagedAccess(Class<?> type, List<String> attributes, List<String> callbacks) {
         this.type = type;
         this.attributes = List.copyOf(attributes);
+        this.callbacks = List.copyOf(callbacks);
     }
 
     /** The managed class. */
@@ -54,6 +64,16 @@ public abstract class ManagedAccess {
     /** The attributes reached by index, as {@code name:FIELD} or {@code name:PROPERTY}. */
     public final List<String> attributes() {
         return attributes;
+    }
+
+    /** The lifecycle callbacks reached by index, as {@code kind:[listener#]owner.method}. */
+    public final List<String> callbacks() {
+        return callbacks;
+    }
+
+    /** Invokes callback {@code callback} on {@code instance}: its method, or its listener's with the instance. */
+    public void callback(Object instance, int callback) {
+        throw new IndexOutOfBoundsException(callback);
     }
 
     /** A new instance, through the no-arg constructor (§2.1); a record is built with {@link #construct}. */

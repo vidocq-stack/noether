@@ -54,7 +54,11 @@ public final class EntityLoader {
         }
         Object instance = type.access().instantiate();
         Object[] state = state(type, instance, row);
-        return context.loaded(instance, type, type.state().snapshot(state)).instance();
+        Object managed = context.loaded(instance, type, type.state().snapshot(state)).instance();
+        if (managed == instance) {
+            type.callback("PostLoad", instance); // §3.6.3: once the state is loaded
+        }
+        return managed;
     }
 
     /** Whether a row of {@code type} has the identity {@code id}, without managing anything. */
@@ -68,7 +72,12 @@ public final class EntityLoader {
      */
     public Object[] refresh(MappedEntity type, Object id, Object instance, Connection connection) {
         Row row = row(type, id, connection);
-        return row == null ? null : type.state().snapshot(state(type, instance, row));
+        if (row == null) {
+            return null;
+        }
+        Object[] snapshot = type.state().snapshot(state(type, instance, row));
+        type.callback("PostLoad", instance); // §3.6.3: after a refresh too
+        return snapshot;
     }
 
     /** The columns of a row, and which were SQL {@code NULL} (a primitive reads 0 from it). */
