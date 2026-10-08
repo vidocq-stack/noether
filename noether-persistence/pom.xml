@@ -76,6 +76,7 @@
 
     <modules>
         <module>mansart-jpa-core</module>
+        <module>mansart-jpa-module-it</module>
     </modules>
 
     <dependencyManagement>
