@@ -132,6 +132,39 @@ class OperationsTest {
         assertThatThrownBy(() -> em.persist("not an entity")).isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test
+    void theFlushPersistsWhatACascadingRelationshipGainedSincePersist() throws SQLException { // §3.2.4
+        Crew crew = new Crew(1, "Brigade");
+        inTransaction(() -> {
+            em.persist(crew);
+            new Sailor(10, "Coco", crew); // added to crew.sailors after persist; the relationship cascades ALL
+        });
+        assertThat(count("Sailor")).isEqualTo(1);
+    }
+
+    @Test
+    void aNewInstanceReachedWithoutCascadeFailsTheFlush() { // §3.2.4: IllegalStateException
+        Crew crew = new Crew(1, "Brigade");
+        Sailor sailor = new Sailor(10, "Coco", crew);
+        sailor.formerCrew(new Crew(2, "never persisted"));
+        em.getTransaction().begin();
+        em.persist(sailor);
+        assertThatThrownBy(() -> em.flush()).isInstanceOf(IllegalStateException.class);
+        em.getTransaction().rollback();
+    }
+
+    @Test
+    void aDetachedInstanceReachedWithoutCascadeIsAllowed() throws SQLException { // §3.2.4: Y detached, X owns
+        insertCrew(2, "Former", 0);
+        Crew former = em.find(Crew.class, 2L);
+        em.clear();
+        Crew crew = new Crew(1, "Brigade");
+        Sailor sailor = new Sailor(10, "Coco", crew);
+        sailor.formerCrew(former);
+        inTransaction(() -> em.persist(sailor));
+        assertThat(count("Sailor")).isEqualTo(1);
+    }
+
     // ---- remove (§3.2.3) ----------------------------------------------------------------------------------
 
     @Test

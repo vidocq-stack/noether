@@ -285,6 +285,45 @@ final class EntityOperations {
         cascade(entity, type, CascadeType.DETACH, target -> detach(target, visited));
     }
 
+    // ---- flush (§3.2.4) -----------------------------------------------------------------------------------
+
+    /**
+     * What a flush does before writing (§3.2.4): the persist cascades again from every managed instance, reaching what
+     * its relationships gained since; an instance it reaches through a relationship it owns that does not cascade
+     * persist must be managed or detached, a new one is an {@link IllegalStateException}.
+     */
+    void beforeFlush() {
+        Set<Object> visited = visited();
+        for (ManagedEntity entry : context.entries()) {
+            if (entry.status() != ManagedEntity.Status.MANAGED) {
+                continue;
+            }
+            Object entity = entry.instance();
+            MappedEntity type = entry.type();
+            cascade(entity, type, CascadeType.PERSIST, target -> persist(target, visited));
+            List<AttributeModel> attributes = type.model().attributes();
+            for (int i = 0; i < attributes.size(); i++) {
+                if (attributes.get(i) instanceof AssociationAttribute association && association.mappedBy() == null
+                        && !association.cascades(CascadeType.PERSIST)) {
+                    targets(type.access().get(entity, i), target -> requireNotNew(entity, association, target));
+                }
+            }
+        }
+    }
+
+    private void requireNotNew(Object owner, AssociationAttribute association, Object target) {
+        if (context.contains(target) || factory.mapping().entity(target.getClass()).isEmpty()) {
+            return;
+        }
+        MappedEntity type = type(target);
+        Object id = type.id(target);
+        boolean detached = id != null && connections.on(connection -> factory.loader(connection).exists(type, id, connection));
+        if (!detached) {
+            throw new IllegalStateException("The relationship " + association.name() + " of " + owner.getClass().getName()
+                + " references a new instance of " + type.model().entityName() + " and does not cascade persist (§3.2.4)");
+        }
+    }
+
     // ---- cascades -----------------------------------------------------------------------------------------
 
     /** Applies {@code operation} to the instances that the relationships of {@code entity} cascading it reach. */

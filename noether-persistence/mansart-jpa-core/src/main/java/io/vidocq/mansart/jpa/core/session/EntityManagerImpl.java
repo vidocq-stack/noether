@@ -350,6 +350,7 @@ final class EntityManagerImpl implements EntityManager {
     /** An empty persistence context has nothing to write: no flush engine, hence no dialect, is needed for it. */
     private void flush(Connection connection) {
         if (context.size() > 0) {
+            operations.beforeFlush();
             factory.flushEngine(connection).flush(context, connection);
         }
     }

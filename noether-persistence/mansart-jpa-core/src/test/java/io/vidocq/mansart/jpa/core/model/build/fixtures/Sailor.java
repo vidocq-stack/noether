@@ -32,6 +32,8 @@ public class Sailor {
     private String name;
     @ManyToOne(cascade = CascadeType.PERSIST)
     private Crew crew;
+    @ManyToOne
+    private Crew formerCrew;
 
     protected Sailor() {
     }
@@ -45,5 +47,9 @@ public class Sailor {
 
     public String name() {
         return name;
+    }
+
+    public void formerCrew(Crew formerCrew) {
+        this.formerCrew = formerCrew;
     }
 }
