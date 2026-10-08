@@ -21,7 +21,9 @@ package io.vidocq.mansart.jpa.dialect;
 
 import io.vidocq.mansart.jpa.dialect.sql.Delete;
 import io.vidocq.mansart.jpa.dialect.sql.Identifier;
+import io.vidocq.mansart.jpa.dialect.sql.Increment;
 import io.vidocq.mansart.jpa.dialect.sql.Insert;
+import io.vidocq.mansart.jpa.dialect.sql.NextValue;
 import io.vidocq.mansart.jpa.dialect.sql.Select;
 import io.vidocq.mansart.jpa.dialect.sql.Statement;
 import io.vidocq.mansart.jpa.dialect.sql.Table;
@@ -45,7 +47,15 @@ public abstract class StandardDialect implements Dialect {
             case Update update -> update(update);
             case Delete delete -> "DELETE FROM " + table(delete.table()) + where(delete.conditions());
             case Select select -> "SELECT " + list(select.columns()) + " FROM " + table(select.table()) + where(select.conditions());
+            case NextValue next -> nextValue(next);
+            case Increment increment -> "UPDATE " + table(increment.table()) + " SET " + name(increment.value()) + " = "
+                + name(increment.value()) + " + ? WHERE " + name(increment.key()) + " = ?";
         };
+    }
+
+    /** SQL:2003 {@code NEXT VALUE FOR}, as a one-row query. */
+    protected String nextValue(NextValue next) {
+        return "VALUES NEXT VALUE FOR " + table(next.table());
     }
 
     protected String insert(Insert insert) {

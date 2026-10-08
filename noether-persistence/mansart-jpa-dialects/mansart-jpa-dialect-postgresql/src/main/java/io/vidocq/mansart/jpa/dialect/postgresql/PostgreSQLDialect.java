@@ -21,6 +21,7 @@ package io.vidocq.mansart.jpa.dialect.postgresql;
 
 import io.vidocq.mansart.jpa.dialect.StandardDialect;
 import io.vidocq.mansart.jpa.dialect.sql.Identifier;
+import io.vidocq.mansart.jpa.dialect.sql.NextValue;
 import java.util.Locale;
 
 /** The PostgreSQL dialect: ANSI rendering, overridden where PostgreSQL differs. */
@@ -33,6 +34,12 @@ public final class PostgreSQLDialect extends StandardDialect {
     @Override
     public String generatedKeyName(Identifier column) {
         return column.quoted() ? column.name() : column.name().toLowerCase(Locale.ROOT);
+    }
+
+    /** {@code nextval} takes the sequence as a string, resolved like a name: quoted parts keep their quotes. */
+    @Override
+    protected String nextValue(NextValue next) {
+        return "SELECT nextval('" + table(next.table()).replace("'", "''") + "')";
     }
 
     @Override

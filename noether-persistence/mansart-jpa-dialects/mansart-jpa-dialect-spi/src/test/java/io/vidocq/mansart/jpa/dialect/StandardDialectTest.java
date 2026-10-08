@@ -24,7 +24,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.vidocq.mansart.jpa.dialect.sql.Delete;
 import io.vidocq.mansart.jpa.dialect.sql.Identifier;
+import io.vidocq.mansart.jpa.dialect.sql.Increment;
 import io.vidocq.mansart.jpa.dialect.sql.Insert;
+import io.vidocq.mansart.jpa.dialect.sql.NextValue;
 import io.vidocq.mansart.jpa.dialect.sql.Select;
 import io.vidocq.mansart.jpa.dialect.sql.Table;
 import io.vidocq.mansart.jpa.dialect.sql.Update;
@@ -84,5 +86,17 @@ class StandardDialectTest {
         assertThatThrownBy(() -> new Update(Table.of("BOOK"), columns("TITLE"), List.of()))
             .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new Update(Table.of("BOOK"), List.of(), columns("ID"))).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void theNextValueOfASequenceIsTheStandardOne() {
+        assertThat(ansi.render(new NextValue(Identifier.of("SEQGENERATOR"), Identifier.of("SHOP"), null)))
+            .isEqualTo("VALUES NEXT VALUE FOR SHOP.SEQGENERATOR");
+    }
+
+    @Test
+    void aGeneratorRowIsIncrementedInPlace() { // table generators: no read-modify-write race
+        assertThat(ansi.render(new Increment(Table.of("GENERATOR_TABLE"), Identifier.of("VAL_COL"), Identifier.of("PK_COL"))))
+            .isEqualTo("UPDATE GENERATOR_TABLE SET VAL_COL = VAL_COL + ? WHERE PK_COL = ?");
     }
 }

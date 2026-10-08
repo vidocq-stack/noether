@@ -66,4 +66,12 @@ class PostgreSQLDialectFactoryTest {
         assertThat(dialect.isDuplicateKey(new java.sql.SQLException("duplicate", "23505"))).isTrue();
         assertThat(dialect.isDuplicateKey(new java.sql.SQLException("not null", "23502"))).isFalse();
     }
+
+    @Test
+    void theNextValueOfASequenceIsNextval() {
+        assertThat(new PostgreSQLDialectFactory().create(17, 0).render(new io.vidocq.mansart.jpa.dialect.sql.NextValue(
+            Identifier.of("SEQGENERATOR"), null, null))).isEqualTo("SELECT nextval('SEQGENERATOR')");
+        assertThat(new PostgreSQLDialectFactory().create(17, 0).render(new io.vidocq.mansart.jpa.dialect.sql.NextValue(
+            Identifier.quoted("Seq"), Identifier.of("shop"), null))).isEqualTo("SELECT nextval('shop.\"Seq\"')");
+    }
 }

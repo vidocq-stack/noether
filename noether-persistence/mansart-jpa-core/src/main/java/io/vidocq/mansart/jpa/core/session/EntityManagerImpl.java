@@ -24,6 +24,7 @@ import io.vidocq.mansart.jpa.core.context.EntityKey;
 import io.vidocq.mansart.jpa.core.context.ManagedEntity;
 import io.vidocq.mansart.jpa.core.context.PersistenceContext;
 import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
+import io.vidocq.mansart.jpa.core.query.NativeQuery;
 import jakarta.persistence.CacheRetrieveMode;
 import jakarta.persistence.CacheStoreMode;
 import jakarta.persistence.ConnectionConsumer;
@@ -52,7 +53,9 @@ import jakarta.persistence.criteria.CriteriaSelect;
 import jakarta.persistence.criteria.CriteriaUpdate;
 import jakarta.persistence.metamodel.Metamodel;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.sql.Types;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -374,6 +377,39 @@ final class EntityManagerImpl implements EntityManager {
         }
     }
 
+    /**
+     * §3.11.6: a native update runs in the transaction, after a flush unless the query's flush mode is COMMIT; a
+     * failure marks the transaction for rollback (§3.12).
+     */
+    private int executeNativeUpdate(String sql, List<Object> parameters, FlushModeType queryFlushMode) {
+        checkOpen();
+        if (!transaction.isActive()) {
+            throw failed(new TransactionRequiredException("executeUpdate() needs an active transaction"));
+        }
+        try {
+            return transaction.onConnection(connection -> {
+                if (queryFlushMode != FlushModeType.COMMIT) {
+                    flush(connection);
+                }
+                try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                    for (int i = 0; i < parameters.size(); i++) {
+                        Object value = parameters.get(i);
+                        if (value == null) {
+                            statement.setNull(i + 1, Types.NULL);
+                        } else {
+                            statement.setObject(i + 1, value instanceof Enum<?> constant ? constant.name() : value);
+                        }
+                    }
+                    return statement.executeUpdate();
+                } catch (SQLException e) {
+                    throw new PersistenceException("The native update failed: " + e.getMessage(), e);
+                }
+            });
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
+    }
+
     /** The persistence context of this entity manager (the entity operations of P4 drive it). */
     PersistenceContext context() {
         return context;
@@ -646,19 +682,31 @@ final class EntityManagerImpl implements EntityManager {
     @Override
     public Query createNativeQuery(String sqlString) {
         checkOpen();
-        throw failed(NotYet.milestone("P7", "native queries"));
+        try {
+            return new NativeQuery(sqlString, flushMode, this::executeNativeUpdate);
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
     }
 
     @Override
     public <T> Query createNativeQuery(String sqlString, Class<T> resultClass) {
         checkOpen();
-        throw failed(NotYet.milestone("P7", "native queries"));
+        try {
+            return new NativeQuery(sqlString, flushMode, this::executeNativeUpdate);
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
     }
 
     @Override
     public Query createNativeQuery(String sqlString, String resultSetMapping) {
         checkOpen();
-        throw failed(NotYet.milestone("P7", "native queries"));
+        try {
+            return new NativeQuery(sqlString, flushMode, this::executeNativeUpdate);
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
     }
 
     @Override
