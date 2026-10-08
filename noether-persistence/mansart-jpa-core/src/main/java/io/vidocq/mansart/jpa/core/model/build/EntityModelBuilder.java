@@ -37,12 +37,12 @@ import io.vidocq.mansart.jpa.core.model.SequenceGeneratorModel;
 import io.vidocq.mansart.jpa.core.model.TableGeneratorModel;
 import io.vidocq.mansart.jpa.core.model.TableModel;
 import io.vidocq.mansart.jpa.core.model.ValueConversion;
+import io.vidocq.mansart.jpa.core.model.build.AccessPlanner.Member;
 import io.vidocq.mansart.jpa.core.model.source.Annotated;
 import io.vidocq.mansart.jpa.core.model.source.AnnotationInfo;
 import io.vidocq.mansart.jpa.core.model.source.ClassFileSource;
 import io.vidocq.mansart.jpa.core.model.source.ClassInfo;
 import io.vidocq.mansart.jpa.core.model.source.FieldInfo;
-import io.vidocq.mansart.jpa.core.model.source.MethodInfo;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.PersistenceException;
@@ -68,24 +68,17 @@ public final class EntityModelBuilder {
 
     private static final String JPA = "jakarta.persistence.";
     private static final String ENTITY = JPA + "Entity";
-    private static final String EMBEDDABLE = JPA + "Embeddable";
-    private static final String MAPPED_SUPERCLASS = JPA + "MappedSuperclass";
     private static final String CONVERTER = JPA + "Converter";
-    private static final String ACCESS = JPA + "Access";
     private static final String ID = JPA + "Id";
     private static final String EMBEDDED_ID = JPA + "EmbeddedId";
-    private static final String TRANSIENT = JPA + "Transient";
     private static final String ATTRIBUTE_OVERRIDE = JPA + "AttributeOverride";
     private static final String ATTRIBUTE_OVERRIDES = JPA + "AttributeOverrides";
     private static final Map<String, AssociationAttribute.Kind> ASSOCIATIONS = Map.of(
         JPA + "OneToOne", AssociationAttribute.Kind.ONE_TO_ONE, JPA + "ManyToOne", AssociationAttribute.Kind.MANY_TO_ONE,
         JPA + "OneToMany", AssociationAttribute.Kind.ONE_TO_MANY, JPA + "ManyToMany", AssociationAttribute.Kind.MANY_TO_MANY);
 
-    /** A persistent field or property, before it is classified. */
-    private record Member(String name, AccessKind access, ClassInfo owner, Annotated element, ClassDesc type, String signature) {
-    }
-
     private final ClassFileSource source;
+    private final AccessPlanner planner;
     private final ClassLoader loader;
     private final boolean mappingFiles;
     private final List<ClassInfo> listed = new ArrayList<>();
@@ -94,6 +87,7 @@ public final class EntityModelBuilder {
 
     private EntityModelBuilder(ClassFileSource source, ClassLoader loader, boolean mappingFiles) {
         this.source = source;
+        this.planner = new AccessPlanner(source);
         this.loader = loader;
         this.mappingFiles = mappingFiles;
     }
@@ -152,14 +146,14 @@ public final class EntityModelBuilder {
         if (entityName == null) {
             entityName = simpleName(info.name());
         }
-        List<ClassInfo> hierarchy = hierarchy(info);
-        AccessKind access = defaultAccess(info, hierarchy);
+        List<ClassInfo> hierarchy = planner.hierarchy(info);
+        AccessKind access = planner.defaultAccess(info, hierarchy);
         Map<String, AnnotationInfo> overrides = overrides(info);
 
         List<AttributeModel> attributes = new ArrayList<>();
         Map<AttributeModel, Member> members = new LinkedHashMap<>();
         for (ClassInfo declaring : hierarchy) {
-            for (Member member : members(declaring, classAccess(declaring, access))) {
+            for (Member member : planner.members(declaring, AccessPlanner.classAccess(declaring, access))) {
                 AttributeModel attribute = attribute(member, declaring == info ? Map.of() : overrides);
                 attributes.add(attribute);
                 members.put(attribute, member);
@@ -170,7 +164,7 @@ public final class EntityModelBuilder {
             .filter(a -> a instanceof BasicAttribute b && b.version()).map(a -> (BasicAttribute) a).findFirst();
         Optional<Class<?>> superEntity = hierarchy.stream().filter(c -> c != info && c.isAnnotated(ENTITY))
             .reduce((first, second) -> second).map(c -> Types.load(c.name(), loader));
-        return new EntityModel(type, entityName, table(info, entityName), classAccess(info, access), id, attributes, version,
+        return new EntityModel(type, entityName, table(info, entityName), AccessPlanner.classAccess(info, access), id, attributes, version,
             superEntity);
     }
 
@@ -196,106 +190,7 @@ public final class EntityModelBuilder {
             .orElse(new TableModel(entityName, null, null));
     }
 
-    /** The entity and its entity or mapped superclasses, the root first (§2.11). */
-    private List<ClassInfo> hierarchy(ClassInfo info) {
-        List<ClassInfo> chain = new ArrayList<>();
-        ClassInfo current = info;
-        while (current != null) {
-            if (current == info || current.isAnnotated(ENTITY) || current.isAnnotated(MAPPED_SUPERCLASS)) {
-                chain.addFirst(current);
-            }
-            String superclass = current.superclassName();
-            current = superclass == null || superclass.startsWith("java.") ? null : source.read(superclass).orElse(null);
-        }
-        return chain;
-    }
-
-    /**
-     * §2.3.1: the default access type of the hierarchy is given by the placement of the identifier in the classes that
-     * do not declare their access type; an explicit {@code @Access} applies to its own class only (§2.3.2), and is the
-     * default only when every class of the hierarchy declares one.
-     */
-    private AccessKind defaultAccess(ClassInfo entity, List<ClassInfo> hierarchy) {
-        for (ClassInfo info : hierarchy) {
-            if (explicitAccess(info).isPresent()) {
-                continue;
-            }
-            if (info.fields().stream().anyMatch(f -> f.isAnnotated(ID) || f.isAnnotated(EMBEDDED_ID))) {
-                return AccessKind.FIELD;
-            }
-            if (info.methods().stream().anyMatch(m -> m.isAnnotated(ID) || m.isAnnotated(EMBEDDED_ID))) {
-                return AccessKind.PROPERTY;
-            }
-        }
-        return explicitAccess(entity)
-            .or(() -> hierarchy.stream().map(EntityModelBuilder::explicitAccess).flatMap(Optional::stream).findFirst())
-            .orElseThrow(() -> new PersistenceException("The entity " + entity.name()
-                + " has no identifier: no @Id or @EmbeddedId (§2.4)"));
-    }
-
-    private AccessKind classAccess(ClassInfo info, AccessKind inherited) {
-        return explicitAccess(info).orElse(inherited);
-    }
-
-    private static Optional<AccessKind> explicitAccess(Annotated element) {
-        return element.annotation(ACCESS).map(a -> AccessKind.valueOf(a.enumConstant("value")));
-    }
-
     // ---- persistent attributes (§2.2, §2.3) -------------------------------------------------------------
-
-    /** The persistent fields or properties a class declares, in declaration order. */
-    private List<Member> members(ClassInfo info, AccessKind access) {
-        List<Member> members = new ArrayList<>();
-        for (FieldInfo field : info.fields()) {
-            if (field.isStatic() || field.isSynthetic() || field.isTransientModifier() || field.isAnnotated(TRANSIENT)) {
-                continue;
-            }
-            AccessKind fieldAccess = explicitAccess(field).orElse(null);
-            if (access == AccessKind.FIELD || fieldAccess == AccessKind.FIELD) {
-                members.add(new Member(field.name(), AccessKind.FIELD, info, field, field.type(), field.genericSignature()));
-            }
-        }
-        for (MethodInfo method : info.methods()) {
-            String property = propertyName(method);
-            if (property == null || method.isAnnotated(TRANSIENT)) {
-                continue;
-            }
-            AccessKind methodAccess = explicitAccess(method).orElse(null);
-            boolean persistent = access == AccessKind.PROPERTY ? methodAccess != AccessKind.FIELD : methodAccess == AccessKind.PROPERTY;
-            if (persistent && hasSetter(info, method, property)) {
-                members.add(new Member(property, AccessKind.PROPERTY, info, method, method.type().returnType(), method.genericSignature()));
-            }
-        }
-        return members;
-    }
-
-    /** JavaBeans: {@code getX()}, or {@code isX()} for a {@code boolean}; {@code null} if not a getter. */
-    private static String propertyName(MethodInfo method) {
-        if (method.isStatic() || method.isSynthetic() || method.type().parameterCount() != 0) {
-            return null;
-        }
-        ClassDesc returned = method.type().returnType();
-        String name = method.name();
-        String suffix;
-        if (name.startsWith("get") && name.length() > 3 && !returned.equals(ConstantDescs.CD_void)) {
-            suffix = name.substring(3);
-        } else if (name.startsWith("is") && name.length() > 2 && returned.equals(ConstantDescs.CD_boolean)) {
-            suffix = name.substring(2);
-        } else {
-            return null;
-        }
-        if (suffix.length() > 1 && Character.isUpperCase(suffix.charAt(0)) && Character.isUpperCase(suffix.charAt(1))) {
-            return suffix;
-        }
-        return Character.toLowerCase(suffix.charAt(0)) + suffix.substring(1);
-    }
-
-    private static boolean hasSetter(ClassInfo info, MethodInfo getter, String property) {
-        String setter = "set" + Character.toUpperCase(property.charAt(0)) + property.substring(1);
-        String alternative = "set" + property;
-        return info.methods().stream().anyMatch(m -> (m.name().equals(setter) || m.name().equals(alternative)) && !m.isStatic()
-            && m.type().parameterCount() == 1 && m.type().parameterType(0).equals(getter.type().returnType()));
-    }
 
     private AttributeModel attribute(Member member, Map<String, AnnotationInfo> entityOverrides) {
         Annotated element = member.element();
@@ -315,7 +210,7 @@ public final class EntityModelBuilder {
         if (element.isAnnotated(JPA + "ElementCollection")) {
             return new ElementCollectionAttribute(member.name(), type, member.access(), declaring, member.signature());
         }
-        if (element.isAnnotated(JPA + "Embedded") || isEmbeddable(type)) {
+        if (planner.embedded(member).isPresent()) {
             return embedded(member, type, declaring);
         }
         ValueConversion conversion = conversion(member, type);
@@ -327,13 +222,6 @@ public final class EntityModelBuilder {
                 + type.getName() + ", which is neither basic, embeddable, serializable nor converted (§2.8)");
         }
         return basic(member, type, declaring, entityOverrides.get(member.name()), conversion);
-    }
-
-    private boolean isEmbeddable(Class<?> type) {
-        if (type.isPrimitive() || type.isArray() || type.getName().startsWith("java.")) {
-            return false;
-        }
-        return source.read(type.getName()).map(i -> i.isAnnotated(EMBEDDABLE)).orElse(false);
     }
 
     // ---- basic attributes (§2.8, §11.1.6) ----------------------------------------------------------------
@@ -428,14 +316,14 @@ public final class EntityModelBuilder {
     private EmbeddableModel embeddable(Class<?> type, AccessKind ownerAccess) {
         ClassInfo info = source.read(type.getName()).orElseThrow(() -> new PersistenceException("The embeddable "
             + type.getName() + " cannot be found"));
-        AccessKind access = info.isRecord() ? AccessKind.FIELD : classAccess(info, ownerAccess);
+        AccessKind access = AccessPlanner.embeddableAccess(info, ownerAccess);
         String key = type.getName() + "/" + access;
         EmbeddableModel known = embeddables.get(key);
         if (known != null) {
             return known;
         }
         List<AttributeModel> attributes = new ArrayList<>();
-        for (Member member : members(info, access)) {
+        for (Member member : planner.members(info, access)) {
             attributes.add(attribute(member, Map.of()));
         }
         EmbeddableModel model = new EmbeddableModel(type, access, info.isRecord(), attributes);

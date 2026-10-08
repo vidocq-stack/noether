@@ -41,7 +41,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Mansart annotation processor (the TCK, any pre-compiled jar). Nothing is loaded and no reflection is used; a class
  * is read once per source. Thread-safe.
  */
-public final class ClassFileSource {
+public final class ClassFileSource implements ClassInfos {
 
     /** The defaults of annotation types, per annotation type name; shared, the annotation types do not change. */
     private static final Map<String, Map<String, Object>> SHARED_DEFAULTS = new ConcurrentHashMap<>();
@@ -56,6 +56,7 @@ public final class ClassFileSource {
     }
 
     /** The class named {@code binaryName}, or empty if its class file cannot be found. */
+    @Override
     public Optional<ClassInfo> read(String binaryName) {
         return classes.computeIfAbsent(binaryName, this::parse);
     }
@@ -169,7 +170,7 @@ public final class ClassFileSource {
     }
 
     /** {@code Lcom/acme/Outer$Inner;} to {@code com.acme.Outer$Inner}; arrays and primitives keep their descriptor. */
-    static String binaryName(ClassDesc desc) {
+    public static String binaryName(ClassDesc desc) {
         if (desc.isClassOrInterface()) {
             String descriptor = desc.descriptorString();
             return descriptor.substring(1, descriptor.length() - 1).replace('/', '.');
