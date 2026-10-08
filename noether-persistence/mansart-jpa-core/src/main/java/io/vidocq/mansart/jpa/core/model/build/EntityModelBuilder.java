@@ -43,6 +43,7 @@ import io.vidocq.mansart.jpa.core.model.source.AnnotationInfo;
 import io.vidocq.mansart.jpa.core.model.source.ClassFileSource;
 import io.vidocq.mansart.jpa.core.model.source.ClassInfo;
 import io.vidocq.mansart.jpa.core.model.source.FieldInfo;
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.PersistenceException;
@@ -53,11 +54,13 @@ import java.lang.constant.ClassDesc;
 import java.lang.constant.ConstantDescs;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Builds the entity model of a persistence unit from its managed classes (Jakarta Persistence 3.2, chapter 2 and
@@ -205,9 +208,13 @@ public final class EntityModelBuilder {
         for (Map.Entry<String, AssociationAttribute.Kind> association : ASSOCIATIONS.entrySet()) {
             Optional<AnnotationInfo> annotation = element.annotation(association.getKey());
             if (annotation.isPresent()) {
-                String mappedBy = annotation.get().has("mappedBy") ? nonEmpty(annotation.get().string("mappedBy")) : null;
+                AnnotationInfo relationship = annotation.get();
+                String mappedBy = relationship.has("mappedBy") ? nonEmpty(relationship.string("mappedBy")) : null;
+                Set<CascadeType> cascade = EnumSet.noneOf(CascadeType.class);
+                relationship.enumConstants("cascade").forEach(constant -> cascade.add(CascadeType.valueOf(constant)));
+                boolean orphanRemoval = relationship.has("orphanRemoval") && relationship.bool("orphanRemoval");
                 return new AssociationAttribute(member.name(), type, member.access(), declaring, association.getValue(),
-                    member.signature(), mappedBy);
+                    member.signature(), mappedBy, cascade, orphanRemoval);
             }
         }
         if (element.isAnnotated(JPA + "ElementCollection")) {

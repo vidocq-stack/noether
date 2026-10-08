@@ -19,6 +19,10 @@
  */
 package io.vidocq.mansart.jpa.core.model;
 
+import jakarta.persistence.CascadeType;
+import java.util.EnumSet;
+import java.util.Set;
+
 /**
  * A relationship (§2.10). Recorded by the model; its mapping (join columns, join tables, fetching, cascades) is
  * milestone P5.
@@ -27,7 +31,16 @@ package io.vidocq.mansart.jpa.core.model;
  * @param mappedBy the {@code mappedBy} of the inverse side, or {@code null} on the owning side
  */
 public record AssociationAttribute(String name, Class<?> javaType, AccessKind access, Class<?> declaringClass, Kind kind,
-        String genericSignature, String mappedBy) implements AttributeModel {
+        String genericSignature, String mappedBy, Set<CascadeType> cascade, boolean orphanRemoval) implements AttributeModel {
+
+    public AssociationAttribute {
+        cascade = cascade.isEmpty() ? Set.of() : Set.copyOf(EnumSet.copyOf(cascade));
+    }
+
+    /** Whether operation {@code type} cascades through this relationship (§3.2: {@code ALL} cascades every one). */
+    public boolean cascades(CascadeType type) {
+        return cascade.contains(type) || cascade.contains(CascadeType.ALL);
+    }
 
     /** The four relationship annotations. */
     public enum Kind { ONE_TO_ONE, MANY_TO_ONE, ONE_TO_MANY, MANY_TO_MANY }

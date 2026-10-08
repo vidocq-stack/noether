@@ -76,6 +76,7 @@ final class EntityManagerImpl implements EntityManager {
     private final Map<String, Object> properties = new LinkedHashMap<>();
     private final ResourceLocalTransaction transaction;
     private final PersistenceContext context = new PersistenceContext();
+    private final EntityOperations operations;
     private boolean closed;
     private FlushModeType flushMode = FlushModeType.AUTO;
     private CacheRetrieveMode cacheRetrieveMode = CacheRetrieveMode.USE;
@@ -83,6 +84,12 @@ final class EntityManagerImpl implements EntityManager {
 
     EntityManagerImpl(EntityManagerFactoryImpl factory, Map<?, ?> map) {
         this.factory = factory;
+        this.operations = new EntityOperations(factory, context, new EntityOperations.Connections() {
+            @Override
+            public <T> T on(Function<Connection, T> work) {
+                return onConnection(work);
+            }
+        });
         this.transaction = new ResourceLocalTransaction(factory, new TransactionListener() {
             @Override
             public void beforeCommit(Connection connection) {
@@ -375,7 +382,11 @@ final class EntityManagerImpl implements EntityManager {
     @Override
     public void detach(Object entity) {
         checkOpen();
-        throw failed(NotYet.milestone("P4", "detach"));
+        try {
+            operations.detach(entity);
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
     }
 
     @Override
@@ -400,19 +411,31 @@ final class EntityManagerImpl implements EntityManager {
     @Override
     public void persist(Object entity) {
         checkOpen();
-        throw failed(NotYet.milestone("P4", "persist"));
+        try {
+            operations.persist(entity);
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
     }
 
     @Override
     public <T> T merge(T entity) {
         checkOpen();
-        throw failed(NotYet.milestone("P4", "merge"));
+        try {
+            return operations.merge(entity);
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
     }
 
     @Override
     public void remove(Object entity) {
         checkOpen();
-        throw failed(NotYet.milestone("P4", "remove"));
+        try {
+            operations.remove(entity);
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
     }
 
     @Override
@@ -527,32 +550,41 @@ final class EntityManagerImpl implements EntityManager {
 
     @Override
     public void refresh(Object entity) {
-        checkOpen();
-        throw failed(NotYet.milestone("P4", "refresh"));
+        refresh(entity, LockModeType.NONE);
     }
 
     @Override
     public void refresh(Object entity, Map<String, Object> properties) {
-        checkOpen();
-        throw failed(NotYet.milestone("P4", "refresh"));
+        refresh(entity, LockModeType.NONE);
     }
 
     @Override
     public void refresh(Object entity, LockModeType lockMode) {
         checkOpen();
-        throw failed(NotYet.milestone("P4", "refresh"));
+        try {
+            if (lockMode != null && lockMode != LockModeType.NONE) {
+                throw NotYet.milestone("P4", "locks other than NONE");
+            }
+            operations.refresh(entity);
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
     }
 
     @Override
     public void refresh(Object entity, LockModeType lockMode, Map<String, Object> properties) {
-        checkOpen();
-        throw failed(NotYet.milestone("P4", "refresh"));
+        refresh(entity, lockMode);
     }
 
     @Override
     public void refresh(Object entity, RefreshOption... options) {
-        checkOpen();
-        throw failed(NotYet.milestone("P4", "refresh"));
+        LockModeType lockMode = LockModeType.NONE;
+        for (RefreshOption option : options) {
+            if (option instanceof LockModeType mode) {
+                lockMode = mode;
+            }
+        }
+        refresh(entity, lockMode);
     }
 
     // ---- queries (P7, P8) ---------------------------------------------------------------------------------

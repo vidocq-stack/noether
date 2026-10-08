@@ -47,6 +47,34 @@ public final class EntityLoader {
      * row has it. If the context already manages that identity, its instance is returned.
      */
     public Object load(MappedEntity type, Object id, Connection connection, PersistenceContext context) {
+        Row row = row(type, id, connection);
+        if (row == null) {
+            return null;
+        }
+        Object instance = type.access().instantiate();
+        Object[] state = state(type, instance, row);
+        return context.loaded(instance, type, type.state().snapshot(state)).instance();
+    }
+
+    /** Whether a row of {@code type} has the identity {@code id}, without managing anything. */
+    public boolean exists(MappedEntity type, Object id, Connection connection) {
+        return row(type, id, connection) != null;
+    }
+
+    /**
+     * §3.2.5: overwrites the state of the managed {@code instance} with its row, and returns the new snapshot;
+     * {@code null} if the row is gone.
+     */
+    public Object[] refresh(MappedEntity type, Object id, Object instance, Connection connection) {
+        Row row = row(type, id, connection);
+        return row == null ? null : type.state().snapshot(state(type, instance, row));
+    }
+
+    /** The columns of a row, and which were SQL {@code NULL} (a primitive reads 0 from it). */
+    private record Row(Object[] values, boolean[] nulls) {
+    }
+
+    private Row row(MappedEntity type, Object id, Connection connection) {
         EntityStatements statements = type.statements();
         List<EntityStatements.Column> columns = statements.columns();
         try (PreparedStatement select = connection.prepareStatement(engine.sql(type).select())) {
@@ -65,15 +93,19 @@ public final class EntityLoader {
                     values[c] = columns.get(c).binder().read(row, c + 1);
                     nulls[c] = row.wasNull(); // the binder's last read is this column's
                 }
-                Object instance = type.access().instantiate();
-                Object[] state = new Object[type.model().attributes().size()];
-                type.access().read(instance, state); // what the row does not hold keeps its initial value
-                statements.hydrate(values, nulls, state);
-                type.access().write(instance, state);
-                return context.loaded(instance, type, type.state().snapshot(state)).instance();
+                return new Row(values, nulls);
             }
         } catch (SQLException e) {
-            throw new PersistenceException("The load of " + type.model().entityName() + " " + id + " failed: " + e.getMessage(), e);
+            throw new PersistenceException("The read of " + type.model().entityName() + " " + id + " failed: " + e.getMessage(), e);
         }
+    }
+
+    /** Writes the row into {@code instance}; what the row does not hold keeps its current value. */
+    private static Object[] state(MappedEntity type, Object instance, Row row) {
+        Object[] state = new Object[type.model().attributes().size()];
+        type.access().read(instance, state);
+        type.statements().hydrate(row.values(), row.nulls(), state);
+        type.access().write(instance, state);
+        return state;
     }
 }
