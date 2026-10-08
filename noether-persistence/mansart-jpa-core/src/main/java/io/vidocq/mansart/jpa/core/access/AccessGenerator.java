@@ -73,6 +73,7 @@ final class AccessGenerator {
     private static final MethodTypeDesc SET = MethodTypeDesc.of(CD_void, CD_Object, CD_int, CD_Object);
     private static final MethodTypeDesc GETTER = MethodTypeDesc.of(CD_Object, CD_Object);
     private static final MethodTypeDesc SETTER = MethodTypeDesc.of(CD_void, CD_Object, CD_Object);
+    private static final MethodTypeDesc BULK = MethodTypeDesc.of(CD_void, CD_Object, CD_Object.arrayType());
 
     private AccessGenerator() {
     }
@@ -189,6 +190,23 @@ final class AccessGenerator {
             if (!record) {
                 cb.withMethodBody("set", SET, ClassFile.ACC_PUBLIC, code -> dispatch(code, setters, index -> code
                     .ldc(handle(index)).aload(1).aload(3).invokevirtual(CD_MethodHandle, "invokeExact", SETTER).return_()));
+            }
+            // straight-line bulk copies: state[i] = getter(instance), setter(instance, state[i])
+            cb.withMethodBody("read", BULK, ClassFile.ACC_PUBLIC, code -> {
+                for (int i = 0; i < getters.length; i++) {
+                    code.aload(2).loadConstant(i).ldc(handle(getters[i])).aload(1)
+                        .invokevirtual(CD_MethodHandle, "invokeExact", GETTER).aastore();
+                }
+                code.return_();
+            });
+            if (!record) {
+                cb.withMethodBody("write", BULK, ClassFile.ACC_PUBLIC, code -> {
+                    for (int i = 0; i < setters.length; i++) {
+                        code.ldc(handle(setters[i])).aload(1).aload(2).loadConstant(i).aaload()
+                            .invokevirtual(CD_MethodHandle, "invokeExact", SETTER);
+                    }
+                    code.return_();
+                });
             }
         });
     }

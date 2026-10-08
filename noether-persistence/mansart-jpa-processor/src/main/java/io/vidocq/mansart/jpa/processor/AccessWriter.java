@@ -105,8 +105,10 @@ final class AccessWriter {
             instantiate(out, type, self, pkg);
         }
         get(out, self, slots);
+        read(out, self, slots);
         if (!record) {
             set(out, self, slots);
+            write(out, self, slots);
         }
         out.append("}\n");
         return out.toString();
@@ -310,18 +312,49 @@ final class AccessWriter {
         out.append("        ").append(self).append(" entity = (").append(self).append(") instance;\n");
         out.append("        try {\n            return switch (attribute) {\n");
         for (int i = 0; i < slots.size(); i++) {
-            Slot slot = slots.get(i);
-            out.append("                case ").append(i).append(" -> ");
-            if (!slot.directGet()) {
-                out.append("GET_").append(i).append(".invokeExact(instance);\n");
-            } else if (slot.member().access() == AccessKind.FIELD && slot.setter() != null) {
-                out.append("entity.").append(slot.getter()).append(";\n");
-            } else {
-                out.append("entity.").append(slot.getter()).append("();\n");
-            }
+            out.append("                case ").append(i).append(" -> ").append(value(slots.get(i), i)).append(";\n");
         }
         out.append("                default -> throw new java.lang.IndexOutOfBoundsException(attribute);\n");
         out.append("            };\n        } catch (java.lang.Throwable failure) {\n            throw rethrow(failure);\n        }\n    }\n");
+    }
+
+    /** The value expression of slot {@code i}, as {@code get} returns it. */
+    private static String value(Slot slot, int i) {
+        if (!slot.directGet()) {
+            return "GET_" + i + ".invokeExact(instance)";
+        }
+        if (slot.member().access() == AccessKind.FIELD && slot.setter() != null) {
+            return "entity." + slot.getter();
+        }
+        return "entity." + slot.getter() + "()";
+    }
+
+    private static void read(StringBuilder out, String self, List<Slot> slots) {
+        out.append("\n    @java.lang.Override\n    public void read(java.lang.Object instance, java.lang.Object[] state) {\n");
+        out.append("        ").append(self).append(" entity = (").append(self).append(") instance;\n");
+        out.append("        try {\n");
+        for (int i = 0; i < slots.size(); i++) {
+            out.append("            state[").append(i).append("] = ").append(value(slots.get(i), i)).append(";\n");
+        }
+        out.append("        } catch (java.lang.Throwable failure) {\n            throw rethrow(failure);\n        }\n    }\n");
+    }
+
+    private static void write(StringBuilder out, String self, List<Slot> slots) {
+        out.append("\n    @java.lang.Override\n    public void write(java.lang.Object instance, java.lang.Object[] state) {\n");
+        out.append("        ").append(self).append(" entity = (").append(self).append(") instance;\n");
+        out.append("        try {\n");
+        for (int i = 0; i < slots.size(); i++) {
+            Slot slot = slots.get(i);
+            out.append("            ");
+            if (!slot.directSet()) {
+                out.append("SET_").append(i).append(".invokeExact(instance, state[").append(i).append("]);\n");
+            } else if (slot.member().access() == AccessKind.FIELD) {
+                out.append("entity.").append(slot.setter()).append(" = (").append(slot.type()).append(") state[").append(i).append("];\n");
+            } else {
+                out.append("entity.").append(slot.setter()).append("((").append(slot.type()).append(") state[").append(i).append("]);\n");
+            }
+        }
+        out.append("        } catch (java.lang.Throwable failure) {\n            throw rethrow(failure);\n        }\n    }\n");
     }
 
     private static void set(StringBuilder out, String self, List<Slot> slots) {

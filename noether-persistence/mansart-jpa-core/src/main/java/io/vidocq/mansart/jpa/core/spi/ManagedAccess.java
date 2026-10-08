@@ -75,6 +75,23 @@ public abstract class ManagedAccess {
     }
 
     /**
+     * Reads every attribute into {@code state}, in index order: what {@code get} returns for each. The accesses Mansart
+     * generates override it with straight-line code, one call per instance instead of one per attribute.
+     */
+    public void read(Object instance, Object[] state) {
+        for (int i = 0; i < attributes.size(); i++) {
+            state[i] = get(instance, i);
+        }
+    }
+
+    /** Writes every attribute from {@code state}, in index order; a record is immutable. */
+    public void write(Object instance, Object[] state) {
+        for (int i = 0; i < attributes.size(); i++) {
+            set(instance, i, state[i]);
+        }
+    }
+
+    /**
      * Rethrows {@code failure}, checked or not, unchanged: generated code calls method handles, which declare
      * {@code Throwable}, and must not wrap what an accessor threw.
      */

@@ -138,6 +138,19 @@ class MansartJpaProcessorTest {
     }
 
     @Test
+    void theWholeStateIsReadAndWrittenInOneCall() throws Exception {
+        ManagedAccess access = accesses.get(type("shop.Item"));
+        Object item = access.instantiate();
+        Object[] values = {Instant.now(), 3, 7L, "lamp", new BigDecimal("9.90"), 12, List.of("light")};
+        access.write(item, values);
+        Object[] state = new Object[values.length];
+        access.read(item, state);
+        assertThat(state).isEqualTo(values);
+        assertThat(shop.source("shop/Item$$MansartAccess.java")).contains("public void read(").contains("public void write(");
+        assertThat(shop.source("shop/Geo$$MansartAccess.java")).contains("public void read(").doesNotContain("public void write(");
+    }
+
+    @Test
     void propertiesGoThroughTheirAccessors() throws Exception {
         ManagedAccess access = accesses.get(type("shop.Purchase"));
         Object purchase = access.instantiate();

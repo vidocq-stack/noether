@@ -180,6 +180,45 @@ class ManagedAccessTest {
     }
 
     @Test
+    void theWholeStateIsReadAndWrittenInOneCall() {
+        for (Class<?> entity : List.of(Customer.class, Account.class, Note.class, Contractor.class)) {
+            EntityModel model = model(entity);
+            ManagedAccess access = Accesses.of(model);
+            Object source = access.instantiate();
+            for (int i = 0; i < model.attributes().size(); i++) {
+                Object value = access.get(source, i);
+                if (value instanceof Integer) {
+                    access.set(source, i, i + 1);
+                } else if (value instanceof Long) {
+                    access.set(source, i, (long) i + 1);
+                }
+            }
+            Object[] state = new Object[model.attributes().size()];
+            access.read(source, state);
+            for (int i = 0; i < state.length; i++) {
+                assertThat(state[i]).as(model.attributes().get(i).name()).isEqualTo(access.get(source, i));
+            }
+            Object copy = access.instantiate();
+            access.write(copy, state);
+            Object[] copied = new Object[state.length];
+            access.read(copy, copied);
+            assertThat(copied).isEqualTo(state);
+        }
+        assertThat(Accesses.of(model(Customer.class)).getClass().getDeclaredMethods())
+            .extracting(java.lang.reflect.Method::getName).contains("read", "write"); // generated, not inherited loops
+    }
+
+    @Test
+    void aRecordIsReadInOneCallButNotWritten() {
+        EmbeddableModel geo = ((EmbeddedAttribute) model(Shop.class).attribute("location").orElseThrow()).embeddable();
+        ManagedAccess access = Accesses.of(geo);
+        Object[] state = new Object[2];
+        access.read(new Geo(1.5, 2.5), state);
+        assertThat(state).containsExactly(1.5, 2.5);
+        assertThatThrownBy(() -> access.write(new Geo(0, 0), state)).isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
     void anUnknownAttributeIndexIsRejected() {
         EntityModel model = model(Customer.class);
         ManagedAccess access = Accesses.of(model);
