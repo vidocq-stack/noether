@@ -140,6 +140,12 @@ prints a counter. PASS = 0 is the expected, correct outcome.
       **no `<provider>`** until P1.
 - [ ] PostgreSQL via Testcontainers; DDL + stored procedures applied before the run.
 - [ ] `run-official-tck-persistence-3.2.sh` (executable), per-area filter (`-Dit.test=…`).
+- [ ] Bean Validation switch for the first failsafe execution: `TCK_VALIDATION=off|on` (environment variable read
+      by the script and the POM). `on` adds `jakarta.validation-api` and `mansart-validation-core` to the
+      additional class path of execution 1, `off` adds neither; execution 2 never has them. Failsafe XML reports
+      stay in `target/failsafe-reports`. [`check-validation-neutrality.sh`](check-validation-neutrality.sh) runs
+      the suite both ways and compares the results test by test: it must report NEUTRAL (the TCK uses no Bean
+      Validation, see P11). Until this runner exists the script exits with status 78.
 - [ ] `TCK.md` with the baseline: executed count, and every test failing *for the right reason*
       (no persistence provider), not on setup or wiring.
 
