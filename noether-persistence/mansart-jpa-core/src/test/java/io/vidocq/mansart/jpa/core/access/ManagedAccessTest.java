@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.vidocq.mansart.jpa.core.model.EmbeddableModel;
+import io.vidocq.mansart.jpa.core.spi.ManagedAccess;
 import io.vidocq.mansart.jpa.core.model.EmbeddedAttribute;
 import io.vidocq.mansart.jpa.core.model.EntityModel;
 import io.vidocq.mansart.jpa.core.model.PersistenceUnitModel;
@@ -58,16 +59,23 @@ class ManagedAccessTest {
 
     @Test
     void theAccessIsAHiddenClassOfThisModuleWithoutReflection() {
-        ManagedAccess access = ManagedAccess.of(model(Customer.class));
+        ManagedAccess access = Accesses.of(model(Customer.class));
         assertThat(access.getClass().isHidden()).isTrue();
         assertThat(access.getClass().getModule()).isEqualTo(ManagedAccess.class.getModule());
         assertThat(access.type()).isEqualTo(Customer.class);
     }
 
     @Test
+    void theAccessListsItsAttributesAsTheModelDoes() {
+        EntityModel model = model(Account.class);
+        assertThat(Accesses.of(model).attributes()).containsExactly("number:PROPERTY", "owner:PROPERTY", "active:PROPERTY");
+        assertThat(Accesses.of(model(Contractor.class)).attributes()).containsExactly("id:FIELD", "name:FIELD", "rate:PROPERTY");
+    }
+
+    @Test
     void fieldAccessReadsAndWritesPrivateFieldsThroughAProtectedConstructor() {
         EntityModel model = model(Customer.class);
-        ManagedAccess access = ManagedAccess.of(model);
+        ManagedAccess access = Accesses.of(model);
         Object customer = access.instantiate();
         assertThat(customer).isInstanceOf(Customer.class);
 
@@ -89,7 +97,7 @@ class ManagedAccessTest {
     @Test
     void propertyAccessCallsTheGettersAndSetters() {
         EntityModel model = model(Account.class);
-        ManagedAccess access = ManagedAccess.of(model);
+        ManagedAccess access = Accesses.of(model);
         Account account = (Account) access.instantiate();
 
         access.set(account, index(model, "number"), 42L);
@@ -106,7 +114,7 @@ class ManagedAccessTest {
     @Test
     void attributesOfAMappedSuperclassAreReachedFromTheEntity() {
         EntityModel model = model(Note.class);
-        ManagedAccess access = ManagedAccess.of(model);
+        ManagedAccess access = Accesses.of(model);
         Object note = access.instantiate();
         Instant now = Instant.now();
 
@@ -122,7 +130,7 @@ class ManagedAccessTest {
     @Test
     void uncapitalisedAccessorsAreCalled() {
         EntityModel model = model(Lowercase.class);
-        ManagedAccess access = ManagedAccess.of(model);
+        ManagedAccess access = Accesses.of(model);
         Lowercase entity = (Lowercase) access.instantiate();
         access.set(entity, index(model, "description"), "plain");
         assertThat(entity.getdescription()).isEqualTo("plain");
@@ -132,7 +140,7 @@ class ManagedAccessTest {
     @Test
     void eachClassOfTheHierarchyIsAccessedTheWayItIsMapped() {
         EntityModel model = model(Contractor.class);
-        ManagedAccess access = ManagedAccess.of(model);
+        ManagedAccess access = Accesses.of(model);
         Contractor contractor = (Contractor) access.instantiate();
         access.set(contractor, index(model, "id"), 3);
         access.set(contractor, index(model, "rate"), 1.5f);
@@ -144,7 +152,7 @@ class ManagedAccessTest {
     void anEmbeddableClassIsInstantiatedAndWrittenLikeAnEntity() {
         EntityModel shop = model(Shop.class);
         EmbeddableModel addr = ((EmbeddedAttribute) shop.attribute("address").orElseThrow()).embeddable();
-        ManagedAccess access = ManagedAccess.of(addr);
+        ManagedAccess access = Accesses.of(addr);
         Object address = access.instantiate();
         assertThat(address).isInstanceOf(Addr.class);
 
@@ -156,7 +164,7 @@ class ManagedAccessTest {
     void aRecordEmbeddableIsBuiltThroughItsCanonicalConstructorAndIsReadOnly() {
         EntityModel shop = model(Shop.class);
         EmbeddableModel geo = ((EmbeddedAttribute) shop.attribute("location").orElseThrow()).embeddable();
-        ManagedAccess access = ManagedAccess.of(geo);
+        ManagedAccess access = Accesses.of(geo);
 
         Object location = access.construct(48.85, 2.35);
         assertThat(location).isEqualTo(new Geo(48.85, 2.35));
@@ -167,14 +175,14 @@ class ManagedAccessTest {
 
     @Test
     void aClassIsNotBuiltFromComponents() {
-        ManagedAccess access = ManagedAccess.of(model(Customer.class));
+        ManagedAccess access = Accesses.of(model(Customer.class));
         assertThatThrownBy(() -> access.construct()).isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test
     void anUnknownAttributeIndexIsRejected() {
         EntityModel model = model(Customer.class);
-        ManagedAccess access = ManagedAccess.of(model);
+        ManagedAccess access = Accesses.of(model);
         Object customer = access.instantiate();
         int outside = model.attributes().size();
         assertThatThrownBy(() -> access.get(customer, outside)).isInstanceOf(IndexOutOfBoundsException.class);
@@ -184,7 +192,7 @@ class ManagedAccessTest {
     @Test
     void theWrongValueTypeFailsWithAClassCastException() {
         EntityModel model = model(Customer.class);
-        ManagedAccess access = ManagedAccess.of(model);
+        ManagedAccess access = Accesses.of(model);
         Object customer = access.instantiate();
         assertThatThrownBy(() -> access.set(customer, index(model, "name"), 12)).isInstanceOf(ClassCastException.class);
         assertThatThrownBy(() -> access.get("not a customer", index(model, "name"))).isInstanceOf(ClassCastException.class);
@@ -194,7 +202,7 @@ class ManagedAccessTest {
     void everyAttributeOfEveryFixtureIsReachable() {
         for (Class<?> entity : List.of(Customer.class, Account.class, Note.class, Shop.class)) {
             EntityModel model = model(entity);
-            ManagedAccess access = ManagedAccess.of(model);
+            ManagedAccess access = Accesses.of(model);
             Object instance = access.instantiate();
             for (int i = 0; i < model.attributes().size(); i++) {
                 Object value = access.get(instance, i);

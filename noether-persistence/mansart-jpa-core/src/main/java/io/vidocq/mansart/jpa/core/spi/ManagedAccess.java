@@ -17,41 +17,43 @@
  *
  * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
  */
-package io.vidocq.mansart.jpa.core.access;
+package io.vidocq.mansart.jpa.core.spi;
 
-import io.vidocq.mansart.jpa.core.model.EmbeddableModel;
-import io.vidocq.mansart.jpa.core.model.EntityModel;
+import java.util.List;
 
 /**
  * Reads, writes and creates the instances of one managed class (an entity or an embeddable), without reflection.
- * Each instance is a hidden class generated for that managed class by {@link AccessGenerator}: its accessors are
- * constant method handles, so a call through it is compiled as a direct field or method access.
  *
- * <p>Attributes are designated by their index in the model ({@link EntityModel#attributes()},
- * {@link EmbeddableModel#attributes()}); primitive values are boxed. Exceptions thrown by property accessors propagate
- * unchanged: wrapping them in a {@code PersistenceException} (§2.3.2) is the engine's job.
+ * <p>Mansart generates the subclasses: at build time with {@code mansart-jpa-processor} (ordinary classes in the
+ * package of the managed class, handed over by a {@link ManagedAccessProvider}), or at bootstrap as hidden classes of
+ * the provider module (which then needs the package opened to it). Applications never implement it.
+ *
+ * <p>Attributes are designated by their index in {@link #attributes()}, which lists them as the entity model of the
+ * provider does: {@code name:FIELD} or {@code name:PROPERTY}, the attributes of superclasses first. Primitive values are
+ * boxed. Exceptions thrown by property accessors propagate unchanged.
  */
 public abstract class ManagedAccess {
 
     private final Class<?> type;
+    private final List<String> attributes;
 
-    protected ManagedAccess(Class<?> type) {
+    /**
+     * @param type the managed class
+     * @param attributes the attributes, as {@code name:FIELD} or {@code name:PROPERTY}, in index order
+     */
+    protected ManagedAccess(Class<?> type, List<String> attributes) {
         this.type = type;
-    }
-
-    /** The access of an entity, attributes of its mapped superclasses and entity superclasses included. */
-    public static ManagedAccess of(EntityModel entity) {
-        return AccessGenerator.generate(entity.javaType(), false, entity.attributes());
-    }
-
-    /** The access of an embeddable, as one owner sees it. */
-    public static ManagedAccess of(EmbeddableModel embeddable) {
-        return AccessGenerator.generate(embeddable.javaType(), embeddable.isRecord(), embeddable.attributes());
+        this.attributes = List.copyOf(attributes);
     }
 
     /** The managed class. */
     public final Class<?> type() {
         return type;
+    }
+
+    /** The attributes reached by index, as {@code name:FIELD} or {@code name:PROPERTY}. */
+    public final List<String> attributes() {
+        return attributes;
     }
 
     /** A new instance, through the no-arg constructor (§2.1); a record is built with {@link #construct}. */
@@ -70,5 +72,18 @@ public abstract class ManagedAccess {
     /** Writes an attribute; a record is immutable. */
     public void set(Object instance, int attribute, Object value) {
         throw new UnsupportedOperationException(type.getName() + " is a record, its components cannot be written");
+    }
+
+    /**
+     * Rethrows {@code failure}, checked or not, unchanged: generated code calls method handles, which declare
+     * {@code Throwable}, and must not wrap what an accessor threw.
+     */
+    protected static RuntimeException rethrow(Throwable failure) {
+        throw ManagedAccess.<RuntimeException>sneaky(failure);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <E extends Throwable> E sneaky(Throwable failure) throws E {
+        throw (E) failure;
     }
 }

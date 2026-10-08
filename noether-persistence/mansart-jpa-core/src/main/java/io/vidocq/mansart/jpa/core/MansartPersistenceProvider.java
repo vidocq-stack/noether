@@ -28,6 +28,7 @@ import io.vidocq.mansart.jpa.core.bootstrap.UnitSettings;
 import io.vidocq.mansart.jpa.core.jdbc.ConnectionSources;
 import io.vidocq.mansart.jpa.core.mapping.MappedUnit;
 import io.vidocq.mansart.jpa.core.session.EntityManagerFactoryImpl;
+import io.vidocq.mansart.jpa.core.spi.ManagedAccessProvider;
 import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.PersistenceConfiguration;
 import jakarta.persistence.PersistenceException;
@@ -39,6 +40,7 @@ import jakarta.persistence.spi.PersistenceUnitInfo;
 import jakarta.persistence.spi.ProviderUtil;
 import java.util.Map;
 import java.util.Optional;
+import java.util.ServiceLoader;
 
 /**
  * The Mansart {@link PersistenceProvider} (Jakarta Persistence 3.2, chapter 9). Published through the service
@@ -126,7 +128,7 @@ public final class MansartPersistenceProvider implements PersistenceProvider {
                 + " asks for validation mode CALLBACK, but no Bean Validation provider is available (§3.7.1)");
         }
         MappedUnit mapping = MappedUnit.of(ManagedClasses.of(settings.definition()), loader,
-            ManagedClasses.hasMappingFiles(settings.definition(), loader));
+            ManagedClasses.hasMappingFiles(settings.definition(), loader), ServiceLoader.load(ManagedAccessProvider.class, loader));
         return new EntityManagerFactoryImpl(settings, ConnectionSources.of(settings, loader), mapping);
     }
 

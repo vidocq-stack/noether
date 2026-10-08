@@ -43,9 +43,11 @@ public final class Handles {
         try {
             return MethodHandles.privateLookupIn(type, LOOKUP);
         } catch (IllegalAccessException e) {
-            throw new PersistenceException("Mansart cannot access the class " + type.getName() + ": its module must open the "
-                + "package " + type.getPackageName() + " to " + module.getName() + " ('opens " + type.getPackageName() + " to "
-                + module.getName() + ";' in its module-info.java)", e);
+            throw new PersistenceException("Mansart cannot access the class " + type.getName() + ": compile it with "
+                + "mansart-jpa-processor and declare the access it generates ('provides "
+                + "io.vidocq.mansart.jpa.core.spi.ManagedAccessProvider with " + type.getPackageName() + "._MansartJpaAccess;'), "
+                + "or open its package to " + module.getName() + " ('opens " + type.getPackageName() + " to " + module.getName()
+                + ";' in its module-info.java)", e);
         }
     }
 

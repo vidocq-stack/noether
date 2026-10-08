@@ -28,6 +28,7 @@ import static java.lang.constant.ConstantDescs.INIT_NAME;
 
 import io.vidocq.mansart.jpa.core.model.AccessKind;
 import io.vidocq.mansart.jpa.core.model.AttributeModel;
+import io.vidocq.mansart.jpa.core.spi.ManagedAccess;
 import jakarta.persistence.PersistenceException;
 import java.lang.classfile.ClassFile;
 import java.lang.classfile.CodeBuilder;
@@ -65,7 +66,7 @@ final class AccessGenerator {
 
     private static final ClassDesc CD_MANAGED_ACCESS = ClassDesc.of(ManagedAccess.class.getName());
     private static final ClassDesc CD_OUT_OF_BOUNDS = ClassDesc.of(IndexOutOfBoundsException.class.getName());
-    private static final MethodTypeDesc CONSTRUCTOR = MethodTypeDesc.of(CD_void, CD_Class);
+    private static final MethodTypeDesc CONSTRUCTOR = MethodTypeDesc.of(CD_void, CD_Class, ClassDesc.of(List.class.getName()));
     private static final MethodTypeDesc INSTANTIATE = MethodTypeDesc.of(CD_Object);
     private static final MethodTypeDesc CONSTRUCT = MethodTypeDesc.of(CD_Object, CD_Object.arrayType());
     private static final MethodTypeDesc GET = MethodTypeDesc.of(CD_Object, CD_Object, CD_int);
@@ -100,8 +101,8 @@ final class AccessGenerator {
             }
             byte[] bytes = bytes(type, record, creator, getters, setters);
             MethodHandles.Lookup hidden = Handles.own().defineHiddenClassWithClassData(bytes, List.copyOf(handles), true);
-            return (ManagedAccess) hidden.findConstructor(hidden.lookupClass(), MethodType.methodType(void.class, Class.class))
-                .invoke(type);
+            return (ManagedAccess) hidden.findConstructor(hidden.lookupClass(),
+                MethodType.methodType(void.class, Class.class, List.class)).invoke(type, Accesses.descriptor(attributes));
         } catch (PersistenceException e) {
             throw e;
         } catch (ReflectiveOperationException e) {
@@ -175,7 +176,7 @@ final class AccessGenerator {
             cb.withFlags(ClassFile.ACC_FINAL | ClassFile.ACC_SUPER | ClassFile.ACC_SYNTHETIC);
             cb.withSuperclass(CD_MANAGED_ACCESS);
             cb.withMethodBody(INIT_NAME, CONSTRUCTOR, ClassFile.ACC_PUBLIC, code -> code
-                .aload(0).aload(1).invokespecial(CD_MANAGED_ACCESS, INIT_NAME, CONSTRUCTOR).return_());
+                .aload(0).aload(1).aload(2).invokespecial(CD_MANAGED_ACCESS, INIT_NAME, CONSTRUCTOR).return_());
             if (creator >= 0 && record) {
                 cb.withMethodBody("construct", CONSTRUCT, ClassFile.ACC_PUBLIC | ClassFile.ACC_VARARGS, code -> code
                     .ldc(handle(creator)).aload(1).invokevirtual(CD_MethodHandle, "invokeExact", CONSTRUCT).areturn());
