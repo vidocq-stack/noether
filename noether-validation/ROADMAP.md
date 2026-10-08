@@ -5,6 +5,22 @@
 > reflection on constrained types, no runtime bytecode library — APT and the Class-File API instead.
 > Mansart-wide vision: [`../PLAN.md`](../PLAN.md) and [`../ROADMAP.md`](../ROADMAP.md).
 
+## Status and scope — a stopgap
+
+This implementation exists so that `mansart-persistence` can run its TCK (Jakarta Persistence section 3.7 and the
+validation tests of its TCK). It only has to **work**: it is not meant to be polished, not meant to pass the whole
+Jakarta Validation TCK, and **it is not published to Maven Central**. Another member of the team is writing the
+real Jakarta Validation implementation; this one is dropped when that one is usable.
+
+Consequences:
+
+- V0 to V2 are delivered and are what the persistence work needs: bootstrap, `validation.xml`, the validation
+  engine on beans, properties and values, the built-in constraints, the metadata API for beans and properties.
+  The official TCK is used as a test bed (308 of 981 pass), not as a certification target.
+- V3 to V6 are **not planned**. They are kept below as a description of what a complete implementation would
+  need, and are picked up only if the persistence TCK is found to need one of them.
+- No release, no `BENCH.md`, no documentation site page, no APT or Maven plugin.
+
 ## Why this brick exists
 
 No Bean Validation implementation is available for the Vidocq runtime. `mansart-persistence`
@@ -147,7 +163,7 @@ Spec: ch. 4 (built-in constraints), ch. 6 (constraint declaration and validation
 **TCK gate**: built-in constraints, bean validation, metadata API — 981 run, **308 pass** (from 42). Every
 remaining failure belongs to V3, V4 or V5, see `mansart-validation-tck/TCK.md`.
 
-### V3 — Groups, group sequences, composition, container elements ⏳
+### V3 (not planned, see "Status and scope") — Groups, group sequences, composition, container elements ⏳
 
 Spec: ch. 3 (groups), ch. 6.4–6.6 (group sequences, redefined default group, container elements).
 
@@ -159,7 +175,7 @@ Spec: ch. 3 (groups), ch. 6.4–6.6 (group sequences, redefined default group, c
 
 **TCK gate**: groups, group sequences, container-element, composition areas.
 
-### V4 — Method and constructor validation ⏳
+### V4 (not planned) — Method and constructor validation ⏳
 
 Spec: method and constructor validation chapter, `ExecutableValidator` (section numbers to be pinned at V0).
 
@@ -170,7 +186,7 @@ Spec: method and constructor validation chapter, `ExecutableValidator` (section 
 
 **TCK gate**: method validation areas.
 
-### V5 — Message interpolation and CDI integration ⏳
+### V5 (not planned) — Message interpolation and CDI integration ⏳
 
 Spec: ch. 5.3 (message interpolation), ch. 8 (CDI integration is spec-defined for the container).
 
@@ -184,7 +200,7 @@ Spec: ch. 5.3 (message interpolation), ch. 8 (CDI integration is spec-defined fo
 **TCK gate**: message interpolation, CDI integration areas (the latter via the in-reactor runner,
 as the standalone TCK does not cover the container).
 
-### V6 — Certification, performance, ecosystem ⏳
+### V6 (not planned) — Certification, performance, ecosystem ⏳
 
 - [ ] TCK **100% PASS** on both runners (official exclusions only), score and command in `TCK.md`,
       `tck` page in the Antora docs (`docs/en`).
