@@ -62,6 +62,7 @@ final class ElementInfos implements ClassInfos {
     private final Elements elements;
     private final Types types;
     private final Map<String, Optional<ClassInfo>> cache = new HashMap<>();
+    private boolean unresolved;
 
     ElementInfos(Elements elements, Types types) {
         this.elements = elements;
@@ -76,6 +77,21 @@ final class ElementInfos implements ClassInfos {
             cache.put(binaryName, known);
         }
         return known;
+    }
+
+    /**
+     * Whether a type met since the last call could not be resolved yet (a class another processor generates in a
+     * later round): its erasure is not known, so nothing planned with it can be trusted. Resets the flag.
+     */
+    boolean unresolved() {
+        boolean was = unresolved;
+        unresolved = false;
+        return was;
+    }
+
+    /** Forgets what was read: the next round may resolve what this one could not. */
+    void clear() {
+        cache.clear();
     }
 
     /** The element of a class read by {@link #read(String)}. */
@@ -137,6 +153,10 @@ final class ElementInfos implements ClassInfos {
             case VOID -> ConstantDescs.CD_void;
             case ARRAY -> desc(((ArrayType) erased).getComponentType()).arrayType();
             case DECLARED -> ClassDesc.of(binaryName(erased));
+            case ERROR -> {
+                unresolved = true;
+                yield ConstantDescs.CD_Object;
+            }
             default -> ConstantDescs.CD_Object;
         };
     }
@@ -165,8 +185,20 @@ final class ElementInfos implements ClassInfos {
 
     // ---- annotations, encoded as ClassFileSource encodes them ---------------------------------------------
 
+    /** The annotations a class file keeps visible at run time, as {@code ClassFileSource} reads them. */
     private List<AnnotationInfo> annotations(Element element) {
-        return element.getAnnotationMirrors().stream().map(this::annotation).toList();
+        return element.getAnnotationMirrors().stream().filter(this::runtimeVisible).map(this::annotation).toList();
+    }
+
+    private boolean runtimeVisible(AnnotationMirror mirror) {
+        Element type = mirror.getAnnotationType().asElement();
+        for (AnnotationMirror meta : type.getAnnotationMirrors()) {
+            if (((TypeElement) meta.getAnnotationType().asElement()).getQualifiedName().contentEquals("java.lang.annotation.Retention")) {
+                return meta.getElementValues().values().stream()
+                    .anyMatch(v -> v.getValue() instanceof VariableElement policy && policy.getSimpleName().contentEquals("RUNTIME"));
+            }
+        }
+        return false; // CLASS retention by default: not visible at run time
     }
 
     private AnnotationInfo annotation(AnnotationMirror mirror) {

@@ -40,6 +40,14 @@ class ModuleProvidesTest {
     }
 
     @Test
+    void aModuleThatDoesNotReadTheProviderIsToldToRequireIt(@TempDir Path out) {
+        Compilation norequires = Compilation.onModulePath(out, Compilation.FIXTURES.resolve("modular-norequires"));
+        assertThat(norequires.success()).isFalse();
+        assertThat(norequires.messages(Diagnostic.Kind.ERROR)).anySatisfy(m -> assertThat(m)
+            .contains("requires io.vidocq.mansart.jpa.core;"));
+    }
+
+    @Test
     void aDeclaredProvidesClauseCompilesWithoutWarnings(@TempDir Path out) {
         Compilation declared = Compilation.onModulePath(out, Compilation.FIXTURES.resolve("modular-declared"));
         assertThat(declared.success()).as("%s", declared.diagnostics()).isTrue();

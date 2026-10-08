@@ -47,6 +47,11 @@ record Compilation(boolean success, List<Diagnostic<? extends JavaFileObject>> d
         return compile(out, List.of("-classpath", dependencies()), roots);
     }
 
+    /** Compiles {@code roots} against the classes of an earlier compilation, as an incremental build does. */
+    static Compilation incrementally(Path out, Compilation earlier, Path... roots) {
+        return compile(out, List.of("-classpath", earlier.classes() + File.pathSeparator + dependencies()), roots);
+    }
+
     /** Compiles every source under {@code roots}, a {@code module-info.java} among them, on the module path. */
     static Compilation onModulePath(Path out, Path... roots) {
         return compile(out, List.of("--module-path", dependencies()), roots);
