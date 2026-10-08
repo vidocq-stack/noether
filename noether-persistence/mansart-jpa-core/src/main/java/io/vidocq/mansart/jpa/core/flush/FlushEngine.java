@@ -55,7 +55,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class FlushEngine {
 
     /** The SQL of an entity, rendered once by the dialect. */
-    private record Sql(String insert, String update, String delete, String[] generatedKey) {
+    record Sql(String insert, String update, String delete, String select, String[] generatedKey) {
     }
 
     /** An instance to write, with the state read from it. */
@@ -240,13 +240,13 @@ public final class FlushEngine {
         return groups;
     }
 
-    private Sql sql(MappedEntity type) {
+    Sql sql(MappedEntity type) {
         return sql.computeIfAbsent(type, t -> {
             EntityStatements statements = t.statements();
             var key = statements.insert().generatedKey();
             return new Sql(dialect.render(statements.insert()),
                 statements.update() == null ? null : dialect.render(statements.update()), dialect.render(statements.delete()),
-                key == null ? null : new String[] {dialect.generatedKeyName(key)});
+                dialect.render(statements.select()), key == null ? null : new String[] {dialect.generatedKeyName(key)});
         });
     }
 

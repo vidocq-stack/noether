@@ -26,7 +26,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.function.Consumer;
+import java.util.function.Function;
 
 /**
  * The resource-local {@link EntityTransaction} of an entity manager (§7.5.2–7.5.4), over one JDBC connection. The
@@ -177,10 +177,10 @@ final class ResourceLocalTransaction implements EntityTransaction {
 
     /** The connection of the active transaction; the entity manager runs its statements on it. */
     /** Runs {@code work} on the connection of the active transaction, which no closing factory can release meanwhile. */
-    void onConnection(Consumer<Connection> work) {
+    <T> T onConnection(Function<Connection, T> work) {
         lock.lock();
         try {
-            work.accept(activeConnection());
+            return work.apply(activeConnection());
         } finally {
             lock.unlock();
         }

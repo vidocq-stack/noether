@@ -41,6 +41,11 @@ public final class Accesses {
         return AccessGenerator.generate(embeddable.javaType(), embeddable.isRecord(), embeddable.attributes());
     }
 
+    /** The access of a class that is neither an entity nor an embeddable of the model (an {@code @IdClass}). */
+    public static ManagedAccess of(Class<?> type, boolean record, List<AttributeModel> attributes) {
+        return AccessGenerator.generate(type, record, attributes);
+    }
+
     /** The attributes as {@link ManagedAccess#attributes()} lists them: {@code name:FIELD} or {@code name:PROPERTY}. */
     public static List<String> descriptor(List<AttributeModel> attributes) {
         return attributes.stream().map(a -> a.name() + ":" + a.access()).toList();

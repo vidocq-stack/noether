@@ -22,6 +22,7 @@ package io.vidocq.mansart.jpa.core.session;
 import io.vidocq.mansart.jpa.core.bootstrap.UnitSettings;
 import io.vidocq.mansart.jpa.core.jdbc.ConnectionSource;
 import io.vidocq.mansart.jpa.core.flush.Dialects;
+import io.vidocq.mansart.jpa.core.flush.EntityLoader;
 import io.vidocq.mansart.jpa.core.flush.FlushEngine;
 import io.vidocq.mansart.jpa.core.mapping.MappedUnit;
 import io.vidocq.mansart.jpa.dialect.Dialect;
@@ -108,6 +109,11 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
             }
         }
         return engine;
+    }
+
+    /** Builds managed instances from rows, with the dialect and SQL of the flush engine. */
+    EntityLoader loader(Connection connection) {
+        return new EntityLoader(flushEngine(connection));
     }
 
     /** The mapped persistence unit: entity model, generated access and binders. */

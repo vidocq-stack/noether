@@ -22,17 +22,22 @@ package io.vidocq.mansart.jpa.core.mapping;
 import io.vidocq.mansart.jpa.core.access.Accesses;
 import io.vidocq.mansart.jpa.core.jdbc.type.ValueBinder;
 import io.vidocq.mansart.jpa.core.jdbc.type.ValueBinders;
+import io.vidocq.mansart.jpa.core.model.AccessKind;
 import io.vidocq.mansart.jpa.core.model.AssociationAttribute;
 import io.vidocq.mansart.jpa.core.model.AttributeModel;
 import io.vidocq.mansart.jpa.core.model.BasicAttribute;
+import io.vidocq.mansart.jpa.core.model.ColumnModel;
 import io.vidocq.mansart.jpa.core.model.EmbeddableModel;
 import io.vidocq.mansart.jpa.core.model.EmbeddedAttribute;
 import io.vidocq.mansart.jpa.core.model.EntityModel;
 import io.vidocq.mansart.jpa.core.model.IdModel;
 import io.vidocq.mansart.jpa.core.model.PersistenceUnitModel;
+import io.vidocq.mansart.jpa.core.model.ValueConversion;
 import io.vidocq.mansart.jpa.core.model.build.EntityModelBuilder;
+import io.vidocq.mansart.jpa.core.model.source.ClassFileSource;
 import io.vidocq.mansart.jpa.core.spi.ManagedAccess;
 import io.vidocq.mansart.jpa.core.spi.ManagedAccessProvider;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.PersistenceException;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -101,9 +106,10 @@ public final class MappedUnit {
         for (EntityModel entity : model.entities()) {
             ManagedAccess embeddedId = entity.id() instanceof IdModel.Embedded embedded
                 ? embeddables.get(embedded.attribute().embeddable()) : null;
+            ManagedAccess idClass = entity.id() instanceof IdModel.ByIdClass byIdClass ? idClassAccess(byIdClass, loader) : null;
             StatePolicy state = StatePolicy.of(entity.attributes(), embeddables::get, valueBinders);
             mapped.put(entity.javaType(), new MappedEntity(entity, entities.get(entity.javaType()), root(model, entity), embeddedId,
-                state, m -> EntityStatements.of(m, MappedEntity.idIndexes(m), binders::get, embeddables::get),
+                idClass, state, m -> EntityStatements.of(m, MappedEntity.idIndexes(m), binders::get, embeddables::get),
                 ranks.get(entity.javaType())));
         }
         return new MappedUnit(model, entities, embeddables, binders, mapped);
@@ -149,6 +155,36 @@ public final class MappedUnit {
             }
         }
         return ranks;
+    }
+
+    /**
+     * The access of an {@code @IdClass} (§2.4.1): one attribute per identifier attribute of the entity, in the same
+     * order, read by field when the id class declares a field of that name, else by property. Relationship
+     * identifiers (derived identities) come with P5.
+     */
+    private static ManagedAccess idClassAccess(IdModel.ByIdClass id, ClassLoader loader) {
+        if (id.attributes().stream().anyMatch(a -> !(a instanceof BasicAttribute))) {
+            return null;
+        }
+        ClassFileSource source = new ClassFileSource(loader);
+        List<AttributeModel> attributes = new ArrayList<>();
+        for (AttributeModel part : id.attributes()) {
+            Class<?> owner = fieldOwner(id.idClass(), part.name(), source);
+            attributes.add(new BasicAttribute(part.name(), part.javaType(), owner != null ? AccessKind.FIELD : AccessKind.PROPERTY,
+                owner != null ? owner : id.idClass(), ColumnModel.defaultFor(part.name()), true, FetchType.EAGER, false,
+                new ValueConversion.None(), false));
+        }
+        return Accesses.of(id.idClass(), id.idClass().isRecord(), attributes);
+    }
+
+    /** The class of {@code type}'s hierarchy that declares the field {@code name}, or {@code null}. */
+    private static Class<?> fieldOwner(Class<?> type, String name, ClassFileSource source) {
+        for (Class<?> current = type; current != null && current != Object.class; current = current.getSuperclass()) {
+            if (source.read(current.getName()).flatMap(info -> info.field(name)).filter(f -> !f.isStatic()).isPresent()) {
+                return current;
+            }
+        }
+        return null;
     }
 
     /** The topmost entity class of the hierarchy of {@code entity}. */

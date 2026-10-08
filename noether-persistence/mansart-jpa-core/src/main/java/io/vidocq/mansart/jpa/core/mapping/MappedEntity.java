@@ -24,6 +24,7 @@ import io.vidocq.mansart.jpa.core.model.EntityModel;
 import io.vidocq.mansart.jpa.core.model.IdModel;
 import io.vidocq.mansart.jpa.core.session.NotYet;
 import io.vidocq.mansart.jpa.core.spi.ManagedAccess;
+import java.lang.invoke.MethodType;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
@@ -39,13 +40,15 @@ public final class MappedEntity {
     private final Class<?> root;
     private final int[] idAttributes;
     private final ManagedAccess embeddedId;
+    private final ManagedAccess idClass;
     private final StatePolicy state;
     private final EntityStatements statements;
     private final int rank;
 
-    MappedEntity(EntityModel model, ManagedAccess access, Class<?> root, ManagedAccess embeddedId, StatePolicy state,
-            Function<EntityModel, EntityStatements> statements, int rank) {
+    MappedEntity(EntityModel model, ManagedAccess access, Class<?> root, ManagedAccess embeddedId, ManagedAccess idClass,
+            StatePolicy state, Function<EntityModel, EntityStatements> statements, int rank) {
         this.model = model;
+        this.idClass = idClass;
         this.state = state;
         this.access = access;
         this.root = root;
@@ -134,6 +137,52 @@ public final class MappedEntity {
     }
 
     /** A generated integral identifier still 0 is a primitive the database has not assigned yet. */
+    /**
+     * The identity of the identifier an application gives (§3.2.8 find, getReference): a value of the identifier type
+     * for a single identifier, an instance of the embeddable for an {@code @EmbeddedId}, of the id class for an
+     * {@code @IdClass}; anything else is an {@link IllegalArgumentException}.
+     */
+    public Object key(Object primaryKey) {
+        if (primaryKey == null) {
+            throw new IllegalArgumentException("The identifier of " + model.entityName() + " cannot be null");
+        }
+        return switch (model.id()) {
+            case IdModel.Single single -> {
+                Class<?> type = boxed(single.attribute().javaType());
+                if (!type.isInstance(primaryKey)) {
+                    throw invalid(primaryKey, type);
+                }
+                yield primaryKey;
+            }
+            case IdModel.Embedded embedded -> {
+                if (!embedded.attribute().javaType().isInstance(primaryKey)) {
+                    throw invalid(primaryKey, embedded.attribute().javaType());
+                }
+                Object[] parts = new Object[embeddedId.attributes().size()];
+                embeddedId.read(primaryKey, parts);
+                yield CompositeId.of(parts);
+            }
+            case IdModel.ByIdClass byIdClass -> {
+                if (!byIdClass.idClass().isInstance(primaryKey)) {
+                    throw invalid(primaryKey, byIdClass.idClass());
+                }
+                Object[] parts = new Object[idClass.attributes().size()];
+                idClass.read(primaryKey, parts);
+                yield CompositeId.of(parts);
+            }
+            case IdModel.Derived _ -> throw NotYet.milestone("P5", "derived identities");
+        };
+    }
+
+    private IllegalArgumentException invalid(Object primaryKey, Class<?> expected) {
+        return new IllegalArgumentException("The identifier of " + model.entityName() + " is a " + expected.getName() + ", not a "
+            + primaryKey.getClass().getName());
+    }
+
+    private static Class<?> boxed(Class<?> type) {
+        return MethodType.methodType(type).wrap().returnType();
+    }
+
     private static Object assigned(Object value, boolean generated) {
         return switch (value) {
             case null -> null;

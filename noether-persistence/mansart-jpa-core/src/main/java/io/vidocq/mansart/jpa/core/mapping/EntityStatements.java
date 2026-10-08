@@ -245,6 +245,70 @@ public final class EntityStatements {
         return values;
     }
 
+    /**
+     * Writes into {@code state} the attributes a row holds, from its column values in {@link #columns()} order: basic
+     * values as read, embeddables built from their columns (a record through its canonical constructor), {@code null}
+     * when all their columns are SQL {@code NULL} ({@code nulls}: a primitive component reads 0 from a {@code NULL}).
+     * Attributes without columns (relationships, P5) keep what {@code state} holds.
+     */
+    public void hydrate(Object[] values, boolean[] nulls, Object[] state) {
+        check();
+        int c = 0;
+        while (c < columns.size()) {
+            Column column = columns.get(c);
+            if (column.path().length == 0) {
+                state[column.attribute()] = values[c++];
+                continue;
+            }
+            int end = c;
+            while (end < columns.size() && columns.get(end).attribute() == column.attribute()) {
+                end++;
+            }
+            state[column.attribute()] = embeddable(values, nulls, c, end, 0);
+            c = end;
+        }
+    }
+
+    /** The embeddable at {@code depth} whose columns are {@code values[from, to)}; {@code null} if they are all NULL. */
+    private Object embeddable(Object[] values, boolean[] nulls, int from, int to, int depth) {
+        boolean empty = true;
+        for (int c = from; c < to && empty; c++) {
+            empty = nulls[c];
+        }
+        if (empty) {
+            return null;
+        }
+        ManagedAccess access = columns.get(from).accesses()[depth];
+        Object[] components = new Object[access.attributes().size()];
+        int c = from;
+        while (c < to) {
+            Column column = columns.get(c);
+            int component = column.path()[depth];
+            if (column.path().length == depth + 1) {
+                components[component] = values[c++];
+                continue;
+            }
+            int end = c;
+            while (end < to && columns.get(end).path()[depth] == component) {
+                end++;
+            }
+            components[component] = embeddable(values, nulls, c, end, depth + 1);
+            c = end;
+        }
+        if (access.type().isRecord()) {
+            return access.construct(components);
+        }
+        Object instance = access.instantiate();
+        access.write(instance, components);
+        return instance;
+    }
+
+    /** The values of the key columns of {@code id}: the identifier, or the parts of a {@link CompositeId}. */
+    public Object[] keyValues(Object id) {
+        check();
+        return id instanceof CompositeId composite ? composite.values().toArray() : new Object[] {id};
+    }
+
     public Insert insert() {
         check();
         return insert;

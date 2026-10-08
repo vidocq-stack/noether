@@ -20,7 +20,10 @@
 package io.vidocq.mansart.jpa.core.session;
 
 import io.vidocq.mansart.jpa.core.bootstrap.UnitSettings;
+import io.vidocq.mansart.jpa.core.context.EntityKey;
+import io.vidocq.mansart.jpa.core.context.ManagedEntity;
 import io.vidocq.mansart.jpa.core.context.PersistenceContext;
+import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
 import jakarta.persistence.CacheRetrieveMode;
 import jakarta.persistence.CacheStoreMode;
 import jakarta.persistence.ConnectionConsumer;
@@ -28,6 +31,7 @@ import jakarta.persistence.ConnectionFunction;
 import jakarta.persistence.EntityGraph;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
+import jakarta.persistence.EntityNotFoundException;
 import jakarta.persistence.EntityTransaction;
 import jakarta.persistence.FindOption;
 import jakarta.persistence.FlushModeType;
@@ -53,6 +57,8 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.function.Function;
 
 /**
  * An application-managed, resource-local {@link EntityManager} (§7.2.1). Not thread-safe, by specification.
@@ -314,7 +320,10 @@ final class EntityManagerImpl implements EntityManager {
             throw failed(new TransactionRequiredException("flush() needs an active transaction"));
         }
         try {
-            transaction.onConnection(this::flush);
+            transaction.onConnection(connection -> {
+                flush(connection);
+                return null;
+            });
         } catch (RuntimeException e) {
             throw failed(e);
         }
@@ -334,6 +343,30 @@ final class EntityManagerImpl implements EntityManager {
         context.clear();
     }
 
+    /** The mapped entity {@code entityClass}; {@link IllegalArgumentException} if it is not an entity of the unit. */
+    private MappedEntity type(Class<?> entityClass) {
+        if (entityClass == null) {
+            throw new IllegalArgumentException("The entity class cannot be null");
+        }
+        return factory.mapping().entity(entityClass).orElseThrow(() -> new IllegalArgumentException(entityClass.getName()
+            + " is not an entity of persistence unit " + factory.getName()));
+    }
+
+    /**
+     * Runs {@code work} on the connection of the active transaction, or, outside a transaction (an extended
+     * persistence context reads without one, §7.7.1), on a connection of its own, released at the end.
+     */
+    private <T> T onConnection(Function<Connection, T> work) {
+        if (transaction.isActive()) {
+            return transaction.onConnection(work);
+        }
+        try (Connection connection = factory.connections().acquire()) {
+            return work.apply(connection);
+        } catch (SQLException e) {
+            throw new PersistenceException("Unable to obtain a connection: " + e.getMessage(), e);
+        }
+    }
+
     /** The persistence context of this entity manager (the entity operations of P4 drive it). */
     PersistenceContext context() {
         return context;
@@ -348,7 +381,12 @@ final class EntityManagerImpl implements EntityManager {
     @Override
     public boolean contains(Object entity) {
         checkOpen();
-        throw failed(NotYet.milestone("P4", "contains"));
+        try {
+            type(entity.getClass());
+            return context.contains(entity);
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
     }
 
     @Override
@@ -379,32 +417,52 @@ final class EntityManagerImpl implements EntityManager {
 
     @Override
     public <T> T find(Class<T> entityClass, Object primaryKey) {
-        checkOpen();
-        throw failed(NotYet.milestone("P4", "find"));
+        return find(entityClass, primaryKey, LockModeType.NONE);
     }
 
+    /** The properties are hints (§3.11): those of P4 are about locks, which come with the locking slice. */
     @Override
     public <T> T find(Class<T> entityClass, Object primaryKey, Map<String, Object> properties) {
-        checkOpen();
-        throw failed(NotYet.milestone("P4", "find"));
+        return find(entityClass, primaryKey, LockModeType.NONE);
     }
 
     @Override
     public <T> T find(Class<T> entityClass, Object primaryKey, LockModeType lockMode) {
         checkOpen();
-        throw failed(NotYet.milestone("P4", "find"));
+        try {
+            if (lockMode != null && lockMode != LockModeType.NONE) {
+                throw NotYet.milestone("P4", "locks other than NONE");
+            }
+            MappedEntity type = type(entityClass);
+            Object id = type.key(primaryKey);
+            Optional<ManagedEntity> known = context.find(new EntityKey(type.root(), id));
+            if (known.isPresent()) {
+                // a removed instance is no longer found; another class of the hierarchy is not this one (P6)
+                Object instance = known.get().instance();
+                return known.get().status() == ManagedEntity.Status.MANAGED && entityClass.isInstance(instance)
+                    ? entityClass.cast(instance) : null;
+            }
+            return entityClass.cast(onConnection(connection -> factory.loader(connection).load(type, id, connection, context)));
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
     }
 
     @Override
     public <T> T find(Class<T> entityClass, Object primaryKey, LockModeType lockMode, Map<String, Object> properties) {
-        checkOpen();
-        throw failed(NotYet.milestone("P4", "find"));
+        return find(entityClass, primaryKey, lockMode);
     }
 
+    /** 3.2: the options of a find; the cache modes and the timeout have no effect without a second-level cache (P11). */
     @Override
     public <T> T find(Class<T> entityClass, Object primaryKey, FindOption... options) {
-        checkOpen();
-        throw failed(NotYet.milestone("P4", "find"));
+        LockModeType lockMode = LockModeType.NONE;
+        for (FindOption option : options) {
+            if (option instanceof LockModeType mode) {
+                lockMode = mode;
+            }
+        }
+        return find(entityClass, primaryKey, lockMode);
     }
 
     @Override
@@ -415,14 +473,38 @@ final class EntityManagerImpl implements EntityManager {
 
     @Override
     public <T> T getReference(Class<T> entityClass, Object primaryKey) {
-        checkOpen();
-        throw failed(NotYet.milestone("P4", "getReference"));
+        // without proxies, a reference is the instance itself: §3.2.8 allows the EntityNotFoundException now
+        T instance = find(entityClass, primaryKey);
+        if (instance == null) {
+            throw failed(new EntityNotFoundException("No " + entityClass.getName() + " has the identifier " + primaryKey));
+        }
+        return instance;
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public <T> T getReference(T entity) {
         checkOpen();
-        throw failed(NotYet.milestone("P4", "getReference"));
+        MappedEntity type;
+        Object id;
+        try {
+            type = type(entity.getClass());
+            id = type.id(entity);
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
+        if (id == null) {
+            throw failed(new IllegalArgumentException("The instance of " + type.model().entityName() + " has no identifier"));
+        }
+        Optional<ManagedEntity> known = context.find(new EntityKey(type.root(), id));
+        if (known.isPresent()) {
+            return (T) known.get().instance();
+        }
+        Object loaded = onConnection(connection -> factory.loader(connection).load(type, id, connection, context));
+        if (loaded == null) {
+            throw failed(new EntityNotFoundException("No " + type.model().entityName() + " has the identifier " + id));
+        }
+        return (T) loaded;
     }
 
     @Override
