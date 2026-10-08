@@ -32,7 +32,23 @@ final class ClassFiles {
     private ClassFiles() {
     }
 
-    /** Parses the class file of {@code type}; class files are never encapsulated, even in a named module. */
+    /**
+     * Parses the class file of {@code type}, or returns {@code null} if there is none to read: a hidden class, a
+     * class defined at run time such as a persistence provider's lazy subclass. Class files are never
+     * encapsulated, even in a named module.
+     */
+    static ClassModel tryParse(Class<?> type) {
+        if (type.isHidden()) {
+            return null;
+        }
+        try (InputStream in = type.getResourceAsStream("/" + type.getName().replace('.', '/') + ".class")) {
+            return in == null ? null : ClassFile.of().parse(in.readAllBytes());
+        } catch (IOException e) {
+            throw new ValidationException("Unable to read the class file of " + type.getName(), e);
+        }
+    }
+
+    /** Parses the class file of {@code type}, which must exist. */
     static ClassModel parse(Class<?> type) {
         String resource = "/" + type.getName().replace('.', '/') + ".class";
         try (InputStream in = type.getResourceAsStream(resource)) {

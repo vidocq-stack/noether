@@ -338,9 +338,31 @@ Spec: §3.10 (second-level cache), §3.7 (Bean Validation).
       This item is **blocked** until that brick delivers a usable `ValidatorFactory`; the
       Mansart side can be written against the API alone and tested with the provider-less paths.
 
-**TCK gate**: `core.cache.*`, `se.cache.*`, the two `entityManagerFactory` validation tests
-(the provider-less one runs in the second failsafe execution; the other needs the validation
-brick on the TCK classpath).
+**What the TCK really asks of Bean Validation** (read in `persistence-tck-spec-tests-3.2.1-sources.jar`,
+checked 2026-10-08): no test declares a constraint, calls a `Validator` or expects a `ConstraintViolation`.
+Bean Validation only appears through
+
+- the `ValidationMode` enum (`core/enums/Client#validationModeValueOfTest`,
+  `se/pluggability/contracts/resource_local/Client#getValidationMode`): API only, no provider involved;
+- `se/entityManagerFactory/Client2#createEntityManagerFactoryNoBeanValidatorTest`, which sets
+  `jakarta.persistence.validation.mode=callback` and expects a `PersistenceException`. It runs in the
+  **second** failsafe execution, with **no Bean Validation provider and no `jakarta.validation-api` on the
+  class path**.
+
+Consequences for this module and for the TCK runner:
+
+- the persistence provider must not link `jakarta.validation` classes eagerly: detect the provider
+  reflection-free (`ServiceLoader` / guarded class loading) and only then touch the API, otherwise the second
+  execution fails with a `NoClassDefFoundError` instead of a `PersistenceException`;
+- execution 1 puts `jakarta.validation-api` and `mansart-validation-core` on the class path (the
+  reference runner does the same with its `validator.classes`); execution 2 puts neither;
+- `Validation.buildDefaultValidatorFactory()` with `mansart-validation-core` was checked against every
+  loadable class of the TCK jars (617 classes, 582 instances): no failure. The brick tolerates classes with no
+  class file (a provider's generated lazy subclasses), honours a `TraversableResolver` imposed through
+  `ValidatorFactory.usingContext()`, and is safe to call from many virtual threads.
+
+**TCK gate**: `core.cache.*`, `se.cache.*`, the `entityManagerFactory` validation test (second execution, no
+provider).
 
 ### P12 — Certification, performance, ecosystem ⏳
 

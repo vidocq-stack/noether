@@ -558,6 +558,103 @@ class ValidatorEngineTest {
         assertThat(nodes.get(2).isInIterable()).isFalse();
     }
 
+    // ---- classes generated at run time (a persistence provider's lazy proxies) ----------------------------
+
+    /** A subclass of {@link Address} defined as a hidden class: it has no class file to read. */
+    private static Address hiddenSubclassOfAddress(String street, String zip) throws Throwable {
+        java.lang.constant.ClassDesc self = java.lang.constant.ClassDesc.of(ValidatorEngineTest.class.getPackageName(), "AddressProxy");
+        java.lang.constant.ClassDesc parent = java.lang.constant.ClassDesc.of(Address.class.getName());
+        java.lang.constant.MethodTypeDesc init = java.lang.constant.MethodTypeDesc.of(java.lang.constant.ConstantDescs.CD_void,
+            java.lang.constant.ConstantDescs.CD_String, java.lang.constant.ConstantDescs.CD_String);
+        byte[] bytes = java.lang.classfile.ClassFile.of().build(self, builder -> {
+            builder.withSuperclass(parent);
+            builder.withMethodBody(java.lang.constant.ConstantDescs.INIT_NAME, init, java.lang.classfile.ClassFile.ACC_PUBLIC,
+                code -> code.aload(0).aload(1).aload(2).invokespecial(parent, java.lang.constant.ConstantDescs.INIT_NAME, init).return_());
+        });
+        java.lang.invoke.MethodHandles.Lookup lookup = java.lang.invoke.MethodHandles.lookup().defineHiddenClass(bytes, true);
+        return (Address) lookup.findConstructor(lookup.lookupClass(),
+            java.lang.invoke.MethodType.methodType(void.class, String.class, String.class)).invoke(street, zip);
+    }
+
+    @Test
+    void aClassGeneratedAtRunTimeIsValidatedWithTheConstraintsOfItsSuperclasses() throws Throwable {
+        Address proxy = hiddenSubclassOfAddress(null, "12345");
+        assertThat(proxy.getClass().getName()).contains("AddressProxy");
+        Set<ConstraintViolation<Address>> violations = validator.validate(proxy);
+        assertThat(paths(violations)).containsExactly("street");
+        assertThat(violations.iterator().next().getRootBeanClass()).isSameAs(proxy.getClass());
+        assertThat(paths(validator.validate(hiddenSubclassOfAddress("s", "1"), Strict.class))).containsExactly("zip");
+        assertThat(validator.getConstraintsForClass(proxy.getClass()).getConstraintsForProperty("street")).isNotNull();
+        assertThat(validator.validateProperty(proxy, "street")).hasSize(1);
+        assertThat(validator.validateValue(proxy.getClass().asSubclass(Address.class), "street", null)).hasSize(1);
+    }
+
+    @Test
+    void aGeneratedClassIsCascadedInto() throws Throwable {
+        Person person = new Person("Alice");
+        person.home = hiddenSubclassOfAddress(null, "12345");
+        assertThat(paths(validator.validate(person))).contains("home.street");
+    }
+
+    // ---- what a persistence provider does (Jakarta Persistence 3.7) ---------------------------------------
+
+    @Test
+    void aPersistenceProviderCanBuildTheDefaultFactoryAndImposeItsOwnTraversableResolver() {
+        jakarta.validation.TraversableResolver lazyAware = new jakarta.validation.TraversableResolver() {
+            @Override
+            public boolean isReachable(Object o, Path.Node n, Class<?> r, Path p, java.lang.annotation.ElementType t) {
+                return !n.getName().equals("nickname"); // as if the attribute were not loaded
+            }
+
+            @Override
+            public boolean isCascadable(Object o, Path.Node n, Class<?> r, Path p, java.lang.annotation.ElementType t) {
+                return true;
+            }
+        };
+        try (ValidatorFactory byDefault = Validation.buildDefaultValidatorFactory()) {
+            assertThat(byDefault.getClass().getSimpleName()).isEqualTo("MansartValidatorFactory");
+            Validator forPersistence = byDefault.usingContext().traversableResolver(lazyAware).getValidator();
+            Person person = new Person(null);
+            person.nickname(null);
+            Set<ConstraintViolation<Person>> violations = forPersistence.validate(person, Default.class);
+            assertThat(paths(violations)).contains("first").doesNotContain("nickname");
+            // the factory's own validators are not affected by the context of another one
+            assertThat(paths(byDefault.getValidator().validate(person))).contains("nickname");
+            jakarta.validation.ConstraintViolationException thrown = new jakarta.validation.ConstraintViolationException(violations);
+            assertThat(thrown.getConstraintViolations()).isEqualTo(violations);
+            assertThat(thrown.getMessage()).contains("first");
+        }
+    }
+
+    @Test
+    void validatingWithNoGroupAndWithTheDefaultGroupGiveTheSameResult() {
+        Person person = new Person(null);
+        assertThat(validator.validate(person)).isEqualTo(validator.validate(person, Default.class));
+    }
+
+    @Test
+    void manyThreadsCanValidateTheSameBeansAtOnce() throws Exception {
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            List<java.util.concurrent.Future<Integer>> results = new java.util.ArrayList<>();
+            for (int i = 0; i < 200; i++) {
+                results.add(executor.submit(() -> {
+                    Person person = new Person(null);
+                    person.home = new Address(null, "12345");
+                    return validator.validate(person).size();
+                }));
+            }
+            for (var result : results) {
+                assertThat(result.get()).isEqualTo(validator.validate(personWithBadHome()).size());
+            }
+        }
+    }
+
+    private static Person personWithBadHome() {
+        Person person = new Person(null);
+        person.home = new Address(null, "12345");
+        return person;
+    }
+
     private static List<Path.Node> nodesOfPath(Path path) {
         List<Path.Node> nodes = new java.util.ArrayList<>();
         path.forEach(nodes::add);

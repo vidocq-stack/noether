@@ -52,7 +52,15 @@ public final class BeanMetadata {
 
     private BeanMetadata(Class<?> type) {
         this.type = type;
-        ClassModel model = ClassFiles.parse(type);
+        ClassModel model = ClassFiles.tryParse(type);
+        if (model == null) {
+            // Nothing to read, e.g. a class generated at run time: it declares no constraint of its own, those of
+            // its superclasses and interfaces apply through the hierarchy.
+            this.classConstraints = List.of();
+            this.properties = List.of();
+            this.declaredPropertyNames = Set.of();
+            return;
+        }
         ClassLoader loader = type.getClassLoader();
         this.classConstraints = List.copyOf(constraintsOf(
             model.findAttribute(Attributes.runtimeVisibleAnnotations()).map(a -> a.annotations()).orElse(List.of()), loader));
