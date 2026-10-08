@@ -122,6 +122,16 @@ class FindTest {
     }
 
     @Test
+    void aLoadedInstanceHoldsTheIdentifierObjectItWasFoundWith() throws SQLException { // some code compares with ==
+        try (Statement insert = database.createStatement()) {
+            insert.executeUpdate("insert into Customer (id, name) values (1000, 'outside the Long cache')");
+        }
+        Long id = 1000L; // not a cached Long: the row's would be another object
+        Customer customer = em.find(Customer.class, id);
+        assertThat(attribute(customer, "id")).isSameAs(id);
+    }
+
+    @Test
     void aMissingRowIsNull() {
         assertThat(em.find(Customer.class, 99L)).isNull();
     }

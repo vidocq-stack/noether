@@ -20,6 +20,7 @@
 package io.vidocq.mansart.jpa.core.flush;
 
 import io.vidocq.mansart.jpa.core.context.PersistenceContext;
+import io.vidocq.mansart.jpa.core.mapping.CompositeId;
 import io.vidocq.mansart.jpa.core.mapping.EntityStatements;
 import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
 import jakarta.persistence.LockModeType;
@@ -64,6 +65,12 @@ public final class EntityLoader {
         }
         Object instance = type.access().instantiate();
         Object[] state = state(type, instance, row);
+        if (!(id instanceof CompositeId)) {
+            // the identifier object the application found it with, as other providers keep it (equal to the one read)
+            int index = type.idAttributes()[0];
+            state[index] = id;
+            type.access().set(instance, index, id);
+        }
         Object managed = context.loaded(instance, type, type.state().snapshot(state)).instance();
         if (managed == instance) {
             type.callback("PostLoad", instance); // §3.6.3: once the state is loaded

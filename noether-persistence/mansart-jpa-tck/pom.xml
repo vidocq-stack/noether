@@ -57,7 +57,10 @@
         <tck.provider>io.vidocq.mansart.jpa.core.MansartPersistenceProvider</tck.provider>
         <!-- "key=value:key=value"; never empty, the TCK puts it in a java.util.Properties. -->
         <tck.provider.properties>io.vidocq.mansart.tck=true</tck.provider.properties>
-        <tck.second.level.cache>false</tck.second.level.cache>
+        <!-- true, the TCK's default: PMClientBase.clearCache() only clears the persistence context (em.clear()) when
+             second-level caching is declared supported, and 63 test classes count on that detachment. The se.cache
+             classes that check the cache itself wait for the cache of milestone P11. -->
+        <tck.second.level.cache>true</tck.second.level.cache>
 
         <tck.jdbc.driver>org.postgresql.Driver</tck.jdbc.driver>
         <tck.jdbc.url>jdbc:postgresql://localhost:5432/jpatck</tck.jdbc.url>
