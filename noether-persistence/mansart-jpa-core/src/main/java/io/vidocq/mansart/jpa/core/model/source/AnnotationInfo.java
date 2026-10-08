@@ -41,6 +41,18 @@ public final class AnnotationInfo {
     }
 
     /** The binary name of the annotation type. */
+    /**
+     * An annotation read by another source than the class files (the annotation processor reads the elements of the
+     * compilation). Values are encoded as {@link ClassFileSource} encodes them: boxed primitives, {@code String},
+     * {@code ClassDesc} for a class, {@link EnumValue}, {@code AnnotationInfo}, {@code List} for an array.
+     *
+     * @param written the members written on the annotation
+     * @param defaults the defaults of the annotation type
+     */
+    public static AnnotationInfo of(String typeName, Map<String, Object> written, Map<String, Object> defaults) {
+        return new AnnotationInfo(typeName, written, Map.copyOf(defaults));
+    }
+
     public String typeName() {
         return typeName;
     }

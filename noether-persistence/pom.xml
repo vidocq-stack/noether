@@ -76,6 +76,7 @@
 
     <modules>
         <module>mansart-jpa-core</module>
+        <module>mansart-jpa-processor</module>
         <module>mansart-jpa-module-it</module>
     </modules>
 
@@ -89,6 +90,11 @@
             <dependency>
                 <groupId>io.vidocq.mansart</groupId>
                 <artifactId>mansart-jpa-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.vidocq.mansart</groupId>
+                <artifactId>mansart-jpa-processor</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <!-- Unit tests run on H2 in memory; never at run time. -->
