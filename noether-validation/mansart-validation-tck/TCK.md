@@ -4,7 +4,30 @@ Official suite: **Jakarta Validation 3.1.1** TCK (`jakarta.validation:validation
 Maven Central), container-less run (TestNG + local Arquillian container, integration tests excluded).
 Command: `./run-official-tck-validation-3.1.sh` (from `mansart-validation/mansart-validation-tck/`).
 
-## Baseline — V0 (provider skeleton, no validation logic)
+## Progress
+
+| Milestone | Date | Tests run | Pass | Fail |
+|---|---|---:|---:|---:|
+| V0 — provider skeleton | 2026-10-08 | 981 | 12 | 969 |
+| V1 — bootstrap, `validation.xml`, factory lifecycle | 2026-10-08 | 981 | 42 | 939 |
+
+### V1 — what the 939 failures are
+
+| Count | Reason |
+|---:|---|
+| 618 | `UnsupportedOperationException: … does not validate yet (milestone V2)` — the validation engine. |
+| 283 | `UnsupportedOperationException: … (milestone V4)` — `ExecutableValidator` (method and constructor validation). |
+| 38 | Other: tests that expect an exception only the constraint-mapping parser or the value-extractor checks would raise (XML mapping files, duplicate declarations, `ValueExtractor` rules), or an assertion on them. All belong to V2/V3; not traced one by one. |
+
+Every failure in the bootstrap areas (`bootstrap`, `validatorfactory`, `validatorcontext`,
+`xmlconfiguration`) that is not in the third row is one of the 901 above: it builds a factory fine
+and then calls `validate(…)`. The 30 tests added by V1 are the bootstrap ones: `BootstrapConfiguration*`
+(executable types, mappings, properties), `validation.xml` versions 1.0 to 3.0 (the TCK found a
+wrong namespace/version table in the first draft of the parser), components declared in
+`validation.xml` (clock provider, message interpolator, traversable resolver, no-arg constructor
+failures), `default-provider` selection and the default components.
+
+## Baseline — V0 (history) (provider skeleton, no validation logic)
 
 | Date | Java | Tests run | Pass | Fail | Error | Skip |
 |---|---|---:|---:|---:|---:|---:|

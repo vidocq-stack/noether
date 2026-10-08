@@ -26,27 +26,25 @@ import jakarta.validation.spi.ConfigurationState;
 import jakarta.validation.spi.ValidationProvider;
 
 /**
- * The Mansart {@link ValidationProvider}. Skeleton only: it is discoverable, every bootstrap method
- * fails explicitly until milestone V1 of {@code ROADMAP.md}.
+ * The Mansart {@link ValidationProvider}: bootstrap (configuration, {@code validation.xml}, factory).
+ * The validation engine itself arrives with milestone V2.
  */
 public final class MansartValidationProvider implements ValidationProvider<MansartConfiguration> {
 
     @Override
     public MansartConfiguration createSpecializedConfiguration(BootstrapState state) {
-        throw notYetImplemented();
+        return new MansartConfigurationImpl(state);
     }
 
     @Override
     public Configuration<?> createGenericConfiguration(BootstrapState state) {
-        throw notYetImplemented();
+        return new MansartConfigurationImpl(state);
     }
 
     @Override
-    public ValidatorFactory buildValidatorFactory(ConfigurationState configurationState) {
-        throw notYetImplemented();
-    }
-
-    private static UnsupportedOperationException notYetImplemented() {
-        return new UnsupportedOperationException("Mansart Validation bootstrap is not implemented yet (milestone V1)");
+    public ValidatorFactory buildValidatorFactory(ConfigurationState state) {
+        return new MansartValidatorFactory(new Components(state.getMessageInterpolator(),
+            state.getTraversableResolver(), state.getConstraintValidatorFactory(), state.getParameterNameProvider(),
+            state.getClockProvider(), state.getValueExtractors()));
     }
 }

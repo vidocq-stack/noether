@@ -24,6 +24,7 @@
  */
 module io.vidocq.mansart.validation.core {
     requires transitive jakarta.validation;
+    requires java.xml;
 
     exports io.vidocq.mansart.validation.core;
 

@@ -102,20 +102,28 @@ because they exercise bootstrap behaviours that need no working provider (see `T
 
 **Done when**: both runners print a counter for the official suite and the baseline is in `TCK.md`.
 
-### V1 — Bootstrap, provider SPI, constraint model ⏳
+### V1 — Bootstrap, provider SPI, configuration ✅
 
-Spec: ch. 5 (bootstrapping, `ValidationProvider`, `validation.xml`), ch. 2 (constraint definition).
+Spec: ch. 5 (bootstrapping, `ValidationProvider`), ch. 8 (`validation.xml`).
 
-- [ ] `mansart-validation-core` module; `MansartValidationProvider` published via `provides` and
+- [x] `mansart-validation-core` module; `MansartValidationProvider` published via `provides` and
       `META-INF/services` (classpath **and** module path).
-- [ ] `Validation.buildDefaultValidatorFactory()`, `Configuration`, `validation.xml` parser (StAX),
-      `ValidatorFactory` / `Validator` lifecycle (`close`, `unwrap`), `ConstraintValidatorFactory`,
-      `MessageInterpolator`, `TraversableResolver`, `ParameterNameProvider`, `ClockProvider`
-      defaults.
-- [ ] Constraint annotation model: `@Constraint`, `groups`, `payload`, `message`, composed
-      constraints, `@ReportAsSingleViolation`, repeatable constraints.
+- [x] `Validation.buildDefaultValidatorFactory()`, `Configuration` (`MansartConfiguration`),
+      `ConfigurationState`, `validation.xml` parser (StAX, versions 1.0 to 3.0, no JAXB), programmatic
+      settings over `validation.xml` over defaults, `default-provider` delegation,
+      `ignoreXmlConfiguration`, mappings and properties kept for later milestones.
+- [x] `ValidatorFactory` / `ValidatorContext` / `Validator` lifecycle (`close`, `unwrap`,
+      `IllegalStateException` once closed); `Validator` methods throw until V2 / V4.
+- [x] Default components: `ConstraintValidatorFactory` (method handles, no `Constructor.newInstance`),
+      `ClockProvider`, `ParameterNameProvider`, `TraversableResolver`; `MessageInterpolator` is a
+      placeholder returning the template until V5.
+- [ ] *Moved to V2:* the constraint annotation model (`@Constraint`, groups, payload, composed and
+      repeatable constraints) — it is the metadata of the engine, not of the bootstrap.
+- [ ] *Moved to V2/V3:* constraint-mapping XML parsing and `ValueExtractor` registration checks
+      (the mappings are read and kept by `addMapping`, not parsed yet).
 
-**TCK gate**: bootstrap and `validation.xml` areas.
+**TCK gate**: bootstrap and `validation.xml` areas — 981 run, **42 pass** (from 12). The bootstrap
+tests that remain red all need `validate(…)`; see `mansart-validation-tck/TCK.md`.
 
 ### V2 — Built-in constraints and bean validation ⏳
 
