@@ -132,7 +132,8 @@ final class EntityOperations {
             throw new IllegalArgumentException("The instance of " + type.model().entityName() + " " + id
                 + " is detached: merge it before removing it (§3.2.3)");
         }
-        // a new instance is ignored
+        // a new instance is ignored, but the remove still cascades from it
+        cascade(entity, type, CascadeType.REMOVE, target -> remove(target, visited));
     }
 
     // ---- merge (§3.2.7.1) ---------------------------------------------------------------------------------
@@ -289,8 +290,8 @@ final class EntityOperations {
 
     /**
      * What a flush does before writing (§3.2.4): the persist cascades again from every managed instance, reaching what
-     * its relationships gained since; an instance it reaches through a relationship it owns that does not cascade
-     * persist must be managed or detached, a new one is an {@link IllegalStateException}.
+     * its relationships gained since; an instance it reaches through a relationship, owning or inverse, that does not
+     * cascade persist must be managed or detached, a new one is an {@link IllegalStateException}.
      */
     void beforeFlush() {
         Set<Object> visited = visited();
@@ -303,8 +304,8 @@ final class EntityOperations {
             cascade(entity, type, CascadeType.PERSIST, target -> persist(target, visited));
             List<AttributeModel> attributes = type.model().attributes();
             for (int i = 0; i < attributes.size(); i++) {
-                if (attributes.get(i) instanceof AssociationAttribute association && association.mappedBy() == null
-                        && !association.cascades(CascadeType.PERSIST)) {
+                // any relationship from X, the inverse side as well as the owning one
+                if (attributes.get(i) instanceof AssociationAttribute association && !association.cascades(CascadeType.PERSIST)) {
                     targets(type.access().get(entity, i), target -> requireNotNew(entity, association, target));
                 }
             }

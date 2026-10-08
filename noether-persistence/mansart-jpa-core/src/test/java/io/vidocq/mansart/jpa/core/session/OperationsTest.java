@@ -154,6 +154,16 @@ class OperationsTest {
     }
 
     @Test
+    void aNewInstanceReachedThroughTheInverseSideWithoutCascadeFailsTheFlush() { // §3.2.4: any relationship from X
+        Crew crew = new Crew(1, "Brigade");
+        crew.formerSailors().add(new Sailor(10, "Coco", new Crew(2, "never persisted")));
+        em.getTransaction().begin();
+        em.persist(crew);
+        assertThatThrownBy(() -> em.flush()).isInstanceOf(IllegalStateException.class);
+        em.getTransaction().rollback();
+    }
+
+    @Test
     void aDetachedInstanceReachedWithoutCascadeIsAllowed() throws SQLException { // §3.2.4: Y detached, X owns
         insertCrew(2, "Former", 0);
         Crew former = em.find(Crew.class, 2L);
@@ -187,6 +197,22 @@ class OperationsTest {
         em.remove(new Crew(2, "never stored")); // new: ignored
         assertThatThrownBy(() -> em.remove(new Crew(1, "detached"))).isInstanceOf(IllegalArgumentException.class);
         em.getTransaction().rollback();
+    }
+
+    @Test
+    void theRemoveOfANewInstanceStillCascades() throws SQLException { // §3.2.3: X new is ignored, the cascade is not
+        Crew crew = new Crew(1, "Brigade");
+        Sailor sailor = new Sailor(10, "Coco", crew);
+        inTransaction(() -> {
+            em.persist(crew);
+            crew.sailors().clear(); // or the flush would cascade the persist to the sailor again (§3.2.4)
+            Crew neverStored = new Crew(2, "never stored");
+            neverStored.sailors().add(sailor);
+            em.remove(neverStored);
+            assertThat(em.contains(sailor)).isFalse();
+        });
+        assertThat(count("Sailor")).isZero();
+        assertThat(count("Crew")).isEqualTo(1);
     }
 
     // ---- merge (§3.2.7.1) ---------------------------------------------------------------------------------

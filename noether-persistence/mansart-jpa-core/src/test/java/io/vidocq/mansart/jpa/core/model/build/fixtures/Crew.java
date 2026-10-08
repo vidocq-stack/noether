@@ -27,7 +27,7 @@ import jakarta.persistence.Version;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Every operation cascades to its sailors; versioned. */
+/** Every operation cascades to its sailors, none to its former sailors; versioned. */
 @Entity
 public class Crew {
     @Id
@@ -37,6 +37,8 @@ public class Crew {
     private int version;
     @OneToMany(mappedBy = "crew", cascade = CascadeType.ALL)
     private List<Sailor> sailors = new ArrayList<>();
+    @OneToMany(mappedBy = "formerCrew")
+    private List<Sailor> formerSailors = new ArrayList<>();
 
     protected Crew() {
     }
@@ -60,5 +62,9 @@ public class Crew {
 
     public List<Sailor> sailors() {
         return sailors;
+    }
+
+    public List<Sailor> formerSailors() {
+        return formerSailors;
     }
 }
