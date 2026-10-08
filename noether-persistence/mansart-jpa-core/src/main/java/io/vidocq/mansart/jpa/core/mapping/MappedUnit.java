@@ -58,7 +58,15 @@ public final class MappedUnit {
 
     /** Maps the managed classes named {@code classNames}, loaded with {@code loader}. */
     public static MappedUnit of(Collection<String> classNames, ClassLoader loader) {
-        PersistenceUnitModel model = EntityModelBuilder.build(classNames, loader);
+        return of(classNames, loader, false);
+    }
+
+    /**
+     * Maps the managed classes named {@code classNames}, loaded with {@code loader}; {@code mappingFiles} tells that
+     * the unit has XML mapping files, which may map what the annotations leave unmapped.
+     */
+    public static MappedUnit of(Collection<String> classNames, ClassLoader loader, boolean mappingFiles) {
+        PersistenceUnitModel model = EntityModelBuilder.build(classNames, loader, mappingFiles);
         ValueBinders valueBinders = new ValueBinders(loader);
         Map<Class<?>, ManagedAccess> entities = new IdentityHashMap<>();
         Map<EmbeddableModel, ManagedAccess> embeddables = new IdentityHashMap<>();
@@ -83,7 +91,8 @@ public final class MappedUnit {
                     }
                 }
                 default -> {
-                    // relationships and element collections are bound with their target (P5)
+                    // relationships and element collections are bound with their target (P5); pending attributes
+                    // with their mapping file
                 }
             }
         }

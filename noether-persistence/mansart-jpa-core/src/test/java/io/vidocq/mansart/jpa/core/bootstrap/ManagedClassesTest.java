@@ -103,6 +103,18 @@ class ManagedClassesTest {
     }
 
     @Test
+    void aJarUrlRootAndUnreadableEntriesAreHandled() throws Exception {
+        Path root = jarOf("root.jar", Customer.class);
+        try (java.nio.file.FileSystem zip = java.nio.file.FileSystems.newFileSystem(root)) {
+            Files.createDirectories(zip.getPath("com/acme"));
+            Files.write(zip.getPath("com/acme/Broken.class"), new byte[] {(byte) 0xCA, (byte) 0xFE, (byte) 0xBA, (byte) 0xBE, 0, 0});
+        }
+        URL jarUrl = java.net.URI.create("jar:" + root.toUri() + "!/").toURL();
+        PersistenceUnitDefinition unit = unit(List.of(), false, jarUrl, List.of());
+        assertThat(ManagedClasses.of(unit)).containsExactly(Customer.class.getName());
+    }
+
+    @Test
     void aUnitDefinedInCodeHasOnlyItsListedClasses() {
         PersistenceUnitDefinition unit = unit(List.of(Customer.class.getName()), false, null, List.of());
         assertThat(ManagedClasses.of(unit)).containsExactly(Customer.class.getName());

@@ -20,12 +20,14 @@
 package io.vidocq.mansart.jpa.core.bootstrap;
 
 import jakarta.persistence.PersistenceException;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.lang.classfile.Attributes;
 import java.lang.classfile.ClassFile;
 import java.lang.classfile.ClassModel;
+import java.net.JarURLConnection;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLConnection;
@@ -66,23 +68,37 @@ public final class ManagedClasses {
         return List.copyOf(classes);
     }
 
+    /**
+     * Whether the unit has XML mapping files (§8.2.1.6.2): {@code mapping-file} elements, or a
+     * {@code META-INF/orm.xml} visible to its class loader.
+     */
+    public static boolean hasMappingFiles(PersistenceUnitDefinition unit, ClassLoader loader) {
+        return !unit.mappingFileNames().isEmpty() || loader.getResource("META-INF/orm.xml") != null;
+    }
+
     private static void scan(URL location, Set<String> into) {
         try {
             if ("file".equals(location.getProtocol()) && Files.isDirectory(Path.of(location.toURI()))) {
                 Path root = Path.of(location.toURI());
                 try (Stream<Path> files = Files.walk(root)) {
-                    for (Path file : (Iterable<Path>) files.filter(f -> isClassFile(root.relativize(f).toString()))::iterator) {
-                        consider(root.relativize(file).toString().replace(java.io.File.separatorChar, '/'), Files.readAllBytes(file), into);
+                    for (Path file : (Iterable<Path>) files.filter(Files::isRegularFile)::iterator) {
+                        String path = root.relativize(file).toString().replace(File.separatorChar, '/');
+                        if (isClassFile(path)) {
+                            consider(Files.readAllBytes(file), into);
+                        }
                     }
                 }
             } else {
-                URLConnection connection = location.openConnection();
+                // jar:file:/x.jar!/ names the whole archive
+                URL archive = "jar".equals(location.getProtocol())
+                    ? ((JarURLConnection) location.openConnection()).getJarFileURL() : location;
+                URLConnection connection = archive.openConnection();
                 // the jar may have been rewritten under the same name since it was cached (see PersistenceUnits)
                 connection.setUseCaches(false);
                 try (InputStream in = connection.getInputStream(); JarInputStream jar = new JarInputStream(in)) {
                     for (JarEntry entry = jar.getNextJarEntry(); entry != null; entry = jar.getNextJarEntry()) {
                         if (!entry.isDirectory() && isClassFile(entry.getName())) {
-                            consider(entry.getName(), jar.readAllBytes(), into);
+                            consider(jar.readAllBytes(), into);
                         }
                     }
                 }
@@ -94,22 +110,23 @@ public final class ManagedClasses {
 
     /** A class file of the unnamed version; versioned entries, module and package descriptors are not classes. */
     private static boolean isClassFile(String path) {
-        return path.endsWith(".class") && !path.startsWith("META-INF/") && !path.endsWith("module-info.class")
-            && !path.endsWith("package-info.class");
+        String name = path.substring(path.lastIndexOf('/') + 1);
+        return name.endsWith(".class") && !path.startsWith("META-INF/") && !name.equals("module-info.class")
+            && !name.equals("package-info.class");
     }
 
-    private static void consider(String path, byte[] bytes, Set<String> into) {
-        ClassModel model;
+    /** Parsing is lazy: an attribute Mansart cannot read fails when it is reached, so the whole reading is guarded. */
+    private static void consider(byte[] bytes, Set<String> into) {
         try {
-            model = ClassFile.of().parse(bytes);
+            ClassModel model = ClassFile.of().parse(bytes);
+            boolean managed = model.findAttribute(Attributes.runtimeVisibleAnnotations()).stream()
+                .flatMap(a -> a.annotations().stream())
+                .anyMatch(a -> MANAGED.contains(a.className().stringValue()));
+            if (managed) {
+                into.add(model.thisClass().asInternalName().replace('/', '.'));
+            }
         } catch (IllegalArgumentException e) {
-            return; // not a class file Mansart can read: not a managed class
-        }
-        boolean managed = model.findAttribute(Attributes.runtimeVisibleAnnotations()).stream()
-            .flatMap(a -> a.annotations().stream())
-            .anyMatch(a -> MANAGED.contains(a.className().stringValue()));
-        if (managed) {
-            into.add(model.thisClass().asInternalName().replace('/', '.'));
+            // not a class file Mansart can read (newer version, obfuscated attributes): not a managed class
         }
     }
 }

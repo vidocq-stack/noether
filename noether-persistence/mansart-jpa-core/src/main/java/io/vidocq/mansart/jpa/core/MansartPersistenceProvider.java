@@ -125,7 +125,8 @@ public final class MansartPersistenceProvider implements PersistenceProvider {
             throw new PersistenceException("Persistence unit " + settings.unitName()
                 + " asks for validation mode CALLBACK, but no Bean Validation provider is available (§3.7.1)");
         }
-        MappedUnit mapping = MappedUnit.of(ManagedClasses.of(settings.definition()), loader);
+        MappedUnit mapping = MappedUnit.of(ManagedClasses.of(settings.definition()), loader,
+            ManagedClasses.hasMappingFiles(settings.definition(), loader));
         return new EntityManagerFactoryImpl(settings, ConnectionSources.of(settings, loader), mapping);
     }
 

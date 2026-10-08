@@ -31,6 +31,7 @@ import io.vidocq.mansart.jpa.core.model.EmbeddedAttribute;
 import io.vidocq.mansart.jpa.core.model.EntityModel;
 import io.vidocq.mansart.jpa.core.model.GenerationModel;
 import io.vidocq.mansart.jpa.core.model.IdModel;
+import io.vidocq.mansart.jpa.core.model.PendingAttribute;
 import io.vidocq.mansart.jpa.core.model.PersistenceUnitModel;
 import io.vidocq.mansart.jpa.core.model.SequenceGeneratorModel;
 import io.vidocq.mansart.jpa.core.model.TableGeneratorModel;
@@ -86,19 +87,29 @@ public final class EntityModelBuilder {
 
     private final ClassFileSource source;
     private final ClassLoader loader;
+    private final boolean mappingFiles;
     private final List<ClassInfo> listed = new ArrayList<>();
     private final List<ConverterModel> converters = new ArrayList<>();
     private final Map<String, EmbeddableModel> embeddables = new HashMap<>();
 
-    private EntityModelBuilder(ClassFileSource source, ClassLoader loader) {
+    private EntityModelBuilder(ClassFileSource source, ClassLoader loader, boolean mappingFiles) {
         this.source = source;
         this.loader = loader;
+        this.mappingFiles = mappingFiles;
     }
 
     /** The model of the managed classes named {@code classNames}, loaded with {@code loader}. */
     public static PersistenceUnitModel build(Collection<String> classNames, ClassLoader loader) {
-        EntityModelBuilder builder = new EntityModelBuilder(new ClassFileSource(loader), loader);
-        return builder.build(classNames);
+        return build(classNames, loader, false);
+    }
+
+    /**
+     * The model of the managed classes named {@code classNames}, loaded with {@code loader}; with
+     * {@code mappingFiles}, the attributes the annotations cannot map are left to the unit's mapping files
+     * ({@link PendingAttribute}) instead of being errors.
+     */
+    public static PersistenceUnitModel build(Collection<String> classNames, ClassLoader loader, boolean mappingFiles) {
+        return new EntityModelBuilder(new ClassFileSource(loader), loader, mappingFiles).build(classNames);
     }
 
     private PersistenceUnitModel build(Collection<String> classNames) {
@@ -159,7 +170,8 @@ public final class EntityModelBuilder {
             .filter(a -> a instanceof BasicAttribute b && b.version()).map(a -> (BasicAttribute) a).findFirst();
         Optional<Class<?>> superEntity = hierarchy.stream().filter(c -> c != info && c.isAnnotated(ENTITY))
             .reduce((first, second) -> second).map(c -> Types.load(c.name(), loader));
-        return new EntityModel(type, entityName, table(info, entityName), access, id, attributes, version, superEntity);
+        return new EntityModel(type, entityName, table(info, entityName), classAccess(info, access), id, attributes, version,
+            superEntity);
     }
 
     private void checkEntityClass(ClassInfo info) {
@@ -198,13 +210,16 @@ public final class EntityModelBuilder {
         return chain;
     }
 
-    /** §2.3.1: an explicit {@code @Access} on the entity, else the placement of the identifier in the hierarchy. */
+    /**
+     * §2.3.1: the default access type of the hierarchy is given by the placement of the identifier in the classes that
+     * do not declare their access type; an explicit {@code @Access} applies to its own class only (§2.3.2), and is the
+     * default only when every class of the hierarchy declares one.
+     */
     private AccessKind defaultAccess(ClassInfo entity, List<ClassInfo> hierarchy) {
-        Optional<AccessKind> explicit = explicitAccess(entity);
-        if (explicit.isPresent()) {
-            return explicit.get();
-        }
         for (ClassInfo info : hierarchy) {
+            if (explicitAccess(info).isPresent()) {
+                continue;
+            }
             if (info.fields().stream().anyMatch(f -> f.isAnnotated(ID) || f.isAnnotated(EMBEDDED_ID))) {
                 return AccessKind.FIELD;
             }
@@ -212,7 +227,10 @@ public final class EntityModelBuilder {
                 return AccessKind.PROPERTY;
             }
         }
-        throw new PersistenceException("The entity " + entity.name() + " has no identifier: no @Id or @EmbeddedId (§2.4)");
+        return explicitAccess(entity)
+            .or(() -> hierarchy.stream().map(EntityModelBuilder::explicitAccess).flatMap(Optional::stream).findFirst())
+            .orElseThrow(() -> new PersistenceException("The entity " + entity.name()
+                + " has no identifier: no @Id or @EmbeddedId (§2.4)"));
     }
 
     private AccessKind classAccess(ClassInfo info, AccessKind inherited) {
@@ -300,7 +318,15 @@ public final class EntityModelBuilder {
         if (element.isAnnotated(JPA + "Embedded") || isEmbeddable(type)) {
             return embedded(member, type, declaring);
         }
-        return basic(member, type, declaring, entityOverrides.get(member.name()));
+        ValueConversion conversion = conversion(member, type);
+        if (!(conversion instanceof ValueConversion.Converted) && !Types.isBasic(type) && !Serializable.class.isAssignableFrom(type)) {
+            if (mappingFiles) {
+                return new PendingAttribute(member.name(), type, member.access(), declaring, member.signature());
+            }
+            throw new PersistenceException("The attribute " + member.name() + " of " + member.owner().name() + " has type "
+                + type.getName() + ", which is neither basic, embeddable, serializable nor converted (§2.8)");
+        }
+        return basic(member, type, declaring, entityOverrides.get(member.name()), conversion);
     }
 
     private boolean isEmbeddable(Class<?> type) {
@@ -312,13 +338,9 @@ public final class EntityModelBuilder {
 
     // ---- basic attributes (§2.8, §11.1.6) ----------------------------------------------------------------
 
-    private BasicAttribute basic(Member member, Class<?> type, Class<?> declaring, AnnotationInfo override) {
+    private BasicAttribute basic(Member member, Class<?> type, Class<?> declaring, AnnotationInfo override,
+            ValueConversion conversion) {
         Annotated element = member.element();
-        ValueConversion conversion = conversion(member, type);
-        if (!(conversion instanceof ValueConversion.Converted) && !Types.isBasic(type) && !Serializable.class.isAssignableFrom(type)) {
-            throw new PersistenceException("The attribute " + member.name() + " of " + member.owner().name() + " has type "
-                + type.getName() + ", which is neither basic, embeddable, serializable nor converted (§2.8)");
-        }
         AnnotationInfo columnAnnotation = override != null ? override.annotation("column")
             : element.annotation(JPA + "Column").orElse(null);
         ColumnModel column = columnAnnotation == null ? ColumnModel.defaultFor(member.name()) : column(columnAnnotation, member.name());
@@ -433,7 +455,7 @@ public final class EntityModelBuilder {
     // ---- identifiers (§2.4, §11.1.20) -------------------------------------------------------------------
 
     private IdModel id(ClassInfo entity, List<ClassInfo> hierarchy, Map<AttributeModel, Member> members) {
-        List<BasicAttribute> ids = new ArrayList<>();
+        List<AttributeModel> ids = new ArrayList<>();
         Member single = null;
         for (Map.Entry<AttributeModel, Member> entry : members.entrySet()) {
             Annotated element = entry.getValue().element();
@@ -441,11 +463,16 @@ public final class EntityModelBuilder {
                 return new IdModel.Embedded((EmbeddedAttribute) entry.getKey());
             }
             if (element.isAnnotated(ID)) {
-                if (!(entry.getKey() instanceof BasicAttribute basic)) {
-                    throw new PersistenceException("The identifier " + entry.getKey().name() + " of " + entity.name()
-                        + " must be a basic attribute; an identifier of an embeddable type is an @EmbeddedId (§2.4)");
+                switch (entry.getKey()) {
+                    case BasicAttribute basic -> ids.add(basic);
+                    // §2.4.1: a derived identity, the relationship to the parent entity is (part of) the identifier
+                    case AssociationAttribute relationship when relationship.kind() == AssociationAttribute.Kind.MANY_TO_ONE
+                        || relationship.kind() == AssociationAttribute.Kind.ONE_TO_ONE -> ids.add(relationship);
+                    case PendingAttribute pending -> ids.add(pending);
+                    default -> throw new PersistenceException("The identifier " + entry.getKey().name() + " of " + entity.name()
+                        + " must be a basic attribute or a many-to-one or one-to-one relationship; an identifier of an "
+                        + "embeddable type is an @EmbeddedId (§2.4)");
                 }
-                ids.add(basic);
                 single = entry.getValue();
             }
         }
@@ -460,7 +487,12 @@ public final class EntityModelBuilder {
         if (ids.isEmpty()) {
             throw new PersistenceException("The entity " + entity.name() + " has no identifier: no @Id or @EmbeddedId (§2.4)");
         }
-        return new IdModel.Single(ids.getFirst(), generation(single, entity));
+        return switch (ids.getFirst()) {
+            case BasicAttribute basic -> new IdModel.Single(basic, generation(single, entity));
+            case AssociationAttribute relationship -> new IdModel.Derived(relationship);
+            default -> throw new PersistenceException("The identifier " + ids.getFirst().name() + " of " + entity.name()
+                + " is mapped by a mapping file, which Mansart does not read yet");
+        };
     }
 
     private Optional<GenerationModel> generation(Member member, ClassInfo entity) {

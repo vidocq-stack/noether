@@ -48,6 +48,8 @@ public final class ClassFileSource {
 
     private final ClassLoader loader;
     private final Map<String, Optional<ClassInfo>> classes = new ConcurrentHashMap<>();
+    /** Defaults of the other annotation types met by this source, absent ones included (an empty map). */
+    private final Map<String, Map<String, Object>> defaults = new ConcurrentHashMap<>();
 
     public ClassFileSource(ClassLoader loader) {
         this.loader = loader;
@@ -145,12 +147,14 @@ public final class ClassFileSource {
 
     /** The members' defaults of an annotation type, read from its own class file; empty if it cannot be found. */
     private Map<String, Object> defaults(String annotationType) {
-        Map<String, Object> shared = SHARED_DEFAULTS.get(annotationType);
-        if (shared != null) {
-            return shared;
+        Map<String, Object> known = annotationType.startsWith("jakarta.persistence.") ? SHARED_DEFAULTS.get(annotationType)
+            : this.defaults.get(annotationType);
+        if (known != null) {
+            return known;
         }
         byte[] bytes = bytes(annotationType);
         if (bytes == null) {
+            this.defaults.putIfAbsent(annotationType, Map.of());
             return Map.of();
         }
         Map<String, Object> defaults = new LinkedHashMap<>();
@@ -159,9 +163,8 @@ public final class ClassFileSource {
                 .ifPresent(d -> defaults.put(method.methodName().stringValue(), value(d.defaultValue())));
         }
         Map<String, Object> result = Map.copyOf(defaults);
-        if (annotationType.startsWith("jakarta.persistence.")) {
-            SHARED_DEFAULTS.putIfAbsent(annotationType, result);
-        }
+        // put, not computeIfAbsent: reading the defaults may read nested annotation types
+        (annotationType.startsWith("jakarta.persistence.") ? SHARED_DEFAULTS : this.defaults).putIfAbsent(annotationType, result);
         return result;
     }
 

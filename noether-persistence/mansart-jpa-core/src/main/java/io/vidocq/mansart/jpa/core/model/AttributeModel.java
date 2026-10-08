@@ -20,7 +20,8 @@
 package io.vidocq.mansart.jpa.core.model;
 
 /** A persistent attribute of an entity or an embeddable (§2.2). */
-public sealed interface AttributeModel permits BasicAttribute, EmbeddedAttribute, AssociationAttribute, ElementCollectionAttribute {
+public sealed interface AttributeModel permits BasicAttribute, EmbeddedAttribute, AssociationAttribute, ElementCollectionAttribute,
+        PendingAttribute {
 
     String name();
 

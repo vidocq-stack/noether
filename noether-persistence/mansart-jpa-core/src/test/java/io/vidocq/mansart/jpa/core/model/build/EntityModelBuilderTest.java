@@ -30,10 +30,16 @@ import io.vidocq.mansart.jpa.core.model.ElementCollectionAttribute;
 import io.vidocq.mansart.jpa.core.model.EmbeddedAttribute;
 import io.vidocq.mansart.jpa.core.model.ConverterModel;
 import io.vidocq.mansart.jpa.core.model.EntityModel;
+import io.vidocq.mansart.jpa.core.model.PendingAttribute;
 import io.vidocq.mansart.jpa.core.model.IdModel;
 import io.vidocq.mansart.jpa.core.model.PersistenceUnitModel;
 import io.vidocq.mansart.jpa.core.model.ValueConversion;
 import io.vidocq.mansart.jpa.core.model.build.fixtures.*;
+import io.vidocq.mansart.jpa.core.model.build.fixtures.Dependent;
+import io.vidocq.mansart.jpa.core.model.build.fixtures.DependentKey;
+import io.vidocq.mansart.jpa.core.model.build.fixtures.NamedDependent;
+import io.vidocq.mansart.jpa.core.model.build.fixtures.Parent;
+import io.vidocq.mansart.jpa.core.model.build.fixtures.XmlMapped;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.PersistenceException;
@@ -289,6 +295,51 @@ class EntityModelBuilderTest {
         PersistenceUnitModel unit = build(Invoice.class, MoneyConverter.class, UpperCaseConverter.class);
         assertThat(unit.converters().stream().collect(Collectors.<ConverterModel, Class<?>, Boolean>toMap(ConverterModel::converterClass, ConverterModel::autoApply)))
             .containsEntry(MoneyConverter.class, true).containsEntry(UpperCaseConverter.class, false);
+    }
+
+    @Test
+    void anAccessAnnotationOnTheEntityDoesNotChangeTheAccessOfItsSuperclasses() { // §2.3.1, §2.3.2
+        EntityModel contractor = build(Contractor.class).entity(Contractor.class).orElseThrow();
+        assertThat(contractor.access()).isEqualTo(AccessKind.PROPERTY);
+        assertThat(contractor.attribute("id").orElseThrow().access()).isEqualTo(AccessKind.FIELD);
+        assertThat(contractor.attribute("name").orElseThrow().access()).isEqualTo(AccessKind.FIELD);
+        assertThat(contractor.attribute("rate").orElseThrow().access()).isEqualTo(AccessKind.PROPERTY);
+        assertThat(contractor.id()).isInstanceOfSatisfying(IdModel.Single.class, id ->
+            assertThat(id.attribute().name()).isEqualTo("id"));
+    }
+
+    @Test
+    void aPropertyIsNamedAfterItsAccessorEvenUncapitalised() { // JavaBeans decapitalisation: getdescription
+        EntityModel lowercase = build(Lowercase.class).entity(Lowercase.class).orElseThrow();
+        assertThat(lowercase.attributes()).extracting(AttributeModel::name).containsExactly("id", "description");
+    }
+
+    @Test
+    void aRelationshipCanBeTheIdentifier() { // §2.4.1: derived identities
+        EntityModel dependent = build(Parent.class, Dependent.class).entity(Dependent.class).orElseThrow();
+        assertThat(dependent.id()).isInstanceOfSatisfying(IdModel.Derived.class, id -> {
+            assertThat(id.relationship().name()).isEqualTo("parent");
+            assertThat(id.relationship().kind()).isEqualTo(AssociationAttribute.Kind.ONE_TO_ONE);
+        });
+    }
+
+    @Test
+    void anIdClassMayGatherBasicAndRelationshipIdentifiers() { // §2.4.1.1
+        EntityModel dependent = build(Parent.class, NamedDependent.class).entity(NamedDependent.class).orElseThrow();
+        assertThat(dependent.id()).isInstanceOfSatisfying(IdModel.ByIdClass.class, id -> {
+            assertThat(id.idClass()).isEqualTo(DependentKey.class);
+            assertThat(id.attributes()).extracting(AttributeModel::name).containsExactly("name", "parent");
+            assertThat(id.attributes().get(1)).isInstanceOf(AssociationAttribute.class);
+        });
+    }
+
+    @Test
+    void withMappingFilesAnAttributeTheAnnotationsCannotMapIsLeftToThem() { // ch. 12 is read later (orm.xml milestone)
+        assertThatThrownBy(() -> build(Parent.class, XmlMapped.class)).isInstanceOf(PersistenceException.class)
+            .hasMessageContaining("parents");
+        EntityModel mapped = EntityModelBuilder.build(List.of(Parent.class.getName(), XmlMapped.class.getName()),
+            getClass().getClassLoader(), true).entity(XmlMapped.class).orElseThrow();
+        assertThat(mapped.attribute("parents").orElseThrow()).isInstanceOf(PendingAttribute.class);
     }
 
     // ---- relationships (P5) and invalid mappings ------------------------------------------------------------

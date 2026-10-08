@@ -29,9 +29,11 @@ import io.vidocq.mansart.jpa.core.model.PersistenceUnitModel;
 import io.vidocq.mansart.jpa.core.model.build.EntityModelBuilder;
 import io.vidocq.mansart.jpa.core.model.build.fixtures.Account;
 import io.vidocq.mansart.jpa.core.model.build.fixtures.Addr;
+import io.vidocq.mansart.jpa.core.model.build.fixtures.Contractor;
 import io.vidocq.mansart.jpa.core.model.build.fixtures.Customer;
 import io.vidocq.mansart.jpa.core.model.build.fixtures.Geo;
 import io.vidocq.mansart.jpa.core.model.build.fixtures.Level;
+import io.vidocq.mansart.jpa.core.model.build.fixtures.Lowercase;
 import io.vidocq.mansart.jpa.core.model.build.fixtures.Note;
 import io.vidocq.mansart.jpa.core.model.build.fixtures.Shop;
 import java.time.Instant;
@@ -115,6 +117,27 @@ class ManagedAccessTest {
         assertThat(access.get(note, index(model, "id"))).isEqualTo(9L);
         assertThat(access.get(note, index(model, "createdAt"))).isEqualTo(now);
         assertThat(access.get(note, index(model, "text"))).isEqualTo("hello");
+    }
+
+    @Test
+    void uncapitalisedAccessorsAreCalled() {
+        EntityModel model = model(Lowercase.class);
+        ManagedAccess access = ManagedAccess.of(model);
+        Lowercase entity = (Lowercase) access.instantiate();
+        access.set(entity, index(model, "description"), "plain");
+        assertThat(entity.getdescription()).isEqualTo("plain");
+        assertThat(access.get(entity, index(model, "description"))).isEqualTo("plain");
+    }
+
+    @Test
+    void eachClassOfTheHierarchyIsAccessedTheWayItIsMapped() {
+        EntityModel model = model(Contractor.class);
+        ManagedAccess access = ManagedAccess.of(model);
+        Contractor contractor = (Contractor) access.instantiate();
+        access.set(contractor, index(model, "id"), 3);
+        access.set(contractor, index(model, "rate"), 1.5f);
+        assertThat(contractor.getId()).isEqualTo(3);
+        assertThat(contractor.getRate()).isEqualTo(1.5f);
     }
 
     @Test

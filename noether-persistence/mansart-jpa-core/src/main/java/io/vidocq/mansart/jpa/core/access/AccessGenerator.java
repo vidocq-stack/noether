@@ -129,15 +129,11 @@ final class AccessGenerator {
         if (attribute.access() == AccessKind.FIELD) {
             return lookup.findGetter(owner, attribute.name(), attribute.javaType());
         }
-        MethodType type = MethodType.methodType(attribute.javaType());
-        if (attribute.javaType() == boolean.class) {
-            try {
-                return lookup.findVirtual(owner, "is" + capitalized(attribute.name()), type);
-            } catch (NoSuchMethodException e) {
-                // a boolean property may also have a get accessor
-            }
-        }
-        return lookup.findVirtual(owner, "get" + capitalized(attribute.name()), type);
+        List<String> names = attribute.javaType() == boolean.class
+            ? List.of("is" + capitalized(attribute.name()), "is" + attribute.name(), "get" + capitalized(attribute.name()),
+                "get" + attribute.name())
+            : List.of("get" + capitalized(attribute.name()), "get" + attribute.name());
+        return accessor(lookup, owner, names, MethodType.methodType(attribute.javaType()));
     }
 
     private static MethodHandle setter(MethodHandles.Lookup lookup, AttributeModel attribute) throws ReflectiveOperationException {
@@ -145,13 +141,26 @@ final class AccessGenerator {
         if (attribute.access() == AccessKind.FIELD) {
             return lookup.findSetter(owner, attribute.name(), attribute.javaType());
         }
-        MethodType type = MethodType.methodType(void.class, attribute.javaType());
-        try {
-            return lookup.findVirtual(owner, "set" + capitalized(attribute.name()), type);
-        } catch (NoSuchMethodException e) {
-            // a property named after an acronym (URL) keeps its case
-            return lookup.findVirtual(owner, "set" + attribute.name(), type);
+        return accessor(lookup, owner, List.of("set" + capitalized(attribute.name()), "set" + attribute.name()),
+            MethodType.methodType(void.class, attribute.javaType()));
+    }
+
+    /**
+     * The first of {@code names} declared with {@code type}: the property {@code description} may come from
+     * {@code getDescription} or from {@code getdescription}, and {@code URL} from {@code getURL} (JavaBeans
+     * decapitalisation, as {@code EntityModelBuilder} reads them).
+     */
+    private static MethodHandle accessor(MethodHandles.Lookup lookup, Class<?> owner, List<String> names, MethodType type)
+            throws NoSuchMethodException, IllegalAccessException {
+        NoSuchMethodException missing = null;
+        for (String name : names.stream().distinct().toList()) {
+            try {
+                return lookup.findVirtual(owner, name, type);
+            } catch (NoSuchMethodException e) {
+                missing = missing == null ? e : missing;
+            }
         }
+        throw missing;
     }
 
     private static String capitalized(String name) {

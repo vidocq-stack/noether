@@ -29,11 +29,18 @@ public sealed interface IdModel {
     record Single(BasicAttribute attribute, Optional<GenerationModel> generation) implements IdModel {
     }
 
-    /** Several {@code @Id} attributes, matching the fields or properties of an {@code @IdClass}. */
-    record ByIdClass(Class<?> idClass, List<BasicAttribute> attributes) implements IdModel {
+    /**
+     * Several {@code @Id} attributes, matching the fields or properties of an {@code @IdClass}: basic attributes, or
+     * relationships for a derived identity (§2.4.1.1).
+     */
+    record ByIdClass(Class<?> idClass, List<AttributeModel> attributes) implements IdModel {
         public ByIdClass {
             attributes = List.copyOf(attributes);
         }
+    }
+
+    /** A derived identity (§2.4.1.2): a single {@code @Id} relationship, the identifier of its parent entity. */
+    record Derived(AssociationAttribute relationship) implements IdModel {
     }
 
     /** An {@code @EmbeddedId}. */
