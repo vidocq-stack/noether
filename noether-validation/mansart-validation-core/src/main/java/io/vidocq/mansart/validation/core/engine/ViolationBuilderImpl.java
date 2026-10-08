@@ -42,11 +42,24 @@ final class ViolationBuilderImpl implements ConstraintViolationBuilder,
     private final ConstraintValidatorContextImpl context;
     private final String messageTemplate;
     private final List<NodeImpl> nodes;
+    private ValidationRun.Slot pendingSlot;
 
-    ViolationBuilderImpl(ConstraintValidatorContextImpl context, String messageTemplate, PathImpl base) {
+    ViolationBuilderImpl(ConstraintValidatorContextImpl context, String messageTemplate, PathImpl base, ValidationRun.Slot pendingSlot) {
         this.context = context;
         this.messageTemplate = messageTemplate;
         this.nodes = new ArrayList<>(base.nodes());
+        this.pendingSlot = pendingSlot;
+    }
+
+    /** The first node added takes the position of the bean in its container, if it has one. */
+    private ViolationBuilderImpl append(NodeImpl node) {
+        NodeImpl added = node;
+        if (pendingSlot != null) {
+            added = node.inContainer(pendingSlot.containerClass(), pendingSlot.typeArgumentIndex(), pendingSlot.index(), pendingSlot.key());
+            pendingSlot = null;
+        }
+        nodes.add(added);
+        return this;
     }
 
     @Override
@@ -57,20 +70,17 @@ final class ViolationBuilderImpl implements ConstraintViolationBuilder,
 
     @Override
     public ViolationBuilderImpl addPropertyNode(String name) {
-        nodes.add(NodeImpl.property(name));
-        return this;
+        return append(NodeImpl.property(name));
     }
 
     @Override
     public ViolationBuilderImpl addBeanNode() {
-        nodes.add(NodeImpl.bean());
-        return this;
+        return append(NodeImpl.bean());
     }
 
     @Override
     public ViolationBuilderImpl addContainerElementNode(String name, Class<?> containerType, Integer typeArgumentIndex) {
-        nodes.add(NodeImpl.containerElement(name, containerType, typeArgumentIndex));
-        return this;
+        return append(NodeImpl.containerElement(name, containerType, typeArgumentIndex));
     }
 
     @Override
@@ -78,8 +88,7 @@ final class ViolationBuilderImpl implements ConstraintViolationBuilder,
         if (!context.isExecutableContext()) {
             throw new IllegalStateException("A parameter node can only be added to the violation of a method or constructor constraint");
         }
-        nodes.add(NodeImpl.parameter("arg" + index, index));
-        return this;
+        return append(NodeImpl.parameter("arg" + index, index));
     }
 
     @Override

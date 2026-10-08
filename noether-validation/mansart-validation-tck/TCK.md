@@ -10,6 +10,24 @@ Command: `./run-official-tck-validation-3.1.sh` (from `mansart-validation/mansar
 |---|---|---:|---:|---:|
 | V0 — provider skeleton | 2026-10-08 | 981 | 12 | 969 |
 | V1 — bootstrap, `validation.xml`, factory lifecycle | 2026-10-08 | 981 | 42 | 939 |
+| V2 — validation engine, built-in constraints, metadata API for beans and properties | 2026-10-08 | 981 | 308 | 673 |
+
+### V2 — what the 673 failures are
+
+| Count | Milestone | What is missing |
+|---:|---|---|
+| 419 | V4 | `ExecutableValidator` (method and constructor validation), the executable descriptors (`MethodDescriptor`, `ParameterDescriptor`, …), `validationAppliesTo` rules, XML method and constructor mappings |
+| 100 | V3 | Container element constraints (`List<@NotNull String>`), value extractors, the container paths they produce |
+| 88 | V3 | XML constraint mappings (`constraint-mapping` files, `addMapping`): read and kept, not parsed yet |
+| 31 | V3 | Group sequences, `@GroupSequence` and Default group redefinition, group conversion |
+| 15 | V3 | Composing constraints: `@OverridesAttribute`, groups and payload propagation |
+| 16 | V5 | Message interpolation (`{param}`, bundles, `${…}` expressions) |
+| 4 | V3 / V5 | One message parameter, one container-element descriptor, two group conversions |
+
+Every failure of the 981 is traced to one of these, or to a missing feature of the same milestones. The
+engine itself (beans, properties, values, cascading into beans, lists, sets, maps and arrays, inheritance,
+groups with inheritance, validator resolution, `ConstraintValidatorContext`, the traversable resolver) has
+no failure left that is not blocked by one of them.
 
 ### V1 — what the 939 failures are
 

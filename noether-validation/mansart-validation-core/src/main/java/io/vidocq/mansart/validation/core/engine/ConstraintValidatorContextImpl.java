@@ -36,6 +36,7 @@ final class ConstraintValidatorContextImpl implements ConstraintValidatorContext
     private final String defaultTemplate;
     private final PathImpl defaultPath;
     private final PathImpl basePath;
+    private final ValidationRun.Slot pendingSlot;
     private boolean defaultDisabled;
     private final List<ViolationDraft> custom = new ArrayList<>();
 
@@ -45,11 +46,13 @@ final class ConstraintValidatorContextImpl implements ConstraintValidatorContext
      * @param defaultPath where the default violation is reported: same as {@code basePath} for a property
      *        constraint, {@code basePath} plus a bean node for a class-level constraint
      */
-    ConstraintValidatorContextImpl(ClockProvider clockProvider, String defaultTemplate, PathImpl basePath, PathImpl defaultPath) {
+    ConstraintValidatorContextImpl(ClockProvider clockProvider, String defaultTemplate, PathImpl basePath, PathImpl defaultPath,
+            ValidationRun.Slot pendingSlot) {
         this.clockProvider = clockProvider;
         this.defaultTemplate = defaultTemplate;
         this.basePath = basePath;
         this.defaultPath = defaultPath;
+        this.pendingSlot = pendingSlot;
     }
 
     @Override
@@ -72,7 +75,7 @@ final class ConstraintValidatorContextImpl implements ConstraintValidatorContext
         if (messageTemplate == null) {
             throw new IllegalArgumentException("The message template must not be null");
         }
-        return new ViolationBuilderImpl(this, messageTemplate, basePath);
+        return new ViolationBuilderImpl(this, messageTemplate, basePath, pendingSlot);
     }
 
     /** Parameter nodes only make sense for the constraints of a method or constructor, which come with V4. */

@@ -101,7 +101,7 @@ public final class ValidatorImpl implements Validator {
                     for (ConstraintDef constraint : property.constraints()) {
                         if (ValidationRun.appliesTo(constraint, group)) {
                             Object value = explicit ? given : property.get(bean);
-                            run.evaluate(constraint, value, property.valueType(), path, path, bean);
+                            run.evaluate(constraint, value, property.valueType(), path, path, null, bean);
                         }
                     }
                 }

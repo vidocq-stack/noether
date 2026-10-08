@@ -63,7 +63,8 @@ final class ValidationRun<T> {
     private final T rootBean;
     private final Class<T> rootBeanClass;
     private final Set<ConstraintViolation<T>> violations = new LinkedHashSet<>();
-    private final Map<Object, Set<Class<?>>> processed = new IdentityHashMap<>();
+    /** The beans being validated, with their group: the chain from the root to the bean under validation. */
+    private final Map<Object, Set<Class<?>>> inProgress = new IdentityHashMap<>();
     private final Map<Object, Map<String, Boolean>> reachable = new IdentityHashMap<>();
 
     ValidationRun(Components components, T rootBean, Class<T> rootBeanClass) {
@@ -78,17 +79,28 @@ final class ValidationRun<T> {
 
     // ---- the graph ---------------------------------------------------------------------------------
 
+    /**
+     * Validates {@code bean} for {@code group}. A bean met again while it is itself being validated (a cycle)
+     * is skipped; a bean reached through several paths is validated, and reported, under each of them.
+     */
     void validateBean(Object bean, Class<?> group, Cursor at) {
-        if (!processed.computeIfAbsent(bean, b -> new LinkedHashSet<>()).add(group)) {
+        if (!inProgress.computeIfAbsent(bean, b -> new LinkedHashSet<>()).add(group)) {
             return;
         }
+        try {
+            validateBeanOnce(bean, group, at);
+        } finally {
+            inProgress.get(bean).remove(group);
+        }
+    }
+
+    private void validateBeanOnce(Object bean, Class<?> group, Cursor at) {
         List<BeanMetadata> hierarchy = BeanMetadata.hierarchy(bean.getClass());
         for (BeanMetadata metadata : hierarchy) {
             for (ConstraintDef constraint : metadata.classConstraints()) {
                 if (appliesTo(constraint, group)) {
-                    Cursor parent = at;
                     Cursor beanNode = at.add(NodeImpl.bean());
-                    evaluate(constraint, bean, metadata.type(), parent.path(), beanNode.path(), bean);
+                    evaluate(constraint, bean, metadata.type(), at.path(), beanNode.path(), at.slot(), bean);
                 }
             }
         }
@@ -99,7 +111,7 @@ final class ValidationRun<T> {
                     Cursor atProperty = at.add(NodeImpl.property(property.name()));
                     for (ConstraintDef constraint : property.constraints()) {
                         if (appliesTo(constraint, group)) {
-                            evaluate(constraint, value, property.valueType(), atProperty.path(), atProperty.path(), bean);
+                            evaluate(constraint, value, property.valueType(), atProperty.path(), atProperty.path(), null, bean);
                         }
                     }
                 }
@@ -217,14 +229,17 @@ final class ValidationRun<T> {
      *
      * @param basePath where custom nodes are added
      * @param defaultPath where the default violation is reported
+     * @param pendingSlot the position of the bean in its container, for a class-level constraint: the first custom
+     *        node takes it, as the bean node of the default violation does
      */
-    boolean evaluate(ConstraintDef constraint, Object value, Class<?> declaredType, PathImpl basePath, PathImpl defaultPath, Object leafBean) {
+    boolean evaluate(ConstraintDef constraint, Object value, Class<?> declaredType, PathImpl basePath, PathImpl defaultPath, Slot pendingSlot,
+            Object leafBean) {
         List<ViolationDraft> mine = new ArrayList<>();
         List<Violation> fromComposing = new ArrayList<>();
         boolean composingValid = true;
         for (ConstraintDescriptor<?> composing : constraint.getComposingConstraints()) {
             List<Violation> sub = new ArrayList<>();
-            composingValid &= evaluateInto(sub, (ConstraintDef) composing, value, declaredType, basePath, defaultPath);
+            composingValid &= evaluateInto(sub, (ConstraintDef) composing, value, declaredType, basePath, defaultPath, pendingSlot);
             fromComposing.addAll(sub);
         }
         boolean mainValid = true;
@@ -235,7 +250,7 @@ final class ValidationRun<T> {
         }
         if (validatorClass != null) {
             ConstraintValidatorContextImpl context = new ConstraintValidatorContextImpl(components.clockProvider(),
-                constraint.getMessageTemplate(), basePath, defaultPath);
+                constraint.getMessageTemplate(), basePath, defaultPath, pendingSlot);
             mainValid = runValidator(validatorClass, constraint, value, context);
             if (!mainValid) {
                 mine.addAll(context.drafts());
@@ -262,9 +277,9 @@ final class ValidationRun<T> {
 
     /** Evaluates a composing constraint, but collects its violations instead of reporting them. */
     private boolean evaluateInto(List<Violation> into, ConstraintDef constraint, Object value, Class<?> declaredType,
-            PathImpl basePath, PathImpl defaultPath) {
+            PathImpl basePath, PathImpl defaultPath, Slot pendingSlot) {
         ValidationRun<T> probe = new ValidationRun<>(components, rootBean, rootBeanClass);
-        boolean valid = probe.evaluate(constraint, value, declaredType, basePath, defaultPath, null);
+        boolean valid = probe.evaluate(constraint, value, declaredType, basePath, defaultPath, pendingSlot, null);
         for (ConstraintViolation<T> v : probe.violations) {
             into.add(new Violation((ConstraintDef) v.getConstraintDescriptor(), new ViolationDraft(v.getMessageTemplate(),
                 (PathImpl) v.getPropertyPath())));

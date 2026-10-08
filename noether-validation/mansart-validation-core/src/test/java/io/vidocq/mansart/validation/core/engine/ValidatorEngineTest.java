@@ -231,12 +231,23 @@ class ValidatorEngineTest {
     }
 
     @Test
-    void theSameBeanReachedTwiceIsValidatedOnce() {
+    void aSharedBeanIsReportedUnderEachPathThatReachesIt() {
         Node shared = new Node(null);
         Node root = new Node("root");
         root.next = shared;
         root.children.add(shared);
-        assertThat(validator.validate(root)).hasSize(1);
+        Set<ConstraintViolation<Node>> violations = validator.validate(root);
+        assertThat(paths(violations)).containsExactlyInAnyOrder("next.label", "children[0].label");
+    }
+
+    @Test
+    void aBeanIsNotRevisitedWhileItIsBeingValidated() {
+        Node a = new Node("a");
+        Node b = new Node(null);
+        a.next = b;
+        b.next = a;
+        b.children.add(b);
+        assertThat(paths(validator.validate(a))).containsExactly("next.label");
     }
 
     // ---- groups --------------------------------------------------------------------------------------
@@ -497,6 +508,54 @@ class ValidatorEngineTest {
     public static class ParameterNodeOnField {
         @ParameterNodeConstraint
         public String field = "x";
+    }
+
+    @jakarta.validation.Constraint(validatedBy = {ExtraNodeValidator.class})
+    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+    public @interface ExtraNode {
+        String message() default "x";
+        Class<?>[] groups() default {};
+        Class<? extends jakarta.validation.Payload>[] payload() default {};
+    }
+
+    public static class ExtraNodeValidator implements jakarta.validation.ConstraintValidator<ExtraNode, Object> {
+        @Override
+        public boolean isValid(Object value, jakarta.validation.ConstraintValidatorContext context) {
+            context.disableDefaultConstraintViolation();
+            context.buildConstraintViolationWithTemplate("t").addPropertyNode("extra").addPropertyNode("deeper").addConstraintViolation();
+            return false;
+        }
+    }
+
+    @ExtraNode
+    public static class Item {
+    }
+
+    public static class ItemHolder {
+        @jakarta.validation.Valid
+        public List<Item> items = List.of(new Item(), new Item());
+        @jakarta.validation.Valid
+        public java.util.Map<String, Item> byKey = java.util.Map.of("k", new Item());
+        @jakarta.validation.Valid
+        public Item single = new Item();
+    }
+
+    @Test
+    void customNodesOfAClassLevelConstraintInheritTheContainerSlotOfTheBean() {
+        Set<ConstraintViolation<ItemHolder>> violations = validator.validate(new ItemHolder());
+        assertThat(paths(violations)).containsExactlyInAnyOrder("items[0].extra.deeper", "items[1].extra.deeper",
+            "byKey[k].extra.deeper", "single.extra.deeper");
+        ConstraintViolation<ItemHolder> second = violations.stream().filter(v -> v.getPropertyPath().toString().startsWith("items[1]"))
+            .findFirst().orElseThrow();
+        List<Path.Node> nodes = nodesOf(second);
+        assertThat(nodes.get(0).getName()).isEqualTo("items");
+        assertThat(nodes.get(0).isInIterable()).isFalse();
+        assertThat(nodes.get(1).getName()).isEqualTo("extra");
+        assertThat(nodes.get(1).isInIterable()).isTrue();
+        assertThat(nodes.get(1).getIndex()).isEqualTo(1);
+        assertThat(nodes.get(1).as(Path.PropertyNode.class).getContainerClass()).isEqualTo(List.class);
+        assertThat(nodes.get(2).getName()).isEqualTo("deeper");
+        assertThat(nodes.get(2).isInIterable()).isFalse();
     }
 
     private static List<Path.Node> nodesOfPath(Path path) {
