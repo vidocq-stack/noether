@@ -21,6 +21,7 @@ package io.vidocq.mansart.jpa.core.context;
 
 import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
 import jakarta.persistence.EntityExistsException;
+import jakarta.persistence.LockModeType;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -109,6 +110,16 @@ public final class PersistenceContext {
         }
         known.status(ManagedEntity.Status.REMOVED);
         return true;
+    }
+
+    /** Records the lock mode {@code entry} holds in the current transaction (§3.5). */
+    public void lock(ManagedEntity entry, LockModeType mode) {
+        entry.lockMode(mode);
+    }
+
+    /** The locks end with the transaction: every instance is back to {@link LockModeType#NONE}. */
+    public void releaseLocks() {
+        byInstance.values().forEach(entry -> entry.lockMode(LockModeType.NONE));
     }
 
     /** §3.2.8: whether {@code instance} is managed; a removed instance is not. */

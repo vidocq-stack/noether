@@ -29,4 +29,7 @@ interface TransactionListener {
 
     /** After a rollback, or a commit that failed: the instances of the persistence context become detached (§3.3.2). */
     void afterRollback();
+
+    /** After a commit: the locks of the transaction are released (§3.5). */
+    void afterCommit();
 }

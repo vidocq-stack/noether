@@ -91,13 +91,16 @@ public final class EntityStatements {
     private final List<Column> columns;
     private final List<TableStatements> tables;
     private final Integer version;
+    private final Select versionSelect;
 
-    private EntityStatements(String entity, String unsupported, List<Column> columns, List<TableStatements> tables, Integer version) {
+    private EntityStatements(String entity, String unsupported, List<Column> columns, List<TableStatements> tables, Integer version,
+            Select versionSelect) {
         this.entity = entity;
         this.unsupported = unsupported;
         this.columns = columns;
         this.tables = tables;
         this.version = version;
+        this.versionSelect = versionSelect;
     }
 
     static EntityStatements of(EntityModel model, int[] idAttributes, Function<BasicAttribute, ValueBinder> binders,
@@ -163,7 +166,11 @@ public final class EntityStatements {
                 tables.add(statements);
             }
         }
-        return new EntityStatements(model.entityName(), null, List.copyOf(columns), List.copyOf(tables), version);
+        // the row of the primary table, by identifier: its version, or its key when the entity has no version (§3.5)
+        TableStatements primary = tables.getFirst();
+        Select versionSelect = new Select(primary.select().table(), List.of(columns.get(version != null ? version : keys.getFirst()).name()),
+            primary.select().conditions());
+        return new EntityStatements(model.entityName(), null, List.copyOf(columns), List.copyOf(tables), version, versionSelect);
     }
 
     /** The statements of table {@code t}; {@code null} for a secondary table no column is mapped to. */
@@ -259,7 +266,7 @@ public final class EntityStatements {
     }
 
     private static EntityStatements unsupported(EntityModel model, String milestone, String feature) {
-        return new EntityStatements(model.entityName(), milestone + ":" + feature, List.of(), List.of(), null);
+        return new EntityStatements(model.entityName(), milestone + ":" + feature, List.of(), List.of(), null, null);
     }
 
     private void check() {
@@ -399,6 +406,12 @@ public final class EntityStatements {
     public List<TableStatements> tables() {
         check();
         return tables;
+    }
+
+    /** The select of the version of a row (of its key without version), by identifier: what a lock reads. */
+    public Select versionSelect() {
+        check();
+        return versionSelect;
     }
 
     /** The index of the version column in {@link #columns()} (§3.4.2), if the entity is versioned. */

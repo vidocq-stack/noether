@@ -46,11 +46,22 @@ public abstract class StandardDialect implements Dialect {
             case Insert insert -> insert(insert);
             case Update update -> update(update);
             case Delete delete -> "DELETE FROM " + table(delete.table()) + where(delete.conditions());
-            case Select select -> "SELECT " + list(select.columns()) + " FROM " + table(select.table()) + where(select.conditions());
+            case Select select -> "SELECT " + list(select.columns()) + " FROM " + table(select.table()) + where(select.conditions())
+                + lock(select);
             case NextValue next -> nextValue(next);
             case Increment increment -> "UPDATE " + table(increment.table()) + " SET " + name(increment.value()) + " = "
                 + name(increment.value()) + " + ? WHERE " + name(increment.key()) + " = ?";
         };
+    }
+
+    /** The row lock of a select: {@code FOR UPDATE}, {@code FOR SHARE}, and {@code NOWAIT} when it must not wait. */
+    protected String lock(Select select) {
+        String lock = switch (select.lock()) {
+            case NONE -> "";
+            case SHARED -> " FOR SHARE";
+            case EXCLUSIVE -> " FOR UPDATE";
+        };
+        return lock.isEmpty() || !select.noWait() ? lock : lock + " NOWAIT";
     }
 
     /** SQL:2003 {@code NEXT VALUE FOR}, as a one-row query. */

@@ -99,4 +99,11 @@ class StandardDialectTest {
         assertThat(ansi.render(new Increment(Table.of("GENERATOR_TABLE"), Identifier.of("VAL_COL"), Identifier.of("PK_COL"))))
             .isEqualTo("UPDATE GENERATOR_TABLE SET VAL_COL = VAL_COL + ? WHERE PK_COL = ?");
     }
+
+    @Test
+    void aPessimisticSelectTakesARowLock() { // §3.5.6
+        Select select = new Select(Table.of("BOOK"), columns("VERSION"), columns("ID"));
+        assertThat(ansi.render(select.locked(Select.Lock.EXCLUSIVE, false))).isEqualTo("SELECT VERSION FROM BOOK WHERE ID = ? FOR UPDATE");
+        assertThat(ansi.render(select.locked(Select.Lock.SHARED, true))).isEqualTo("SELECT VERSION FROM BOOK WHERE ID = ? FOR SHARE NOWAIT");
+    }
 }

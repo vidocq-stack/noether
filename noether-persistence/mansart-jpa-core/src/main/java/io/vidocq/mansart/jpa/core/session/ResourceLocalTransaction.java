@@ -126,6 +126,7 @@ final class ResourceLocalTransaction implements EntityTransaction {
                 throw end(current, new RollbackException("The commit failed: " + e.getMessage(), e));
             }
             end(current, null);
+            listener.afterCommit();
         } finally {
             lock.unlock();
         }

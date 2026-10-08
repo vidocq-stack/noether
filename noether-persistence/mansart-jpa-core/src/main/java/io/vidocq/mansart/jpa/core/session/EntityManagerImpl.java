@@ -23,6 +23,7 @@ import io.vidocq.mansart.jpa.core.bootstrap.UnitSettings;
 import io.vidocq.mansart.jpa.core.context.EntityKey;
 import io.vidocq.mansart.jpa.core.context.ManagedEntity;
 import io.vidocq.mansart.jpa.core.context.PersistenceContext;
+import io.vidocq.mansart.jpa.core.flush.Locks;
 import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
 import io.vidocq.mansart.jpa.core.query.NativeQuery;
 import jakarta.persistence.CacheRetrieveMode;
@@ -43,6 +44,7 @@ import jakarta.persistence.PersistenceException;
 import jakarta.persistence.Query;
 import jakarta.persistence.RefreshOption;
 import jakarta.persistence.StoredProcedureQuery;
+import jakarta.persistence.Timeout;
 import jakarta.persistence.TransactionRequiredException;
 import jakarta.persistence.TypedQuery;
 import jakarta.persistence.TypedQueryReference;
@@ -57,6 +59,7 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -102,6 +105,11 @@ final class EntityManagerImpl implements EntityManager {
             @Override
             public void afterRollback() {
                 context.clear(); // §3.3.2: the instances become detached
+            }
+
+            @Override
+            public void afterCommit() {
+                context.releaseLocks();
             }
         });
         if (map != null) {
@@ -353,6 +361,35 @@ final class EntityManagerImpl implements EntityManager {
         context.clear();
     }
 
+    /** The standard lock timeout hint (§3.11.4), in milliseconds. */
+    private static final String LOCK_TIMEOUT = "jakarta.persistence.lock.timeout";
+
+    /** The lock timeout of an operation: its hint, else the entity manager's property, else none (the database's). */
+    private Integer lockTimeout(Map<String, Object> hints, Integer fallback) {
+        Object value = hints != null && hints.containsKey(LOCK_TIMEOUT) ? hints.get(LOCK_TIMEOUT) : properties.get(LOCK_TIMEOUT);
+        if (value == null) {
+            return fallback;
+        }
+        try {
+            return value instanceof Number number ? number.intValue() : Integer.parseInt(value.toString().strip());
+        } catch (NumberFormatException e) {
+            return fallback; // §3.11: a hint that cannot be used is ignored
+        }
+    }
+
+    private void requireTransaction(String operation) {
+        if (!transaction.isActive()) {
+            throw new TransactionRequiredException(operation + " needs an active transaction");
+        }
+    }
+
+    /** The entry of a managed instance; {@link IllegalArgumentException} for anything else. */
+    private ManagedEntity managedEntry(Object entity) {
+        operations.type(entity);
+        return context.entry(entity).filter(e -> e.status() == ManagedEntity.Status.MANAGED)
+            .orElseThrow(() -> new IllegalArgumentException("The instance is not managed by this entity manager"));
+    }
+
     /** The mapped entity {@code entityClass}; {@link IllegalArgumentException} if it is not an entity of the unit. */
     private MappedEntity type(Class<?> entityClass) {
         if (entityClass == null) {
@@ -439,7 +476,12 @@ final class EntityManagerImpl implements EntityManager {
     @Override
     public LockModeType getLockMode(Object entity) {
         checkOpen();
-        throw failed(NotYet.milestone("P4", "getLockMode"));
+        try {
+            requireTransaction("getLockMode");
+            return managedEntry(entity).lockMode();
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
     }
 
     // ---- entity operations (P4) ---------------------------------------------------------------------------
@@ -479,18 +521,24 @@ final class EntityManagerImpl implements EntityManager {
         return find(entityClass, primaryKey, LockModeType.NONE);
     }
 
-    /** The properties are hints (§3.11): those of P4 are about locks, which come with the locking slice. */
+    /** The properties are hints (§3.11): the lock timeout is the one that matters without a second-level cache. */
     @Override
     public <T> T find(Class<T> entityClass, Object primaryKey, Map<String, Object> properties) {
-        return find(entityClass, primaryKey, LockModeType.NONE);
+        return find(entityClass, primaryKey, LockModeType.NONE, properties);
     }
 
     @Override
     public <T> T find(Class<T> entityClass, Object primaryKey, LockModeType lockMode) {
+        return find(entityClass, primaryKey, lockMode, Map.of());
+    }
+
+    @Override
+    public <T> T find(Class<T> entityClass, Object primaryKey, LockModeType lockMode, Map<String, Object> properties) {
         checkOpen();
         try {
-            if (lockMode != null && lockMode != LockModeType.NONE) {
-                throw NotYet.milestone("P4", "locks other than NONE");
+            boolean locking = lockMode != null && lockMode != LockModeType.NONE;
+            if (locking) {
+                requireTransaction("find with a lock mode");
             }
             MappedEntity type = type(entityClass);
             Object id = type.key(primaryKey);
@@ -498,30 +546,44 @@ final class EntityManagerImpl implements EntityManager {
             if (known.isPresent()) {
                 // a removed instance is no longer found; another class of the hierarchy is not this one (P6)
                 Object instance = known.get().instance();
-                return known.get().status() == ManagedEntity.Status.MANAGED && entityClass.isInstance(instance)
-                    ? entityClass.cast(instance) : null;
+                if (known.get().status() != ManagedEntity.Status.MANAGED || !entityClass.isInstance(instance)) {
+                    return null;
+                }
+                if (locking) {
+                    lock(instance, lockMode, properties);
+                }
+                return entityClass.cast(instance);
             }
-            return entityClass.cast(onConnection(connection -> factory.loader(connection).load(type, id, connection, context)));
+            Integer timeout = lockTimeout(properties, null);
+            return entityClass.cast(onConnection(connection -> {
+                Object loaded = factory.loader(connection).load(type, id, connection, context, lockMode, timeout);
+                if (loaded != null && locking) {
+                    // the row is locked by the select already for a pessimistic mode: record the mode, check nothing
+                    ManagedEntity entry = context.entry(loaded).orElseThrow();
+                    factory.locks(connection).lock(type, entry, Locks.pessimistic(lockMode) ? LockModeType.NONE : lockMode, timeout,
+                        false, connection, context);
+                    context.lock(entry, lockMode);
+                }
+                return loaded;
+            }));
         } catch (RuntimeException e) {
             throw failed(e);
         }
-    }
-
-    @Override
-    public <T> T find(Class<T> entityClass, Object primaryKey, LockModeType lockMode, Map<String, Object> properties) {
-        return find(entityClass, primaryKey, lockMode);
     }
 
     /** 3.2: the options of a find; the cache modes and the timeout have no effect without a second-level cache (P11). */
     @Override
     public <T> T find(Class<T> entityClass, Object primaryKey, FindOption... options) {
         LockModeType lockMode = LockModeType.NONE;
+        Map<String, Object> properties = new HashMap<>();
         for (FindOption option : options) {
             if (option instanceof LockModeType mode) {
                 lockMode = mode;
+            } else if (option instanceof Timeout timeout) {
+                properties.put(LOCK_TIMEOUT, timeout.milliseconds());
             }
         }
-        return find(entityClass, primaryKey, lockMode);
+        return find(entityClass, primaryKey, lockMode, properties);
     }
 
     @Override
@@ -568,20 +630,34 @@ final class EntityManagerImpl implements EntityManager {
 
     @Override
     public void lock(Object entity, LockModeType lockMode) {
-        checkOpen();
-        throw failed(NotYet.milestone("P4", "lock"));
+        lock(entity, lockMode, Map.of());
     }
 
     @Override
     public void lock(Object entity, LockModeType lockMode, Map<String, Object> properties) {
         checkOpen();
-        throw failed(NotYet.milestone("P4", "lock"));
+        try {
+            requireTransaction("lock");
+            ManagedEntity entry = managedEntry(entity);
+            Integer timeout = lockTimeout(properties, null);
+            transaction.onConnection(connection -> {
+                factory.locks(connection).lock(entry.type(), entry, lockMode, timeout, true, connection, context);
+                return null;
+            });
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
     }
 
     @Override
     public void lock(Object entity, LockModeType lockMode, LockOption... options) {
-        checkOpen();
-        throw failed(NotYet.milestone("P4", "lock"));
+        Map<String, Object> properties = new HashMap<>();
+        for (LockOption option : options) {
+            if (option instanceof Timeout timeout) {
+                properties.put(LOCK_TIMEOUT, timeout.milliseconds());
+            }
+        }
+        lock(entity, lockMode, properties);
     }
 
     @Override
@@ -598,10 +674,23 @@ final class EntityManagerImpl implements EntityManager {
     public void refresh(Object entity, LockModeType lockMode) {
         checkOpen();
         try {
-            if (lockMode != null && lockMode != LockModeType.NONE) {
-                throw NotYet.milestone("P4", "locks other than NONE");
+            boolean locking = lockMode != null && lockMode != LockModeType.NONE;
+            if (locking) {
+                requireTransaction("refresh with a lock mode");
+                ManagedEntity entry = managedEntry(entity);
+                if (Locks.pessimistic(lockMode)) {
+                    // lock the row first: the refresh then reads what no one can change any more
+                    transaction.onConnection(connection -> {
+                        factory.locks(connection).lock(entry.type(), entry, lockMode, lockTimeout(Map.of(), null), false, connection,
+                            context);
+                        return null;
+                    });
+                }
             }
             operations.refresh(entity);
+            if (locking && !Locks.pessimistic(lockMode)) {
+                lock(entity, lockMode);
+            }
         } catch (RuntimeException e) {
             throw failed(e);
         }

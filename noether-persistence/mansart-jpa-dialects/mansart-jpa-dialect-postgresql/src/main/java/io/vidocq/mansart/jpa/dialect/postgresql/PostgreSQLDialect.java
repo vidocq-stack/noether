@@ -22,6 +22,7 @@ package io.vidocq.mansart.jpa.dialect.postgresql;
 import io.vidocq.mansart.jpa.dialect.StandardDialect;
 import io.vidocq.mansart.jpa.dialect.sql.Identifier;
 import io.vidocq.mansart.jpa.dialect.sql.NextValue;
+import java.sql.SQLException;
 import java.util.Locale;
 
 /** The PostgreSQL dialect: ANSI rendering, overridden where PostgreSQL differs. */
@@ -40,6 +41,27 @@ public final class PostgreSQLDialect extends StandardDialect {
     @Override
     protected String nextValue(NextValue next) {
         return "SELECT nextval('" + table(next.table()).replace("'", "''") + "')";
+    }
+
+    /** {@code SET LOCAL}: the timeout ends with the transaction, never left on a pooled connection. */
+    @Override
+    public String lockTimeout(int milliseconds) {
+        return "SET LOCAL lock_timeout = '" + milliseconds + "ms'";
+    }
+
+    /** PostgreSQL: 55P03 lock_not_available is a timeout; 40P01 deadlock_detected and 40001 are pessimistic. */
+    @Override
+    public LockFailure lockFailure(SQLException failure) {
+        for (SQLException current = failure; current != null; current = current.getNextException()) {
+            String state = current.getSQLState();
+            if ("55P03".equals(state)) {
+                return LockFailure.TIMEOUT;
+            }
+            if ("40P01".equals(state) || "40001".equals(state)) {
+                return LockFailure.PESSIMISTIC;
+            }
+        }
+        return LockFailure.NONE;
     }
 
     @Override

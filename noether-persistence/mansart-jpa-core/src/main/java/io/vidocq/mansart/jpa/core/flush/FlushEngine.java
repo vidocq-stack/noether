@@ -25,6 +25,7 @@ import io.vidocq.mansart.jpa.core.mapping.EntityStatements;
 import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
 import io.vidocq.mansart.jpa.dialect.Dialect;
 import jakarta.persistence.EntityExistsException;
+import jakarta.persistence.LockModeType;
 import jakarta.persistence.OptimisticLockException;
 import jakarta.persistence.PersistenceException;
 import java.sql.Connection;
@@ -94,6 +95,7 @@ public final class FlushEngine {
         List<Work> inserts = new ArrayList<>();
         List<Work> updates = new ArrayList<>();
         List<Work> deletes = new ArrayList<>();
+        List<ManagedEntity> checks = new ArrayList<>();
         for (ManagedEntity entry : context.entries()) {
             MappedEntity type = entry.type();
             switch (entry.status()) {
@@ -105,6 +107,10 @@ public final class FlushEngine {
                         // §3.6.3: PreUpdate may change the instance, its changes are written with the others
                         type.callback("PreUpdate", entry.instance());
                         updates.add(new Work(entry, read(type, entry.instance())));
+                    } else if (Locks.forcesIncrement(entry.lockMode())) {
+                        updates.add(new Work(entry, state)); // §3.5: a new version, without a change
+                    } else if (entry.lockMode() == LockModeType.OPTIMISTIC || entry.lockMode() == LockModeType.READ) {
+                        checks.add(entry);
                     }
                 }
                 case REMOVED -> {
@@ -127,6 +133,11 @@ public final class FlushEngine {
         }
         for (List<Work> group : groups(deletes)) {
             delete(group, context, connection);
+        }
+        // §3.5.5 OPTIMISTIC: the rows read under that lock and not written must not have changed since
+        Locks locks = new Locks(this);
+        for (ManagedEntity entry : checks) {
+            locks.checkVersion(entry.type(), entry, connection);
         }
     }
 
@@ -236,6 +247,12 @@ public final class FlushEngine {
         for (Work work : group) {
             context.updated(work.entry(), type.state().snapshot(work.state()));
             type.callback("PostUpdate", work.entry().instance());
+            LockModeType mode = work.entry().lockMode();
+            if (Locks.forcesIncrement(mode)) {
+                // incremented once per transaction: the lock stays, without forcing another version
+                context.lock(work.entry(), mode == LockModeType.PESSIMISTIC_FORCE_INCREMENT ? LockModeType.PESSIMISTIC_WRITE
+                    : LockModeType.OPTIMISTIC);
+            }
         }
     }
 

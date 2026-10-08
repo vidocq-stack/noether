@@ -74,4 +74,14 @@ class PostgreSQLDialectFactoryTest {
         assertThat(new PostgreSQLDialectFactory().create(17, 0).render(new io.vidocq.mansart.jpa.dialect.sql.NextValue(
             Identifier.quoted("Seq"), Identifier.of("shop"), null))).isEqualTo("SELECT nextval('shop.\"Seq\"')");
     }
+
+    @Test
+    void theLockTimeoutIsScopedToTheTransaction() {
+        var dialect = new PostgreSQLDialectFactory().create(17, 0);
+        assertThat(dialect.lockTimeout(100)).isEqualTo("SET LOCAL lock_timeout = '100ms'");
+        assertThat(dialect.lockFailure(new java.sql.SQLException("no lock", "55P03")))
+            .isEqualTo(io.vidocq.mansart.jpa.dialect.Dialect.LockFailure.TIMEOUT);
+        assertThat(dialect.lockFailure(new java.sql.SQLException("deadlock", "40P01")))
+            .isEqualTo(io.vidocq.mansart.jpa.dialect.Dialect.LockFailure.PESSIMISTIC);
+    }
 }

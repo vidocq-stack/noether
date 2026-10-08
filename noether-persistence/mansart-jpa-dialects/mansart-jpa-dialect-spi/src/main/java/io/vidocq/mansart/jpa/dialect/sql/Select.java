@@ -21,11 +21,33 @@ package io.vidocq.mansart.jpa.dialect.sql;
 
 import java.util.List;
 
-/** {@code SELECT columns FROM table WHERE k = ? AND …}: one parameter per condition. Conditions are required. */
-public record Select(Table table, List<Identifier> columns, List<Identifier> conditions) implements Statement {
+/**
+ * {@code SELECT columns FROM table WHERE k = ? AND … [lock]}: one parameter per condition. Conditions are required.
+ *
+ * @param lock the row lock the select takes (§3.5.6), {@link Lock#NONE} for a plain read
+ * @param noWait whether a lock that is not available fails at once rather than waits
+ */
+public record Select(Table table, List<Identifier> columns, List<Identifier> conditions, Lock lock, boolean noWait)
+        implements Statement {
+
+    /** The row locks of the pessimistic lock modes. */
+    public enum Lock {
+        NONE, SHARED, EXCLUSIVE
+    }
 
     public Select {
         columns = Statement.copy(columns, "columns", true);
         conditions = Statement.copy(conditions, "conditions", true);
+        lock = lock == null ? Lock.NONE : lock;
+    }
+
+    /** A plain read. */
+    public Select(Table table, List<Identifier> columns, List<Identifier> conditions) {
+        this(table, columns, conditions, Lock.NONE, false);
+    }
+
+    /** The same select, taking {@code lock}. */
+    public Select locked(Lock lock, boolean noWait) {
+        return new Select(table, columns, conditions, lock, noWait);
     }
 }

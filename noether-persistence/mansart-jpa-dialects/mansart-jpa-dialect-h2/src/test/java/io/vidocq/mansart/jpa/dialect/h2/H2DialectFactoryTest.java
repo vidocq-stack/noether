@@ -66,4 +66,16 @@ class H2DialectFactoryTest {
         assertThat(dialect.isDuplicateKey(new java.sql.SQLException("duplicate", "23505"))).isTrue();
         assertThat(dialect.isDuplicateKey(new java.sql.SQLException("not null", "23502"))).isFalse();
     }
+
+    @Test
+    void locksAreExclusiveAndATimeoutIsRecognised() {
+        var dialect = new H2DialectFactory().create(2, 3);
+        var select = new io.vidocq.mansart.jpa.dialect.sql.Select(Table.of("BOOK"), List.of(Identifier.of("ID")),
+            List.of(Identifier.of("ID")));
+        assertThat(dialect.render(select.locked(io.vidocq.mansart.jpa.dialect.sql.Select.Lock.SHARED, true)))
+            .isEqualTo("SELECT ID FROM BOOK WHERE ID = ? FOR UPDATE");
+        assertThat(dialect.lockFailure(new java.sql.SQLException("timeout", "HYT00", 50200)))
+            .isEqualTo(io.vidocq.mansart.jpa.dialect.Dialect.LockFailure.TIMEOUT);
+        assertThat(dialect.lockTimeout(100)).isNull();
+    }
 }

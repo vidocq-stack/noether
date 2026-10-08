@@ -21,6 +21,8 @@ package io.vidocq.mansart.jpa.dialect.h2;
 
 import io.vidocq.mansart.jpa.dialect.StandardDialect;
 import io.vidocq.mansart.jpa.dialect.sql.Identifier;
+import io.vidocq.mansart.jpa.dialect.sql.Select;
+import java.sql.SQLException;
 import java.util.Locale;
 
 /** The H2 dialect: ANSI rendering, overridden where H2 differs. */
@@ -33,6 +35,26 @@ public final class H2Dialect extends StandardDialect {
     @Override
     public String generatedKeyName(Identifier column) {
         return column.quoted() ? column.name() : column.name().toUpperCase(Locale.ROOT);
+    }
+
+    /** H2 has no shared row lock: a shared lock is an exclusive one; it has no NOWAIT either. */
+    @Override
+    protected String lock(Select select) {
+        return select.lock() == Select.Lock.NONE ? "" : " FOR UPDATE";
+    }
+
+    /** H2 reports a lock timeout as 50200, a deadlock as 40001. */
+    @Override
+    public LockFailure lockFailure(SQLException failure) {
+        for (SQLException current = failure; current != null; current = current.getNextException()) {
+            if (current.getErrorCode() == 50200 || "HYT00".equals(current.getSQLState())) {
+                return LockFailure.TIMEOUT;
+            }
+            if ("40001".equals(current.getSQLState())) {
+                return LockFailure.PESSIMISTIC;
+            }
+        }
+        return LockFailure.NONE;
     }
 
     @Override

@@ -24,6 +24,7 @@ import io.vidocq.mansart.jpa.core.jdbc.ConnectionSource;
 import io.vidocq.mansart.jpa.core.flush.Dialects;
 import io.vidocq.mansart.jpa.core.flush.EntityLoader;
 import io.vidocq.mansart.jpa.core.flush.FlushEngine;
+import io.vidocq.mansart.jpa.core.flush.Locks;
 import io.vidocq.mansart.jpa.core.generation.IdGenerators;
 import io.vidocq.mansart.jpa.core.mapping.MappedUnit;
 import io.vidocq.mansart.jpa.dialect.Dialect;
@@ -124,6 +125,11 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
             }
         }
         return generators;
+    }
+
+    /** The locks of §3.5, rendered by the dialect of the flush engine. */
+    Locks locks(Connection connection) {
+        return new Locks(flushEngine(connection));
     }
 
     /** Builds managed instances from rows, with the dialect and SQL of the flush engine. */

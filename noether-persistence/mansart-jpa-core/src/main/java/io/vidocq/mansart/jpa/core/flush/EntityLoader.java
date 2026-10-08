@@ -22,6 +22,7 @@ package io.vidocq.mansart.jpa.core.flush;
 import io.vidocq.mansart.jpa.core.context.PersistenceContext;
 import io.vidocq.mansart.jpa.core.mapping.EntityStatements;
 import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
+import jakarta.persistence.LockModeType;
 import jakarta.persistence.PersistenceException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -48,7 +49,16 @@ public final class EntityLoader {
      * row has it. If the context already manages that identity, its instance is returned.
      */
     public Object load(MappedEntity type, Object id, Connection connection, PersistenceContext context) {
-        Row row = row(type, id, connection);
+        return load(type, id, connection, context, LockModeType.NONE, null);
+    }
+
+    /**
+     * Like {@link #load(MappedEntity, Object, Connection, PersistenceContext)}, the primary row locked in a pessimistic
+     * {@code mode} (§3.5.6), waiting at most {@code timeout} milliseconds ({@code null}: the database's timeout).
+     */
+    public Object load(MappedEntity type, Object id, Connection connection, PersistenceContext context, LockModeType mode,
+            Integer timeout) {
+        Row row = row(type, id, connection, mode, timeout);
         if (row == null) {
             return null;
         }
@@ -63,7 +73,7 @@ public final class EntityLoader {
 
     /** Whether a row of {@code type} has the identity {@code id}, without managing anything. */
     public boolean exists(MappedEntity type, Object id, Connection connection) {
-        return row(type, id, connection) != null;
+        return row(type, id, connection, LockModeType.NONE, null) != null;
     }
 
     /**
@@ -71,7 +81,7 @@ public final class EntityLoader {
      * {@code null} if the row is gone.
      */
     public Object[] refresh(MappedEntity type, Object id, Object instance, Connection connection) {
-        Row row = row(type, id, connection);
+        Row row = row(type, id, connection, LockModeType.NONE, null);
         if (row == null) {
             return null;
         }
@@ -84,7 +94,7 @@ public final class EntityLoader {
     private record Row(Object[] values, boolean[] nulls) {
     }
 
-    private Row row(MappedEntity type, Object id, Connection connection) {
+    private Row row(MappedEntity type, Object id, Connection connection, LockModeType mode, Integer timeout) {
         EntityStatements statements = type.statements();
         List<EntityStatements.Column> columns = statements.columns();
         Object[] key = statements.keyValues(id);
@@ -95,7 +105,12 @@ public final class EntityLoader {
         try {
             for (int t = 0; t < statements.tables().size(); t++) {
                 EntityStatements.TableStatements table = statements.tables().get(t);
-                try (PreparedStatement select = connection.prepareStatement(sql.tables().get(t).select())) {
+                String text = sql.tables().get(t).select();
+                if (t == 0 && Locks.pessimistic(mode)) {
+                    Locks.timeout(engine.dialect(), timeout, connection);
+                    text = engine.dialect().render(table.select().locked(Locks.rowLock(mode), timeout != null && timeout == 0));
+                }
+                try (PreparedStatement select = connection.prepareStatement(text)) {
                     List<EntityStatements.Parameter> parameters = table.selectParameters();
                     for (int i = 0; i < parameters.size(); i++) {
                         columns.get(parameters.get(i).column()).binder().bind(select, i + 1, key[i]);
@@ -117,6 +132,9 @@ public final class EntityLoader {
             }
             return new Row(values, nulls);
         } catch (SQLException e) {
+            if (Locks.pessimistic(mode)) {
+                throw Locks.failure(engine.dialect(), e, null);
+            }
             throw new PersistenceException("The read of " + type.model().entityName() + " " + id + " failed: " + e.getMessage(), e);
         }
     }

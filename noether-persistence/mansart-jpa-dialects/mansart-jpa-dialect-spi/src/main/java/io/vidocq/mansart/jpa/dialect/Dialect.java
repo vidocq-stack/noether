@@ -54,6 +54,35 @@ public interface Dialect {
         return column.name();
     }
 
+    /** How a failure of a locking statement counts (§3.12). */
+    enum LockFailure {
+        /** Not a lock failure. */
+        NONE,
+        /** The lock was not obtained in time; only the statement is rolled back: {@code LockTimeoutException}. */
+        TIMEOUT,
+        /** A deadlock or a serialization failure; the transaction is lost: {@code PessimisticLockException}. */
+        PESSIMISTIC
+    }
+
+    /** Classifies {@code failure}: the SQLSTATE of a serialization failure (40001) is pessimistic, by default. */
+    default LockFailure lockFailure(SQLException failure) {
+        for (SQLException current = failure; current != null; current = current.getNextException()) {
+            if ("40001".equals(current.getSQLState())) {
+                return LockFailure.PESSIMISTIC;
+            }
+        }
+        return LockFailure.NONE;
+    }
+
+    /**
+     * The statement that limits, for the current transaction only, how long a lock is waited for; {@code null} when
+     * the database cannot scope it to the transaction (the database's own timeout then applies). A timeout of 0 is a
+     * {@code noWait} select instead.
+     */
+    default String lockTimeout(int milliseconds) {
+        return null;
+    }
+
     /** Whether {@code failure} reports a duplicate key: the identity of an insert already exists (§3.2.2). */
     default boolean isDuplicateKey(SQLException failure) {
         for (SQLException current = failure; current != null; current = current.getNextException()) {

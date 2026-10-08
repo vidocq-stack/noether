@@ -20,6 +20,7 @@
 package io.vidocq.mansart.jpa.core.context;
 
 import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
+import jakarta.persistence.LockModeType;
 
 /**
  * An instance of a persistence context, and where it stands in its life cycle (§3.2): managed or removed, with or
@@ -39,6 +40,7 @@ public final class ManagedEntity {
     private Status status;
     private boolean inserted;
     private Object[] snapshot;
+    private LockModeType lockMode = LockModeType.NONE;
 
     ManagedEntity(Object instance, MappedEntity type, long sequence, EntityKey key, Status status, boolean inserted,
             Object[] snapshot) {
@@ -81,6 +83,15 @@ public final class ManagedEntity {
     /** The state at load or at the last flush, compared at the next flush; {@code null} before the insert. */
     public Object[] snapshot() {
         return snapshot;
+    }
+
+    /** The lock mode the instance holds in the current transaction (§3.5); NONE once it ends. */
+    public LockModeType lockMode() {
+        return lockMode;
+    }
+
+    void lockMode(LockModeType lockMode) {
+        this.lockMode = lockMode;
     }
 
     void key(EntityKey key) {
