@@ -150,7 +150,7 @@ public final class ValueBinders {
     }
 
     /** The shared instance of a converter class. */
-    AttributeConverter<?, ?> converter(Class<?> converterClass) {
+    public AttributeConverter<?, ?> converter(Class<?> converterClass) {
         return converters.computeIfAbsent(converterClass, c -> (AttributeConverter<?, ?>) Handles.newInstance(c));
     }
 

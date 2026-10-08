@@ -38,9 +38,11 @@ public final class MappedEntity {
     private final Class<?> root;
     private final int[] idAttributes;
     private final ManagedAccess embeddedId;
+    private final StatePolicy state;
 
-    MappedEntity(EntityModel model, ManagedAccess access, Class<?> root, ManagedAccess embeddedId) {
+    MappedEntity(EntityModel model, ManagedAccess access, Class<?> root, ManagedAccess embeddedId, StatePolicy state) {
         this.model = model;
+        this.state = state;
         this.access = access;
         this.root = root;
         this.embeddedId = embeddedId;
@@ -63,6 +65,11 @@ public final class MappedEntity {
 
     public ManagedAccess access() {
         return access;
+    }
+
+    /** How its state is kept in snapshots and compared at flush. */
+    public StatePolicy state() {
+        return state;
     }
 
     /** The root entity class of the hierarchy: identities are unique per root. */

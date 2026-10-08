@@ -96,7 +96,9 @@ public final class MappedUnit {
         for (EntityModel entity : model.entities()) {
             ManagedAccess embeddedId = entity.id() instanceof IdModel.Embedded embedded
                 ? embeddables.get(embedded.attribute().embeddable()) : null;
-            mapped.put(entity.javaType(), new MappedEntity(entity, entities.get(entity.javaType()), root(model, entity), embeddedId));
+            StatePolicy state = StatePolicy.of(entity.attributes(), embeddables::get, valueBinders);
+            mapped.put(entity.javaType(), new MappedEntity(entity, entities.get(entity.javaType()), root(model, entity), embeddedId,
+                state));
         }
         return new MappedUnit(model, entities, embeddables, binders, mapped);
     }
