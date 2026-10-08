@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Arquillian configuration for the container-less run of the Jakarta Validation TCK.
+    Only the "local" container is defined: a dummy container (validation-standalone-container-adapter)
+    that deploys each test archive into a class loader, with no application server.
+    Adapted from the TCK's own setup example (setup-examples/maven/src/test/resources/arquillian.xml,
+    Apache License 2.0).
+-->
+<arquillian xmlns="http://jboss.org/schema/arquillian" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="http://jboss.org/schema/arquillian
+        http://jboss.org/schema/arquillian/arquillian_1_0.xsd">
+
+    <engine>
+        <property name="deploymentExportPath">target/artifacts</property>
+    </engine>
+
+    <container qualifier="local">
+        <protocol type="Local" />
+        <configuration />
+    </container>
+</arquillian>

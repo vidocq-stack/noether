@@ -76,22 +76,29 @@ In-reactor counterpart: a `vidocq-runtime-tck-validation` runner in the `vidocq`
 Status legend: ⏳ not started · 🚧 in progress · ✅ delivered. Every milestone records its TCK
 delta in `TCK.md` when it closes.
 
-### V0 — The TCK instrument ⏳
+### V0 — The TCK instrument 🚧
 
 **Goal**: runners that execute the official Jakarta Validation 3.1 TCK against *our* (still absent)
-provider and print a counter. PASS = 0 is the expected, correct outcome.
+provider and print a counter. PASS = 0 is the expected, correct outcome — here 12 of 981 pass,
+because they exercise bootstrap behaviours that need no working provider (see `TCK.md`).
 
-- [ ] Locate the official TCK bundle and its artifacts (Maven Central vs. download bundle — to be
-      re-checked at V0, as for the persistence TCK); document the install procedure in the
-      runner README.
-- [ ] `mansart-validation-tck/` — standalone Model 4.0.0 POM, **out of the reactor**, copied from
-      `mansart-data-tck` / `mansart-transactions-tck` then adapted.
-- [ ] Counter comes from the TCK's own packages (never from a class of the runner — same trap as
-      the persistence TCK `Client` pitfall: verify that `Tests run` is not 0).
-- [ ] `run-official-tck-validation-3.1.sh` (executable), per-area filter.
-- [ ] In-reactor runner `vidocq-runtime-tck-validation` in `vidocq` (`tck` profile), same suite.
-- [ ] `TCK.md` with the baseline: executed count, and every failure *for the right reason*
-      (no validation provider), not on setup or wiring.
+- [x] Locate the official TCK: **`jakarta.validation:validation-tck-tests:3.1.1` is on Maven
+      Central** (plus `validation-standalone-container-adapter` and the TestNG suite file) — no
+      manual install. It is **TestNG + Arquillian**, not JUnit.
+- [x] `mansart-validation-tck/` — standalone Model 4.0.0 POM, **out of the reactor**, container-less
+      run modelled on the TCK's own `setup-examples/maven/pom-local.xml`.
+- [x] Counter comes from the TCK's own packages (`org.hibernate.beanvalidation.tck.*`), never from a
+      class of the runner (no Java in the module); `Tests run` is not 0.
+- [x] `run-official-tck-validation-3.1.sh` (executable), `README.md`.
+- [x] `TCK.md` with the baseline: 981 run / 12 pass / 969 fail, every failure traced to the missing
+      provider (one assertion, `ConstraintValidatorFactorySpecifiedInValidationXmlTest`, not traced
+      individually), not to setup or wiring.
+- [ ] In-reactor runner `vidocq-runtime-tck-validation` in the `vidocq` repository (`tck` profile),
+      same suite — separate repository, separate PR.
+- [ ] Integration tests (CDI / container) — only meaningful with the CDI module (V5); the
+      container-less run excludes them.
+- [ ] Signature test.
+- [ ] Official exclusions for 3.1.1, if any.
 
 **Done when**: both runners print a counter for the official suite and the baseline is in `TCK.md`.
 

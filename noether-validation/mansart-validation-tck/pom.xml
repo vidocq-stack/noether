@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    OUT OF THE REACTOR — standalone modelVersion 4.0.0 POM (no <parent>), like mansart-data-tck and
+    mansart-transactions-tck. It is never listed in a <modules> section and never built through
+    `mvn -pl`: run it through run-official-tck-validation-3.1.sh.
+
+    This module holds NO Java: the tests come from the official artifact
+    jakarta.validation:validation-tck-tests (Maven Central). The run is the container-less one of the
+    TCK's own setup example (pom-local.xml): TestNG + the "local" Arquillian container shipped by
+    validation-standalone-container-adapter, with the integration tests excluded.
+
+    Never put a class in package org.hibernate.beanvalidation.tck here, and never put another
+    Jakarta Validation provider on the classpath: that would measure another implementation.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>io.vidocq.mansart</groupId>
+    <artifactId>mansart-validation-tck</artifactId>
+    <version>0.4.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+
+    <name>Mansart :: Validation :: TCK runner</name>
+    <description>
+        Runs the official Jakarta Validation 3.1 TCK against the Mansart provider. Standalone: invoked
+        through run-official-tck-validation-3.1.sh, never via the parent reactor.
+    </description>
+
+    <properties>
+        <maven.deploy.skip>true</maven.deploy.skip>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+        <mansart.version>0.4.0-SNAPSHOT</mansart.version>
+        <tck.version>3.1.1</tck.version>
+        <validation.provider>io.vidocq.mansart.validation.core.MansartValidationProvider</validation.provider>
+        <tck.suite.file>${project.build.directory}/dependency/validation-tck-tests-suite.xml</tck.suite.file>
+
+        <testng.version>7.9.0</testng.version>
+        <arquillian.version>1.8.0.Final</arquillian.version>
+        <jakarta.cdi.version>4.1.0</jakarta.cdi.version>
+        <jakarta.el.version>6.0.1</jakarta.el.version>
+        <jakarta.interceptor.version>2.2.0</jakarta.interceptor.version>
+        <jakarta.ejb.version>4.0.1</jakarta.ejb.version>
+        <jakarta.annotation.version>3.0.0</jakarta.annotation.version>
+    </properties>
+
+    <dependencies>
+        <!-- The provider under test. -->
+        <dependency>
+            <groupId>io.vidocq.mansart</groupId>
+            <artifactId>mansart-validation-core</artifactId>
+            <version>${mansart.version}</version>
+        </dependency>
+
+        <!-- The official tests, and the container-less Arquillian adapter. -->
+        <dependency>
+            <groupId>jakarta.validation</groupId>
+            <artifactId>validation-tck-tests</artifactId>
+            <version>${tck.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.validation</groupId>
+            <artifactId>validation-standalone-container-adapter</artifactId>
+            <version>${tck.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.testng</groupId>
+            <artifactId>testng</artifactId>
+            <version>${testng.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.jboss.arquillian.testng</groupId>
+            <artifactId>arquillian-testng-container</artifactId>
+            <version>${arquillian.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.jboss.arquillian.protocol</groupId>
+            <artifactId>arquillian-protocol-servlet</artifactId>
+            <version>${arquillian.version}</version>
+        </dependency>
+
+        <!--
+            APIs the test classes are compiled against ("provided" in the TCK). Only the APIs: the
+            container-less run excludes the integration tests, so no CDI/EJB implementation is needed.
+        -->
+        <dependency>
+            <groupId>jakarta.enterprise</groupId>
+            <artifactId>jakarta.enterprise.cdi-api</artifactId>
+            <version>${jakarta.cdi.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.interceptor</groupId>
+            <artifactId>jakarta.interceptor-api</artifactId>
+            <version>${jakarta.interceptor.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.ejb</groupId>
+            <artifactId>jakarta.ejb-api</artifactId>
+            <version>${jakarta.ejb.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.annotation</groupId>
+            <artifactId>jakarta.annotation-api</artifactId>
+            <version>${jakarta.annotation.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.el</groupId>
+            <artifactId>jakarta.el-api</artifactId>
+            <version>${jakarta.el.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <testResources>
+            <testResource>
+                <filtering>true</filtering>
+                <directory>src/test/resources</directory>
+            </testResource>
+        </testResources>
+        <plugins>
+            <!-- Downloads the official TestNG suite file (classifier "suite") from Maven Central. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.8.1</version>
+                <executions>
+                    <execution>
+                        <id>copy-tck-test-suite-file</id>
+                        <phase>generate-test-sources</phase>
+                        <goals>
+                            <goal>copy</goal>
+                        </goals>
+                        <configuration>
+                            <stripVersion>true</stripVersion>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>jakarta.validation</groupId>
+                                    <artifactId>validation-tck-tests</artifactId>
+                                    <version>${tck.version}</version>
+                                    <type>xml</type>
+                                    <classifier>suite</classifier>
+                                    <overWrite>false</overWrite>
+                                </artifactItem>
+                            </artifactItems>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.5.5</version>
+                <configuration>
+                    <argLine>-Xmx1024m -DexcludeIntegrationTests=true</argLine>
+                    <suiteXmlFiles>
+                        <suiteXmlFile>${tck.suite.file}</suiteXmlFile>
+                    </suiteXmlFiles>
+                    <systemPropertyVariables>
+                        <validation.provider>${validation.provider}</validation.provider>
+                        <arquillian.launch>local</arquillian.launch>
+                    </systemPropertyVariables>
+                    <!-- The TCK is the contract: report it, never fail the script on a red TCK at V0. -->
+                    <testFailureIgnore>true</testFailureIgnore>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
