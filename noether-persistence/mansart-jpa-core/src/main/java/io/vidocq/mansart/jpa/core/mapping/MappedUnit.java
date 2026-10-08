@@ -96,15 +96,16 @@ public final class MappedUnit {
                 .orElseGet(() -> Accesses.of(entity)));
             prepare(entity.attributes(), valueBinders, generated, embeddables, binders);
         }
+        Map<Class<?>, Integer> ranks = ranks(model);
         Map<Class<?>, MappedEntity> mapped = new IdentityHashMap<>();
         for (EntityModel entity : model.entities()) {
             ManagedAccess embeddedId = entity.id() instanceof IdModel.Embedded embedded
                 ? embeddables.get(embedded.attribute().embeddable()) : null;
             StatePolicy state = StatePolicy.of(entity.attributes(), embeddables::get, valueBinders);
             mapped.put(entity.javaType(), new MappedEntity(entity, entities.get(entity.javaType()), root(model, entity), embeddedId,
-                state, m -> EntityStatements.of(m, MappedEntity.idIndexes(m), binders::get, embeddables::get)));
+                state, m -> EntityStatements.of(m, MappedEntity.idIndexes(m), binders::get, embeddables::get),
+                ranks.get(entity.javaType())));
         }
-        rank(model, mapped);
         return new MappedUnit(model, entities, embeddables, binders, mapped);
     }
 
@@ -112,7 +113,9 @@ public final class MappedUnit {
      * Orders the entities for inserts (Kahn): an entity after those its owned to-one relationships reference. Entities
      * of a cycle keep the order of the unit, after the others; the database then needs deferred constraints.
      */
-    private static void rank(PersistenceUnitModel model, Map<Class<?>, MappedEntity> mapped) {
+    private static Map<Class<?>, Integer> ranks(PersistenceUnitModel model) {
+        Set<Class<?>> entities = new LinkedHashSet<>();
+        model.entities().forEach(e -> entities.add(e.javaType()));
         Map<Class<?>, Set<Class<?>>> references = new LinkedHashMap<>();
         for (EntityModel entity : model.entities()) {
             Set<Class<?>> targets = new LinkedHashSet<>();
@@ -120,12 +123,13 @@ public final class MappedUnit {
                 if (attribute instanceof AssociationAttribute association && association.mappedBy() == null
                         && (association.kind() == AssociationAttribute.Kind.MANY_TO_ONE
                         || association.kind() == AssociationAttribute.Kind.ONE_TO_ONE)
-                        && mapped.containsKey(association.javaType()) && association.javaType() != entity.javaType()) {
+                        && entities.contains(association.javaType()) && association.javaType() != entity.javaType()) {
                     targets.add(association.javaType());
                 }
             }
             references.put(entity.javaType(), targets);
         }
+        Map<Class<?>, Integer> ranks = new IdentityHashMap<>();
         int rank = 0;
         Set<Class<?>> placed = new LinkedHashSet<>();
         boolean progress = true;
@@ -133,7 +137,7 @@ public final class MappedUnit {
             progress = false;
             for (Map.Entry<Class<?>, Set<Class<?>>> entry : references.entrySet()) {
                 if (!placed.contains(entry.getKey()) && placed.containsAll(entry.getValue())) {
-                    mapped.get(entry.getKey()).rank(rank++);
+                    ranks.put(entry.getKey(), rank++);
                     placed.add(entry.getKey());
                     progress = true;
                 }
@@ -141,9 +145,10 @@ public final class MappedUnit {
         }
         for (Class<?> remaining : references.keySet()) {
             if (placed.add(remaining)) {
-                mapped.get(remaining).rank(rank++);
+                ranks.put(remaining, rank++);
             }
         }
+        return ranks;
     }
 
     /** The topmost entity class of the hierarchy of {@code entity}. */

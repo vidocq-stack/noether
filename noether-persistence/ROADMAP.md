@@ -292,21 +292,37 @@ by the application.
 TCK proof is a no-regression one: every TCK unit maps at bootstrap and the counts stay 220 / 1911, all failures still
 attributed to P4, P5, P7, P8 or P9 (see [`TCK.md`](TCK.md)).
 
-### P3 — Persistence context and flush engine ⏳
+### P3 — Persistence context and flush engine ✅
 
 Spec: §3.3 (entity instance life cycle, synchronization to the database), §3.4 (persistence
 context lifetime). Kept apart from P4 on purpose: this is the invariant every later milestone
 relies on, and it is fully testable without the TCK.
 
-- [ ] Identity map per persistence context (one managed instance per id), entity states
-      (new / managed / detached / removed) as an explicit state machine.
-- [ ] Snapshot-based dirty detection (state copied at load / persist, compared at flush) — no
-      enhancement, no interception. The generated access gains bulk `read(Object, Object[])` /
-      `write(Object, Object[])` methods (straight-line, one virtual call per entity instead of one per attribute).
-- [ ] Flush engine: deterministic statement ordering (inserts → updates → deletes, FK-aware),
-      JDBC batching, generated keys read back through the dialect.
+- [x] SQL AST and dialects (decision D4): `mansart-jpa-dialect-spi` (`Insert`, `Update`, `Delete`, `Select` with
+      their parameters in order; `Dialect`, `DialectFactory`, `StandardDialect` ANSI rendering; generated-key names,
+      duplicate-key detection), `mansart-jpa-dialect-h2`, `mansart-jpa-dialect-postgresql`; the dialect is detected
+      from the JDBC metadata at the first flush, or named by `io.vidocq.mansart.jpa.dialect`.
+- [x] Identity map per persistence context (one managed instance per identity, `CompositeId` compared by value for
+      `@EmbeddedId` / `@IdClass`), entity states (managed / removed, inserted or not) as an explicit state machine
+      (`context.PersistenceContext`).
+- [x] Snapshot-based dirty detection (`mapping.StatePolicy`): immutable values shared, arrays, dates and calendars
+      copied, `BigDecimal` by value, embeddables recursively, converted values as stored, other serializable values
+      serialized — no enhancement, no interception. The generated accesses gained straight-line bulk
+      `read(Object, Object[])` / `write(Object, Object[])`.
+- [x] Statements per entity built once from the mapping (`mapping.EntityStatements`: columns, embedded ones
+      flattened with their overrides, insert / update / delete / select by identifier with their parameters).
+- [x] Flush engine (`flush.FlushEngine`): inserts (an entity after those its owned to-one relationships reference)
+      → updates → deletes in reverse, JDBC batching of consecutive statements of an entity (batch size
+      `io.vidocq.mansart.jpa.jdbc.batch-size`, default 50), `IDENTITY` keys read back, version initialised and
+      incremented, `OptimisticLockException` when a versioned row matches nothing, `EntityExistsException` on a
+      duplicate key. `flush()` and `commit()` write the context (a failed flush at commit rolls back:
+      `RollbackException`), a rollback and `clear()` detach.
+- *For P4:* the entity operations (`persist`, `find`, `merge`, …) that drive the context — P3 is driven by its own
+  API in the tests; inserts of entities with generated keys other than `IDENTITY`.
+- *For P5:* relationship columns and the FK-aware ordering they need at the database (the ranks are computed now).
+- *For P6:* entity inheritance (its statements name the milestone).
 
-**TCK gate**: none on its own — closed by unit tests on H2; the TCK delta appears with P4.
+**TCK gate**: none on its own — closed by unit tests on H2 (the TCK still passes 220 / 2135 with the flush at commit); the TCK delta appears with P4.
 
 ### P4 — Entity operations, callbacks, locking ⏳
 

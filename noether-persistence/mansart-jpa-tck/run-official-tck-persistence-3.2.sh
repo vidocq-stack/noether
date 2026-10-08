@@ -55,7 +55,7 @@ echo ">>> TCK artifacts"
 ./install-tck.sh
 
 echo ">>> Build and install the provider under test (mansart-jpa-core)"
-(cd ../.. && ./mvnw -q -B -ntp -pl mansart-persistence/mansart-jpa-core -am install -DskipTests)
+(cd ../.. && ./mvnw -q -B -ntp -pl mansart-persistence/mansart-jpa-core,mansart-persistence/mansart-jpa-dialects/mansart-jpa-dialect-postgresql -am install -DskipTests)
 
 if [ "$TCK_VALIDATION" = on ]; then
     echo ">>> Build and install mansart-validation-core (Bean Validation on the class path of execution 1)"

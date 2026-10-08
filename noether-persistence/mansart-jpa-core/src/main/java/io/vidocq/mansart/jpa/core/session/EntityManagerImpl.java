@@ -314,7 +314,7 @@ final class EntityManagerImpl implements EntityManager {
             throw failed(new TransactionRequiredException("flush() needs an active transaction"));
         }
         try {
-            flush(transaction.connection());
+            transaction.onConnection(this::flush);
         } catch (RuntimeException e) {
             throw failed(e);
         }

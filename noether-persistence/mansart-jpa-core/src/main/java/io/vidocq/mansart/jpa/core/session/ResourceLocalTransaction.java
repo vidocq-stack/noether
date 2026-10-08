@@ -25,6 +25,8 @@ import jakarta.persistence.RollbackException;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
 
 /**
  * The resource-local {@link EntityTransaction} of an entity manager (§7.5.2–7.5.4), over one JDBC connection. The
@@ -39,6 +41,12 @@ final class ResourceLocalTransaction implements EntityTransaction {
 
     private final EntityManagerFactoryImpl factory;
     private final TransactionListener listener;
+    /**
+     * Held by the owning thread while it works on the connection (flush, commit, rollback), and by a closing factory
+     * that abandons the transaction: the connection is never rolled back and released under a running flush. A
+     * {@link ReentrantLock}, not a monitor: a virtual thread waiting for it parks without pinning its carrier.
+     */
+    private final ReentrantLock lock = new ReentrantLock();
     private final AtomicReference<Connection> connection = new AtomicReference<>();
     private volatile boolean rollbackOnly;
     private Integer timeout;
@@ -78,56 +86,66 @@ final class ResourceLocalTransaction implements EntityTransaction {
 
     @Override
     public void commit() {
-        if (!rollbackOnly) {
+        lock.lock();
+        try {
+            if (!rollbackOnly) {
+                try {
+                    listener.beforeCommit(activeConnection());
+                } catch (IllegalStateException e) {
+                    throw e; // no active transaction
+                } catch (RuntimeException e) {
+                    Connection current = takeConnection();
+                    try {
+                        current.rollback();
+                    } catch (SQLException rollbackFailure) {
+                        e.addSuppressed(rollbackFailure);
+                    }
+                    listener.afterRollback();
+                    throw end(current, new RollbackException("The flush before the commit failed: " + e.getMessage(), e));
+                }
+            }
+            Connection current = takeConnection();
+            if (rollbackOnly) {
+                listener.afterRollback();
+                try {
+                    current.rollback();
+                } catch (SQLException e) {
+                    throw end(current, new RollbackException("The transaction was marked for rollback, and the rollback failed", e));
+                }
+                throw end(current, new RollbackException("The transaction was marked for rollback only"));
+            }
             try {
-                listener.beforeCommit(activeConnection());
-            } catch (IllegalStateException e) {
-                throw e; // no active transaction
-            } catch (RuntimeException e) {
-                Connection current = takeConnection();
+                current.commit();
+            } catch (SQLException e) {
                 try {
                     current.rollback();
                 } catch (SQLException rollbackFailure) {
                     e.addSuppressed(rollbackFailure);
                 }
                 listener.afterRollback();
-                throw end(current, new RollbackException("The flush before the commit failed: " + e.getMessage(), e));
+                throw end(current, new RollbackException("The commit failed: " + e.getMessage(), e));
             }
+            end(current, null);
+        } finally {
+            lock.unlock();
         }
-        Connection current = takeConnection();
-        if (rollbackOnly) {
-            listener.afterRollback();
-            try {
-                current.rollback();
-            } catch (SQLException e) {
-                throw end(current, new RollbackException("The transaction was marked for rollback, and the rollback failed", e));
-            }
-            throw end(current, new RollbackException("The transaction was marked for rollback only"));
-        }
-        try {
-            current.commit();
-        } catch (SQLException e) {
-            try {
-                current.rollback();
-            } catch (SQLException rollbackFailure) {
-                e.addSuppressed(rollbackFailure);
-            }
-            listener.afterRollback();
-            throw end(current, new RollbackException("The commit failed: " + e.getMessage(), e));
-        }
-        end(current, null);
     }
 
     @Override
     public void rollback() {
-        Connection current = takeConnection();
-        listener.afterRollback();
+        lock.lock();
         try {
-            current.rollback();
-        } catch (SQLException e) {
-            throw end(current, new PersistenceException("The rollback failed: " + e.getMessage(), e));
+            Connection current = takeConnection();
+            listener.afterRollback();
+            try {
+                current.rollback();
+            } catch (SQLException e) {
+                throw end(current, new PersistenceException("The rollback failed: " + e.getMessage(), e));
+            }
+            end(current, null);
+        } finally {
+            lock.unlock();
         }
-        end(current, null);
     }
 
     @Override
@@ -158,20 +176,35 @@ final class ResourceLocalTransaction implements EntityTransaction {
     }
 
     /** The connection of the active transaction; the entity manager runs its statements on it. */
+    /** Runs {@code work} on the connection of the active transaction, which no closing factory can release meanwhile. */
+    void onConnection(Consumer<Connection> work) {
+        lock.lock();
+        try {
+            work.accept(activeConnection());
+        } finally {
+            lock.unlock();
+        }
+    }
+
     Connection connection() {
         return activeConnection();
     }
 
     /** Rolls back and releases an abandoned transaction, when its factory is closed; a no-op if it already ended. */
     void abandon() {
-        Connection current = connection.getAndSet(null);
-        if (current != null) {
-            try {
-                current.rollback();
-            } catch (SQLException ignored) {
-                // the factory is closing: nothing more can be done for this transaction
+        lock.lock();
+        try {
+            Connection current = connection.getAndSet(null);
+            if (current != null) {
+                try {
+                    current.rollback();
+                } catch (SQLException ignored) {
+                    // the factory is closing: nothing more can be done for this transaction
+                }
+                end(current, null);
             }
-            end(current, null);
+        } finally {
+            lock.unlock();
         }
     }
 

@@ -30,7 +30,7 @@ import javax.sql.DataSource;
  * A {@link DataSource} over a JDBC URL (H2 in the tests) that counts the connections it hands out and the ones still open: a resource-local
  * transaction must take a connection when it begins and give it back when it ends.
  */
-public final class CountingDataSource implements DataSource {
+public class CountingDataSource implements DataSource {
 
     private final String url;
     final AtomicInteger opened = new AtomicInteger();

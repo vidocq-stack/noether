@@ -32,7 +32,10 @@ public interface Dialect {
     /** The name of the dialect, as the property {@code io.vidocq.mansart.jpa.dialect} selects it. */
     String name();
 
-    /** The SQL of {@code statement}, with one {@code ?} per parameter, in the order the statement documents. */
+    /**
+     * The SQL of {@code statement}, with one {@code ?} per parameter, in the order the statement documents. Pure
+     * computation, no I/O and no call back into Mansart: the provider renders inside a concurrent cache.
+     */
     String render(Statement statement);
 
     /**

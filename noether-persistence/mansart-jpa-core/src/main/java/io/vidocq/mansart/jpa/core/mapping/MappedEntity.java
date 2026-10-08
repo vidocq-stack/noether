@@ -41,10 +41,10 @@ public final class MappedEntity {
     private final ManagedAccess embeddedId;
     private final StatePolicy state;
     private final EntityStatements statements;
-    private int rank;
+    private final int rank;
 
     MappedEntity(EntityModel model, ManagedAccess access, Class<?> root, ManagedAccess embeddedId, StatePolicy state,
-            Function<EntityModel, EntityStatements> statements) {
+            Function<EntityModel, EntityStatements> statements, int rank) {
         this.model = model;
         this.state = state;
         this.access = access;
@@ -52,6 +52,7 @@ public final class MappedEntity {
         this.embeddedId = embeddedId;
         this.idAttributes = idIndexes(model);
         this.statements = statements.apply(model);
+        this.rank = rank;
     }
 
     /**
@@ -60,10 +61,6 @@ public final class MappedEntity {
      */
     public int rank() {
         return rank;
-    }
-
-    void rank(int rank) {
-        this.rank = rank;
     }
 
     /** Its insert, update, delete and select by identifier, and their parameters. */

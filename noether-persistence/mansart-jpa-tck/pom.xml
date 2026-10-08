@@ -95,6 +95,13 @@
             <version>${mansart.version}</version>
             <scope>test</scope>
         </dependency>
+        <!-- The SQL of the certification database (decision D4). -->
+        <dependency>
+            <groupId>io.vidocq.mansart</groupId>
+            <artifactId>mansart-jpa-dialect-postgresql</artifactId>
+            <version>${mansart.version}</version>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>jakarta.persistence</groupId>
             <artifactId>jakarta.persistence-api</artifactId>

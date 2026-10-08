@@ -58,6 +58,7 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     private final ConnectionSource connections;
     private final MappedUnit mapping;
     private final AtomicReference<FlushEngine> flushEngine = new AtomicReference<>();
+    private final int batchSize;
     private final Cache cache = new NoSecondLevelCache();
     private final AtomicBoolean open = new AtomicBoolean(true);
     private final Set<ResourceLocalTransaction> activeTransactions = ConcurrentHashMap.newKeySet();
@@ -66,6 +67,24 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
         this.settings = settings;
         this.connections = connections;
         this.mapping = mapping;
+        this.batchSize = batchSize(settings);
+    }
+
+    /** The batch size the unit sets, checked when the factory is created rather than at the first flush. */
+    private static int batchSize(UnitSettings settings) {
+        String value = settings.string(BATCH_SIZE);
+        if (value == null || value.isBlank()) {
+            return DEFAULT_BATCH_SIZE;
+        }
+        try {
+            int size = Integer.parseInt(value.strip());
+            if (size < 1) {
+                throw new NumberFormatException("not positive");
+            }
+            return size;
+        } catch (NumberFormatException e) {
+            throw new PersistenceException("The property " + BATCH_SIZE + " must be a positive integer, not '" + value + "'", e);
+        }
     }
 
     /** The batch size of the flush, {@value #DEFAULT_BATCH_SIZE} unless the unit sets {@value #BATCH_SIZE}. */
@@ -82,8 +101,7 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
             ClassLoader loader = settings.definition().classLoader() != null ? settings.definition().classLoader()
                 : Thread.currentThread().getContextClassLoader();
             Dialect dialect = Dialects.resolve(connection, settings.string(Dialects.PROPERTY), loader);
-            String batchSize = settings.string(BATCH_SIZE);
-            FlushEngine created = new FlushEngine(dialect, batchSize == null ? DEFAULT_BATCH_SIZE : Integer.parseInt(batchSize.strip()));
+            FlushEngine created = new FlushEngine(dialect, batchSize);
             engine = flushEngine.compareAndExchange(null, created);
             if (engine == null) {
                 engine = created;

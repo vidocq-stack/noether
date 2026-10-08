@@ -32,7 +32,9 @@ import java.util.ServiceLoader;
 
 /**
  * Finds the dialect of a database among the {@link DialectFactory} implementations {@link ServiceLoader} sees
- * ({@code mansart-jpa-dialect-*} modules or jars): by name when the unit names it, else from the JDBC metadata.
+ * ({@code mansart-jpa-dialect-*} modules or jars): by name when the unit names it, else from the JDBC metadata. The
+ * factories of the boot layer come first, then those only the unit's class loader sees; the first that serves the
+ * database wins. Resolved once per factory, at its first flush.
  */
 public final class Dialects {
 

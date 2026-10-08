@@ -28,12 +28,20 @@ import jakarta.persistence.EntityExistsException;
 import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.PersistenceConfiguration;
 import jakarta.persistence.RollbackException;
+import java.lang.reflect.Proxy;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Duration;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -52,7 +60,7 @@ class FlushOnCommitTest {
     @BeforeEach
     void open() throws SQLException {
         url = "jdbc:h2:mem:flush-" + DATABASES.incrementAndGet() + ";DB_CLOSE_DELAY=-1";
-        keepAlive = DriverManager.getConnection(url);
+        keepAlive = DriverManager.getConnection(url, "sa", "");
         try (Statement ddl = keepAlive.createStatement()) {
             ddl.execute("create table Customer (id bigint primary key, name varchar(50), E_MAIL varchar(120), visits int, "
                 + "balance decimal(19,2), credit decimal(12,2), since date, legacy timestamp, birthDate date, token uuid, level int, "
@@ -60,7 +68,7 @@ class FlushOnCommitTest {
                 + "biography varchar(1000))");
         }
         emf = new PersistenceConfiguration("flush").provider("io.vidocq.mansart.jpa.core.MansartPersistenceProvider")
-            .managedClass(Customer.class).property(PersistenceConfiguration.JDBC_URL, url).createEntityManagerFactory();
+            .managedClass(Customer.class).property(PersistenceConfiguration.JDBC_URL, url).property(PersistenceConfiguration.JDBC_USER, "sa").createEntityManagerFactory();
         em = (EntityManagerImpl) emf.createEntityManager();
         customer = emf.unwrap(EntityManagerFactoryImpl.class).mapping().entity(Customer.class).orElseThrow();
     }
@@ -132,13 +140,89 @@ class FlushOnCommitTest {
     void aTransactionWithNothingManagedNeedsNoDialect() { // the unit names a dialect that does not exist
         try (EntityManagerFactory other = new PersistenceConfiguration("nodialect")
                 .provider("io.vidocq.mansart.jpa.core.MansartPersistenceProvider").managedClass(Customer.class)
-                .property(PersistenceConfiguration.JDBC_URL, url).property("io.vidocq.mansart.jpa.dialect", "nope")
+                .property(PersistenceConfiguration.JDBC_URL, url).property(PersistenceConfiguration.JDBC_USER, "sa").property("io.vidocq.mansart.jpa.dialect", "nope")
                 .createEntityManagerFactory()) {
             var manager = other.createEntityManager();
             manager.getTransaction().begin();
             manager.flush();
             manager.getTransaction().commit();
         }
+    }
+
+    /** A data source whose connections block in {@code executeBatch} until {@code release} opens. */
+    private DataSource blockingBatches(CountDownLatch entered, CountDownLatch release, List<String> events) {
+        return new CountingDataSource(url) {
+            @Override
+            public Connection getConnection() throws SQLException {
+                Connection real = super.getConnection();
+                return (Connection) Proxy.newProxyInstance(Connection.class.getClassLoader(), new Class<?>[] {Connection.class},
+                    (proxy, method, args) -> {
+                        if (method.getName().equals("close")) {
+                            events.add("close");
+                        }
+                        Object result = invoke(real, method, args);
+                        if (result instanceof PreparedStatement statement) {
+                            return Proxy.newProxyInstance(PreparedStatement.class.getClassLoader(),
+                                new Class<?>[] {PreparedStatement.class}, (p, m, a) -> {
+                                    if (m.getName().equals("executeBatch")) {
+                                        entered.countDown();
+                                        release.await();
+                                        events.add("executeBatch");
+                                    }
+                                    return invoke(statement, m, a);
+                                });
+                        }
+                        return result;
+                    });
+            }
+        };
+    }
+
+    private static Object invoke(Object target, java.lang.reflect.Method method, Object[] args) throws Throwable {
+        try {
+            return method.invoke(target, args);
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            throw e.getCause();
+        }
+    }
+
+    @Test
+    void closingTheFactoryWaitsForAFlushInProgress() throws Exception { // the connection is never released under a flush
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        List<String> events = new CopyOnWriteArrayList<>();
+        EntityManagerFactory blocking = new PersistenceConfiguration("blocking")
+            .provider("io.vidocq.mansart.jpa.core.MansartPersistenceProvider").managedClass(Customer.class)
+            .property("jakarta.persistence.nonJtaDataSource", blockingBatches(entered, release, events))
+            .createEntityManagerFactory();
+        EntityManagerImpl manager = (EntityManagerImpl) blocking.createEntityManager();
+        manager.getTransaction().begin();
+        manager.context().persist(newCustomer(1, "Vidocq"), customer);
+        Thread committer = Thread.ofVirtual().start(() -> {
+            try {
+                manager.getTransaction().commit();
+                events.add("committed");
+            } catch (RuntimeException e) {
+                events.add("commit failed: " + e);
+            }
+        });
+        assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+        Thread closer = Thread.ofVirtual().start(blocking::close);
+        closer.join(Duration.ofMillis(300));
+        assertThat(closer.isAlive()).as("close waits for the commit").isTrue();
+        release.countDown();
+        committer.join(Duration.ofSeconds(10));
+        closer.join(Duration.ofSeconds(10));
+        assertThat(events).containsExactly("executeBatch", "close", "committed");
+        assertThat(rows()).isEqualTo(1);
+    }
+
+    @Test
+    void anInvalidBatchSizeFailsTheCreationOfTheFactory() {
+        assertThatThrownBy(() -> new PersistenceConfiguration("batch").provider("io.vidocq.mansart.jpa.core.MansartPersistenceProvider")
+            .managedClass(Customer.class).property(PersistenceConfiguration.JDBC_URL, url)
+            .property(EntityManagerFactoryImpl.BATCH_SIZE, "zero").createEntityManagerFactory())
+            .isInstanceOf(jakarta.persistence.PersistenceException.class).hasMessageContaining(EntityManagerFactoryImpl.BATCH_SIZE);
     }
 
     @Test
