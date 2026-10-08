@@ -24,6 +24,7 @@ import io.vidocq.mansart.jpa.core.jdbc.ConnectionSource;
 import io.vidocq.mansart.jpa.core.flush.Dialects;
 import io.vidocq.mansart.jpa.core.flush.EntityLoader;
 import io.vidocq.mansart.jpa.core.flush.FlushEngine;
+import io.vidocq.mansart.jpa.core.generation.IdGenerators;
 import io.vidocq.mansart.jpa.core.mapping.MappedUnit;
 import io.vidocq.mansart.jpa.dialect.Dialect;
 import jakarta.persistence.Cache;
@@ -59,6 +60,7 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     private final ConnectionSource connections;
     private final MappedUnit mapping;
     private final AtomicReference<FlushEngine> flushEngine = new AtomicReference<>();
+    private final AtomicReference<IdGenerators> idGenerators = new AtomicReference<>();
     private final int batchSize;
     private final Cache cache = new NoSecondLevelCache();
     private final AtomicBoolean open = new AtomicBoolean(true);
@@ -109,6 +111,19 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
             }
         }
         return engine;
+    }
+
+    /** The identifier generators of the factory, created at first use with the dialect of the flush engine. */
+    IdGenerators idGenerators(Connection connection) {
+        IdGenerators generators = idGenerators.get();
+        if (generators == null) {
+            IdGenerators created = new IdGenerators(flushEngine(connection).dialect(), connections);
+            generators = idGenerators.compareAndExchange(null, created);
+            if (generators == null) {
+                generators = created;
+            }
+        }
+        return generators;
     }
 
     /** Builds managed instances from rows, with the dialect and SQL of the flush engine. */

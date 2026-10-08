@@ -22,6 +22,7 @@ package io.vidocq.mansart.jpa.core.session;
 import io.vidocq.mansart.jpa.core.context.EntityKey;
 import io.vidocq.mansart.jpa.core.context.ManagedEntity;
 import io.vidocq.mansart.jpa.core.context.PersistenceContext;
+import io.vidocq.mansart.jpa.core.generation.IdGenerators;
 import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
 import io.vidocq.mansart.jpa.core.mapping.MappedUnit;
 import io.vidocq.mansart.jpa.core.model.AssociationAttribute;
@@ -87,10 +88,21 @@ final class EntityOperations {
         }
         MappedEntity type = type(entity);
         Optional<ManagedEntity> known = context.entry(entity);
-        if (known.isEmpty() || known.get().status() == ManagedEntity.Status.REMOVED) {
+        if (known.isEmpty()) {
+            generateId(type, entity);
             context.persist(entity, type); // a detached instance fails at flush: its identity exists (§3.2.2)
+        } else if (known.get().status() == ManagedEntity.Status.REMOVED) {
+            context.persist(entity, type);
         }
         cascade(entity, type, CascadeType.PERSIST, target -> persist(target, visited));
+    }
+
+    /** §11.1.20: a generated identifier not assigned yet is assigned now, unless the insert generates it (IDENTITY). */
+    private void generateId(MappedEntity type, Object entity) {
+        if (IdGenerators.generatesBeforeInsert(type) && type.id(entity) == null) {
+            Object id = connections.on(connection -> factory.idGenerators(connection).next(type, connection));
+            type.access().set(entity, type.idAttributes()[0], id);
+        }
     }
 
     // ---- remove (§3.2.3) ----------------------------------------------------------------------------------
@@ -160,6 +172,7 @@ final class EntityOperations {
             // a new instance: a new managed copy (§3.2.7.1)
             managed = type.access().instantiate();
             copy(type, entity, managed);
+            generateId(type, managed);
             context.persist(managed, type);
         } else {
             checkVersion(type, entity, managed);
