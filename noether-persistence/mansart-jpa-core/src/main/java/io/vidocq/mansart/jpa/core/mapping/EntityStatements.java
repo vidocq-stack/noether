@@ -110,10 +110,12 @@ public final class EntityStatements {
         if (model.superEntity().isPresent()) {
             return unsupported(model, "P6", "entity inheritance");
         }
-        if (model.id() instanceof IdModel.Derived) {
+        List<Integer> ids = Arrays.stream(idAttributes).boxed().toList();
+        // a derived identity, single or through an @IdClass: part of the identifier is a relationship column (P5)
+        if (ids.stream().anyMatch(i -> !(model.attributes().get(i) instanceof BasicAttribute
+                || model.attributes().get(i) instanceof EmbeddedAttribute))) {
             return unsupported(model, "P5", "derived identities");
         }
-        List<Integer> ids = Arrays.stream(idAttributes).boxed().toList();
         Identifier generated = model.id() instanceof IdModel.Single single
             && single.generation().map(g -> g.strategy() == GenerationType.IDENTITY).orElse(false)
             ? Identifier.of(single.attribute().column().name()) : null;
@@ -157,6 +159,9 @@ public final class EntityStatements {
             if (column.version()) {
                 version = c;
             }
+        }
+        if (keyColumns.isEmpty()) {
+            return unsupported(model, "P5", "identifiers without a column of their own");
         }
         List<Identifier> conditions = new ArrayList<>(keyColumns);
         List<Parameter> conditionParameters = new ArrayList<>(keyParameters);

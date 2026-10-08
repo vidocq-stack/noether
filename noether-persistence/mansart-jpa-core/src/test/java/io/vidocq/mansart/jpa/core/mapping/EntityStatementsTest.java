@@ -107,4 +107,14 @@ class EntityStatementsTest {
         assertThat(values[names.lastIndexOf("lat")]).isEqualTo(48.85);
         assertThat(values[names.indexOf("street")]).isNull(); // a null embeddable: null columns
     }
+
+    @Test
+    void anIdentifierHeldByARelationshipWaitsForP5WithoutFailingTheBootstrap() { // §2.4.1, through an @IdClass
+        MappedUnit unit = MappedUnit.of(List.of(io.vidocq.mansart.jpa.core.model.build.fixtures.Parent.class.getName(),
+            io.vidocq.mansart.jpa.core.model.build.fixtures.NamedDependent.class.getName()), EntityStatementsTest.class.getClassLoader());
+        EntityStatements statements = unit.entity(io.vidocq.mansart.jpa.core.model.build.fixtures.NamedDependent.class).orElseThrow()
+            .statements();
+        org.assertj.core.api.Assertions.assertThatThrownBy(statements::insert).isInstanceOf(UnsupportedOperationException.class)
+            .hasMessageContaining("P5");
+    }
 }
