@@ -204,14 +204,15 @@ Spec: ch. 7 (EM/EMF lifecycle, `EntityTransaction`), ch. 8 (`persistence.xml`), 
 **TCK gate**: 220 of 2135 pass (17 at P0); every failure names the milestone that delivers what it needs (P4: 877,
 P7: 661, P8: 348, P9: 23, P5: 2), nothing is unexplained. Gate areas: 20 pass, 15 wait for P4/P5/P7/P8.
 
-### P2 — Entity model and generated access 🚧
+### P2 — Entity model and generated access ✅
 
 Spec: ch. 2 (entities, access type, ids, basic types, embeddables), ch. 11 (ORM metadata —
 non-relational part), §3.9 (attribute converters), §8.2.1.6 (managed classes).
 
-Split in two: **P2a** builds the runtime path, from the class files read at bootstrap; **P2b** moves the same
-work to build time for application sources and jars. Both feed one model (`model.*`), so P2b changes where the model
-is computed, never what the engine sees.
+Split in two: **P2a** builds the runtime path, from the class files read at bootstrap; **P2b** generates the entity
+accesses at build time for application sources. The model (`model.*`) is still built at bootstrap from the class
+files; the accesses of both paths are planned by the same code (`AccessPlanner`), so P2b changes how the engine
+reaches entities, never what it sees.
 
 **P2a — runtime path** ✅
 
@@ -244,13 +245,39 @@ is computed, never what the engine sees.
 - *Moved to P4:* executing the generation strategies (`IDENTITY`, `SEQUENCE`, `TABLE`, `UUID`, `AUTO` honouring
   `db.supports.sequence`): they need the insert path and the dialect (D4). The model above carries their metadata.
 
-**P2b — build-time path** — required for AOT: GraalVM native-image cannot define hidden classes at run time and
+**P2b — build-time path** ✅ — required for AOT: GraalVM native-image cannot define hidden classes at run time and
 Leyden does not archive them, so the P2a path stays the fallback for archives nobody compiled with Mansart.
 
-- [ ] APT processor (`mansart-jpa-processor`) and Maven plugin computing the same model at build time, with the
-      accessors generated as ordinary classes (no hidden class, no `opens` needed).
-- [ ] Static metamodel `_Entity` generation (canonical metamodel, §5.1.1), shared format with
-      `mansart-data-processor`.
+Hand-over decided 2026-10-08 (maintainer): the ecosystem convention (Vauban, Cassini, Champollion) — generated
+classes in the application package, an SPI exported by the provider, `ServiceLoader`, the `provides` line written
+by the application.
+
+- [x] Shared planning: `AccessPlanner` (which members are persistent, through which access type, in which order) over
+      a `ClassInfos` source — class files at bootstrap, `javax.lang.model` elements in the processor — so that both
+      list the attributes identically.
+- [x] SPI `io.vidocq.mansart.jpa.core.spi` (the only package exported to applications): `ManagedAccess`, which lists
+      its attributes (`name:FIELD|PROPERTY`), and `ManagedAccessProvider`. At bootstrap a provided access is used
+      only when its attribute list is the model's (else a warning and the hidden class): a stale build never maps
+      wrongly.
+- [x] `mansart-jpa-processor`: `X$$MansartAccess` per entity and embedded embeddable, `_MansartJpaAccess` per
+      package, `META-INF/services` for the class path, `provides` check with the line to add for the module path.
+      Direct access where the language allows it, `static final` method handles from the generated class's own
+      lookup otherwise (`privateLookupIn` within the module: no `opens`). Classes it cannot serve are left to the
+      bootstrap with a warning. It claims no annotation (the Jakarta Data processor still sees the entities).
+- [x] Module-path proof (`mansart-jpa-processor-module-it`): entity package neither opened nor exported, mapped
+      through its generated access; without the `provides` line the build warns and the bootstrap refuses, naming
+      both remedies.
+- *Moved to P8* (decided 2026-10-08): the canonical static metamodel `X_` (§6.2.1.1). Its fields are initialised by
+  the provider at factory creation (§6.2.2), which needs the metamodel API; `mansart-data-processor` already
+  generates an `X_`, and sharing one writer with it is part of that work.
+- *Later, own milestone* (decided 2026-10-08): the Maven plugin for entities in dependency jars (split packages,
+  `module-info` rewriting as Vauban does). Until then such entities use the P2a path (`opens`).
+- [x] Hardened by the Class-File/APT review: generic mapped superclasses, fluent and non-public setters, throwing
+      constructors, the unnamed package, shadowed `java.lang` names, types resolved in later rounds, runtime-visible
+      annotations only (parity with class files), incremental builds (providers and `META-INF/services` keep what
+      the build did not recompile), originating elements for incremental build tools.
+- *Moved to P12:* AOT metadata — the generated accesses use `MethodHandles` on private members; GraalVM
+  native-image needs them registered (reachability metadata).
 
 **TCK gate**: `core.types`, `core.enums`, `core.annotations.{access,basic,convert,id,lob,temporal,embeddable}`,
 `jpa22.repeatable.convert`, `jpa22.generators`. These areas persist and read entities back: they open with P4. P2a's

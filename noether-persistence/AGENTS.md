@@ -27,11 +27,14 @@
 
 ## Real Code State to Know Before Modifying
 
-- **No production code yet.** `pom.xml` is an empty aggregator (`packaging pom`, no `<modules>`)
-  registered in the root reactor. Each implementation module is created by the milestone that
-  needs it, together with its first failing test.
-- The next milestone is **P0 — the TCK instrument** (see `ROADMAP.md`). Nothing is implemented
-  before a TCK counter exists to measure it.
+- Modules in the reactor: `mansart-jpa-core` (provider, bootstrap, entity model, accesses, JDBC binders),
+  `mansart-jpa-processor` (APT, entity accesses at build time) and two module-path test vehicles,
+  `mansart-jpa-module-it` (runtime path, `opens`) and `mansart-jpa-processor-module-it` (build-time path,
+  `provides`). `mansart-jpa-tck` stays out of the reactor.
+- Milestones P0, P1 and P2 are delivered: read `ROADMAP.md` (status per item) and `TCK.md`
+  (measured score, failures attributed per milestone) before starting.
+- The entity model is built at bootstrap from the class files; which members are persistent, and in which order, is
+  decided by `AccessPlanner`, shared with the processor. Never duplicate that logic.
 - Several abandoned JPA attempts live on remote branches (`feature/*mansart*persistence*`). They
   are history, not a base: nothing is cherry-picked from them without a test that justifies it.
 
@@ -58,7 +61,10 @@ Module names are a plan, not a contract: a module is only created when a milesto
   Never write a class named `Client` (it would match the TCK include and report a fake pass).
 - **No runtime reflection on entities** — no `Field.get/set`, no `Method.invoke`, no
   `setAccessible(true)`. Entity access goes through code generated, in this order of preference:
-  1. by APT at compile time (application sources);
+  1. by APT at compile time (application sources): `mansart-jpa-processor` writes `X$$MansartAccess` and a
+     `_MansartJpaAccess` per package, handed over by `ServiceLoader` (`provides
+     io.vidocq.mansart.jpa.core.spi.ManagedAccessProvider with <package>._MansartJpaAccess;` written by the
+     application, `META-INF/services` on the class path) — no `opens` needed;
   2. by the Maven plugin at build time (dependency jars);
   3. by the **Class-File API** at `EntityManagerFactory` bootstrap (opaque archives such as the
      TCK), reading annotations from class bytes (`ClassFile.of().parse`) and defining accessors as
