@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Persistence units of the mansart-jpa-core unit tests. -->
+<persistence xmlns="https://jakarta.ee/xml/ns/persistence" version="3.2">
+    <persistence-unit name="h2">
+        <properties>
+            <property name="jakarta.persistence.jdbc.url" value="jdbc:h2:mem:core-tests;DB_CLOSE_DELAY=-1"/>
+            <property name="jakarta.persistence.jdbc.user" value="sa"/>
+            <property name="jakarta.persistence.jdbc.password" value=""/>
+            <property name="from.xml" value="xml"/>
+            <property name="overridden" value="xml"/>
+        </properties>
+    </persistence-unit>
+    <persistence-unit name="other-provider">
+        <provider>com.acme.OtherProvider</provider>
+    </persistence-unit>
+    <persistence-unit name="ours-by-name">
+        <provider>io.vidocq.mansart.jpa.core.MansartPersistenceProvider</provider>
+    </persistence-unit>
+    <persistence-unit name="jta" transaction-type="JTA"/>
+    <persistence-unit name="callback">
+        <validation-mode>CALLBACK</validation-mode>
+    </persistence-unit>
+</persistence>

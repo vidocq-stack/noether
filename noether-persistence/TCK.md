@@ -9,6 +9,28 @@ Official suite: **Jakarta Persistence 3.2.1** TCK (bundle from eclipse.org, SHA-
 | Milestone | Date | Java | Database | Tests | Pass | Fail | Skipped |
 |---|---|---|---|---:|---:|---:|---:|
 | P0 — instrument, no provider | 2026-10-08 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 17 | 2114 | 4 |
+| P1 — bootstrap, provider SPI, resource-local transactions | 2026-10-08 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 220 | 1911 | 4 |
+
+## P1 — what the 1911 failures are
+
+Every failure names the milestone that delivers the missing operation (the provider throws
+`UnsupportedOperationException: Mansart JPA does not support … yet (milestone Pn …)`, or a `PersistenceException` for
+schema generation):
+
+| Count | Milestone | What the tests need |
+|---:|---|---|
+| 877 | P4 | `persist`, `find`, `remove`, … on entities |
+| 661 | P7 | Jakarta Persistence queries, native queries, named queries, stored procedures |
+| 348 | P8 | the metamodel, the Criteria API, entity graphs |
+| 23 | P9 | schema generation |
+| 2 | P5 | `PersistenceUnitUtil` |
+
+No failure is left unexplained. P1 gate areas (`se.entityManagerFactory`, `core.entityManagerFactory`,
+`core.entityTransaction`, `se.resource_local`): 20 pass, 1 skipped (official exclusion), 15 fail, all on P4, P5, P7 or P8.
+`se.entityManagerFactory.Client2#createEntityManagerFactoryNoBeanValidatorTest` now passes for the right reason: the
+provider refuses validation mode CALLBACK without Bean Validation.
+
+Bean Validation neutrality (2026-10-08, with the provider): NEUTRAL, 2135 tests, same results both ways.
 
 ## Baseline — P0 (no provider)
 

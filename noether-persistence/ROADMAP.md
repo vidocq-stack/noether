@@ -175,23 +175,34 @@ prints a counter. PASS = 0 is the expected, correct outcome — 17 pass anyway, 
 - Both failsafe executions run `se.entityManagerFactory.Client2`: with a shared reports directory, the
   second overwrites the first and a test disappears from the count.
 
-### P1 — Bootstrap, provider SPI, resource-local transactions ⏳
+### P1 — Bootstrap, provider SPI, resource-local transactions ✅
 
 Spec: ch. 7 (EM/EMF lifecycle, `EntityTransaction`), ch. 8 (`persistence.xml`), ch. 9 (provider contracts,
 §9.2 Java SE bootstrapping), `PersistenceConfiguration` (new in 3.2).
 
-- [ ] `mansart-jpa-core` module; `MansartPersistenceProvider` published via `provides` and
-      `META-INF/services` (classpath **and** module path).
-- [ ] `persistence.xml` 3.2 parser (StAX, XSD-conformant, incl. the new `qualifier` and `scope` elements), `PersistenceUnitInfo` model, property
-      precedence (`jakarta.persistence.jdbc.*`, map overrides).
-- [ ] `EntityManagerFactory` / `EntityManager` shells with spec-exact open/close semantics and
-      exception types (`IllegalStateException` after close, `getProperties`, `unwrap`).
-- [ ] Resource-local `EntityTransaction` over JDBC (`begin/commit/rollback/setRollbackOnly`).
-- [ ] Dialect selection from the JDBC metadata via `ServiceLoader` (H2, PostgreSQL).
-- [ ] 3.2 API: `runInTransaction` / `callInTransaction`, `getName`, `getSchemaManager` (stub).
+- [x] `mansart-jpa-core` module; `MansartPersistenceProvider` published via `provides` and `META-INF/services`
+      (classpath **and** module path; the unit tests run in the named module). Nothing exported, nothing opened.
+- [x] `persistence.xml` parser (StAX, schemas 1.0 to 3.2, `qualifier` and `scope` of 3.2, DTDs refused), read
+      without the JDK jar URL cache (a jar rewritten under the same name — the TCK does it for every test — would
+      otherwise be read stale); one definition model for `persistence.xml`, `PersistenceConfiguration` and a
+      container's `PersistenceUnitInfo`; property precedence (definition, then container data sources, then the
+      caller's map).
+- [x] `EntityManagerFactory` / `EntityManager` with spec-exact closed-state semantics and exception types; closing
+      the factory closes its entity managers and rolls back their active transactions; every runtime exception of an
+      entity manager method marks the joined transaction for rollback (§3.12).
+- [x] Resource-local `EntityTransaction` over JDBC: a connection only between `begin` and the end of the transaction,
+      handed over atomically so that a factory closed from another thread never races a commit (concurrent test).
+      Connections from a `DataSource` object (`jakarta.persistence.nonJtaDataSource` / `dataSource`) or from the
+      `jakarta.persistence.jdbc.*` properties (the named driver is used directly, not through `DriverManager`).
+- [x] 3.2 API: `runInTransaction` / `callInTransaction`, `getName`, `getTransactionType`, `runWithConnection` /
+      `callWithConnection`; `SchemaManager` refused until P9; a no-op `Cache` until P11.
+- [x] Validation mode `CALLBACK` without Bean Validation is a `PersistenceException` (§3.7.1), detected without linking
+      `jakarta.validation`.
+- [ ] *Moved to P3:* dialect selection from the JDBC metadata. It needs decision **D4** (the shared dialect SPI is
+      Jakarta Data–shaped: `requires transitive jakarta.data`, `translate` returns Jakarta Data exceptions).
 
-**TCK gate**: `se.entityManagerFactory`, `core.entityManagerFactory`, `core.entityTransaction`,
-`se.resource_local` mostly green; P0 errors turn into assertion failures.
+**TCK gate**: 220 of 2135 pass (17 at P0); every failure names the milestone that delivers what it needs (P4: 877,
+P7: 661, P8: 348, P9: 23, P5: 2), nothing is unexplained. Gate areas: 20 pass, 15 wait for P4/P5/P7/P8.
 
 ### P2 — Entity model and generated access ⏳
 
@@ -401,6 +412,7 @@ Recorded before implementation; each entry: date, decision, reason.
 | D4 | — | Extension of `mansart-data-dialect-spi` for JPA needs (joins, locking, DDL, procedures) vs a JPA-private SQL AST lowering to the existing SPI. | Open — maintainer |
 | D5 | — | `TABLE_PER_CLASS` inheritance (optional in the spec). | Open |
 | D6 | 2026-10-07 | Bean Validation is not available, so a Vidocq implementation (Jakarta Validation 3.1) will be created as a new building block **inside Mansart** (Mansart is the data character of the ecosystem; no new repository, no new `mani.yaml` / `GestionProjet` entry). It is put on the persistence TCK classpath. `mansart-persistence` depends only on `jakarta.validation-api`. Its own TCK runs both **out of the Vidocq reactor** (standalone runner, authoritative for the building block) and **inside it** (`vidocq-runtime-integration-tests`, `tck` profile, certifying the assembled runtime). Named `mansart-validation`; it is a stopgap that only has to run for this TCK (not polished, not published, to be replaced by the implementation another team member is writing); roadmap in [`../mansart-validation/ROADMAP.md`](../mansart-validation/ROADMAP.md). | Decided |
+| D7 | — | Connection pooling in Java SE: the unit's own connections come from `DriverManager` (one per transaction) unless a `DataSource` is given. Options: embed `mansart-pool` (virtual-thread-native, zero-dep) as the default pool of `jakarta.persistence.jdbc.*` units, or require a `DataSource` for production. To decide before the performance work (P12), ideally before P4. | Open — maintainer |
 
 ## Out of Scope
 

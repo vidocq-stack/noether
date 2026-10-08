@@ -64,6 +64,7 @@
     <properties>
         <maven.deploy.skip>false</maven.deploy.skip>
         <jakarta.persistence.version>3.2.0</jakarta.persistence.version>
+        <h2.version>2.3.232</h2.version>
     </properties>
 
     <!--
@@ -73,12 +74,28 @@
         out of the reactor, like mansart-data-tck and mansart-transactions-tck.
     -->
 
+    <modules>
+        <module>mansart-jpa-core</module>
+    </modules>
+
     <dependencyManagement>
         <dependencies>
             <dependency>
                 <groupId>jakarta.persistence</groupId>
                 <artifactId>jakarta.persistence-api</artifactId>
                 <version>${jakarta.persistence.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.vidocq.mansart</groupId>
+                <artifactId>mansart-jpa-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <!-- Unit tests run on H2 in memory; never at run time. -->
+            <dependency>
+                <groupId>com.h2database</groupId>
+                <artifactId>h2</artifactId>
+                <version>${h2.version}</version>
+                <scope>test</scope>
             </dependency>
             <dependency>
                 <groupId>io.vidocq.mansart</groupId>

@@ -53,7 +53,7 @@
         <jakarta.validation.version>3.1.1</jakarta.validation.version>
         <postgresql.version>42.7.4</postgresql.version>
 
-        <!-- The provider under test. Until milestone P1 delivers it, every test fails on "no provider". -->
+        <!-- The provider under test (mansart-jpa-core). -->
         <tck.provider>io.vidocq.mansart.jpa.core.MansartPersistenceProvider</tck.provider>
         <!-- "key=value:key=value"; never empty, the TCK puts it in a java.util.Properties. -->
         <tck.provider.properties>io.vidocq.mansart.tck=true</tck.provider.properties>
@@ -88,7 +88,13 @@
     </dependencyManagement>
 
     <dependencies>
-        <!-- The API. The provider will come next to it (milestone P1). -->
+        <!-- The provider under test, and the API. -->
+        <dependency>
+            <groupId>io.vidocq.mansart</groupId>
+            <artifactId>mansart-jpa-core</artifactId>
+            <version>${mansart.version}</version>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>jakarta.persistence</groupId>
             <artifactId>jakarta.persistence-api</artifactId>

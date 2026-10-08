@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the official Jakarta Persistence 3.2 TCK against the Mansart provider, on PostgreSQL.
 #
-# Steps: install the TCK if needed (install-tck.sh), start a throw-away PostgreSQL in Docker (or use an external
+# Steps: install the TCK if needed (install-tck.sh), build and install the provider (mansart-jpa-core), start a throw-away PostgreSQL in Docker (or use an external
 # database), apply the official DDL and stored procedures of the bundle, run both failsafe executions, report.
 #
 # Usage:
@@ -53,6 +53,9 @@ mkdir -p target
 
 echo ">>> TCK artifacts"
 ./install-tck.sh
+
+echo ">>> Build and install the provider under test (mansart-jpa-core)"
+(cd ../.. && ./mvnw -q -B -ntp -pl mansart-persistence/mansart-jpa-core -am install -DskipTests)
 
 if [ "$TCK_VALIDATION" = on ]; then
     echo ">>> Build and install mansart-validation-core (Bean Validation on the class path of execution 1)"
