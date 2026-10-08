@@ -19,6 +19,7 @@
  */
 package io.vidocq.mansart.validation.core;
 
+import io.vidocq.mansart.validation.core.engine.Components;
 import jakarta.validation.Configuration;
 import jakarta.validation.ValidatorFactory;
 import jakarta.validation.spi.BootstrapState;

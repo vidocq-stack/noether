@@ -92,7 +92,7 @@ public final class PropertyMetadata {
             return handle().invoke(bean);
         } catch (Error e) {
             throw e;
-        } catch (RuntimeException e) {
+        } catch (ValidationException e) {
             throw e;
         } catch (Throwable e) {
             throw new ValidationException("Unable to read " + declaringClass.getName() + "." + memberName, e);

@@ -50,6 +50,7 @@ public final class BeanMetadata {
     private final Class<?> type;
     private final List<ConstraintDef> classConstraints;
     private final List<PropertyMetadata> properties;
+    private final Set<String> declaredPropertyNames;
 
     private BeanMetadata(Class<?> type) {
         this.type = type;
@@ -58,10 +59,12 @@ public final class BeanMetadata {
         this.classConstraints = List.copyOf(constraintsOf(
             model.findAttribute(Attributes.runtimeVisibleAnnotations()).map(a -> a.annotations()).orElse(List.of()), loader));
         List<PropertyMetadata> found = new ArrayList<>();
+        Set<String> names = new LinkedHashSet<>();
         for (FieldModel field : model.fields()) {
             if (isStaticOrSynthetic(field.flags().flagsMask())) {
                 continue;
             }
+            names.add(field.fieldName().stringValue());
             List<java.lang.classfile.Annotation> raw = field.findAttribute(Attributes.runtimeVisibleAnnotations())
                 .map(a -> a.annotations()).orElse(List.of());
             List<ConstraintDef> constraints = constraintsOf(raw, loader);
@@ -82,6 +85,7 @@ public final class BeanMetadata {
             if (propertyName == null) {
                 continue;
             }
+            names.add(propertyName);
             List<java.lang.classfile.Annotation> raw = method.findAttribute(Attributes.runtimeVisibleAnnotations())
                 .map(a -> a.annotations()).orElse(List.of());
             List<ConstraintDef> constraints = constraintsOf(raw, loader);
@@ -92,6 +96,7 @@ public final class BeanMetadata {
             }
         }
         this.properties = List.copyOf(found);
+        this.declaredPropertyNames = Set.copyOf(names);
     }
 
     public static BeanMetadata of(Class<?> type) {
@@ -132,6 +137,11 @@ public final class BeanMetadata {
 
     public List<PropertyMetadata> properties() {
         return properties;
+    }
+
+    /** Every non-static field and getter name the class declares, constrained or not. */
+    public Set<String> declaredPropertyNames() {
+        return declaredPropertyNames;
     }
 
     // ---- reading ---------------------------------------------------------------------------------

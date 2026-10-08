@@ -17,7 +17,7 @@
  *
  * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
  */
-package io.vidocq.mansart.validation.core;
+package io.vidocq.mansart.validation.core.engine;
 
 import jakarta.validation.ClockProvider;
 import jakarta.validation.ConstraintValidatorFactory;
@@ -28,7 +28,7 @@ import jakarta.validation.valueextraction.ValueExtractor;
 import java.util.Set;
 
 /** The pluggable components a factory (or a validator context) works with. */
-record Components(
+public record Components(
         MessageInterpolator messageInterpolator,
         TraversableResolver traversableResolver,
         ConstraintValidatorFactory constraintValidatorFactory,
@@ -36,7 +36,7 @@ record Components(
         ClockProvider clockProvider,
         Set<ValueExtractor<?>> valueExtractors) {
 
-    Components {
+    public Components {
         valueExtractors = Set.copyOf(valueExtractors);
     }
 }

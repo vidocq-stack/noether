@@ -130,14 +130,18 @@ public final class BuiltInConstraints {
                 MaxValidatorForByte.class,
                 MaxValidatorForShort.class,
                 MaxValidatorForInteger.class,
-                MaxValidatorForLong.class));
+                MaxValidatorForLong.class,
+                MaxValidatorForNumber.class,
+                MaxValidatorForCharSequence.class));
         VALIDATORS.put(Min.class, List.of(
                 MinValidatorForBigDecimal.class,
                 MinValidatorForBigInteger.class,
                 MinValidatorForByte.class,
                 MinValidatorForShort.class,
                 MinValidatorForInteger.class,
-                MinValidatorForLong.class));
+                MinValidatorForLong.class,
+                MinValidatorForNumber.class,
+                MinValidatorForCharSequence.class));
         VALIDATORS.put(Negative.class, List.of(
                 NegativeValidatorForBigDecimal.class,
                 NegativeValidatorForBigInteger.class,

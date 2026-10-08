@@ -19,6 +19,8 @@
  */
 package io.vidocq.mansart.validation.core;
 
+import io.vidocq.mansart.validation.core.engine.Components;
+import io.vidocq.mansart.validation.core.engine.ValidatorImpl;
 import jakarta.validation.ClockProvider;
 import jakarta.validation.ConstraintValidatorFactory;
 import jakarta.validation.MessageInterpolator;
@@ -45,7 +47,7 @@ final class MansartValidatorFactory implements ValidatorFactory {
     @Override
     public Validator getValidator() {
         checkOpen();
-        return new MansartValidator(components);
+        return new ValidatorImpl(components);
     }
 
     @Override
@@ -147,7 +149,7 @@ final class MansartValidatorFactory implements ValidatorFactory {
         @Override
         public Validator getValidator() {
             checkOpen();
-            return new MansartValidator(new Components(messageInterpolator, traversableResolver,
+            return new ValidatorImpl(new Components(messageInterpolator, traversableResolver,
                 constraintValidatorFactory, parameterNameProvider, clockProvider, valueExtractors));
         }
     }

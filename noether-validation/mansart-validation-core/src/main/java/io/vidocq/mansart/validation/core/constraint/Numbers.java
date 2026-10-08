@@ -68,4 +68,28 @@ final class Numbers {
             throw new IllegalArgumentException("The length cannot be negative: max < min (" + max + " < " + min + ")");
         }
     }
+
+    /**
+     * Compares any {@link Number} with a {@code long} limit: negative, zero or positive like
+     * {@code Comparable}, or {@code null} for NaN, which compares with nothing. Infinities are beyond every limit.
+     */
+    static Integer compareToLimit(Number value, long limit) {
+        return switch (value) {
+            case BigDecimal d -> d.compareTo(BigDecimal.valueOf(limit));
+            case java.math.BigInteger i -> new BigDecimal(i).compareTo(BigDecimal.valueOf(limit));
+            case Double d -> compareToLimit(d.doubleValue(), limit);
+            case Float f -> compareToLimit(f.doubleValue(), limit);
+            default -> Long.compare(value.longValue(), limit);
+        };
+    }
+
+    private static Integer compareToLimit(double value, long limit) {
+        if (Double.isNaN(value)) {
+            return null;
+        }
+        if (Double.isInfinite(value)) {
+            return value > 0 ? 1 : -1;
+        }
+        return new BigDecimal(value).compareTo(BigDecimal.valueOf(limit));
+    }
 }

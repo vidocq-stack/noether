@@ -80,7 +80,7 @@ class BuiltInConstraintsTest {
         assertThat(BuiltInConstraints.validatorsFor(NotEmpty.class)).hasSize(12);
         assertThat(BuiltInConstraints.validatorsFor(Past.class)).hasSize(16);
         assertThat(BuiltInConstraints.validatorsFor(FutureOrPresent.class)).hasSize(16);
-        assertThat(BuiltInConstraints.validatorsFor(Min.class)).hasSize(6);
+        assertThat(BuiltInConstraints.validatorsFor(Min.class)).hasSize(8);
         assertThat(BuiltInConstraints.validatorsFor(DecimalMax.class)).hasSize(7);
         assertThat(BuiltInConstraints.validatorsFor(Digits.class)).hasSize(7);
         assertThat(BuiltInConstraints.validatorsFor(Positive.class)).hasSize(8);
