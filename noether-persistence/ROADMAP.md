@@ -204,26 +204,58 @@ Spec: ch. 7 (EM/EMF lifecycle, `EntityTransaction`), ch. 8 (`persistence.xml`), 
 **TCK gate**: 220 of 2135 pass (17 at P0); every failure names the milestone that delivers what it needs (P4: 877,
 P7: 661, P8: 348, P9: 23, P5: 2), nothing is unexplained. Gate areas: 20 pass, 15 wait for P4/P5/P7/P8.
 
-### P2 — Entity model and generated access ⏳
+### P2 — Entity model and generated access 🚧
 
 Spec: ch. 2 (entities, access type, ids, basic types, embeddables), ch. 11 (ORM metadata —
-non-relational part), §3.9 (attribute converters).
+non-relational part), §3.9 (attribute converters), §8.2.1.6 (managed classes).
 
-- [ ] Entity model built from annotations through three sources with one shared result type:
-      APT (`mansart-jpa-processor`), Maven plugin, and Class-File API parsing at bootstrap.
-- [ ] Generated accessors/instantiators (field and property access, `@Access` mixing);
-      runtime path defines hidden classes via `privateLookupIn` (requires `opens` — documented).
-- [ ] Ids: simple, `@IdClass`, `@EmbeddedId`, records as id classes; generation strategies
-      `IDENTITY`, `SEQUENCE`, `TABLE`, `UUID`, `AUTO` (honouring `db.supports.sequence`).
-- [ ] Basic types incl. `java.time`, `UUID`, enums (`ORDINAL`/`STRING`, `@EnumeratedValue` 3.2),
-      `@Lob`, `@Temporal`, `AttributeConverter` / `@Convert` / auto-apply.
-- [ ] Naming defaults (`@Table`, `@Column`, quoting rules), `@Embeddable` / `@Embedded`,
-      `@AttributeOverride`.
+Split in two: **P2a** builds the runtime path, from the class files read at bootstrap; **P2b** moves the same
+work to build time for application sources and jars. Both feed one model (`model.*`), so P2b changes where the model
+is computed, never what the engine sees.
+
+**P2a — runtime path** ✅
+
+- [x] Class files read as annotation data with the Class-File API, without loading the annotations
+      (`model.source.ClassFileSource`, defaults read from the annotation class files).
+- [x] Entity model (`model.build.EntityModelBuilder`): entity name and table, access type (§2.3, explicit or from
+      the identifier placement, per class and per attribute), entity and mapped superclass hierarchy, basic,
+      embedded (records included, nested, dotted `@AttributeOverride`), relationship and element-collection
+      attributes recorded for P5, version attribute. Mapping errors are `PersistenceException`s naming the class and
+      the attribute (no identifier, final class, no public or protected no-arg constructor, unmappable type).
+- [x] Identifiers: single, `@IdClass`, `@EmbeddedId`, derived identities (`@Id` on a many-to-one or one-to-one,
+      §2.4.1); `@GeneratedValue` with its `@SequenceGenerator` / `@TableGenerator` (looked up on the attribute, the
+      entity, then the whole unit).
+- [x] Units with mapping files: what the annotations leave unmapped is a `PendingAttribute` for the `orm.xml`
+      milestone, not an error. Every package of the TCK maps as a unit (161 / 161).
+- [x] Generated access (`access.ManagedAccess`, decision D3): one hidden class per managed class, defined in this
+      module; the method handles (private lookup, so the package must be `opens … to io.vidocq.mansart.jpa.core`)
+      are class data loaded by `ldc` of `classDataAt` dynamic constants, which the JIT treats as constants. Field and
+      property access, mapped superclass attributes, records through their canonical constructor.
+- [x] Basic types bound to JDBC (`jdbc.type.ValueBinders`): §2.8 types, `java.time`, `Instant`, `Year`, `UUID`,
+      enums (`ORDINAL`, `STRING`, `@EnumeratedValue`), legacy `Date`/`Calendar` per `@Temporal`, converters
+      (explicit, auto-applied, disabled; one instance per unit), serialized values.
+- [x] Managed class discovery (`bootstrap.ManagedClasses`): listed classes, then the annotated classes of the root and
+      the `jar-file`s unless `exclude-unlisted-classes`.
+- [x] Everything built when the factory is created (`mapping.MappedUnit`), so that errors fail
+      `createEntityManagerFactory`.
+- [x] Module-path integration test (`mansart-jpa-module-it`): entities in a named application module, with and
+      without the `opens` clause (the unit tests run inside the provider module and cannot exercise the refusal).
+- [ ] Quoting rules (`<delimited-identifiers/>`, §2.13) — with the SQL generation of P3/P4.
+- *Moved to P4:* executing the generation strategies (`IDENTITY`, `SEQUENCE`, `TABLE`, `UUID`, `AUTO` honouring
+  `db.supports.sequence`): they need the insert path and the dialect (D4). The model above carries their metadata.
+
+**P2b — build-time path** — required for AOT: GraalVM native-image cannot define hidden classes at run time and
+Leyden does not archive them, so the P2a path stays the fallback for archives nobody compiled with Mansart.
+
+- [ ] APT processor (`mansart-jpa-processor`) and Maven plugin computing the same model at build time, with the
+      accessors generated as ordinary classes (no hidden class, no `opens` needed).
 - [ ] Static metamodel `_Entity` generation (canonical metamodel, §5.1.1), shared format with
       `mansart-data-processor`.
 
 **TCK gate**: `core.types`, `core.enums`, `core.annotations.{access,basic,convert,id,lob,temporal,embeddable}`,
-`jpa22.repeatable.convert`, `jpa22.generators`.
+`jpa22.repeatable.convert`, `jpa22.generators`. These areas persist and read entities back: they open with P4. P2a's
+TCK proof is a no-regression one: every TCK unit maps at bootstrap and the counts stay 220 / 1911, all failures still
+attributed to P4, P5, P7, P8 or P9 (see [`TCK.md`](TCK.md)).
 
 ### P3 — Persistence context and flush engine ⏳
 
@@ -234,7 +266,8 @@ relies on, and it is fully testable without the TCK.
 - [ ] Identity map per persistence context (one managed instance per id), entity states
       (new / managed / detached / removed) as an explicit state machine.
 - [ ] Snapshot-based dirty detection (state copied at load / persist, compared at flush) — no
-      enhancement, no interception.
+      enhancement, no interception. The generated access gains bulk `read(Object, Object[])` /
+      `write(Object, Object[])` methods (straight-line, one virtual call per entity instead of one per attribute).
 - [ ] Flush engine: deterministic statement ordering (inserts → updates → deletes, FK-aware),
       JDBC batching, generated keys read back through the dialect.
 
@@ -246,6 +279,9 @@ Spec: ch. 3 (entity operations), §3.6 (callbacks), §3.5 (optimistic / pessimis
 
 - [ ] `persist`, `find` (incl. 3.2 `FindOption`s), `getReference`, `merge`, `remove`, `refresh`,
       `detach`, `clear`, `contains`, `flush`, `FlushModeType`, cascade on these operations.
+- [ ] Identifier generation (*from P2*): `IDENTITY` (generated keys), `SEQUENCE` and `TABLE` (pooled by
+      `allocationSize`, no lock held across the database round trip), `UUID`, `AUTO` honouring
+      `db.supports.sequence`; SQL rendered by the dialect (D4).
 - [ ] Lifecycle callbacks and entity listeners (`@PrePersist` … `@PostLoad`), default and
       excluded listeners (annotation part).
 - [ ] `@Version` optimistic locking, `OptimisticLockException`; `LockModeType` incl. pessimistic

@@ -10,6 +10,22 @@ Official suite: **Jakarta Persistence 3.2.1** TCK (bundle from eclipse.org, SHA-
 |---|---|---|---|---:|---:|---:|---:|
 | P0 — instrument, no provider | 2026-10-08 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 17 | 2114 | 4 |
 | P1 — bootstrap, provider SPI, resource-local transactions | 2026-10-08 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 220 | 1911 | 4 |
+| P2a — entity model and generated access, mapped at bootstrap | 2026-10-08 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 220 | 1911 | 4 |
+
+## P2a — the whole TCK is mapped, the counts do not move
+
+From P2a on, every `createEntityManagerFactory` of the TCK maps its managed classes: entity model, generated access,
+binders. The counts stay those of P1 on purpose: the P2 gate areas (`core.types`, `core.enums`, `core.annotations.*`,
+`jpa22.generators`, …) persist and read entities back, so they open with P4. What P2a proves is that the mapping
+breaks nothing:
+
+- the first run with the mapping at bootstrap fell to 135 passes: the access type of mixed hierarchies, uncapitalised
+  accessors (`getdescription`), derived identities (§2.4.1) and attributes left to `orm.xml` failed the bootstrap;
+- a one-off probe mapping every package of the TCK spec-tests jar as one unit found them; after the fixes, 161 units
+  out of 161 map;
+- the failure split is the P1 one exactly (P4 877, P7 661, P8 348, P9 23, P5 2), and no report holds a mapping error.
+
+Bean Validation neutrality (2026-10-08, with the mapping at bootstrap): NEUTRAL, 2135 tests, same results both ways.
 
 ## P1 — what the 1911 failures are
 
