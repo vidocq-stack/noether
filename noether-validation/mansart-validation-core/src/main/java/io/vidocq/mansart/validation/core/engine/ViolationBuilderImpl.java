@@ -75,6 +75,9 @@ final class ViolationBuilderImpl implements ConstraintViolationBuilder,
 
     @Override
     public ViolationBuilderImpl addParameterNode(int index) {
+        if (!context.isExecutableContext()) {
+            throw new IllegalStateException("A parameter node can only be added to the violation of a method or constructor constraint");
+        }
         nodes.add(NodeImpl.parameter("arg" + index, index));
         return this;
     }

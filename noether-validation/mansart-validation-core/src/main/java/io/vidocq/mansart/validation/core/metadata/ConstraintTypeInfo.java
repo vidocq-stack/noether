@@ -52,14 +52,15 @@ public final class ConstraintTypeInfo {
 
     private final Class<? extends Annotation> type;
     private final List<Class<? extends ConstraintValidator<?, ?>>> validatedBy;
-    private final List<Annotation> composing;
+    private final List<java.lang.classfile.Annotation> rawComposing;
+    private volatile List<ConstraintDef> composing;
     private final boolean reportAsSingleViolation;
 
     private ConstraintTypeInfo(Class<? extends Annotation> type, List<Class<? extends ConstraintValidator<?, ?>>> validatedBy,
-            List<Annotation> composing, boolean reportAsSingleViolation) {
+            List<java.lang.classfile.Annotation> rawComposing, boolean reportAsSingleViolation) {
         this.type = type;
         this.validatedBy = validatedBy;
-        this.composing = composing;
+        this.rawComposing = rawComposing;
         this.reportAsSingleViolation = reportAsSingleViolation;
     }
 
@@ -77,9 +78,14 @@ public final class ConstraintTypeInfo {
         return validatedBy;
     }
 
-    /** The composing constraint annotations, as written on the annotation type (not yet expanded). */
-    public List<Annotation> composing() {
-        return composing;
+    /** The composing constraints, as written on the annotation type; read once, when first needed. */
+    public List<ConstraintDef> composingConstraints() {
+        List<ConstraintDef> result = composing;
+        if (result == null) {
+            result = List.copyOf(ConstraintDef.fromRaw(rawComposing, type.getClassLoader()));
+            composing = result;
+        }
+        return result;
     }
 
     public boolean reportAsSingleViolation() {
@@ -109,11 +115,11 @@ public final class ConstraintTypeInfo {
             }
         }
         boolean single = raw.stream().anyMatch(a -> a.className().stringValue().equals(REPORT_AS_SINGLE_VIOLATION));
-        List<Annotation> composing = new ArrayList<>();
+        List<java.lang.classfile.Annotation> composing = new ArrayList<>();
         for (java.lang.classfile.Annotation a : raw) {
             String descriptor = a.className().stringValue();
             if (NOT_COMPOSING.stream().noneMatch(descriptor::startsWith)) {
-                composing.add(AnnotationFactory.of(a, loader));
+                composing.add(a);
             }
         }
         return Optional.of(new ConstraintTypeInfo(type, List.copyOf(validators), List.copyOf(composing), single));

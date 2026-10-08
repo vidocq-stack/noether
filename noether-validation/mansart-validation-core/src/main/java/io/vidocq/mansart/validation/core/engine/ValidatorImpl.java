@@ -19,6 +19,7 @@
  */
 package io.vidocq.mansart.validation.core.engine;
 
+import io.vidocq.mansart.validation.core.descriptor.BeanDescriptorImpl;
 import io.vidocq.mansart.validation.core.metadata.BeanMetadata;
 import io.vidocq.mansart.validation.core.metadata.ConstraintDef;
 import io.vidocq.mansart.validation.core.metadata.PropertyMetadata;
@@ -93,6 +94,10 @@ public final class ValidatorImpl implements Validator {
                     if (!property.name().equals(propertyName)) {
                         continue;
                     }
+                    if (property.constraints().stream().noneMatch(c -> ValidationRun.appliesTo(c, group))
+                            || !ValidationRun.isReachable(bean, property, PathImpl.root(), components, type)) {
+                        continue;
+                    }
                     for (ConstraintDef constraint : property.constraints()) {
                         if (ValidationRun.appliesTo(constraint, group)) {
                             Object value = explicit ? given : property.get(bean);
@@ -107,7 +112,10 @@ public final class ValidatorImpl implements Validator {
 
     @Override
     public BeanDescriptor getConstraintsForClass(Class<?> clazz) {
-        throw new UnsupportedOperationException("The metadata API is not implemented yet");
+        if (clazz == null) {
+            throw new IllegalArgumentException("The class must not be null");
+        }
+        return BeanDescriptorImpl.of(clazz);
     }
 
     @Override

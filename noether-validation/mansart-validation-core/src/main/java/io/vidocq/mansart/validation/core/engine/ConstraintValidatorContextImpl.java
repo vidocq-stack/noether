@@ -75,6 +75,11 @@ final class ConstraintValidatorContextImpl implements ConstraintValidatorContext
         return new ViolationBuilderImpl(this, messageTemplate, basePath);
     }
 
+    /** Parameter nodes only make sense for the constraints of a method or constructor, which come with V4. */
+    boolean isExecutableContext() {
+        return false;
+    }
+
     @Override
     public <T> T unwrap(Class<T> type) {
         if (type.isInstance(this)) {

@@ -44,4 +44,16 @@ final class ClassFileReader {
         }
         throw new ValidationException(type.getName() + " has no field " + name);
     }
+
+    /** The constraints declared on the field {@code name} of {@code type}. */
+    static List<ConstraintDef> fieldConstraints(Class<?> type, String name) {
+        ClassModel model = ClassFiles.parse(type);
+        for (FieldModel field : model.fields()) {
+            if (field.fieldName().stringValue().equals(name)) {
+                return ConstraintDef.fromRaw(field.findAttribute(Attributes.runtimeVisibleAnnotations())
+                    .map(a -> a.annotations()).orElse(List.of()), type.getClassLoader());
+            }
+        }
+        throw new ValidationException(type.getName() + " has no field " + name);
+    }
 }

@@ -96,6 +96,13 @@ public final class ConstraintFixtures {
         String validFoo() default "";
     }
 
+    /** A container that is not public: its instances cannot be generated, its content is all that is needed. */
+    @Documented
+    @Retention(RetentionPolicy.RUNTIME)
+    @interface HiddenList {
+        Required[] value();
+    }
+
     public interface Group {
     }
 
@@ -118,5 +125,7 @@ public final class ConstraintFixtures {
         @NotNull
         @Size(min = 1, max = 3)
         public String builtIns;
+        @HiddenList({@Required(level = 7), @Required(level = 8)})
+        public String hiddenContainer;
     }
 }

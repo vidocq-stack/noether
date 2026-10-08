@@ -19,8 +19,6 @@
  */
 package io.vidocq.mansart.validation.core.metadata;
 
-import jakarta.validation.ValidationException;
-import java.lang.annotation.Annotation;
 import java.lang.classfile.Attributes;
 import java.lang.classfile.ClassFile;
 import java.lang.classfile.ClassModel;
@@ -154,46 +152,8 @@ public final class BeanMetadata {
         return raw.stream().anyMatch(a -> a.className().stringValue().equals(VALID));
     }
 
-    /**
-     * The constraints among the raw annotations. An annotation whose class cannot be loaded (an optional
-     * dependency of the application) cannot be a constraint and is skipped; a malformed constraint is not.
-     */
-    @SuppressWarnings("unchecked")
     private static List<ConstraintDef> constraintsOf(List<java.lang.classfile.Annotation> raw, ClassLoader loader) {
-        List<Annotation> candidates = new ArrayList<>();
-        for (java.lang.classfile.Annotation annotation : raw) {
-            if (annotation.className().stringValue().equals(VALID)) {
-                continue;
-            }
-            Class<?> annotationType;
-            try {
-                annotationType = ClassFiles.load(annotation.classSymbol(), loader);
-            } catch (ValidationException | LinkageError absent) {
-                continue;
-            }
-            if (isConstraintOrContainer((Class<? extends Annotation>) annotationType)) {
-                candidates.add(AnnotationFactory.of(annotation, loader));
-            }
-        }
-        return ConstraintDef.from(candidates);
-    }
-
-    private static boolean isConstraintOrContainer(Class<? extends Annotation> type) {
-        if (ConstraintTypeInfo.of(type).isPresent()) {
-            return true;
-        }
-        AnnotationTypeInfo info = AnnotationTypeInfo.of(type);
-        if (!info.hasMember("value")) {
-            return false;
-        }
-        Class<?> value = info.member("value").type();
-        return value.isArray() && value.getComponentType().isAnnotation()
-            && ConstraintTypeInfo.of(componentAnnotation(value)).isPresent();
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Class<? extends Annotation> componentAnnotation(Class<?> array) {
-        return (Class<? extends Annotation>) array.getComponentType();
+        return ConstraintDef.fromRaw(raw, loader);
     }
 
     /** JavaBeans naming: getX, and isX or hasX for a boolean; X is decapitalized unless it starts with two capitals. */

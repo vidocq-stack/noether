@@ -205,7 +205,10 @@ class ValidatorEngineTest {
         ConstraintViolation<Person> violation = validator.validate(person).stream()
             .filter(v -> v.getPropertyPath().toString().contains("street")).findFirst().orElseThrow();
         assertThat(violation.getPropertyPath().toString()).isEqualTo("array[2].street");
-        assertThat(nodesOf(violation).get(1).getIndex()).isEqualTo(2);
+        Path.Node leaf = nodesOf(violation).get(1);
+        assertThat(leaf.getIndex()).isEqualTo(2);
+        assertThat(leaf.as(Path.PropertyNode.class).getContainerClass()).isEqualTo(Object[].class);
+        assertThat(leaf.as(Path.PropertyNode.class).getTypeArgumentIndex()).isNull();
     }
 
     @Test
@@ -396,6 +399,110 @@ class ValidatorEngineTest {
             person.home = new Address(null, "12345");
             assertThat(paths(custom.getValidator().validate(person))).doesNotContain("first", "home.street");
         }
+    }
+
+
+    @Test
+    void theTraversableResolverSeesTheRootPathAsAnUnnamedBeanNode() {
+        java.util.List<Path> seen = new java.util.ArrayList<>();
+        try (ValidatorFactory custom = Validation.byProvider(MansartValidationProvider.class).configure()
+                .traversableResolver(new jakarta.validation.TraversableResolver() {
+                    @Override
+                    public boolean isReachable(Object o, Path.Node n, Class<?> r, Path p, java.lang.annotation.ElementType t) {
+                        seen.add(p);
+                        return true;
+                    }
+
+                    @Override
+                    public boolean isCascadable(Object o, Path.Node n, Class<?> r, Path p, java.lang.annotation.ElementType t) {
+                        seen.add(p);
+                        return true;
+                    }
+                }).buildValidatorFactory()) {
+            Person person = new Person("Alice");
+            person.home = new Address("s", "12345");
+            custom.getValidator().validate(person);
+            custom.getValidator().validateValue(Person.class, "first", "x");
+        }
+        assertThat(seen).isNotEmpty();
+        Path root = seen.get(0);
+        assertThat(nodesOfPath(root)).hasSize(1);
+        assertThat(nodesOfPath(root).get(0).getKind()).isEqualTo(ElementKind.BEAN);
+        assertThat(nodesOfPath(root).get(0).getName()).isNull();
+        assertThat(seen.stream().map(Path::toString)).contains("home");
+    }
+
+    @Test
+    void theTraversableResolverIsConsultedByValidateValueWithoutBean() {
+        java.util.List<Object> beans = new java.util.ArrayList<>();
+        try (ValidatorFactory custom = Validation.byProvider(MansartValidationProvider.class).configure()
+                .traversableResolver(new jakarta.validation.TraversableResolver() {
+                    @Override
+                    public boolean isReachable(Object o, Path.Node n, Class<?> r, Path p, java.lang.annotation.ElementType t) {
+                        beans.add(o == null ? "null-bean:" + n.getName() : o);
+                        return true;
+                    }
+
+                    @Override
+                    public boolean isCascadable(Object o, Path.Node n, Class<?> r, Path p, java.lang.annotation.ElementType t) {
+                        return true;
+                    }
+                }).buildValidatorFactory()) {
+            custom.getValidator().validateValue(Person.class, "first", null);
+        }
+        assertThat(beans).containsExactly("null-bean:first");
+    }
+
+    @Test
+    void anExceptionFromTheTraversableResolverIsWrapped() {
+        try (ValidatorFactory custom = Validation.byProvider(MansartValidationProvider.class).configure()
+                .traversableResolver(new jakarta.validation.TraversableResolver() {
+                    @Override
+                    public boolean isReachable(Object o, Path.Node n, Class<?> r, Path p, java.lang.annotation.ElementType t) {
+                        throw new IllegalStateException("isReachable failed");
+                    }
+
+                    @Override
+                    public boolean isCascadable(Object o, Path.Node n, Class<?> r, Path p, java.lang.annotation.ElementType t) {
+                        return true;
+                    }
+                }).buildValidatorFactory()) {
+            assertThatThrownBy(() -> custom.getValidator().validate(new Person("A"))).isInstanceOf(ValidationException.class);
+        }
+    }
+
+    @Test
+    void aParameterNodeCannotBeAddedOutsideAnExecutable() {
+        assertThatThrownBy(() -> validator.validate(new ParameterNodeOnField()))
+            .isInstanceOf(ValidationException.class).hasRootCauseInstanceOf(IllegalStateException.class);
+    }
+
+    @jakarta.validation.Constraint(validatedBy = {ParameterNodeValidator.class})
+    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+    public @interface ParameterNodeConstraint {
+        String message() default "x";
+        Class<?>[] groups() default {};
+        Class<? extends jakarta.validation.Payload>[] payload() default {};
+    }
+
+    public static class ParameterNodeValidator implements jakarta.validation.ConstraintValidator<ParameterNodeConstraint, Object> {
+        @Override
+        public boolean isValid(Object value, jakarta.validation.ConstraintValidatorContext context) {
+            context.disableDefaultConstraintViolation();
+            context.buildConstraintViolationWithTemplate("t").addParameterNode(0).addConstraintViolation();
+            return false;
+        }
+    }
+
+    public static class ParameterNodeOnField {
+        @ParameterNodeConstraint
+        public String field = "x";
+    }
+
+    private static List<Path.Node> nodesOfPath(Path path) {
+        List<Path.Node> nodes = new java.util.ArrayList<>();
+        path.forEach(nodes::add);
+        return nodes;
     }
 
     private static List<Path.Node> nodesOf(ConstraintViolation<?> violation) {

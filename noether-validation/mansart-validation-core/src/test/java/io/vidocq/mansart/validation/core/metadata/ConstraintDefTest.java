@@ -41,8 +41,7 @@ import org.junit.jupiter.api.Test;
 class ConstraintDefTest {
 
     private static List<ConstraintDef> on(String field) {
-        List<Annotation> annotations = ClassFileReader.fieldAnnotations(Holder.class, field);
-        return ConstraintDef.from(annotations);
+        return ClassFileReader.fieldConstraints(Holder.class, field);
     }
 
     @Test
@@ -54,7 +53,7 @@ class ConstraintDefTest {
         assertThat(def.getPayload()).isEmpty();
         assertThat(def.isReportAsSingleViolation()).isFalse();
         assertThat(def.getComposingConstraints()).isEmpty();
-        assertThat(def.getValidationAppliesTo()).isEqualTo(ConstraintTarget.IMPLICIT);
+        assertThat(def.getValidationAppliesTo()).isNull();
         assertThat(def.getConstraintValidatorClasses()).containsExactly((Class) RequiredValidator.class);
     }
 
@@ -79,6 +78,13 @@ class ConstraintDefTest {
         List<ConstraintDef> defs = on("repeated");
         assertThat(defs).hasSize(2);
         assertThat(defs.stream().map(d -> d.getAttributes().get("level")).toList()).containsExactly(2, 3);
+    }
+
+    @Test
+    void aNonPublicContainerIsUnwrappedWithoutInstantiatingIt() {
+        List<ConstraintDef> defs = on("hiddenContainer");
+        assertThat(defs).hasSize(2);
+        assertThat(defs.stream().map(d -> d.getAttributes().get("level")).toList()).containsExactly(7, 8);
     }
 
     @Test

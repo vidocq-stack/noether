@@ -145,7 +145,7 @@ final class ValidationRun<T> {
             case Object[] array -> {
                 for (int i = 0; i < array.length; i++) {
                     if (array[i] != null) {
-                        validateElement(array[i], group, at.into(new Slot(null, null, i, null)));
+                        validateElement(array[i], group, at.into(new Slot(Object[].class, null, i, null)));
                     }
                 }
             }
@@ -172,17 +172,41 @@ final class ValidationRun<T> {
 
     private boolean isReachable(Object bean, PropertyMetadata property, Cursor at) {
         String key = property.kind() + ":" + property.memberName();
-        return reachable.computeIfAbsent(bean, b -> new java.util.HashMap<>()).computeIfAbsent(key, k ->
-            components.traversableResolver().isReachable(bean, NodeImpl.property(property.name()), rootBeanClass, at.path(),
-                elementType(property)));
+        return reachable.computeIfAbsent(bean, b -> new java.util.HashMap<>()).computeIfAbsent(key, k -> isReachable(bean, property, at.path(), components));
+    }
+
+    /** Asks the traversable resolver; the path of the root bean is a single unnamed bean node. */
+    static boolean isReachable(Object bean, PropertyMetadata property, PathImpl pathToBean, Components components, Class<?> rootBeanClass) {
+        try {
+            return components.traversableResolver().isReachable(bean, NodeImpl.property(property.name()), rootBeanClass,
+                resolverPath(pathToBean), elementType(property));
+        } catch (ValidationException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            throw new ValidationException("The TraversableResolver failed on " + property.name(), e);
+        }
+    }
+
+    private boolean isReachable(Object bean, PropertyMetadata property, PathImpl pathToBean, Components components) {
+        return isReachable(bean, property, pathToBean, components, rootBeanClass);
     }
 
     private boolean isCascadable(Object bean, PropertyMetadata property, Cursor at) {
-        return components.traversableResolver().isCascadable(bean, NodeImpl.property(property.name()), rootBeanClass, at.path(),
-            elementType(property));
+        try {
+            return components.traversableResolver().isCascadable(bean, NodeImpl.property(property.name()), rootBeanClass,
+                resolverPath(at.path()), elementType(property));
+        } catch (ValidationException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            throw new ValidationException("The TraversableResolver failed on " + property.name(), e);
+        }
     }
 
-    private static ElementType elementType(PropertyMetadata property) {
+    private static PathImpl resolverPath(PathImpl path) {
+        return path.nodes().isEmpty() ? PathImpl.of(List.of(NodeImpl.bean())) : path;
+    }
+
+    static ElementType elementType(PropertyMetadata property) {
         return property.kind() == PropertyMetadata.Kind.FIELD ? ElementType.FIELD : ElementType.METHOD;
     }
 

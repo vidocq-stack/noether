@@ -28,11 +28,13 @@ import jakarta.validation.metadata.ConstraintDescriptor;
 import jakarta.validation.metadata.ValidateUnwrappedValue;
 import java.lang.annotation.Annotation;
 import java.util.ArrayList;
+import java.lang.classfile.AnnotationValue;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /** A constraint as declared on an element: the {@link ConstraintDescriptor} the API exposes, and what the engine reads. */
@@ -63,39 +65,60 @@ public final class ConstraintDef implements ConstraintDescriptor<Annotation> {
         @SuppressWarnings("unchecked")
         Class<? extends Payload>[] payloads = (Class<? extends Payload>[]) all.get("payload");
         this.payload = Collections.unmodifiableSet(new LinkedHashSet<>(List.of(payloads)));
-        this.composing = Collections.unmodifiableSet(new LinkedHashSet<>(from(typeInfo.composing())));
+        this.composing = Collections.unmodifiableSet(new LinkedHashSet<>(typeInfo.composingConstraints()));
     }
 
     /**
-     * The constraints among {@code annotations}: constraint annotations themselves, and the constraints
-     * a multi-valued container ({@code value()} returning constraint annotations) holds. Anything else is skipped.
+     * The constraints among the raw annotations of a class file: constraint annotations themselves, and the
+     * constraints a multi-valued container ({@code value()} returning constraint annotations) holds. A container
+     * is read from the class file, never instantiated, so it may well be non-public. An annotation whose class
+     * cannot be loaded (an optional dependency of the application) cannot be a constraint and is skipped; a
+     * malformed constraint is not.
      */
-    public static List<ConstraintDef> from(List<? extends Annotation> annotations) {
+    @SuppressWarnings("unchecked")
+    public static List<ConstraintDef> fromRaw(List<java.lang.classfile.Annotation> raw, ClassLoader loader) {
         List<ConstraintDef> defs = new ArrayList<>();
-        for (Annotation annotation : annotations) {
-            ConstraintTypeInfo typeInfo = ConstraintTypeInfo.of(annotation.annotationType()).orElse(null);
-            if (typeInfo != null) {
-                defs.add(new ConstraintDef(annotation, typeInfo));
-            } else {
-                defs.addAll(unwrapContainer(annotation));
+        for (java.lang.classfile.Annotation annotation : raw) {
+            Class<?> type;
+            try {
+                type = ClassFiles.load(annotation.classSymbol(), loader);
+            } catch (ValidationException | LinkageError absent) {
+                continue;
+            }
+            if (!type.isAnnotation()) {
+                continue;
+            }
+            Class<? extends Annotation> annotationType = (Class<? extends Annotation>) type;
+            Optional<ConstraintTypeInfo> typeInfo = ConstraintTypeInfo.of(annotationType);
+            if (typeInfo.isPresent()) {
+                defs.add(new ConstraintDef(AnnotationFactory.of(annotation, loader), typeInfo.get()));
+            } else if (isContainer(annotationType)) {
+                for (java.lang.classfile.AnnotationElement element : annotation.elements()) {
+                    if (element.name().stringValue().equals("value") && element.value() instanceof AnnotationValue.OfArray array) {
+                        List<java.lang.classfile.Annotation> contained = new ArrayList<>();
+                        for (AnnotationValue value : array.values()) {
+                            if (value instanceof AnnotationValue.OfAnnotation nested) {
+                                contained.add(nested.annotation());
+                            }
+                        }
+                        defs.addAll(fromRaw(contained, loader));
+                    }
+                }
             }
         }
         return defs;
     }
 
+    /** A multi-valued container: {@code value()} returns an array of constraint annotations. */
     @SuppressWarnings("unchecked")
-    private static List<ConstraintDef> unwrapContainer(Annotation container) {
-        AnnotationTypeInfo info = AnnotationTypeInfo.of(container.annotationType());
+    private static boolean isContainer(Class<? extends Annotation> type) {
+        AnnotationTypeInfo info = AnnotationTypeInfo.of(type);
         if (!info.hasMember("value")) {
-            return List.of();
+            return false;
         }
-        Class<?> valueType = info.member("value").type();
-        if (!valueType.isArray() || !valueType.getComponentType().isAnnotation()
-                || ConstraintTypeInfo.of((Class<? extends Annotation>) valueType.getComponentType()).isEmpty()) {
-            return List.of();
-        }
-        Annotation[] contained = (Annotation[]) info.read(info.members().indexOf(info.member("value")), container);
-        return from(List.of(contained));
+        Class<?> value = info.member("value").type();
+        return value.isArray() && value.getComponentType().isAnnotation()
+            && ConstraintTypeInfo.of((Class<? extends Annotation>) value.getComponentType()).isPresent();
     }
 
     public Class<? extends Annotation> annotationType() {
@@ -124,8 +147,7 @@ public final class ConstraintDef implements ConstraintDescriptor<Annotation> {
 
     @Override
     public ConstraintTarget getValidationAppliesTo() {
-        Object target = attributes.get("validationAppliesTo");
-        return target instanceof ConstraintTarget t ? t : ConstraintTarget.IMPLICIT;
+        return attributes.get("validationAppliesTo") instanceof ConstraintTarget target ? target : null;
     }
 
     /** The validators declared by the annotation type (the built-in ones are added by the registry, see the engine). */
