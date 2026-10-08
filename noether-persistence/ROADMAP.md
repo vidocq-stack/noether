@@ -19,7 +19,7 @@
 | Zero implementation library | Only `jakarta.persistence-api` (+ CDI/inject/transaction APIs in the integration module). JPQL parser hand-written, XML via StAX, no ORM borrowed. |
 | No runtime reflection on entities | Entity access, instantiation and metamodel are generated: APT for sources, Maven plugin for jars, Class-File API at bootstrap for opaque archives. |
 | No proxy / bytecode library | Lazy to-one via Class-File API generated subclasses, lazy collections via our own wrappers, dirty checking via snapshots. `ClassTransformer` is declined. |
-| Shared Mansart bricks | SQL rendered through `mansart-data-dialect-spi` (H2, PostgreSQL); JTA through `mansart-transactions`; any `DataSource` (e.g. `mansart-pool`). |
+| Shared Mansart bricks | JTA through `mansart-transactions`; any `DataSource` (e.g. `mansart-pool`). SQL through Mansart JPA's own dialect SPI (D4: `mansart-jpa-dialect-*`, H2 and PostgreSQL). |
 | Virtual threads | JDBC on virtual threads; no `synchronized` around I/O; `ScopedValue` instead of `ThreadLocal`. |
 | Strict Java Modules | One `module-info.java` per module, provider published via `provides`, internals not exported. |
 | Measured performance | JMH from P12, vs Hibernate ORM and EclipseLink on the same JVM and database; numbers only in `BENCH.md`. |
@@ -98,12 +98,20 @@ Facts read from the official bundle `jakarta-persistence-tck-3.2.1.zip`
 mansart-jpa-core          io.vidocq.mansart.jpa.core
   requires transitive jakarta.persistence
   requires java.sql, java.xml
-  requires io.vidocq.mansart.data.dialect.spi
-  uses     io.vidocq.mansart.data.dialect.DialectFactory
+  requires io.vidocq.mansart.jpa.dialect.spi
+  uses     io.vidocq.mansart.jpa.dialect.DialectFactory
   provides jakarta.persistence.spi.PersistenceProvider with …MansartPersistenceProvider
   → bootstrap (persistence.xml, PersistenceConfiguration), EMF, EM, persistence context,
     entity model, generated accessors (runtime path), flush engine, JDBC executor,
     PersistenceUnitUtil, schema generation
+
+mansart-jpa-dialect-spi   io.vidocq.mansart.jpa.dialect.spi   (D4)
+  requires java.sql
+  → sealed SQL AST (io.vidocq.mansart.jpa.dialect.sql), Dialect, DialectFactory, StandardDialect (ANSI rendering)
+
+mansart-jpa-dialect-h2 / -postgresql   io.vidocq.mansart.jpa.dialect.h2 / .postgresql
+  provides io.vidocq.mansart.jpa.dialect.DialectFactory with …
+  → what each database renders differently (identity, sequences, locks, paging, DDL)
 
 mansart-jpa-query         io.vidocq.mansart.jpa.query
   requires io.vidocq.mansart.jpa.core (qualified exports only)
@@ -472,7 +480,7 @@ Recorded before implementation; each entry: date, decision, reason.
 | D1 | 2026-10-07 | Folder `mansart-persistence/`, Maven parent `mansart-jpa`, sub-modules `mansart-jpa-*`, Java modules `io.vidocq.mansart.jpa.*`. | Actioned |
 | D2 | 2026-10-07 | Certification database: PostgreSQL (official TCK DDL); H2 for unit tests only. | Actioned |
 | D3 | 2026-10-07 | No `ClassTransformer` / no instrumentation: lazy loading and dirty checking without enhancement. | Actioned |
-| D4 | — | Extension of `mansart-data-dialect-spi` for JPA needs (joins, locking, DDL, procedures) vs a JPA-private SQL AST lowering to the existing SPI. | Open — maintainer |
+| D4 | 2026-10-08 | Mansart JPA renders its SQL from its **own sealed SQL AST** (statements of the flush, then queries, locks, DDL), through **its own dialect SPI** in separate modules — `mansart-jpa-dialect-spi`, `mansart-jpa-dialect-h2`, `mansart-jpa-dialect-postgresql`, found with `ServiceLoader` — rather than by extending `mansart-data-dialect-spi`: that SPI is model-centric (Jakarta Data `EntityModel`, single-attribute ids), `requires transitive jakarta.data`, and is delivered (Jakarta Data TCK 74/74). The SQL knowledge of the two SPIs is duplicated for now; converging them (Jakarta Data rendered through this AST) may be decided later. | Decided |
 | D5 | — | `TABLE_PER_CLASS` inheritance (optional in the spec). | Open |
 | D6 | 2026-10-07 | Bean Validation is not available, so a Vidocq implementation (Jakarta Validation 3.1) will be created as a new building block **inside Mansart** (Mansart is the data character of the ecosystem; no new repository, no new `mani.yaml` / `GestionProjet` entry). It is put on the persistence TCK classpath. `mansart-persistence` depends only on `jakarta.validation-api`. Its own TCK runs both **out of the Vidocq reactor** (standalone runner, authoritative for the building block) and **inside it** (`vidocq-runtime-integration-tests`, `tck` profile, certifying the assembled runtime). Named `mansart-validation`; it is a stopgap that only has to run for this TCK (not polished, not published, to be replaced by the implementation another team member is writing); roadmap in [`../mansart-validation/ROADMAP.md`](../mansart-validation/ROADMAP.md). | Decided |
 | D7 | — | Connection pooling in Java SE: the unit's own connections come from `DriverManager` (one per transaction) unless a `DataSource` is given. Options: embed `mansart-pool` (virtual-thread-native, zero-dep) as the default pool of `jakarta.persistence.jdbc.*` units, or require a `DataSource` for production. To decide before the performance work (P12), ideally before P4. | Open — maintainer |

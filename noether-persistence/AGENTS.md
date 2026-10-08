@@ -14,7 +14,8 @@
   modules — `jakarta.persistence-api` (3.2.0), and, for the integration modules only,
   `jakarta.enterprise.cdi-api`, `jakarta.inject-api`, `jakarta.transaction-api`. JDBC, StAX
   (`java.xml`) and the Class-File API are in the JDK. Reused Mansart bricks:
-  `mansart-data-dialect-spi` (shared SQL dialect SPI) and `mansart-transactions-api` (JTA).
+  `mansart-transactions-api` (JTA). The SQL is Mansart JPA's own (decision D4): a sealed AST in
+  `mansart-jpa-dialect-spi`, rendered by the `mansart-jpa-dialect-*` modules.
 - **No Hibernate, EclipseLink, OpenJPA, ANTLR, ASM, Byte Buddy, Caffeine, Jackson** — not in
   production, and never as the provider of a TCK run (that would measure *their* conformance).
 - **Virtual threads** for all I/O: every JDBC call runs on a virtual thread; no platform-thread
@@ -79,8 +80,8 @@ Module names are a plan, not a contract: a module is only created when a milesto
 - **No `synchronized` around blocking I/O** — use `ReentrantLock`, `Semaphore`, atomics.
 - **No `ThreadLocal`** — use `ScopedValue` (as `mansart-transactions` does) for any contextual
   propagation (current transaction, current persistence context).
-- **No inline SQL in the core**: every statement is built as a dialect-SPI AST and rendered by the
-  dialect (H2, PostgreSQL). The TCK DDL scripts are the only hand-written SQL, and they are not ours.
+- **No inline SQL in the core**: every statement is built as a `mansart-jpa-dialect-spi` AST and
+  rendered by the dialect (H2, PostgreSQL). The TCK DDL scripts are the only hand-written SQL, and they are not ours.
 - The persistence context (`EntityManager`) is **not thread-safe** by spec; the
   `EntityManagerFactory` is. Do not add locking to the EM, do make the EMF and its caches safe.
 - Any `<scope>compile|runtime</scope>` dependency addition requires the `dependency-gatekeeper`
@@ -95,7 +96,7 @@ Module names are a plan, not a contract: a module is only created when a milesto
   `provides jakarta.persistence.spi.PersistenceProvider with io.vidocq.mansart.jpa.core.…`
   **and** `META-INF/services/jakarta.persistence.spi.PersistenceProvider` — the TCK runs on the
   classpath, production on the module path; both must work.
-- Dialects are found with `uses io.vidocq.mansart.data.dialect.DialectFactory` (`ServiceLoader`).
+- Dialects are found with `uses io.vidocq.mansart.jpa.dialect.DialectFactory` (`ServiceLoader`).
 - `persistence.xml` and `orm.xml` are parsed with StAX (`java.xml`, JDK) — no JAXB.
 - Run the `java-modules-guardian` agent after every `module-info.java` or package change.
 

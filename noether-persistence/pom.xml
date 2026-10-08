@@ -75,6 +75,7 @@
     -->
 
     <modules>
+        <module>mansart-jpa-dialects</module>
         <module>mansart-jpa-core</module>
         <module>mansart-jpa-processor</module>
         <module>mansart-jpa-module-it</module>
@@ -96,6 +97,21 @@
             <dependency>
                 <groupId>io.vidocq.mansart</groupId>
                 <artifactId>mansart-jpa-processor</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.vidocq.mansart</groupId>
+                <artifactId>mansart-jpa-dialect-spi</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.vidocq.mansart</groupId>
+                <artifactId>mansart-jpa-dialect-h2</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.vidocq.mansart</groupId>
+                <artifactId>mansart-jpa-dialect-postgresql</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <!-- Unit tests run on H2 in memory; never at run time. -->
