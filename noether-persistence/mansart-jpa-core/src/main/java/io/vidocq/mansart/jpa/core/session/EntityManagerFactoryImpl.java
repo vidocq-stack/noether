@@ -70,6 +70,7 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     private final NamedQueries namedQueries;
     private final Metamodel metamodel;
     private final EntityGraphs entityGraphs;
+    private final io.vidocq.mansart.jpa.core.bootstrap.SchemaGeneration schemaGeneration;
 
     public EntityManagerFactoryImpl(UnitSettings settings, ConnectionSource connections, MappedUnit mapping) {
         this.settings = settings;
@@ -79,6 +80,7 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
         this.metamodel = new io.vidocq.mansart.jpa.core.model.build.RuntimeMetamodel(mapping.model(), mapping.loader());
         this.entityGraphs = new EntityGraphs(metamodel, mapping.loader());
         this.batchSize = batchSize(settings);
+        schemaGeneration = new io.vidocq.mansart.jpa.core.bootstrap.SchemaGeneration(settings, connections, mapping, this::checkOpen);
     }
 
     /** The batch size the unit sets, checked when the factory is created rather than at the first flush. */
@@ -196,6 +198,10 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     @Override
     public EntityManager createEntityManager(SynchronizationType synchronizationType, Map<?, ?> map) {
         checkOpen();
+        java.util.Objects.requireNonNull(synchronizationType, "synchronizationType");
+        if (settings.transactionType() == PersistenceUnitTransactionType.JTA) {
+            return new EntityManagerImpl(this, map, synchronizationType);
+        }
         throw new IllegalStateException("The persistence unit " + settings.unitName()
             + " is resource-local: a synchronization type only applies to JTA entity managers");
     }
@@ -267,7 +273,7 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     @Override
     public SchemaManager getSchemaManager() {
         checkOpen();
-        throw NotYet.milestone("P9", "the SchemaManager");
+        return schemaGeneration;
     }
 
     @Override

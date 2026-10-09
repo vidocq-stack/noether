@@ -59,6 +59,7 @@ public final class Dialects {
                 if (name != null ? factory.name().equalsIgnoreCase(name.strip()) : factory.supports(product)) {
                     return factory.create(metadata.getDatabaseMajorVersion(), metadata.getDatabaseMinorVersion());
                 }
+
             }
             throw new PersistenceException((name != null ? "No Mansart JPA dialect is named " + name
                 : "No Mansart JPA dialect serves " + product) + ": add the dialect module of the database "
@@ -67,6 +68,16 @@ public final class Dialects {
         } catch (SQLException e) {
             throw new PersistenceException("Unable to read the JDBC metadata of the database: " + e.getMessage(), e);
         }
+    }
+
+    /** Script-only generation can identify a database without opening a JDBC connection (§9.4). */
+    public static Dialect resolve(String product, int major, int minor, String name, ClassLoader loader) {
+        for (DialectFactory factory : factories(loader)) {
+            if (name != null ? factory.name().equalsIgnoreCase(name.strip()) : factory.supports(product)) {
+                return factory.create(major, minor);
+            }
+        }
+        throw new PersistenceException("No Mansart JPA dialect serves " + product + " (" + name + ")");
     }
 
     private static List<DialectFactory> factories(ClassLoader loader) {

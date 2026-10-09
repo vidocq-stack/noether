@@ -145,3 +145,128 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     A red H2 regression covers both JPQL and Criteria converted-literal assignments and predicates.
   - 2026-10-09: converter-backed literals now use existing binder slots in assignments and comparisons.
     The clean reactor and official `convert3Test` pass; full score 2013 / 2135 with no baseline regression.
+
+## BUG-20261009-11 — Schema projection omits synthetic and relational columns
+
+- **Date**: 2026-10-09
+- **Status**: FIXED (P9 working tree; no commit requested)
+- **Module**: `mansart-jpa-core`, `SchemaPlan`, JPA dialect AST
+- **Symptom**: generated schemas fail for discriminator columns, Year values, order columns and named
+  foreign keys/secondary-table joins; the schema gate initially retained six errors after basic generation.
+- **Minimal reproduction**: `SchemaGenerationTest#inheritanceDiscriminatorsAndYearAreSchemaColumns`;
+  official `se.schemaGeneration` and repeatable generator/secondary-table cases.
+- **Cause hypothesis**: physical columns were assumed to have an entity attribute index; relational
+  mapping metadata and class-file foreign-key definitions were not fully projected.
+- **Investigation**: 2026-10-09: retain synthetic columns, physical mapping columns and named constraints;
+  dialect-rendered DDL clears the schema gate. The secondary-table test now reaches its separate P11 cache failure.
+
+## BUG-20261009-12 — Virtual JTA flush loses transaction association and nested connection ownership
+
+- **Date**: 2026-10-09
+- **Status**: FIXED (P9 working tree; no commit requested)
+- **Module**: `mansart-jpa-core`, `EntityManagerImpl`; `mansart-jpa-cdi`, `JtaIntegration`
+- **Symptom**: AUTO queries omit pending changes; a nested relationship existence check during flush reads a
+  separate non-enlisted connection and falsely treats an already-flushed detached target as new.
+- **Minimal reproduction**: `JtaIntegrationTest#autoQueryFlushUsesTheCallerTransactionBeforeVirtualOffload`;
+  `#nestedFlushReadsReuseTheEnlistedConnectionForAutoQueriesAndCommit` (real H2, platform-thread caller).
+- **Cause hypothesis**: the delivered transaction manager's ThreadLocal association is absent on a virtual
+  worker; nested `onConnection` reconsults the manager instead of retaining the execution's connection.
+- **Investigation**: 2026-10-09: both real regressions failed before correction. Capture the transaction decision
+  on the caller and retain/restore the current execution connection around callbacks and JDBC work.
+  AUTO-query and before-completion flush now see their own uncommitted writes, without adding ThreadLocal.
+
+## BUG-20261009-13 — Failed JTA join leaks the acquired connection
+
+- **Date**: 2026-10-09
+- **Status**: FIXED (P9 working tree; no commit requested)
+- **Module**: `mansart-jpa-cdi`, `JtaIntegration`
+- **Symptom**: joining a rollback-only transaction leaves its newly acquired JDBC connection open;
+  a synchronization registration failure after enlistment gives ownership to neither completion nor the caller.
+- **Minimal reproduction**: `JtaIntegrationTest#failedJoinToRollbackOnlyTransactionReleasesItsRealJdbcConnection`.
+- **Cause hypothesis**: failure after acquiring/enlisting bypasses release; registration happened too late.
+- **Investigation**: 2026-10-09: real rollback-only reproduction was red. Guard completion, register synchronization
+  before enlistment, and release idempotently on every failed join. XA JDBC callbacks execute on virtual threads.
+
+## BUG-20261009-14 — Container query creation binds to the wrong transaction lifetime
+
+- **Date**: 2026-10-09
+- **Status**: FIXED (JPQL/Criteria/native/named queries and, 2026-10-09, stored-procedure facade creation)
+- **Module**: `mansart-jpa-cdi`, `ContainerEntityManager`, `ContextQuery`
+- **Symptom**: creating a query without a transaction throws `TransactionRequiredException`; retaining a query
+  across transaction boundaries otherwise retains the old persistence context.
+- **Minimal reproduction**: `JtaIntegrationTest#contextQueriesResolveIdentityAtExecutionAndReadDetachedWithoutATransaction`;
+  `JtaIntegrationTest#storedProcedureCreatedOutsideATransactionKeepsMetadataAndExecutesBoundToTheCurrentTransaction`
+  (plus the named, result-lifetime and `executeUpdate`/closed-state tests) for stored procedures.
+- **Cause hypothesis**: query creation directly forwarded to the active transaction's entity manager.
+- **Investigation**: 2026-10-09: a red real-H2 query test precedes a static forwarding wrapper which recreates
+  execution against the current context, retaining metadata/parameters/settings. Outside-transaction results are
+  materialized and detached. Stored procedures got `ContextStoredProcedureQuery` after red H2/Mansart-TM tests: it
+  records registration/parameters/settings, replays them on the current context at `execute()`, and copies result
+  sets, update counts and outputs (REF_CURSOR rows are already materialized by the core query) before that
+  context ends, so they survive its closure. Paging is applied to the copy; closure follows the facade. H2 has no
+  OUT/REF_CURSOR procedures, so those parameter modes rely on the core implementation's tests.
+
+## BUG-20261009-15 — Shared container facade metadata races across virtual requests
+
+- **Date**: 2026-10-09
+- **Status**: FIXED (P9 working tree; no commit requested)
+- **Module**: `mansart-jpa-cdi`, `ContainerEntityManager`
+- **Symptom**: an application-scoped CDI owner concurrently setting properties/creating queries encounters
+  `ConcurrentModificationException`; lazy metadata contexts can be duplicated.
+- **Minimal reproduction**: `JtaIntegrationTest#containerFacadeMetadataIsSafeWhenOwnedByASharedCdiBean`
+  (100 real virtual tasks and a real JTA factory).
+- **Cause hypothesis**: mutable settings were iterated without a snapshot and metadata creation was unguarded.
+- **Investigation**: 2026-10-09: the stress regression failed with `ArrayList.forEach` in `configured`.
+  Publish immutable bounded-per-setting snapshots and guard only non-JDBC metadata operations with ReentrantLock;
+  destroy/release occurs outside that lock. The regression now passes.
+
+## BUG-20261009-16 — Vauban cannot apply portable persistence injection enhancements
+
+- **Date**: 2026-10-09
+- **Status**: FIXED UPSTREAM (Vauban `BUG-20261009-01`/`-02`, Vauban working tree, uncommitted; installed locally as `0.4.0-SNAPSHOT`); no Mansart workaround
+- **Module**: `vauban-core`, enhancement application; consumer `mansart-jpa-cdi-module-it`
+- **Symptom**: plain persistence-annotated fields remain null; an already-`@Inject` persistence setter retains
+  `@Default` on its parameter and fails deployment despite the BCE adding `PersistenceBinding`.
+- **Minimal reproduction**: `ContainerModuleTest#persistenceAnnotationsInjectThroughTheActualContainer`;
+  `#persistenceSetterParametersReceiveTheirEnhancedQualifier` (actual Vauban, named modules, real H2/TM).
+- **Cause hypothesis**: `EnhancementApplier` modifies existing field injection points but does not synthesize
+  missing points; method parameter annotation enhancements are not applied to injection-point qualifiers.
+  Generated factories therefore omit the plain resource fields.
+- **Upstream evidence**: `vauban-core/.../extensions/EnhancementApplier.java`, field loop at lines 330–368;
+  `applyParameterEnhancement()` at lines 394–398 is a no-op for injection qualifiers.
+- **Investigation**: 2026-10-09: both required-contract tests remain red. Explicit source `@Inject` fields are a
+  passing diagnostic control, including actual synthetic factory/context injection and transactional writes.
+  This workaround is not treated as fulfillment of the plain persistence annotation contract. P9 remains partial.
+- **Investigation**: 2026-10-09: fixed upstream. Vauban now turns BCE-added `@Inject` fields/initializers into
+  injection points with their enhanced qualifiers (BUG-20261009-01), and its APT provider has in-module write cases
+  for public mutable fields (BUG-20261009-02; a follow-up fix stopped that scan completing the compiled module,
+  which had broken this module's `provides … _VaubanComponents`). Clean
+  `./mvnw -ntp -pl mansart-persistence/mansart-jpa-cdi-module-it -am clean test`: `ContainerModuleTest` 4/4 green on
+  the module path with assertions unchanged, CDI/JTA 13, core 410, dialect SPI 23, H2 6. Upstream limitation:
+  generated writes cover public mutable reference fields only; other BCE-enhanced members need `opens` and fail
+  loudly without it. P9 itself remains partial (Arquillian gate and Vidocq extension).
+
+## BUG-20261009-17 — Fresh drop-and-create tries to drop a constraint on an absent table
+
+- **Date**: 2026-10-09
+- **Status**: FIXED (P9 working tree; no commit requested)
+- **Module**: `mansart-jpa-dialect-spi`, `StandardDialect`
+- **Symptom**: bootstrapping a fresh H2 database with a to-one relationship fails before CREATE,
+  `Table JTA_OWNER not found` at `ALTER TABLE ... DROP CONSTRAINT IF EXISTS`.
+- **Minimal reproduction**: `JtaIntegrationTest#nestedFlushReadsReuseTheEnlistedConnectionForAutoQueriesAndCommit`;
+  create its mapped `Owner`/`Record` unit with `database.action=drop-and-create`.
+- **Cause hypothesis**: DROP guarded the constraint name but not the table.
+- **Investigation**: 2026-10-09: the new nested-flush regression first exposed this schema defect.
+  The dialect renders `ALTER TABLE IF EXISTS ... DROP CONSTRAINT IF EXISTS`; fresh H2 bootstrap passes.
+
+## BUG-20261009-18 — Destroyed container contexts silently accept nontransactional operations
+
+- **Date**: 2026-10-09
+- **Status**: FIXED (P9 working tree; no commit requested)
+- **Module**: `mansart-jpa-cdi`, `ContainerEntityManager`
+- **Symptom**: `contains`, `clear` and `detach` without an associated transaction bypass closed-state checks.
+- **Minimal reproduction**: `JtaIntegrationTest#containerFactoryOwnershipAndContextConfigurationDoNotRequireATransaction`;
+  destroy the facade and call `contains(new Record(1))`.
+- **Cause hypothesis**: the nontransactional no-op branch skipped the underlying entity manager's validation.
+- **Investigation**: 2026-10-09: the lifecycle regression was red. Require an open facade, and use a transient
+  detached context to preserve entity argument validation for nontransactional `contains`/`detach`.

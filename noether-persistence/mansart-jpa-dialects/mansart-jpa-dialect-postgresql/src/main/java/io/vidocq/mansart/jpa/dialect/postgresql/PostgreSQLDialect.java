@@ -32,6 +32,22 @@ import java.util.UUID;
 /** The PostgreSQL dialect: ANSI rendering, overridden where PostgreSQL differs. */
 public final class PostgreSQLDialect extends StandardDialect {
 
+    @Override
+    protected String truncate(io.vidocq.mansart.jpa.dialect.sql.TruncateTables truncate) {
+        return "TRUNCATE TABLE " + String.join(", ", truncate.tables().stream().map(this::table).toList());
+    }
+
+    @Override
+    protected String schemaType(io.vidocq.mansart.jpa.dialect.sql.SchemaStatement.Column column) {
+        return switch (column.type()) {
+            case BINARY, VARBINARY, BLOB -> "BYTEA";
+            case CLOB -> "TEXT";
+            case TINYINT -> "SMALLINT";
+            case DOUBLE -> "DOUBLE PRECISION";
+            default -> super.schemaType(column);
+        };
+    }
+
     PostgreSQLDialect() {
     }
 

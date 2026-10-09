@@ -37,7 +37,7 @@ import java.util.function.Function;
  * reference (commit, rollback or abandon) is the only one to end the transaction, so it is never rolled back or
  * closed twice, nor committed after being rolled back.
  */
-final class ResourceLocalTransaction implements EntityTransaction {
+final class ResourceLocalTransaction implements SessionTransaction {
 
     private final EntityManagerFactoryImpl factory;
     private final TransactionListener listener;
@@ -178,7 +178,7 @@ final class ResourceLocalTransaction implements EntityTransaction {
 
     /** The connection of the active transaction; the entity manager runs its statements on it. */
     /** Runs {@code work} on the connection of the active transaction, which no closing factory can release meanwhile. */
-    <T> T onConnection(Function<Connection, T> work) {
+    public <T> T onConnection(Function<Connection, T> work) {
         lock.lock();
         try {
             return work.apply(activeConnection());
@@ -187,7 +187,7 @@ final class ResourceLocalTransaction implements EntityTransaction {
         }
     }
 
-    Connection connection() {
+    public Connection connection() {
         return activeConnection();
     }
 

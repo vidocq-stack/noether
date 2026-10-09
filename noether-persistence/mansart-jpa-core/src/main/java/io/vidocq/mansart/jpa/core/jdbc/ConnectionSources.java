@@ -59,7 +59,8 @@ public final class ConnectionSources {
     }
 
     public static ConnectionSource of(UnitSettings settings, ClassLoader loader) {
-        Object dataSource = settings.property(Definitions.NON_JTA_DATA_SOURCE);
+        Object dataSource = settings.transactionType() == jakarta.persistence.PersistenceUnitTransactionType.JTA
+            ? settings.property(Definitions.JTA_DATA_SOURCE) : settings.property(Definitions.NON_JTA_DATA_SOURCE);
         if (dataSource == null) {
             dataSource = settings.property(UnitSettings.DATA_SOURCE);
         }

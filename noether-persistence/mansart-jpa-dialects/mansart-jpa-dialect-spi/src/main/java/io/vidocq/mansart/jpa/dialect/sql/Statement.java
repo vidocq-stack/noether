@@ -27,7 +27,7 @@ import java.util.List;
  * locks, DDL).
  */
 public sealed interface Statement permits Insert, Update, Delete, Select, NextValue, Increment, SelectStatement, UpdateQuery,
-        DeleteQuery {
+        DeleteQuery, SchemaStatement, ForeignKeyStatement, TruncateTables {
 
     /** The table the statement works on. */
     Table table();

@@ -86,15 +86,20 @@ final class EntityManagerImpl implements EntityManager {
 
     private final EntityManagerFactoryImpl factory;
     private final Map<String, Object> properties = new LinkedHashMap<>();
-    private final ResourceLocalTransaction transaction;
+    private final SessionTransaction transaction;
     private final PersistenceContext context = new PersistenceContext();
     private final EntityOperations operations;
     private boolean closed;
     private FlushModeType flushMode = FlushModeType.AUTO;
     private CacheRetrieveMode cacheRetrieveMode = CacheRetrieveMode.USE;
     private CacheStoreMode cacheStoreMode = CacheStoreMode.USE;
+    private Connection executionConnection;
 
     EntityManagerImpl(EntityManagerFactoryImpl factory, Map<?, ?> map) {
+        this(factory, map, jakarta.persistence.SynchronizationType.SYNCHRONIZED);
+    }
+
+    EntityManagerImpl(EntityManagerFactoryImpl factory, Map<?, ?> map, jakarta.persistence.SynchronizationType synchronization) {
         this.factory = factory;
         this.operations = new EntityOperations(factory, context, new EntityOperations.Connections() {
             @Override
@@ -102,10 +107,13 @@ final class EntityManagerImpl implements EntityManager {
                 return onConnection(work);
             }
         });
-        this.transaction = new ResourceLocalTransaction(factory, new TransactionListener() {
+        TransactionListener listener = new TransactionListener() {
             @Override
             public void beforeCommit(Connection connection) {
-                flush(connection);
+                withConnection(connection, current -> {
+                    flush(current);
+                    return null;
+                });
             }
 
             @Override
@@ -117,7 +125,20 @@ final class EntityManagerImpl implements EntityManager {
             public void afterCommit() {
                 context.releaseLocks();
             }
-        });
+        };
+        if (factory.getTransactionType() == jakarta.persistence.PersistenceUnitTransactionType.JTA) {
+            var integration = (io.vidocq.mansart.jpa.core.spi.TransactionIntegration)
+                factory.settings().property(io.vidocq.mansart.jpa.core.spi.TransactionIntegration.PROPERTY);
+            transaction = new ContainerTransaction(integration.open(synchronization, factory.connections()::acquire,
+                new io.vidocq.mansart.jpa.core.spi.TransactionIntegration.Completion() {
+                    @Override public void beforeCommit(Connection connection) { listener.beforeCommit(connection); }
+                    @Override public void afterCompletion(boolean committed) {
+                        if (committed) listener.afterCommit(); else listener.afterRollback();
+                        if (closed) context.clear();
+                    }
+                }));
+            transaction.isActive();
+        } else transaction = new ResourceLocalTransaction(factory, listener);
         if (map != null) {
             map.forEach((key, value) -> {
                 if (key != null) {
@@ -146,7 +167,7 @@ final class EntityManagerImpl implements EntityManager {
      * marks the transaction it is joined to for rollback. Every exception this class throws goes through here.
      */
     private RuntimeException failed(RuntimeException failure) {
-        if (!(failure instanceof LockTimeoutException) && transaction.isActive()) {
+        if (!(failure instanceof LockTimeoutException) && transaction.joined()) {
             transaction.setRollbackOnly();
         }
         return failure;
@@ -165,6 +186,9 @@ final class EntityManagerImpl implements EntityManager {
     /** Allowed once closed (§7.7). */
     @Override
     public EntityTransaction getTransaction() {
+        if (factory.getTransactionType() == jakarta.persistence.PersistenceUnitTransactionType.JTA) {
+            throw new IllegalStateException("getTransaction() is not available for a JTA entity manager");
+        }
         return transaction;
     }
 
@@ -177,16 +201,13 @@ final class EntityManagerImpl implements EntityManager {
     @Override
     public void joinTransaction() {
         checkOpen();
-        if (!transaction.isActive()) {
-            throw failed(new TransactionRequiredException("No active transaction to join: this resource-local entity manager "
-                + "takes part in the transaction of its own EntityTransaction"));
-        }
+        transaction.join();
     }
 
     @Override
     public boolean isJoinedToTransaction() {
         checkOpen();
-        return transaction.isActive();
+        return transaction.isActive() && transaction.joined();
     }
 
     // ---- properties ---------------------------------------------------------------------------------------
@@ -319,16 +340,11 @@ final class EntityManagerImpl implements EntityManager {
     public <C, T> T callWithConnection(ConnectionFunction<C, T> function) {
         checkOpen();
         try {
-            if (transaction.isActive()) {
-                return function.apply((C) transaction.connection());
-            }
-            try (Connection connection = factory.connections().acquire()) {
-                return function.apply((C) connection);
-            }
+            Function<Connection, T> work = connection -> io.vidocq.mansart.jpa.core.spi.JdbcExecution.call(
+                () -> function.apply((C) connection));
+            return onConnection(work);
         } catch (RuntimeException e) {
             throw failed(e);
-        } catch (SQLException e) {
-            throw failed(new PersistenceException("JDBC failure: " + e.getMessage(), e));
         } catch (Exception e) {
             throw failed(new PersistenceException(e.getMessage(), e));
         }
@@ -344,7 +360,7 @@ final class EntityManagerImpl implements EntityManager {
             throw failed(new TransactionRequiredException("flush() needs an active transaction"));
         }
         try {
-            transaction.onConnection(connection -> {
+            withTransactionConnection(connection -> {
                 flush(connection);
                 return null;
             });
@@ -411,14 +427,29 @@ final class EntityManagerImpl implements EntityManager {
      * persistence context reads without one, §7.7.1), on a connection of its own, released at the end.
      */
     private <T> T onConnection(Function<Connection, T> work) {
+        if (executionConnection != null) return work.apply(executionConnection);
         if (transaction.isActive()) {
-            return transaction.onConnection(work);
+            return withTransactionConnection(work);
         }
-        try (Connection connection = factory.connections().acquire()) {
-            return work.apply(connection);
-        } catch (SQLException e) {
-            throw new PersistenceException("Unable to obtain a connection: " + e.getMessage(), e);
-        }
+        return io.vidocq.mansart.jpa.core.spi.JdbcExecution.call(() -> {
+            try (Connection connection = factory.connections().acquire()) {
+                return withConnection(connection, work);
+            } catch (SQLException e) {
+                throw new PersistenceException("Unable to obtain a connection: " + e.getMessage(), e);
+            }
+        });
+    }
+
+    private <T> T withTransactionConnection(Function<Connection, T> work) {
+        return transaction.onConnection(connection -> withConnection(connection, work));
+    }
+
+    /** Nested loaders and cascades retain the enlisted connection across virtual execution without a ThreadLocal. */
+    private <T> T withConnection(Connection connection, Function<Connection, T> work) {
+        Connection previous = executionConnection;
+        executionConnection = connection;
+        try { return work.apply(connection); }
+        finally { executionConnection = previous; }
     }
 
     /**
@@ -431,7 +462,7 @@ final class EntityManagerImpl implements EntityManager {
             throw failed(new TransactionRequiredException("executeUpdate() needs an active transaction"));
         }
         try {
-            return transaction.onConnection(connection -> {
+            return withTransactionConnection(connection -> {
                 if (queryFlushMode != FlushModeType.COMMIT) {
                     flush(connection);
                 }
@@ -656,7 +687,7 @@ final class EntityManagerImpl implements EntityManager {
             requireTransaction("lock");
             ManagedEntity entry = managedEntry(entity);
             Integer timeout = lockTimeout(properties, null);
-            transaction.onConnection(connection -> {
+            withTransactionConnection(connection -> {
                 factory.locks(connection).lock(entry.type(), entry, lockMode, timeout, true, connection, context);
                 return null;
             });
@@ -696,7 +727,7 @@ final class EntityManagerImpl implements EntityManager {
                 ManagedEntity entry = managedEntry(entity);
                 if (Locks.pessimistic(lockMode)) {
                     // lock the row first: the refresh then reads what no one can change any more
-                    transaction.onConnection(connection -> {
+                    withTransactionConnection(connection -> {
                         factory.locks(connection).lock(entry.type(), entry, lockMode, lockTimeout(Map.of(), null), false, connection,
                             context);
                         return null;
@@ -765,10 +796,11 @@ final class EntityManagerImpl implements EntityManager {
         @Override
         public <T> T read(FlushModeType queryFlushMode, Function<Connection, T> work) {
             checkOpen();
+            boolean active = transaction.isActive();
             try {
                 return onConnection(connection -> {
                     // §3.10.8: AUTO makes the changes of the transaction visible to the query; no flush outside one
-                    if (queryFlushMode == FlushModeType.AUTO && transaction.isActive()) {
+                    if (queryFlushMode == FlushModeType.AUTO && active) {
                         flush(connection);
                     }
                     return work.apply(connection);
@@ -785,7 +817,7 @@ final class EntityManagerImpl implements EntityManager {
                 throw failed(new TransactionRequiredException("executeUpdate() needs an active transaction (§3.11.6)"));
             }
             try {
-                return transaction.onConnection(connection -> {
+                return withTransactionConnection(connection -> {
                     if (queryFlushMode != FlushModeType.COMMIT) {
                         flush(connection);
                     }

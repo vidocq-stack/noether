@@ -577,21 +577,60 @@ The standalone JPA processor and official P8 gate have no such dependency.
 **TCK gate**: `core.metamodelapi.*`, `core.criteriaapi.*`, `core.EntityGraph`,
 `jpa22.repeatable.namedentitygraph`.
 
-### P9 — Container contracts, JTA, schema generation ⏳
+### P9 — Container contracts, JTA, schema generation ✅
 
 Spec: §7.7 (container-managed persistence contexts), ch. 9 (container / provider contracts),
 §9.4 (schema generation), §7.12 (`SchemaManager`).
 
-- [ ] `createContainerEntityManagerFactory(PersistenceUnitInfo, Map)`; `ClassTransformer`
+- [x] `createContainerEntityManagerFactory(PersistenceUnitInfo, Map)`; `ClassTransformer`
       explicitly not registered.
-- [ ] Schema generation: `jakarta.persistence.schema-generation.*` (database and scripts
+- [x] Schema generation: `jakarta.persistence.schema-generation.*` (database and scripts
       actions), DDL rendered by the dialect; `SchemaManager` (`create`/`drop`/`validate`/`truncate`).
-- [ ] `mansart-jpa-cdi`: Vauban BCE for `@PersistenceContext` / `@PersistenceUnit`, transaction-
+- [x] `mansart-jpa-cdi`: Vauban BCE for `@PersistenceContext` / `@PersistenceUnit`, transaction-
       scoped and extended contexts, `SynchronizationType`, JTA join via `mansart-transactions`.
-- [ ] Vidocq runtime extension (in the `vidocq` repository) — planned with the runtime roadmap.
+- [x] Vidocq runtime extension: secure persistence-unit discovery, startup factory initialization,
+      JTA and CDI-managed `DataSource` bootstrap, application-owned data-source pass-through, and
+      CDI deployment lifecycle ownership.
+- [x] Arquillian integration on the assembled Vidocq runtime: `@PersistenceContext` field and
+      `@PersistenceUnit` setter injection, JTA commit/rollback and transaction-scoped identity
+      against H2, explicit join behavior for an unsynchronized context, named CDI `DataSource`
+      selection, application ownership and deployment-shutdown factory cleanup.
 
 **TCK gate**: `se.schemaGeneration.*`, `se.pluggability.*`. The JTA/CDI part is not covered by the
-standalone TCK: covered by `mansart-jpa-tests` and, later, by the Vidocq runtime.
+standalone TCK: covered by `mansart-jpa-cdi-module-it` and the assembled runtime's Arquillian vehicle,
+`vidocq-runtime-it-mansart-persistence`.
+
+**2026-10-09 status: IMPLEMENTATION COMPLETE.** Official PostgreSQL TCK: 2040 passes,
+0 failures, 91 errors, 4 skips / 2135 (+27 versus P8, zero baseline regressions/test-set changes).
+The standalone schema/container gate has no errors/failures and one unchanged upstream skip.
+A secondary-table schema unblock now exposes its
+separate P11 cache assertion; remaining owners are P10 (78) and P11 (13).
+
+Implemented and independently tested with real Mansart transactions and H2: synchronized and unsynchronized
+joining, commit flush, rollback detach, close-before-completion, transaction-scoped identity, extended ownership,
+queries created outside a transaction and rebound at execution, detached nontransactional reads, safe virtual
+JDBC callbacks/nested flushes and shared-facade metadata. Core depends only on its transaction SPI, not JTA/CDI/Vauban.
+The portable BCE supplies persistence fields/setters and deployment-owned factories/contexts.
+
+P9 implementation and its container integration gate are complete. Remaining external release
+coordination and later milestones are not P9 implementation gaps:
+
+- **Upstream Vauban:** fixed (Vauban `BUG-20261009-01`/`-02`, commit `e7daa793`, Codefloe PR #139;
+  installed locally as `0.4.0-SNAPSHOT`). Plain
+  `@PersistenceContext`/`@PersistenceUnit` fields and enhanced setter qualifiers now work; the actual module-path
+  vehicle is 4/4 green with unchanged assertions. Needs the Vauban change released before it is a delivered dependency.
+- **Arquillian gate:** complete. Vidocq's existing Arquillian adapter exercises the real runtime and
+  container-managed JPA contract; see `TCK.md` for the command and 6/6 integration-module results. Extended-context
+  lifetime remains validated by the actual Vauban module-path vehicle; the Vidocq adapter does not
+  expose a stateful-session-bean lifecycle.
+- **Local container facade:** done — stored-procedure queries are created outside a transaction and bound to the
+  current one at execution (`ContextStoredProcedureQuery`, tested on real H2/Mansart-TM). No full container
+  conformance claim is made.
+- **Vidocq:** runtime extension and integration module are implemented in the `vidocq` checkout. The CDI
+  factory remains owned/disposed by the deployment; user-managed `DataSource` instances are passed through
+  and never closed by the persistence extension.
+
+See `TCK.md` for exact commands, retained red counters and ownership evidence; `BUG.md` records the defects.
 
 ### P10 — XML mapping descriptors ⏳
 

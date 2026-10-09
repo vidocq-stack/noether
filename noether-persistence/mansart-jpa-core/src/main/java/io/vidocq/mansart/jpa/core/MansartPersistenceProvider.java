@@ -80,7 +80,8 @@ public final class MansartPersistenceProvider implements PersistenceProvider {
 
     @Override
     public void generateSchema(PersistenceUnitInfo info, Map<?, ?> map) {
-        throw new PersistenceException("Schema generation comes with milestone P9 of mansart-persistence/ROADMAP.md");
+        ClassLoader loader = info.getClassLoader() != null ? info.getClassLoader() : classLoader();
+        generateSchema(UnitSettings.of(Definitions.from(info), Definitions.dataSourcesOf(info), map), loader);
     }
 
     @Override
@@ -89,7 +90,18 @@ public final class MansartPersistenceProvider implements PersistenceProvider {
         if (definition.isEmpty() || !isOurs(UnitSettings.of(definition.get(), Map.of(), map))) {
             return false;
         }
-        throw new PersistenceException("Schema generation comes with milestone P9 of mansart-persistence/ROADMAP.md");
+        generateSchema(UnitSettings.of(definition.get(), Map.of(), map), classLoader());
+        return true;
+    }
+
+    private static void generateSchema(UnitSettings settings, ClassLoader loader) {
+        MappedUnit mapping = mapping(settings, loader);
+        var connections = ConnectionSources.of(settings, loader);
+        try {
+            new io.vidocq.mansart.jpa.core.bootstrap.SchemaGeneration(settings, connections, mapping, () -> {}).generate();
+        } finally {
+            connections.close();
+        }
     }
 
     /**
@@ -123,21 +135,34 @@ public final class MansartPersistenceProvider implements PersistenceProvider {
     }
 
     private static EntityManagerFactory build(UnitSettings settings, ClassLoader loader) {
-        if (settings.transactionType() == PersistenceUnitTransactionType.JTA) {
+        if (settings.transactionType() == PersistenceUnitTransactionType.JTA
+                && !(settings.property(io.vidocq.mansart.jpa.core.spi.TransactionIntegration.PROPERTY)
+                    instanceof io.vidocq.mansart.jpa.core.spi.TransactionIntegration)) {
             throw new PersistenceException("Persistence unit " + settings.unitName() + " is JTA: JTA entity managers come with "
-                + "the container integration (mansart-jpa-cdi, milestone P9); use transaction-type RESOURCE_LOCAL in Java SE");
+                + "the container integration (mansart-jpa-cdi); supply its TransactionIntegration bridge");
         }
         if (settings.validationMode() == ValidationMode.CALLBACK && !BeanValidation.isAvailable(loader)) {
             throw new PersistenceException("Persistence unit " + settings.unitName()
                 + " asks for validation mode CALLBACK, but no Bean Validation provider is available (§3.7.1)");
         }
-        MappedUnit mapping = MappedUnit.of(ManagedClasses.of(settings.definition()), loader,
-            ManagedClasses.hasMappingFiles(settings.definition(), loader), ServiceLoader.load(ManagedAccessProvider.class, loader));
-        return new EntityManagerFactoryImpl(settings, ConnectionSources.of(settings, loader), mapping);
+        MappedUnit mapping = mapping(settings, loader);
+        var factory = new EntityManagerFactoryImpl(settings, ConnectionSources.of(settings, loader), mapping);
+        try {
+            ((io.vidocq.mansart.jpa.core.bootstrap.SchemaGeneration) factory.getSchemaManager()).generate();
+            return factory;
+        } catch (RuntimeException | Error failure) {
+            try { factory.close(); } catch (RuntimeException close) { failure.addSuppressed(close); }
+            throw failure;
+        }
     }
 
     private static ClassLoader classLoader() {
         ClassLoader context = Thread.currentThread().getContextClassLoader();
         return context != null ? context : MansartPersistenceProvider.class.getClassLoader();
+    }
+
+    private static MappedUnit mapping(UnitSettings settings, ClassLoader loader) {
+        return MappedUnit.of(ManagedClasses.of(settings.definition()), loader,
+            ManagedClasses.hasMappingFiles(settings.definition(), loader), ServiceLoader.load(ManagedAccessProvider.class, loader));
     }
 }

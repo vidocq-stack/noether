@@ -33,8 +33,11 @@
   context, flush engine),
   `mansart-jpa-processor` (APT, entity accesses at build time) and two module-path test vehicles,
   `mansart-jpa-module-it` (runtime path, `opens`) and `mansart-jpa-processor-module-it` (build-time path,
-  `provides`). `mansart-jpa-tck` stays out of the reactor.
-- Milestones P0 to P8 are delivered (2013 / 2135 TCK passes; 118 P9/P10/P11 errors and 4 official skips):
+  `provides`), plus `mansart-jpa-cdi` and the actual-Vauban/H2 `mansart-jpa-cdi-module-it`.
+  `mansart-jpa-tck` stays out of the reactor.
+- Milestones P0 to P9 are implemented; P9's Vidocq integration module passes 6/6 tests, including adapter undeploy cleanup. The official standalone TCK reports 2040 / 2135 passes; 91 errors belong to P10/P11 and 4 tests are official skips. The integration runs against a local Vauban snapshot carrying an upstream fix not yet released.
+  The two real-container injection regressions are green after the upstream Vauban fix (pending release); the independent Arquillian gate and Vidocq extension
+  are not delivered. Do not hide these failures or change another repository without authorization:
   read `ROADMAP.md` (status per item) and
   `TCK.md` (measured score, failures attributed per milestone) before starting.
 - The entity model is built at bootstrap from the class files; which members are persistent, and in which order, is
@@ -54,6 +57,7 @@
 | `mansart-jpa-processor` | `io.vidocq.mansart.jpa.processor` | APT: canonical JPA metamodel `Entity_`, application-module initialization helpers and generated entity accessors/instantiators. Retain other producers' canonical output; do not change delivered Data to reconcile incompatible fields without a maintainer decision. |
 | `mansart-jpa-maven-plugin` | — | Build-time generation for entities living in pre-compiled jars (mirror of `mansart-data-maven-plugin`). |
 | `mansart-jpa-cdi` | `io.vidocq.mansart.jpa.cdi` | CDI 4.1 Lite BCE on Vauban: `@PersistenceContext` / `@PersistenceUnit`, JTA-bound contexts via `mansart-transactions`. |
+| `mansart-jpa-cdi-module-it` | `io.vidocq.mansart.jpa.cdi.moduleit` | Non-release actual Vauban/H2 module-path vehicle, including retained upstream resource/parameter injection regressions. |
 | `mansart-jpa-tests` | — | Cross-module and PostgreSQL (Testcontainers) integration tests. |
 | `mansart-jpa-tck` | — | Official TCK runner — **OUT OF REACTOR**, standalone Model 4.0.0 POM, never listed in `<modules>`. |
 
@@ -84,10 +88,12 @@ Module names are a plan, not a contract: a module is only created when a milesto
 - `mansart-jpa-core` must **never import** `jakarta.enterprise.*`, `jakarta.inject.*`,
   `jakarta.transaction.*`, nor any Vauban class. Container integration lives in `mansart-jpa-cdi`.
 - **No `synchronized` around blocking I/O** — use `ReentrantLock`, `Semaphore`, atomics.
-- **No `ThreadLocal`** — use `ScopedValue` (as `mansart-transactions` does) for any contextual
-  propagation (current transaction, current persistence context).
+- **No new `ThreadLocal`** — the delivered `mansart-transactions` manager currently uses one.
+  Capture its transaction on the caller before virtual offload; use transaction objects as container context keys
+  and an execution-owned connection for nested JDBC. Do not change delivered Transactions to match old prose.
 - **No inline SQL in the core**: every statement is built as a `mansart-jpa-dialect-spi` AST and
-  rendered by the dialect (H2, PostgreSQL). The TCK DDL scripts are the only hand-written SQL, and they are not ours.
+  rendered by the dialect (H2, PostgreSQL). Schema generation also executes caller-provided standard SQL scripts;
+  generated DDL still goes through the SQL AST, never inline core SQL.
 - The persistence context (`EntityManager`) is **not thread-safe** by spec; the
   `EntityManagerFactory` is. Do not add locking to the EM, do make the EMF and its caches safe.
 - Any `<scope>compile|runtime</scope>` dependency addition requires the `dependency-gatekeeper`

@@ -80,6 +80,8 @@
         <module>mansart-jpa-processor</module>
         <module>mansart-jpa-module-it</module>
         <module>mansart-jpa-processor-module-it</module>
+        <module>mansart-jpa-cdi</module>
+        <module>mansart-jpa-cdi-module-it</module>
     </modules>
 
     <dependencyManagement>

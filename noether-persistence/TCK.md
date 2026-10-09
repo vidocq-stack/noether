@@ -27,6 +27,135 @@ Official suite: **Jakarta Persistence 3.2.1** TCK (bundle from eclipse.org, SHA-
 | P6 — required inheritance, polymorphic loading and JPQL `TYPE` | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 1005 | 1126 | 4 |
 | P7 — JPQL, native queries and stored procedures | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 1063 | 1068 | 4 |
 | P8 — runtime/canonical metamodel, Criteria and entity graphs; exposed converted-literal query fix | 2026-10-09 | Temurin 25.0.4+7-LTS | postgres:17-alpine | 2135 | 2013 | 118 | 4 |
+| P9 — schema, CDI/JTA, Vidocq extension and Arquillian integration | 2026-10-09 | Temurin 25.0.4+7-LTS | postgres:17-alpine | 2135 | 2040 | 91 | 4 |
+
+## P9 — schema/JTA implementation and actual container contract complete
+
+The final 2026-10-09 official run reports **2135 tests, 2040 passed, 0 failures, 91 errors, 4 skipped**.
+Actual toolchain: **Temurin 25.0.4+7-LTS**, Maven **3.9.16**, PostgreSQL **17-alpine**,
+unmodified official **3.2.1** tests. `.sdkmanrc` still names 25.0.3; the commands explicitly select 25.0.4.
+
+Compared by **class + test name** against the preserved P8 execution-1 XML:
+**27 newly passing, zero previously passing regressions, zero added/missing tests**.
+Execution 1 remains 2134 tests (2039 passed / 91 errors / 4 skips); execution 2 adds its unchanged single pass.
+The total P8 baseline was 2013 passes / 118 errors / 4 skips. Original XML was preserved before focused runs.
+
+The P9 gate extracted from the final full reports:
+
+| Gate | Pass | Error | Skipped | Total |
+|---|---:|---:|---:|---:|
+| `se.schemaGeneration.*` | 25 | 0 | 1 | 26 |
+| `se.pluggability.*` | 15 | 0 | 0 | 15 |
+| `core.types.datetime.*` | 1 | 0 | 0 | 1 |
+| **Total** | **41** | **0** | **1** | **42** |
+
+The schema skip is the upstream-disabled table-generator case. All four official skips are unchanged.
+The remaining newly passing generator case is outside this gate. No TCK source, DDL, exclusions or upstream
+dependencies were edited to improve the score. The shell script exits zero even when XML contains errors;
+these counters come from the XML, not its exit code.
+
+| Remaining owner | Errors | Evidence |
+|---|---:|---|
+| P10 — ORM XML | 78 | The same descriptor/override/callback/listener/native/stored-procedure mapping blockers as P8 |
+| P11 — second-level cache | 13 | The former 12 cache blockers plus `jpa22.se.repeatable.secondarytable.Client#subClassInheritsCacheableTrue` |
+
+That secondary-table test previously stopped during schema setup (hence P9's former 28-error attribution).
+It now persists the entities, then reports `Cache returned: false` for Product and HardwareProduct.
+This is a newly reached P11 assertion, not a remaining schema failure or a baseline pass regression.
+
+Implemented boundaries:
+
+- Provider `PersistenceUnitInfo` bootstrap; no transformer registration (the existing bootstrap test rejects
+  any `addTransformer` call).
+- Database/scripts actions, metadata/script source ordering, load scripts and caller-owned URL/Reader/Writer/
+  Connection ownership; schema projection and DDL through the JPA dialect AST. `SchemaManager` create/drop,
+  mapped table/column validation and child-first/grouped truncation with initial load reapplication.
+- Core's isolated `TransactionIntegration`/session SPI, with **no** CDI/Inject/JTA/Vauban import.
+  `mansart-jpa-cdi` adapts the existing Transactions JDBC `ConnectionXAResource`; delivered
+  Pool/Transactions/Data implementation files are unchanged.
+- Synchronized/unsynchronized JTA joining, commit flush, rollback detach, close-before-completion,
+  container transaction identity and extended ownership. Static contextual query wrappers retain settings and
+  parameters while resolving execution against the current transaction; nontransactional reads detach.
+  Deployment-owned injected factories/managers reject application closure.
+- Portable CDI Lite BCE field/setter enhancements, synthetic factories/contexts and default unit discovery.
+  Actual-container behavior is tested through Vauban, not inferred from API doubles.
+
+**Standalone JPA validation is not fully green yet** because P10 and P11 remain open. The clean selected JPA reactor ran **490 tests:
+488 passed, 1 failure, 1 error, 0 skips**. Core 410 (including six schema regressions), processor 24,
+dialect SPI 23, H2 6, PostgreSQL 8, existing module vehicles 3 each, CDI/JTA 9, actual-container vehicle 4.
+The 15 focused schema/JTA tests pass. Real H2/Mansart-TM reds preceded the fixes for AUTO-query offload,
+failed-join release, nested flush connection reuse, shared-facade metadata races, contextual queries and closure.
+
+In the actual named-module Vauban/H2 vehicle, all **4** tests now pass (clean run, assertions unchanged):
+programmatic transaction-scoped/extended identity, explicit-source-`@Inject` field synthesis (diagnostic control),
+and the two required-contract tests that were previously retained red:
+
+1. `ContainerModuleTest#persistenceAnnotationsInjectThroughTheActualContainer`: plain `@PersistenceContext`
+   and `@PersistenceUnit` fields are injected.
+2. `#persistenceSetterParametersReceiveTheirEnhancedQualifier`: the enhanced setter parameter qualifier is honored.
+
+Both were fixed upstream (Vauban `BUG-20261009-01`/`-02`, Vauban working tree, uncommitted; installed locally as `0.4.0-SNAPSHOT`; see `BUG.md` →
+`BUG-20261009-16`). Selected rerun, `-pl mansart-persistence/mansart-jpa-cdi-module-it -am clean test`: core 410,
+dialect SPI 23, H2 6, CDI/JTA 13, actual-container vehicle 4 — all green. The 490-test reactor figure above predates it.
+
+The local transaction-scoped facade creates stored-procedure queries outside a transaction
+(`ContextStoredProcedureQuery`, four real H2/Mansart-TM tests in `JtaIntegrationTest`; CDI/JTA module 13 tests green,
+actual Vauban module-path vehicle 4/4). The Vidocq Arquillian deployment covers `@PersistenceContext` field and
+`@PersistenceUnit` setter injection, synchronized commit/rollback, transaction-scoped identity, explicit joining
+of an unsynchronized context, named CDI `DataSource` selection and deployment-owned factory closure semantics.
+A sixth integration-module test drives the Vidocq Arquillian adapter through undeploy and asserts CDI closes
+the factory while leaving the application-owned `DataSource` open (6/6 total). Extended-context lifetime is
+covered by the Vauban module-path vehicle; the Vidocq adapter has no stateful-session-bean lifecycle.
+
+Final full standalone rerun on 2026-10-09: **2135 tests, 2040 passed, 0 failures, 91 errors, 4 skipped**,
+identical to the recorded P9 result. The unmodified official TCK's remaining errors are P10 (78 ORM XML) and
+P11 (13 cache); four tests remain officially skipped. This is not full Jakarta Persistence certification.
+Optional `TABLE_PER_CLASS`/D5 and the frozen Data producer gap remain outside P9.
+
+The Vidocq extension discovers persistence units without external XML entity access, initializes CDI synthetic
+factories during runtime startup, supplies the active JTA integration and passes an available CDI `DataSource`
+instance directly to Mansart. The persistence CDI disposer closes deployment-owned factories; the runtime
+extension never closes the application-owned data source.
+
+Arquillian command from the Vidocq repository root:
+
+```bash
+./mvnw -ntp -pl vidocq-runtime-integration-tests/vidocq-runtime-it-mansart-persistence \
+ -am test
+```
+
+Result: **6 tests, 6 passed, 0 failures/errors/skips**. The dependency build uses the local Vauban
+`0.4.0-SNAPSHOT` containing `BUG-20261009-01`/`-02`; the upstream fix is not released yet.
+
+The persistence extension adds only Jakarta Persistence/CDI/JTA/Inject spec dependencies and a named module;
+no new thread or executor is introduced. The non-release vehicle's Central publishing guard was added.
+The final concurrency review's nested-connection and shared-metadata findings were reproduced red and fixed
+without modifying the delivered manager's ThreadLocal association or adding a new one.
+
+Commands from the repository root:
+
+```bash
+export JAVA_HOME="$HOME/.sdkman/candidates/java/25.0.4-tem"
+export PATH="$JAVA_HOME/bin:$PATH"
+P9_SCRATCH="$PWD/mansart-persistence/mansart-jpa-tck/target/p9-jvm-scratch"
+mkdir -p "$P9_SCRATCH"
+export JAVA_TOOL_OPTIONS="-Djava.io.tmpdir=$P9_SCRATCH"
+
+./mvnw -q -ntp -pl mansart-persistence/mansart-jpa-processor,mansart-persistence/mansart-jpa-cdi \
+  -am install -DskipTests
+# Currently fails only on the two retained Vauban required-contract regressions described above.
+./mvnw -q -ntp \
+  -pl mansart-persistence/mansart-jpa-processor,mansart-persistence/mansart-jpa-processor-module-it,mansart-persistence/mansart-jpa-module-it,mansart-persistence/mansart-jpa-cdi-module-it,mansart-persistence/mansart-jpa-dialects/mansart-jpa-dialect-postgresql \
+  -am clean verify
+./mvnw -q -ntp -pl mansart-persistence/mansart-jpa-cdi -am test \
+  -Dtest=SchemaGenerationTest,JtaIntegrationTest -Dsurefire.failIfNoSpecifiedTests=false
+
+cd mansart-persistence/mansart-jpa-tck
+./run-official-tck-persistence-3.2.sh
+```
+
+Final full XML/logs, clean reactor XML/logs, original baseline and the exact class/name comparison are preserved
+in session evidence (`files/p9-baseline`, `files/p9-final/comparison.json`).
 
 ## P8 — metamodel, Criteria and entity graphs: 1063 → 2013
 
