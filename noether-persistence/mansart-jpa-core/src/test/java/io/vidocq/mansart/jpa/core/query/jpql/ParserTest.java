@@ -79,6 +79,16 @@ class ParserTest {
     }
 
     @Test
+    void treatsAPathAsAnEntitySubtypeInExpressionsAndJoins() { // §4.4.9
+        Select select = select("SELECT s.name FROM LineItem l JOIN TREAT(l.product AS SoftwareProduct) s "
+            + "WHERE TREAT(l.product AS SoftwareProduct).revisionNumber = 1");
+        assertThat(select.from().getFirst().joins().getFirst().path())
+            .isEqualTo(new Path(List.of("l", "product"), "SoftwareProduct", 2));
+        assertThat(((Binary) select.where()).left())
+            .isEqualTo(new Path(List.of("l", "product", "revisionNumber"), "SoftwareProduct", 2));
+    }
+
+    @Test
     void conditionsFollowThePrecedenceOfTheLanguage() { // §4.6.1: NOT > AND > OR
         Select select = select("SELECT e FROM Emp e WHERE e.name = :name OR NOT e.age > 30 AND e.dept IS NOT NULL");
         assertThat(select.where()).isEqualTo(new Binary(

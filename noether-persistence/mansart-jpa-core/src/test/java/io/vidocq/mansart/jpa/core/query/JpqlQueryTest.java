@@ -28,6 +28,7 @@ import io.vidocq.mansart.jpa.core.model.build.fixtures.rel.Emp;
 import io.vidocq.mansart.jpa.core.model.build.fixtures.rel.Meeting;
 import io.vidocq.mansart.jpa.core.model.build.fixtures.rel.Room;
 import io.vidocq.mansart.jpa.core.model.build.fixtures.rel.RoomKey;
+import io.vidocq.mansart.jpa.core.model.build.fixtures.rel.RoomKey;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.NoResultException;
@@ -133,6 +134,23 @@ class JpqlQueryTest {
         assertThat(em.createQuery("SELECT e.name, m.name FROM Emp e LEFT JOIN e.manager m WHERE e.id IN (1, 4)", Object[].class)
             .getResultList()).allSatisfy(row -> assertThat(row[1]).isNull());
         assertThat(em.createQuery("SELECT e.dept FROM Emp e WHERE e.id = 4").getResultList()).isEmpty(); // navigation is an inner join
+    }
+
+    @Test
+    void wholeEmbeddablesCompareAndProjectThroughGeneratedAccess() { // §4.6.11, §4.8.2
+        RoomKey key = new RoomKey("B", 12);
+
+        assertThat(em.createQuery("SELECT r FROM Room r WHERE r.key = :key", Room.class).setParameter("key", key)
+            .getResultList()).containsExactly(em.find(Room.class, key));
+        assertThat(em.createQuery("SELECT NEW io.vidocq.mansart.jpa.core.query.RoomHolder(r.key) FROM Room r", RoomHolder.class)
+            .getSingleResult()).isEqualTo(new RoomHolder(key));
+    }
+
+    @Test
+    void aCorrelatedSubqueryCanRangeOverAnEnclosingSingleValuedPath() { // §4.5.10
+        assertThat(em.createQuery("SELECT m FROM Meeting m WHERE EXISTS "
+            + "(SELECT r FROM m.room r WHERE r.seats > 0)", Meeting.class).getResultList())
+            .containsExactly(em.find(Meeting.class, 1L));
     }
 
     @Test

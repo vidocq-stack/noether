@@ -450,6 +450,9 @@ public final class Parser {
             throw error("an expression");
         }
         String word = token.text().toUpperCase(Locale.ROOT);
+        if (word.equals("TREAT") && peek(1).is("(")) {
+            return treatedPath();
+        }
         switch (word) {
             case "TRUE", "FALSE" -> {
                 advance();
@@ -607,6 +610,9 @@ public final class Parser {
     }
 
     private Ast.Path path() {
+        if (peek().is("TREAT") && peek(1).is("(")) {
+            return treatedPath();
+        }
         List<String> segments = new ArrayList<>();
         segments.add(name("a path"));
         while (peek().is(".") && peek(1).kind() == Kind.NAME) {
@@ -614,6 +620,22 @@ public final class Parser {
             segments.add(advance().text());
         }
         return new Ast.Path(segments);
+    }
+
+    private Ast.Path treatedPath() {
+        expect("TREAT");
+        expect("(");
+        Ast.Path treated = path();
+        expect("AS");
+        String type = entityName();
+        expect(")");
+        List<String> segments = new ArrayList<>(treated.segments());
+        int treatAt = segments.size();
+        while (peek().is(".") && peek(1).kind() == Kind.NAME) {
+            advance();
+            segments.add(advance().text());
+        }
+        return new Ast.Path(segments, type, treatAt);
     }
 
     // ---- tokens -------------------------------------------------------------------------------------------

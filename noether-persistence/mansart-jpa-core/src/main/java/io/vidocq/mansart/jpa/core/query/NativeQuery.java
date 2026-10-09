@@ -55,7 +55,7 @@ import java.util.Set;
  * A native query (§3.11): SQL passed to the database as written, its positional parameters ({@code ?1} or {@code ?})
  * bound in order. Result rows may be scalars, tuples, entities, or results declared by {@code @SqlResultSetMapping}.
  */
-public final class NativeQuery extends AbstractQuery implements Query {
+public class NativeQuery extends AbstractQuery implements Query {
 
     /** Runs a native update for the entity manager: transaction, flush, connection, exceptions (§3.11.6, §3.12). */
     public interface Executor {
@@ -134,6 +134,14 @@ public final class NativeQuery extends AbstractQuery implements Query {
     /** The SQL as the application wrote it. */
     public String sqlString() {
         return sqlString;
+    }
+
+    QueryRuntime runtime() {
+        return runtime;
+    }
+
+    Object mapResult(ResultSet row, Class<?> type, String mapping) throws SQLException {
+        return readResult(row, type, mapping);
     }
 
     @Override
@@ -216,32 +224,39 @@ public final class NativeQuery extends AbstractQuery implements Query {
                 int first = getFirstResult();
                 int max = getMaxResults();
                 int skipped = 0;
-                SqlResultSetMappingModel mapping = resultSetMapping == null ? null
-                    : runtime.mapping().model().sqlResultSetMapping(resultSetMapping).orElseThrow(() ->
-                        new PersistenceException("The persistence unit has no SQL result-set mapping " + resultSetMapping));
                 while (results.next() && rows.size() < max) {
                     if (skipped++ < first) {
                         continue;
                     }
-                    if (mapping != null) {
-                        rows.add(mappedResult(results, metadata, mapping));
-                    } else if (resultClass != null && runtime.mapping().entity(resultClass).isPresent()) {
-                        rows.add(entityResult(results, metadata, resultClass, List.of()));
-                    } else if (columns == 1) {
-                        rows.add(convert(results.getObject(1), resultClass));
-                    } else {
-                        Object[] tuple = new Object[columns];
-                        for (int i = 0; i < columns; i++) {
-                            tuple[i] = results.getObject(i + 1);
-                        }
-                        rows.add(tuple);
-                    }
+                    rows.add(readResult(results, resultClass, resultSetMapping));
                 }
             }
         } catch (SQLException e) {
             throw new PersistenceException("The native query failed: " + e.getMessage() + " — " + sqlString, e);
         }
         return rows;
+    }
+
+    /** Maps one result row for native queries and stored procedures (§3.11.11–12). */
+    Object readResult(ResultSet row, Class<?> resultClass, String resultSetMapping) throws SQLException {
+        ResultSetMetaData metadata = row.getMetaData();
+        int columns = metadata.getColumnCount();
+        if (resultSetMapping != null) {
+            SqlResultSetMappingModel mapping = runtime.mapping().model().sqlResultSetMapping(resultSetMapping).orElseThrow(() ->
+                new PersistenceException("The persistence unit has no SQL result-set mapping " + resultSetMapping));
+            return mappedResult(row, metadata, mapping);
+        }
+        if (resultClass != null && runtime.mapping().entity(resultClass).isPresent()) {
+            return entityResult(row, metadata, resultClass, List.of());
+        }
+        if (columns == 1) {
+            return convert(row.getObject(1), resultClass);
+        }
+        Object[] tuple = new Object[columns];
+        for (int i = 0; i < columns; i++) {
+            tuple[i] = row.getObject(i + 1);
+        }
+        return tuple;
     }
 
     private Object mappedResult(ResultSet row, ResultSetMetaData metadata, SqlResultSetMappingModel mapping) throws SQLException {

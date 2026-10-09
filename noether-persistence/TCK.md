@@ -25,6 +25,7 @@ Official suite: **Jakarta Persistence 3.2.1** TCK (bundle from eclipse.org, SHA-
 | P7 (in progress) — slice 4: set operations and casts | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 897 | 1234 | 4 |
 | Pre-P6 — clean checkout `1e982af`, including partial native results | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 909 | 1222 | 4 |
 | P6 — required inheritance, polymorphic loading and JPQL `TYPE` | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 1005 | 1126 | 4 |
+| P7 — JPQL, native queries and stored procedures | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 1063 | 1068 | 4 |
 
 ## P6 — inheritance: 909 → 1005
 
@@ -92,8 +93,48 @@ cd mansart-persistence/mansart-jpa-tck
 ```
 
 The runner's exit status alone is not a conformance result: it exits zero even with failing tests.
-Counters were read from `target/tck-report-persistence.txt` and the failsafe XML reports.
-Baseline, focused-gate and full-run XML evidence was preserved separately before running another selector.
+Counters were read from `target/tck-report-persistence.txt` and the failsafe XML reports. Baseline, focused-gate and
+full-run XML evidence was preserved separately before running another selector.
+
+## P7 — JPQL, native queries and stored procedures: 1005 → 1063
+
+The 2026-10-09 full official run reports **2135 tests, 1063 passed, 0 failures, 1068 errors, 4 skipped** on
+Temurin 25.0.3 and PostgreSQL 17. Compared test by test with the preserved P6 baseline: **58 newly passing tests,
+no regressions, and no added or missing tests**. The JPA core reactor tests also pass.
+
+The P7 gate totals **312 tests: 307 passed, 4 errored and 1 skipped**:
+
+| Gate | Result | Remaining tests |
+|---|---:|---|
+| `core.query` | 244 / 245; 1 skipped | No P7-attributable failure |
+| `core.annotations.nativequery` | 10 / 12 | Two constructor-result tests fail during setup because their `PurchaseOrder` entity is supplied by ORM XML, which is P10 |
+| `core.StoredProcedureQuery` | 38 / 40 | Two XML override tests depend on ORM XML mapping, which is P10 |
+| `core.lock.query` | 8 / 8 | — |
+| `jpa22.query.stream` | 2 / 2 | — |
+| `jpa22.repeatable.namednativequery` | 1 / 1 | — |
+| `jpa22.repeatable.namedstoredprocedurequery` | 4 / 4 | — |
+
+Delivered JPQL work includes map `KEY` / `VALUE` / `ENTRY` expressions, whole-embeddable comparisons and projections,
+correlated enclosing-variable navigation, and `TREAT` path/join support. Native results cover scalar, tuple, entity,
+constructor and column mappings; procedure queries support named and unnamed metadata, parameter modes, result/update
+handling and PostgreSQL ref cursors through dialect-rendered calls. The four remaining P7-gate errors are blocked by
+P10 XML mapping/override support, not by the P7 result or procedure execution paths. No TCK tests were changed or
+excluded.
+
+Review fixes to the stored-procedure lifecycle (`BUG.md` MANSART-008: repeated execution, retryable failures,
+`null` results, safe paging, trailing `IN` defaults, temporal bindings, statement closing) were re-measured on
+2026-10-09 (Temurin 25.0.4): the clean JPA reactor reports **453 tests, 0 failures, 0 errors, 0 skipped**; the full
+official run again reports **2135 tests, 1063 passed, 0 failures, 1068 errors, 4 skipped**, identical test by test to
+the preserved 1063 baseline (no regression, no newly passing, no added or missing test), P7 gate unchanged
+(307 / 4 / 1).
+
+Reproduction:
+
+```bash
+./mvnw -q -ntp -pl mansart-persistence/mansart-jpa-core -am test
+cd mansart-persistence/mansart-jpa-tck
+./run-official-tck-persistence-3.2.sh
+```
 
 ## P7, slice 4 — set operations and casts: 893 → 897
 
@@ -105,13 +146,13 @@ H2, including casted parameter typing and set-query paging. The remaining failur
 Criteria and metamodel APIs (P8), schema generation (P9), and XML mappings (P10); P7 still has native query results and
 stored procedures to implement.
 
-## P7, slice 5 — focused native-query area
+## P7, slice 5 — initial native-query check (historical)
 
-Focused official TCK run on 2026-10-09 (Temurin 25.0.3, PostgreSQL 17): `core.annotations.nativequery` reports
+The initial focused official TCK run on 2026-10-09 (Temurin 25.0.3, PostgreSQL 17): `core.annotations.nativequery` reports
 **10 passed, 2 failed, 0 skipped** of 12 tests. Scalar, tuple, entity and most constructor/column result cases pass;
 `nativeQueryTestConstructorResultNoId` and `nativeQueryTestConstructorResultWithId` remain failing. This area-only
-result is not a full-suite pass count. `StoredProcedureQuery` and named stored-procedure queries are not implemented,
-so slice 5 remains in progress.
+result is not a full-suite pass count. `StoredProcedureQuery` and named stored-procedure queries were not yet
+implemented at this checkpoint; the final P7 implementation and current test attribution are recorded above.
 
 ## P7, slice 3 — bulk statements, named queries, locks: 840 → 893
 

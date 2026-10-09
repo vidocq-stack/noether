@@ -91,6 +91,14 @@ public final class PostgreSQLDialect extends StandardDialect {
     }
 
     @Override
+    public String renderRefCursorFetch(String cursorName) {
+        if (cursorName == null || cursorName.isBlank()) {
+            throw new IllegalArgumentException("A PostgreSQL REF_CURSOR needs a cursor name");
+        }
+        return "FETCH ALL IN \"" + cursorName.replace("\"", "\"\"") + "\"";
+    }
+
+    @Override
     public String name() {
         return "postgresql";
     }

@@ -110,7 +110,8 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
                 continue;
             }
             Object key = key(slot.parameter());
-            Class<?> type = slot.entity() != null ? slot.entity().model().javaType() : slot.type();
+            Class<?> type = slot.entity() != null ? slot.entity().model().javaType()
+                : slot.parameterType() != null ? slot.parameterType() : slot.type();
             Class<?> parameterType = type == null ? Object.class : boxed(type);
             parameters.putIfAbsent(key, declared(slot.parameter(), parameterType));
         }
@@ -318,6 +319,9 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
             }
         } else if (result != null && runtime.mapping().entity(result.getClass()).isPresent()) {
             runtime.locked(result, lockMode);
+        } else if (result instanceof Map.Entry<?, ?> entry) {
+            lockEntities(entry.getKey());
+            lockEntities(entry.getValue());
         }
     }
 
@@ -327,6 +331,13 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
 
     /** A constructor result whose arguments are read, built once the entities among them are found. */
     private record Built(Class<?> type, Object[] arguments) {
+    }
+
+    /** An {@code ENTRY()} result whose entity keys or values are resolved through the persistence context. */
+    private record EntryBuilt(Object key, Object value) {
+    }
+
+    private record EmbeddedBuilt(Compiled.EmbeddedItem item, Object[] components) {
     }
 
     private Object resolve(Object read, Connection connection) {
@@ -339,6 +350,9 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
                 }
                 yield construct(built.type(), arguments);
             }
+            case EntryBuilt entry -> new java.util.AbstractMap.SimpleImmutableEntry<>(resolve(entry.key(), connection),
+                resolve(entry.value(), connection));
+            case EmbeddedBuilt embedded -> embedded(embedded, connection);
             case Object[] row -> {
                 Object[] resolved = new Object[row.length];
                 for (int i = 0; i < row.length; i++) {
@@ -373,7 +387,41 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
                 }
                 yield new Built(constructor.type(), arguments);
             }
+            case Compiled.MapEntryItem entry ->
+                new EntryBuilt(read(entry.key(), results, column), read(entry.value(), results, column));
+            case Compiled.EmbeddedItem embedded -> {
+                Object[] components = new Object[embedded.parts().size()];
+                for (int i = 0; i < components.length; i++) {
+                    Compiled.EmbeddedPart part = embedded.parts().get(i);
+                    if (part instanceof Compiled.ScalarEmbedded scalar) {
+                        Object value = scalar.binder() != null ? scalar.binder().read(results, column[0]) : results.getObject(column[0]);
+                        column[0]++;
+                        components[i] = results.wasNull() ? null : scalar.binder() != null ? value : convert(value, scalar.type());
+                    } else {
+                        components[i] = read(((Compiled.NestedEmbedded) part).item(), results, column);
+                    }
+                }
+                yield new EmbeddedBuilt(embedded, components);
+            }
         };
+    }
+
+    private Object embedded(EmbeddedBuilt built, Connection connection) {
+        Object[] components = new Object[built.components().length];
+        boolean empty = true;
+        for (int i = 0; i < components.length; i++) {
+            components[i] = resolve(built.components()[i], connection);
+            empty &= components[i] == null;
+        }
+        if (empty) {
+            return null;
+        }
+        if (built.item().model().isRecord()) {
+            return built.item().access().construct(components);
+        }
+        Object value = built.item().access().instantiate();
+        built.item().access().write(value, components);
+        return value;
     }
 
     /**

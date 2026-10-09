@@ -34,7 +34,7 @@
   `mansart-jpa-processor` (APT, entity accesses at build time) and two module-path test vehicles,
   `mansart-jpa-module-it` (runtime path, `opens`) and `mansart-jpa-processor-module-it` (build-time path,
   `provides`). `mansart-jpa-tck` stays out of the reactor.
-- Milestones P0 to P6 and P7 slices 1 to 4 are delivered (1005 / 2135 TCK passes): read `ROADMAP.md` (status per item) and
+- Milestones P0 to P7 are delivered (1063 / 2135 TCK passes; remaining P7 gate errors depend on P10 XML mappings): read `ROADMAP.md` (status per item) and
   `TCK.md` (measured score, failures attributed per milestone) before starting.
 - The entity model is built at bootstrap from the class files; which members are persistent, and in which order, is
   decided by `AccessPlanner`, shared with the processor. Never duplicate that logic.

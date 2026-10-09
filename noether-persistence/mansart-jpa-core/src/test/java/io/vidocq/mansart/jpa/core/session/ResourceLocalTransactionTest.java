@@ -298,7 +298,7 @@ class ResourceLocalTransactionTest {
         tx.rollback();
 
         tx.begin();
-        assertThatThrownBy(() -> em.createStoredProcedureQuery("doesnotexist")).isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> em.createStoredProcedureQuery(null)).isInstanceOf(IllegalArgumentException.class);
         assertThat(tx.getRollbackOnly()).isTrue();
         tx.rollback();
 

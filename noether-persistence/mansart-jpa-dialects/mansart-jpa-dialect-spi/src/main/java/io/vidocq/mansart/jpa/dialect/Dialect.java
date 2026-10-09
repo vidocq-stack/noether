@@ -26,6 +26,7 @@ import io.vidocq.mansart.jpa.dialect.sql.Query;
 import io.vidocq.mansart.jpa.dialect.sql.SelectStatement;
 import io.vidocq.mansart.jpa.dialect.sql.UpdateQuery;
 import io.vidocq.mansart.jpa.dialect.sql.Statement;
+import io.vidocq.mansart.jpa.dialect.sql.ProcedureCall;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.List;
@@ -64,6 +65,17 @@ public interface Dialect {
             case DeleteQuery delete -> delete.parameters();
             default -> List.of();
         });
+    }
+
+    /** The JDBC call escape for {@code call}, in its declared parameter order (§3.11.12). */
+    default String renderProcedureCall(ProcedureCall call) {
+        return "CALL " + call.procedureName() + "(" + String.join(", ",
+            java.util.Collections.nCopies(call.parameters().size(), "?")) + ")";
+    }
+
+    /** SQL that opens the result set behind a REF_CURSOR returned by a procedure. */
+    default String renderRefCursorFetch(String cursorName) {
+        throw new UnsupportedOperationException("REF_CURSOR results are not supported by the " + name() + " dialect");
     }
 
     /**

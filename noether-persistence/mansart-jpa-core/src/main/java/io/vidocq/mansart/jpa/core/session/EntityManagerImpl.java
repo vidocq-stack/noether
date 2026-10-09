@@ -29,6 +29,8 @@ import io.vidocq.mansart.jpa.core.mapping.MappedUnit;
 import io.vidocq.mansart.jpa.core.query.JpqlQuery;
 import io.vidocq.mansart.jpa.core.query.NativeQuery;
 import io.vidocq.mansart.jpa.core.query.QueryRuntime;
+import io.vidocq.mansart.jpa.core.query.StoredProcedureQueryImpl;
+import io.vidocq.mansart.jpa.core.model.NamedStoredProcedureModel;
 import io.vidocq.mansart.jpa.dialect.Dialect;
 import jakarta.persistence.CacheRetrieveMode;
 import jakarta.persistence.CacheStoreMode;
@@ -899,25 +901,80 @@ final class EntityManagerImpl implements EntityManager {
     @Override
     public StoredProcedureQuery createNamedStoredProcedureQuery(String name) {
         checkOpen();
-        throw failed(NotYet.milestone("P7", "stored procedure queries"));
+        try {
+            NamedStoredProcedureModel model = factory.mapping().model().namedStoredProcedure(name).orElseThrow(() ->
+                new IllegalArgumentException("The persistence unit has no named stored procedure " + name));
+            StoredProcedureQuery query = createStoredProcedureQuery(model.procedureName(),
+                model.resultClasses().toArray(Class<?>[]::new));
+            if (!model.resultSetMappings().isEmpty()) {
+                query = new StoredProcedureQueryImpl(model.procedureName(), model.resultClasses(), model.resultSetMappings(),
+                    flushMode, this::executeNativeUpdate, queries, () -> !closed);
+            }
+            for (NamedStoredProcedureModel.Parameter parameter : model.parameters()) {
+                if (parameter.name() == null || parameter.name().isBlank()) {
+                    query.registerStoredProcedureParameter(query.getParameters().size() + 1, parameter.type(), parameter.mode());
+                } else {
+                    query.registerStoredProcedureParameter(parameter.name(), parameter.type(), parameter.mode());
+                }
+            }
+            model.hints().forEach(query::setHint);
+            return query;
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
     }
 
     @Override
     public StoredProcedureQuery createStoredProcedureQuery(String procedureName) {
         checkOpen();
-        throw failed(NotYet.milestone("P7", "stored procedure queries"));
+        try {
+            return createStoredProcedureQuery(procedureName, List.of(), List.of());
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
     }
 
     @Override
     public StoredProcedureQuery createStoredProcedureQuery(String procedureName, Class<?>... resultClasses) {
         checkOpen();
-        throw failed(NotYet.milestone("P7", "stored procedure queries"));
+        try {
+            if (resultClasses == null || java.util.Arrays.stream(resultClasses).anyMatch(java.util.Objects::isNull)) {
+                throw new IllegalArgumentException("Stored-procedure result classes cannot contain null");
+            }
+            for (Class<?> resultClass : resultClasses) {
+                if (factory.mapping().entity(resultClass).isEmpty() && !factory.mapping().model().entity(resultClass).isEmpty()) {
+                    throw new IllegalArgumentException("Unsupported stored-procedure result class " + resultClass.getName());
+                }
+            }
+            return createStoredProcedureQuery(procedureName, List.of(resultClasses), List.of());
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
     }
 
     @Override
     public StoredProcedureQuery createStoredProcedureQuery(String procedureName, String... resultSetMappings) {
         checkOpen();
-        throw failed(NotYet.milestone("P7", "stored procedure queries"));
+        try {
+            if (resultSetMappings == null || java.util.Arrays.stream(resultSetMappings).anyMatch(java.util.Objects::isNull)) {
+                throw new IllegalArgumentException("Stored-procedure result mappings cannot contain null");
+            }
+            for (String mapping : resultSetMappings) {
+                if (factory.mapping().model().sqlResultSetMapping(mapping).isEmpty()) {
+                    throw new IllegalArgumentException("The persistence unit has no SQL result-set mapping " + mapping);
+                }
+            }
+            return createStoredProcedureQuery(procedureName, List.of(), List.of(resultSetMappings));
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
+    }
+
+    private StoredProcedureQuery createStoredProcedureQuery(String name, List<Class<?>> resultClasses, List<String> mappings) {
+        if (name == null || name.isBlank()) {
+            throw new IllegalArgumentException("A stored procedure needs a name");
+        }
+        return new StoredProcedureQueryImpl(name, resultClasses, mappings, flushMode, this::executeNativeUpdate, queries, () -> !closed);
     }
 
     @Override

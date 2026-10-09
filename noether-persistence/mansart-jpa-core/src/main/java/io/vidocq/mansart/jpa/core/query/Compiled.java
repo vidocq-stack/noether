@@ -21,7 +21,9 @@ package io.vidocq.mansart.jpa.core.query;
 
 import io.vidocq.mansart.jpa.core.jdbc.type.ValueBinder;
 import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
+import io.vidocq.mansart.jpa.core.model.EmbeddableModel;
 import io.vidocq.mansart.jpa.core.query.jpql.Ast;
+import io.vidocq.mansart.jpa.core.spi.ManagedAccess;
 import io.vidocq.mansart.jpa.dialect.sql.Statement;
 import java.util.List;
 
@@ -48,11 +50,16 @@ record Compiled(Statement sql, List<Item> items, Class<?> resultType, List<Slot>
      * the driver choose; {@code type} the Java type the parameter is compared with, if known.
      */
     record Slot(Ast.Parameter parameter, int element, MappedEntity entity, int part, ValueBinder binder, Class<?> type,
-            Object constant) {
+            Object constant, Class<?> parameterType) {
+
+        Slot(Ast.Parameter parameter, int element, MappedEntity entity, int part, ValueBinder binder, Class<?> type,
+                Object constant) {
+            this(parameter, element, entity, part, binder, type, constant, type);
+        }
 
         /** A literal the SQL cannot write (an enum constant, a date), bound through the binder of what it is compared with. */
         static Slot constant(Object value, ValueBinder binder, Class<?> type) {
-            return new Slot(null, -1, null, -1, binder, type, value);
+            return new Slot(null, -1, null, -1, binder, type, value, null);
         }
 
         /** Whether it binds a literal of the query rather than a parameter. */
@@ -62,7 +69,7 @@ record Compiled(Statement sql, List<Item> items, Class<?> resultType, List<Slot>
     }
 
     /** How a select item is read from the row. */
-    sealed interface Item permits EntityItem, ValueItem, ConstructorItem {
+    sealed interface Item permits EntityItem, ValueItem, ConstructorItem, MapEntryItem, EmbeddedItem {
         /** The columns it takes in the row. */
         int width();
     }
@@ -92,5 +99,30 @@ record Compiled(Statement sql, List<Item> items, Class<?> resultType, List<Slot>
         public int width() {
             return arguments.stream().mapToInt(Item::width).sum();
         }
+    }
+
+    /** A {@code Map.Entry} result of {@code ENTRY()} (§4.6.17.2.3). */
+    record MapEntryItem(Item key, Item value) implements Item {
+        @Override
+        public int width() {
+            return key.width() + value.width();
+        }
+    }
+
+    /** An embeddable selected as a whole, assembled through generated attribute access. */
+    record EmbeddedItem(EmbeddableModel model, ManagedAccess access, List<EmbeddedPart> parts) implements Item {
+        @Override
+        public int width() {
+            return parts.stream().mapToInt(part -> part instanceof NestedEmbedded nested ? nested.item().width() : 1).sum();
+        }
+    }
+
+    sealed interface EmbeddedPart permits ScalarEmbedded, NestedEmbedded {
+    }
+
+    record ScalarEmbedded(ValueBinder binder, Class<?> type) implements EmbeddedPart {
+    }
+
+    record NestedEmbedded(EmbeddedItem item) implements EmbeddedPart {
     }
 }

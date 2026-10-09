@@ -30,6 +30,7 @@ public final class PersistenceUnitModel {
     private final List<EntityModel> entities;
     private final List<ConverterModel> converters;
     private final List<NamedQueryModel> namedQueries;
+    private final List<NamedStoredProcedureModel> namedStoredProcedures;
     private final List<SqlResultSetMappingModel> sqlResultSetMappings;
     private final Map<Class<?>, EntityModel> byClass = new LinkedHashMap<>();
     private final Map<String, EntityModel> byName = new LinkedHashMap<>();
@@ -44,10 +45,16 @@ public final class PersistenceUnitModel {
 
     public PersistenceUnitModel(List<EntityModel> entities, List<ConverterModel> converters, List<NamedQueryModel> namedQueries,
             List<SqlResultSetMappingModel> sqlResultSetMappings) {
+        this(entities, converters, namedQueries, sqlResultSetMappings, List.of());
+    }
+
+    public PersistenceUnitModel(List<EntityModel> entities, List<ConverterModel> converters, List<NamedQueryModel> namedQueries,
+            List<SqlResultSetMappingModel> sqlResultSetMappings, List<NamedStoredProcedureModel> namedStoredProcedures) {
         this.entities = List.copyOf(entities);
         this.converters = List.copyOf(converters);
         this.namedQueries = List.copyOf(namedQueries);
         this.sqlResultSetMappings = List.copyOf(sqlResultSetMappings);
+        this.namedStoredProcedures = List.copyOf(namedStoredProcedures);
         for (EntityModel entity : this.entities) {
             byClass.put(entity.javaType(), entity);
             byName.put(entity.entityName(), entity);
@@ -73,6 +80,15 @@ public final class PersistenceUnitModel {
 
     public Optional<SqlResultSetMappingModel> sqlResultSetMapping(String name) {
         return sqlResultSetMappings.stream().filter(mapping -> mapping.name().equals(name)).findFirst();
+    }
+
+    /** The named stored procedures the managed classes declare. */
+    public List<NamedStoredProcedureModel> namedStoredProcedures() {
+        return namedStoredProcedures;
+    }
+
+    public Optional<NamedStoredProcedureModel> namedStoredProcedure(String name) {
+        return namedStoredProcedures.stream().filter(procedure -> procedure.name().equals(name)).findFirst();
     }
 
     public Optional<EntityModel> entity(Class<?> type) {

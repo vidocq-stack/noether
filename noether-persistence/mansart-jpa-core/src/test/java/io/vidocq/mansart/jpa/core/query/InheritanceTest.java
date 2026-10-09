@@ -104,6 +104,9 @@ class InheritanceTest {
                 .hasSize(2);
             assertThat(em.createQuery("select a from Animal a where TYPE(a) in :types", Animal.class)
                 .setParameter("types", List.of(Cat.class)).getResultList()).hasSize(1);
+            // §4.4.9: a treated path narrows the inherited range to the specified entity subtype.
+            assertThat(em.createQuery("select a from Animal a where TREAT(a AS Cat).lives = 9", Animal.class)
+                .getResultList()).hasSize(1).first().isInstanceOf(Cat.class);
         }
     }
 

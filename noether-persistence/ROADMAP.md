@@ -463,7 +463,7 @@ Spec: ch. 2.13–2.14, ch. 11 (`@Inheritance`, `@DiscriminatorColumn`, `@Discrim
 without exclusion. Full suite: **1005 / 2135 passed**; rebuilt pre-P6 checkout: 909, **+96**, no test-by-test regression.
 The earlier documented score of 897 predates the current partial-native-results checkout; see `TCK.md`.
 
-### P7 — Jakarta Persistence Query Language and native queries 🚧
+### P7 — Jakarta Persistence Query Language and native queries ✅
 
 Spec: ch. 4 (query language), §3.11 (query APIs), §3.11.11 (SQL queries), §3.11.12 (stored procedures).
 
@@ -480,7 +480,8 @@ Slices, each closed by its unit tests and a TCK run compared test by test:
 3. Bulk `UPDATE` / `DELETE`, named queries (`@NamedQuery`, `TypedQueryReference`), hints, lock modes, timeouts.
 4. The 3.2 additions: `UNION` / `INTERSECT` / `EXCEPT`, `||`, `LEFT` / `RIGHT` / `REPLACE`, `CAST`, `ID()`,
    `VERSION()`, the implicit identification variable.
-5. Native query results and `@SqlResultSetMapping`; then `StoredProcedureQuery`.
+5. Native query results and `@SqlResultSetMapping`; then `StoredProcedureQuery`, including the dialect-rendered
+   procedure call and ref-cursor handling where the dialect supports it.
 
 Most of `core.query.language` and of the Criteria tests persist a `HardwareProduct` in their test data: they open
 with inheritance (P6) as much as with this milestone.
@@ -522,18 +523,22 @@ with inheritance (P6) as much as with this milestone.
       `ALL`), set-result ordering and paging, plus `CAST` for the Jakarta Persistence 3.2 target types. The SQL AST
       carries set-query operands and keeps bind parameters in rendered order; `||`, `LEFT` / `RIGHT` / `REPLACE`,
       `ID()`, `VERSION()` and the implicit identification variable are supported by the earlier slices.
-- [ ] Left for later slices: `KEY` / `VALUE` / `ENTRY` of maps in queries, embeddables compared as a whole,
-      navigating an enclosing variable inside a subquery. `TYPE` is delivered by P6.
+- [x] JPQL map expressions `KEY` / `VALUE` / `ENTRY`, whole-embeddable comparison and projection, correlated enclosing
+      variable navigation, and inheritance-aware `TREAT` path and join expressions (§4.4.9).
 - [x] Semantic analysis against the entity model and SQL lowering through the dialect SPI for the implemented JPQL
       features: joins, subqueries, grouping, constructors, cases, functions and the 3.2 set operations and casts.
 - [x] `Query` / `TypedQuery`: parameters, pagination, hints, lock modes, `getResultStream`,
       `getSingleResultOrNull`, bulk `UPDATE` / `DELETE`, named queries (`@NamedQuery`).
-- [ ] Native query results (`query.NativeQuery`): scalar and tuple results, entity results by `resultClass`, and
-      annotation-backed `@SqlResultSetMapping` metadata for entity, constructor and column results are implemented.
-      Unit tests pass; the focused `core.annotations.nativequery` TCK area is 10 / 12, with two constructor-result cases
-      still failing. Native `executeUpdate` was brought forward to P4.
-- [ ] `StoredProcedureQuery` / `@NamedStoredProcedureQuery` (IN / OUT / INOUT, ref cursors as
-      the dialect allows).
+- [x] Native query results (`query.NativeQuery`): scalar and tuple results, entity results by `resultClass`, and
+      annotation-backed `@SqlResultSetMapping` metadata for entity, constructor and column results. Native
+      `executeUpdate` was brought forward to P4.
+- [x] `StoredProcedureQuery` / `@NamedStoredProcedureQuery`: IN / OUT / INOUT parameters, results and update counts,
+      and ref cursors as the dialect allows. Reusable lifecycle (repeat `execute()`, rebinding resets results, a
+      failed call stays retryable), trailing unbound `IN` parameters left to database defaults, `null` result list
+      for a non-result-set pending result (review fixes, `BUG.md` MANSART-008).
+- [x] P7 TCK gate run on PostgreSQL 17: 307 passed, 4 errors, 1 skipped across 312 tests. The four errors depend on
+      ORM XML metadata/overrides (P10); `core.query` has no P7-attributable failures. Full TCK: 1063 / 2135 passed,
+      0 failures, 1068 errors, 4 skipped; 58 newly passing vs P6 with no test-by-test regressions. See `TCK.md`.
 
 **TCK gate**: `core.query.*`, `core.annotations.nativequery`, `core.StoredProcedureQuery`,
 `jpa22.query.stream`, `jpa22.repeatable.{namednativequery,namedstoredprocedurequery}`,

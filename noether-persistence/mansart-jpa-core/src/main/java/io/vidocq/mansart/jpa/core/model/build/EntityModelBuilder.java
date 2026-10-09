@@ -35,6 +35,7 @@ import io.vidocq.mansart.jpa.core.model.EntityModel;
 import io.vidocq.mansart.jpa.core.model.GenerationModel;
 import io.vidocq.mansart.jpa.core.model.IdModel;
 import io.vidocq.mansart.jpa.core.model.NamedQueryModel;
+import io.vidocq.mansart.jpa.core.model.NamedStoredProcedureModel;
 import io.vidocq.mansart.jpa.core.model.JoinColumnModel;
 import io.vidocq.mansart.jpa.core.model.JoinTableModel;
 import io.vidocq.mansart.jpa.core.model.PendingAttribute;
@@ -132,14 +133,35 @@ public final class EntityModelBuilder {
         List<EntityModel> entities = new ArrayList<>();
         List<NamedQueryModel> namedQueries = new ArrayList<>();
         List<SqlResultSetMappingModel> resultSetMappings = new ArrayList<>();
+        List<NamedStoredProcedureModel> namedStoredProcedures = new ArrayList<>();
         for (ClassInfo info : listed) {
             if (info.isAnnotated(ENTITY)) {
                 entities.add(entity(info));
             }
             namedQueries.addAll(namedQueries(info));
             resultSetMappings.addAll(sqlResultSetMappings(info));
+            namedStoredProcedures.addAll(namedStoredProcedures(info));
         }
-        return new PersistenceUnitModel(entities, converters, namedQueries, resultSetMappings);
+        return new PersistenceUnitModel(entities, converters, namedQueries, resultSetMappings, namedStoredProcedures);
+    }
+
+    private List<NamedStoredProcedureModel> namedStoredProcedures(ClassInfo info) {
+        List<AnnotationInfo> declarations = new ArrayList<>();
+        info.annotation(JPA + "NamedStoredProcedureQuery").ifPresent(declarations::add);
+        info.annotation(JPA + "NamedStoredProcedureQueries").ifPresent(container -> declarations.addAll(container.annotations("value")));
+        List<NamedStoredProcedureModel> procedures = new ArrayList<>();
+        for (AnnotationInfo declaration : declarations) {
+            List<NamedStoredProcedureModel.Parameter> parameters = declaration.annotations("parameters").stream()
+                .map(parameter -> new NamedStoredProcedureModel.Parameter(parameter.string("name"),
+                    Types.load(parameter.type("type"), loader),
+                    jakarta.persistence.ParameterMode.valueOf(parameter.enumConstant("mode"))))
+                .toList();
+            List<Class<?>> resultClasses = new ArrayList<>();
+            declaration.types("resultClasses").forEach(type -> resultClasses.add(Types.load(type, loader)));
+            procedures.add(new NamedStoredProcedureModel(declaration.string("name"), declaration.string("procedureName"), parameters,
+                resultClasses, declaration.strings("resultSetMappings"), hints(declaration)));
+        }
+        return procedures;
     }
 
     private List<SqlResultSetMappingModel> sqlResultSetMappings(ClassInfo info) {

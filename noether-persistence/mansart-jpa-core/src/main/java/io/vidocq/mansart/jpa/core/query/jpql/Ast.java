@@ -117,9 +117,13 @@ public final class Ast {
     }
 
     /** {@code var.attribute.…}, or a single name: a variable, a result variable, or the dotted name of an enum constant. */
-    public record Path(List<String> segments) implements Expr {
+    public record Path(List<String> segments, String treatEntity, int treatAt) implements Expr {
         public Path {
             segments = List.copyOf(segments);
+        }
+
+        public Path(List<String> segments) {
+            this(segments, null, -1);
         }
     }
 

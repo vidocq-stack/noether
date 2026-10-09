@@ -70,10 +70,12 @@ class JpqlExpressionTest {
             ddl.execute("create table Suspect_aliases (Suspect_id bigint, ALIAS varchar(50))");
             ddl.execute("create table SUSPECT_SIGHTINGS (SUSPECT bigint, TOWN varchar(50), seen date)");
             ddl.execute("create table Suspect_traits (Suspect_id bigint, traits varchar(20))");
+            ddl.execute("create table QUERY_MAP (OWNER_ID bigint, MAP_KEY varchar(40), MAP_VALUE varchar(40))");
+            ddl.execute("create table MapOwner (id bigint primary key)");
         }
         emf = new PersistenceConfiguration("jpql-expressions").provider("io.vidocq.mansart.jpa.core.MansartPersistenceProvider")
             .managedClass(Team.class).managedClass(Player.class).managedClass(Skill.class).managedClass(Coach.class)
-            .managedClass(Club.class).managedClass(Suspect.class).managedClass(Sighting.class)
+            .managedClass(Club.class).managedClass(Suspect.class).managedClass(Sighting.class).managedClass(MapOwner.class)
             .property(PersistenceConfiguration.JDBC_URL, url).property(PersistenceConfiguration.JDBC_USER, "sa")
             .createEntityManagerFactory();
         em = emf.createEntityManager();
@@ -93,8 +95,9 @@ class JpqlExpressionTest {
         suspect.aliases().add("Eugène");
         suspect.traits().add(Trait.CUNNING);
         suspect.sightings().add(new Sighting("Arras", LocalDate.of(1796, 3, 1)));
+        MapOwner mapOwner = new MapOwner(1, java.util.Map.of("alias", "Jules", "title", "Detective"));
         em.getTransaction().begin();
-        List.of(brigade, surete, disguise, tracking, coach, suspect).forEach(em::persist);
+        List.of(brigade, surete, disguise, tracking, coach, suspect, mapOwner).forEach(em::persist);
         em.getTransaction().commit();
         em.clear();
     }
@@ -152,6 +155,30 @@ class JpqlExpressionTest {
             .containsExactly("Coco");
         assertThat(list("SELECT p.name FROM Player p WHERE p.id = (SELECT MIN(q.id) FROM Player q)", String.class))
             .containsExactly("Vidocq");
+    }
+
+    @Test
+    void correlatedEnclosingNavigation() { // §4.5.10
+        assertThat(list("SELECT p.name FROM Player p WHERE EXISTS (SELECT q FROM Player q "
+            + "WHERE q.team.name = p.team.name) ORDER BY p.id", String.class))
+            .containsExactly("Vidocq", "Coco");
+    }
+
+    @Test
+    void comparesWholeEmbeddableValues() { // §4.6.11
+        Sighting sighting = new Sighting("Arras", LocalDate.of(1796, 3, 1));
+        assertThat(em.createQuery("SELECT s.id FROM Suspect s JOIN s.sightings x WHERE x = :sighting", Long.class)
+            .setParameter("sighting", sighting).getResultList()).containsExactly(1L);
+    }
+
+    @Test
+    void mapKeyValueAndEntryExpressions() { // §4.6.17.2.3
+        assertThat(em.createQuery("SELECT KEY(v), VALUE(v) FROM MapOwner m JOIN m.entries v ORDER BY KEY(v)", Object[].class)
+            .getResultList()).containsExactly(new Object[] {"alias", "Jules"}, new Object[] {"title", "Detective"});
+        assertThat(list("SELECT VALUE(v) FROM MapOwner m JOIN m.entries v WHERE KEY(v) = 'alias'", String.class))
+            .containsExactly("Jules");
+        assertThat(em.createQuery("SELECT ENTRY(v) FROM MapOwner m JOIN m.entries v WHERE KEY(v) = 'alias'", java.util.Map.Entry.class)
+            .getSingleResult()).isEqualTo(new java.util.AbstractMap.SimpleImmutableEntry<>("alias", "Jules"));
     }
 
     @Test
