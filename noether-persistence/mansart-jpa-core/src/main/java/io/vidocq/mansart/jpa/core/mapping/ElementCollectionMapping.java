@@ -34,11 +34,12 @@ import java.util.List;
  * columns of the element — its value, or the columns of its embeddable. Elements have no identity: a changed collection
  * is written again whole.
  *
+ * @param index the key of a map or the position in a list, or {@code null}
  * @param columns the columns of the element, as {@link EntityStatements.Column}s of a one-attribute state (attribute
  *        0: the element)
  */
 public record ElementCollectionMapping(int attribute, ElementCollectionAttribute model, Table table, List<Identifier> ownerColumns,
-        List<ValueBinder> ownerBinders, List<EntityStatements.Column> columns) {
+        List<ValueBinder> ownerBinders, IndexMapping index, List<EntityStatements.Column> columns) {
 
     public ElementCollectionMapping {
         ownerColumns = List.copyOf(ownerColumns);
@@ -46,9 +47,10 @@ public record ElementCollectionMapping(int attribute, ElementCollectionAttribute
         columns = List.copyOf(columns);
     }
 
-    /** The row of one element: the owner columns, then the element columns. */
+    /** The row of one element: the owner columns, the index columns if any, then the element columns. */
     public Insert insert() {
         List<Identifier> names = new ArrayList<>(ownerColumns);
+        names.addAll(indexColumns());
         columns.forEach(c -> names.add(c.name()));
         return new Insert(table, names, null);
     }
@@ -58,9 +60,16 @@ public record ElementCollectionMapping(int attribute, ElementCollectionAttribute
         return new Delete(table, ownerColumns);
     }
 
-    /** The element columns of the rows of an owner, by its key. */
+    /** The index columns if any, then the element columns, of the rows of an owner, by its key. */
     public Select select() {
-        return new Select(table, columns.stream().map(EntityStatements.Column::name).toList(), ownerColumns);
+        List<Identifier> names = new ArrayList<>(indexColumns());
+        columns.forEach(c -> names.add(c.name()));
+        return new Select(table, names, ownerColumns);
+    }
+
+    /** The index columns, none for an unindexed collection. */
+    public List<Identifier> indexColumns() {
+        return index == null ? List.of() : index.columns();
     }
 
     /** The values of the element columns of {@code element}, in {@link #columns()} order. */

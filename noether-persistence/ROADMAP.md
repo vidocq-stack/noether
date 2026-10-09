@@ -411,7 +411,15 @@ Spec: ch. 2.10–2.12 (relationships, defaults), ch. 2.4.2 (derived identities),
       its owner and is written again whole; its rows are deleted before their owner; a merged one is a copy.
 - [x] `@OrderBy` on paths: attributes of the elements through embeddables (`zipcode.zip DESC`), or the value itself
       for basic elements (`@OrderBy`, `@OrderBy("DESC")`).
-- [ ] `Map` collections (`@MapKey*` family), `@OrderColumn`.
+- [x] Maps and ordered lists (`IndexedCollectionTest`, `model.CollectionIndex`, `mapping.IndexMapping`), for relationships
+      and element collections: keys that are attributes of the elements (`@MapKey`, the identifier by default), basic
+      keys in a column (`@MapKeyColumn`, default `<attribute>_KEY`, with `@MapKeyEnumerated`, `@MapKeyTemporal`,
+      `@Convert(attributeName = "key")`), entity keys (`@MapKeyJoinColumn(s)`, `@MapKeyClass`, default `<attribute>_KEY`),
+      positions (`@OrderColumn`, default `<attribute>_ORDER`). The index lives in the join table, the collection table,
+      or — for an inverse one-to-many — in the table of the target, which the inverse side writes (honouring
+      `insertable` / `updatable`) without versioning its owner. A changed indexed collection is written again whole;
+      a reordered list or a re-keyed map is a change. Maps merge key by key (entity keys to their managed instances).
+- [ ] Embeddable map keys, indexes of the inverse side of a many-to-many.
 - [ ] Derived identities (`@MapsId`, all `ex1a…ex6b` shapes), nested embeddables.
 
 **TCK gate**: `core.relationship.*`, `core.derivedid.*`, `core.nestedembedding`,

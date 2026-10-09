@@ -26,6 +26,7 @@ import io.vidocq.mansart.jpa.dialect.sql.Identifier;
 import io.vidocq.mansart.jpa.dialect.sql.Insert;
 import io.vidocq.mansart.jpa.dialect.sql.Select;
 import io.vidocq.mansart.jpa.dialect.sql.Table;
+import io.vidocq.mansart.jpa.dialect.sql.Update;
 import jakarta.persistence.PersistenceException;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -52,7 +53,7 @@ public sealed interface CollectionMapping {
      * of the owner then the key of the element, each in the order of {@link EntityStatements#keyValues(Object)}.
      */
     record JoinTable(int attribute, AssociationAttribute association, Table table, List<Identifier> ownerColumns,
-            List<ValueBinder> ownerBinders, List<Identifier> targetColumns, List<ValueBinder> targetBinders)
+            List<ValueBinder> ownerBinders, List<Identifier> targetColumns, List<ValueBinder> targetBinders, IndexMapping index)
             implements CollectionMapping {
 
         public JoinTable {
@@ -62,11 +63,19 @@ public sealed interface CollectionMapping {
             targetBinders = List.copyOf(targetBinders);
         }
 
-        /** The row of one element: the owner columns, then the element columns. */
+        /** The row of one element: the owner columns, the element columns, then the index columns, if any. */
         public Insert insert() {
             List<Identifier> columns = new ArrayList<>(ownerColumns);
             columns.addAll(targetColumns);
+            if (index != null) {
+                columns.addAll(index.columns());
+            }
             return new Insert(table, columns, null);
+        }
+
+        /** Whether the rows hold an index: a changed collection is then written again whole. */
+        public boolean indexed() {
+            return index != null && index.stored();
         }
 
         /** The delete of the row of one element: the owner columns, then the element columns. */
@@ -81,9 +90,13 @@ public sealed interface CollectionMapping {
             return new Delete(table, ownerColumns);
         }
 
-        /** The keys of the elements of an owner, by the key of the owner. */
+        /** The keys of the elements of an owner, then their index columns, if any, by the key of the owner. */
         public Select targets() {
-            return new Select(table, targetColumns, ownerColumns);
+            List<Identifier> columns = new ArrayList<>(targetColumns);
+            if (index != null) {
+                columns.addAll(index.columns());
+            }
+            return new Select(table, columns, ownerColumns);
         }
 
         /** The keys of the owners of an element, by the key of the element: how the inverse side reads the table. */
@@ -94,13 +107,23 @@ public sealed interface CollectionMapping {
 
     /**
      * The inverse side, mapped by the attribute {@code mappedBy} of the target (§2.10): read through the foreign key
-     * or the join table of that attribute, never written.
+     * or the join table of that attribute. Only its index is written, when it lives in the table of the target
+     * ({@code indexUpdate}: the index columns, then the key of the element).
      */
-    record MappedBy(int attribute, AssociationAttribute association) implements CollectionMapping {
+    record MappedBy(int attribute, AssociationAttribute association, IndexMapping index, Update indexUpdate,
+            List<ValueBinder> targetBinders) implements CollectionMapping {
+
+        public MappedBy {
+            targetBinders = targetBinders == null ? List.of() : List.copyOf(targetBinders);
+        }
     }
 
     /** A shape this milestone does not map yet: the collection is neither read nor written. */
     record Unsupported(int attribute, AssociationAttribute association, String feature) implements CollectionMapping {
+    }
+
+    /** The snapshot of a map: its keys and the snapshots of its values, in the same order. */
+    record MapSnapshot(List<Object> keys, List<Object> values) {
     }
 
     /** The elements a collection value holds, in its order: the values of a map; none for {@code null}. */
@@ -109,7 +132,23 @@ public sealed interface CollectionMapping {
             case null -> List.of();
             case Collection<?> collection -> new ArrayList<>(collection);
             case Map<?, ?> map -> new ArrayList<>(map.values());
+            case MapSnapshot snapshot -> new ArrayList<>(snapshot.values());
             default -> throw new IllegalStateException("Not a collection: " + value.getClass().getName());
+        };
+    }
+
+    /** The keys of a map value, in the order of {@link #elements(Object)}; the positions of any other collection. */
+    static List<Object> keys(Object value) {
+        return switch (value) {
+            case Map<?, ?> map -> new ArrayList<>(map.keySet());
+            case MapSnapshot snapshot -> new ArrayList<>(snapshot.keys());
+            default -> {
+                List<Object> positions = new ArrayList<>();
+                for (int i = 0; i < elements(value).size(); i++) {
+                    positions.add(i);
+                }
+                yield positions;
+            }
         };
     }
 

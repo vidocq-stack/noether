@@ -36,12 +36,12 @@ import java.util.Set;
  * @param joinColumns the {@code @JoinColumn}s written on it, empty for the defaults
  * @param joinTable its {@code @JoinTable}, or {@code null} if none is written
  * @param orderBy the {@code @OrderBy} of a collection ({@code ""}: by primary key), or {@code null}
- * @param orderColumn the {@code @OrderColumn} of a list, or {@code null}
+ * @param index how a map or an ordered list indexes its elements, or {@code null}
  * @param mapsId the {@code @MapsId} of a derived identity ({@code ""}: the whole identifier), or {@code null}
  */
 public record AssociationAttribute(String name, Class<?> javaType, AccessKind access, Class<?> declaringClass, Kind kind,
         Class<?> targetEntity, String mappedBy, Set<CascadeType> cascade, boolean orphanRemoval, FetchType fetch, boolean optional,
-        List<JoinColumnModel> joinColumns, JoinTableModel joinTable, String orderBy, OrderColumnModel orderColumn, String mapsId)
+        List<JoinColumnModel> joinColumns, JoinTableModel joinTable, String orderBy, CollectionIndex index, String mapsId)
         implements AttributeModel {
 
     public AssociationAttribute {

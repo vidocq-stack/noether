@@ -23,6 +23,7 @@ import io.vidocq.mansart.jpa.core.jdbc.type.ValueBinders;
 import io.vidocq.mansart.jpa.core.model.AssociationAttribute;
 import io.vidocq.mansart.jpa.core.model.AttributeModel;
 import io.vidocq.mansart.jpa.core.model.BasicAttribute;
+import io.vidocq.mansart.jpa.core.model.CollectionIndex;
 import io.vidocq.mansart.jpa.core.model.ElementCollectionAttribute;
 import io.vidocq.mansart.jpa.core.model.EmbeddableModel;
 import io.vidocq.mansart.jpa.core.model.EmbeddedAttribute;
@@ -62,6 +63,11 @@ public final class StatePolicy {
         Object copy(Object value);
 
         boolean same(Object snapshot, Object current);
+
+        /** Whether the value changed since the snapshot, even where that does not change the owner. */
+        default boolean changed(Object snapshot, Object current) {
+            return !same(snapshot, current);
+        }
     }
 
     private static final Copier IMMUTABLE = new Copier() {
@@ -234,6 +240,14 @@ public final class StatePolicy {
         return changes;
     }
 
+    /**
+     * Whether the collection attribute {@code index} changed since {@code snapshot}, including the index of an inverse
+     * side that does not change its owner.
+     */
+    public boolean collectionChanged(int index, Object snapshot, Object current) {
+        return copiers[index].changed(snapshot, current);
+    }
+
     /** Whether any attribute differs from the snapshot; stops at the first change. */
     public boolean dirty(Object[] snapshot, Object[] state) {
         for (int i = 0; i < state.length; i++) {
@@ -251,10 +265,12 @@ public final class StatePolicy {
                 ? converted(converters.converter(converter), byType(column))
                 : byType(basic.javaType());
             case EmbeddedAttribute embedded -> embedded(embedded.embeddable(), embeddables, converters);
-            case AssociationAttribute association when !association.singleValued() ->
-                association.owning() ? OWNED_COLLECTION : INVERSE_COLLECTION;
-            case ElementCollectionAttribute elements when elements.element() != null ->
-                elementCollection(copier(elements.element(), embeddables, converters));
+            case AssociationAttribute association when !association.singleValued() -> keyed(association.javaType(), association.index())
+                ? indexed(Map.class.isAssignableFrom(association.javaType()), REFERENCE, association.owning())
+                : association.owning() ? OWNED_COLLECTION : INVERSE_COLLECTION;
+            case ElementCollectionAttribute elements when elements.element() != null -> keyed(elements.javaType(), elements.index())
+                ? indexed(Map.class.isAssignableFrom(elements.javaType()), copier(elements.element(), embeddables, converters), true)
+                : elementCollection(copier(elements.element(), embeddables, converters));
             default -> REFERENCE;
         };
     }
@@ -293,6 +309,62 @@ public final class StatePolicy {
                     before.remove(match);
                 }
                 return true;
+            }
+        };
+    }
+
+    /**
+     * Whether a collection keeps an index of its own: the keys of a map that are not attributes of its elements, the
+     * positions of a list with an order column.
+     */
+    private static boolean keyed(Class<?> type, CollectionIndex index) {
+        return index instanceof CollectionIndex.ByPosition
+            || Map.class.isAssignableFrom(type) && (index instanceof CollectionIndex.ByColumn || index instanceof CollectionIndex.ByEntity);
+    }
+
+    /**
+     * An indexed collection: a map (its keys and the snapshot of each value) or an ordered list (the snapshot of each
+     * element, in order). Another key, or another position, is a change. {@code dirties}: whether a change changes the
+     * owner — not for an inverse side, whose index only its own write follows ({@link #collectionChanged}).
+     */
+    private static Copier indexed(boolean map, Copier element, boolean dirties) {
+        return new Copier() {
+            @Override
+            public Object copy(Object value) {
+                List<Object> values = new ArrayList<>();
+                CollectionMapping.elements(value).forEach(e -> values.add(element.copy(e)));
+                return map ? new CollectionMapping.MapSnapshot(value == null ? List.of() : CollectionMapping.keys(value), values) : values;
+            }
+
+            @Override
+            public boolean same(Object snapshot, Object current) {
+                return !dirties || !changed(snapshot, current);
+            }
+
+            @Override
+            public boolean changed(Object snapshot, Object current) {
+                List<Object> before = CollectionMapping.elements(snapshot);
+                List<Object> now = CollectionMapping.elements(current);
+                if (before.size() != now.size()) {
+                    return true;
+                }
+                if (!map) {
+                    for (int i = 0; i < now.size(); i++) {
+                        if (!element.same(before.get(i), now.get(i))) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+                List<Object> keys = CollectionMapping.keys(snapshot);
+                @SuppressWarnings("unchecked")
+                Map<Object, Object> currentMap = (Map<Object, Object>) current;
+                for (int i = 0; i < keys.size(); i++) {
+                    if (!currentMap.containsKey(keys.get(i)) || !element.same(before.get(i), currentMap.get(keys.get(i)))) {
+                        return true;
+                    }
+                }
+                return false;
             }
         };
     }

@@ -27,12 +27,12 @@ import jakarta.persistence.FetchType;
  * @param genericSignature the generic signature of the attribute
  * @param element the element as an attribute of the collection table: a {@link BasicAttribute} (its column, its
  *        conversion, read from the annotations of the collection) or an {@link EmbeddedAttribute} (its columns with the
- *        {@code @AttributeOverride}s of the collection); {@code null} for a map, whose keys come later in P5
+ *        {@code @AttributeOverride}s of the collection); the value of a map
  * @param table its {@code @CollectionTable}, or the defaults
  * @param orderBy the {@code @OrderBy} ({@code ""}: by value), or {@code null}
- * @param orderColumn the {@code @OrderColumn} of a list, or {@code null}
+ * @param index how a map or an ordered list indexes its elements, or {@code null}
  */
 public record ElementCollectionAttribute(String name, Class<?> javaType, AccessKind access, Class<?> declaringClass,
-        String genericSignature, AttributeModel element, CollectionTableModel table, String orderBy, OrderColumnModel orderColumn,
+        String genericSignature, AttributeModel element, CollectionTableModel table, String orderBy, CollectionIndex index,
         FetchType fetch) implements AttributeModel {
 }

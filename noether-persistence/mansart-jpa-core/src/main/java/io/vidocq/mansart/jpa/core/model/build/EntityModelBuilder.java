@@ -24,6 +24,7 @@ import io.vidocq.mansart.jpa.core.model.AssociationAttribute;
 import io.vidocq.mansart.jpa.core.model.AttributeModel;
 import io.vidocq.mansart.jpa.core.model.BasicAttribute;
 import io.vidocq.mansart.jpa.core.model.CallbackModel;
+import io.vidocq.mansart.jpa.core.model.CollectionIndex;
 import io.vidocq.mansart.jpa.core.model.CollectionTableModel;
 import io.vidocq.mansart.jpa.core.model.ColumnModel;
 import io.vidocq.mansart.jpa.core.model.ConverterModel;
@@ -35,7 +36,6 @@ import io.vidocq.mansart.jpa.core.model.GenerationModel;
 import io.vidocq.mansart.jpa.core.model.IdModel;
 import io.vidocq.mansart.jpa.core.model.JoinColumnModel;
 import io.vidocq.mansart.jpa.core.model.JoinTableModel;
-import io.vidocq.mansart.jpa.core.model.OrderColumnModel;
 import io.vidocq.mansart.jpa.core.model.PendingAttribute;
 import io.vidocq.mansart.jpa.core.model.PersistenceUnitModel;
 import io.vidocq.mansart.jpa.core.model.SecondaryTableModel;
@@ -291,10 +291,9 @@ public final class EntityModelBuilder {
                 .map(EntityModelBuilder::joinColumn).toList(),
             t.annotations("inverseJoinColumns").stream().map(EntityModelBuilder::joinColumn).toList())).orElse(null);
         String orderBy = element.annotation(JPA + "OrderBy").map(o -> o.string("value").trim()).orElse(null);
-        OrderColumnModel orderColumn = element.annotation(JPA + "OrderColumn").map(o -> new OrderColumnModel(nonEmpty(o.string("name")),
-            o.bool("nullable"), o.bool("insertable"), o.bool("updatable"))).orElse(null);
         String mapsId = element.annotation(JPA + "MapsId").map(m -> m.string("value")).orElse(null);
-        return new AssociationAttribute(member.name(), type, member.access(), declaring, kind, target, mappedBy, cascade, orphanRemoval, fetch, optional, joinColumns(element), joinTable, orderBy, orderColumn, mapsId);
+        return new AssociationAttribute(member.name(), type, member.access(), declaring, kind, target, mappedBy, cascade, orphanRemoval,
+            fetch, optional, joinColumns(element), joinTable, orderBy, index(member, type, declaring), mapsId);
     }
 
     /**
@@ -344,21 +343,89 @@ public final class EntityModelBuilder {
             throw new PersistenceException("The element collection " + member.name() + " of " + member.owner().name() + " is a raw "
                 + type.getName() + ": give its targetClass, or the type of its elements (§2.7)");
         }
-        AttributeModel value = null;
-        if (!Map.class.isAssignableFrom(type)) {
-            boolean embeddable = source.read(elementType.getName()).map(i -> i.isAnnotated(JPA + "Embeddable")).orElse(false);
-            value = embeddable ? embedded(member, elementType, declaring, Map.of())
-                : basic(member, elementType, declaring, null, conversion(member, elementType));
-        }
+        boolean embeddable = source.read(elementType.getName()).map(i -> i.isAnnotated(JPA + "Embeddable")).orElse(false);
+        // §11.1.4: the overrides of the values of a map name them "value.<attribute>"
+        AttributeModel value = embeddable ? embedded(member, elementType, declaring, Map.of(), Map.class.isAssignableFrom(type) ? "value." : "")
+            : basic(member, elementType, declaring, null, conversion(member, elementType));
         CollectionTableModel table = element.annotation(JPA + "CollectionTable").map(t -> new CollectionTableModel(nonEmpty(t.string("name")),
             nonEmpty(t.string("schema")), nonEmpty(t.string("catalog")), t.annotations("joinColumns").stream()
                 .map(EntityModelBuilder::joinColumn).toList())).orElse(CollectionTableModel.defaults());
         String orderBy = element.annotation(JPA + "OrderBy").map(o -> o.string("value").trim()).orElse(null);
-        OrderColumnModel orderColumn = element.annotation(JPA + "OrderColumn").map(o -> new OrderColumnModel(nonEmpty(o.string("name")),
-            o.bool("nullable"), o.bool("insertable"), o.bool("updatable"))).orElse(null);
         FetchType fetch = FetchType.valueOf(collection.enumConstant("fetch"));
         return new ElementCollectionAttribute(member.name(), type, member.access(), declaring, member.signature(), value, table, orderBy,
-            orderColumn, fetch);
+            index(member, type, declaring), fetch);
+    }
+
+    // ---- map keys and order columns (§2.7, §11.1.30 to §11.1.42) ---------------------------------------------
+
+    /**
+     * How the collection {@code member} indexes its elements: the {@code @OrderColumn} of a list; the key of a map — an
+     * attribute of the target ({@code @MapKey}), an entity ({@code @MapKeyJoinColumn}, or a key class that is an
+     * entity), else a basic value in its {@code @MapKeyColumn}. {@code null} for an unindexed collection.
+     */
+    private CollectionIndex index(Member member, Class<?> type, Class<?> declaring) {
+        Annotated element = member.element();
+        if (!Map.class.isAssignableFrom(type)) {
+            return element.annotation(JPA + "OrderColumn").<CollectionIndex>map(o -> {
+                String name = nonEmpty(o.string("name"));
+                ColumnModel column = new ColumnModel(name != null ? name : member.name() + "_ORDER", null, o.bool("nullable"),
+                    o.bool("insertable"), o.bool("updatable"), false, 255, 0, 0, nonEmpty(o.string("columnDefinition")));
+                return new CollectionIndex.ByPosition(new BasicAttribute(column.name(), Integer.class, member.access(), declaring, column,
+                    true, FetchType.EAGER, false, new ValueConversion.None(), false));
+            }).orElse(null);
+        }
+        Optional<AnnotationInfo> mapKey = element.annotation(JPA + "MapKey");
+        if (mapKey.isPresent()) {
+            return new CollectionIndex.ByAttribute(mapKey.get().has("name") ? mapKey.get().string("name") : "");
+        }
+        Class<?> keyType = element.annotation(JPA + "MapKeyClass").map(k -> Types.load(k.type("value"), loader)).orElse(null);
+        if (keyType == null) {
+            List<Class<?>> arguments = GenericSignatures.memberTypeArguments(member.signature(), element instanceof MethodInfo, loader);
+            if (arguments == null || arguments.size() != 2) {
+                return new CollectionIndex.Unsupported("a raw map without @MapKeyClass");
+            }
+            keyType = arguments.getFirst();
+        }
+        List<JoinColumnModel> keyJoins = new ArrayList<>();
+        element.annotation(JPA + "MapKeyJoinColumn").ifPresent(c -> keyJoins.add(joinColumn(c)));
+        element.annotation(JPA + "MapKeyJoinColumns").ifPresent(container ->
+            container.annotations("value").forEach(c -> keyJoins.add(joinColumn(c))));
+        Optional<ClassInfo> keyInfo = source.read(keyType.getName());
+        if (!keyJoins.isEmpty() || keyInfo.map(i -> i.isAnnotated(JPA + "Entity")).orElse(false)) {
+            return new CollectionIndex.ByEntity(keyType, keyJoins);
+        }
+        if (keyInfo.map(i -> i.isAnnotated(JPA + "Embeddable")).orElse(false)) {
+            return new CollectionIndex.Unsupported("embeddable map keys");
+        }
+        String defaultName = member.name() + "_KEY";
+        ColumnModel column = element.annotation(JPA + "MapKeyColumn").map(c -> column(c, defaultName))
+            .orElse(ColumnModel.defaultFor(defaultName));
+        return new CollectionIndex.ByColumn(new BasicAttribute(defaultName, keyType, member.access(), declaring, column, true,
+            FetchType.EAGER, false, keyConversion(member, keyType), false));
+    }
+
+    /** The conversion of a basic map key: {@code @Convert(attributeName = "key")}, auto-applied, {@code @MapKeyEnumerated}, {@code @MapKeyTemporal}. */
+    private ValueConversion keyConversion(Member member, Class<?> type) {
+        AnnotationInfo convert = converts(member.element()).get("key");
+        Optional<ValueConversion> explicit = convert == null ? Optional.empty() : explicit(convert);
+        if (explicit.isPresent()) {
+            return explicit.get();
+        }
+        Class<?> boxed = Types.box(type);
+        for (ConverterModel candidate : converters) {
+            if (candidate.autoApply() && candidate.attributeType() == boxed) {
+                return new ValueConversion.Converted(candidate.converterClass(), candidate.databaseType());
+            }
+        }
+        if (type.isEnum()) {
+            String enumType = member.element().annotation(JPA + "MapKeyEnumerated").map(e -> e.enumConstant("value")).orElse("ORDINAL");
+            return "STRING".equals(enumType) ? new ValueConversion.EnumString() : new ValueConversion.EnumOrdinal();
+        }
+        if (Types.isLegacyTemporal(type)) {
+            String temporal = member.element().annotation(JPA + "MapKeyTemporal").map(t -> t.enumConstant("value")).orElse("TIMESTAMP");
+            return new ValueConversion.Temporal(TemporalType.valueOf(temporal));
+        }
+        return new ValueConversion.None();
     }
 
     /** The {@code @JoinColumn}s written on an element, in order. */
@@ -473,12 +540,19 @@ public final class EntityModelBuilder {
 
     /** @param entityConverts the {@code @Convert}s of the entity naming attributes of this one, by path inside it */
     private EmbeddedAttribute embedded(Member member, Class<?> type, Class<?> declaring, Map<String, AnnotationInfo> entityConverts) {
+        return embedded(member, type, declaring, entityConverts, "");
+    }
+
+    /** @param overridePrefix the prefix of the paths the {@code @AttributeOverride}s name ({@code "value."} for map values) */
+    private EmbeddedAttribute embedded(Member member, Class<?> type, Class<?> declaring, Map<String, AnnotationInfo> entityConverts,
+            String overridePrefix) {
         Map<String, AnnotationInfo> converts = new LinkedHashMap<>(entityConverts);
         converts.putAll(converts(member.element())); // the attribute's own win
         EmbeddableModel embeddable = converted(embeddable(type, member.access()), converts);
         Map<String, ColumnModel> columns = new LinkedHashMap<>();
         flatten(embeddable, "", columns);
-        overrides(member.element()).forEach((path, override) -> {
+        overrides(member.element()).forEach((written, override) -> {
+            String path = written.startsWith(overridePrefix) ? written.substring(overridePrefix.length()) : written;
             if (columns.containsKey(path)) {
                 columns.put(path, column(override.annotation("column"), path.substring(path.lastIndexOf('.') + 1)));
             }

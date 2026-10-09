@@ -17,6 +17,18 @@ Official suite: **Jakarta Persistence 3.2.1** TCK (bundle from eclipse.org, SHA-
 | P5 (in progress) — single-valued relationships: foreign keys, loading, orphan removal | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 611 | 1520 | 4 |
 | P5 (in progress) — collection-valued relationships: join tables, inverse sides, orphans, merge | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 615 | 1516 | 4 |
 | P5 (in progress) — element collections, `@OrderBy` paths | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 622 | 1509 | 4 |
+| P5 (in progress) — maps and order columns | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 627 | 1504 | 4 |
+
+## P5, fourth slice — maps and order columns: 622 → 627
+
+Map keys (`@MapKey`, `@MapKeyColumn`, `@MapKeyJoinColumn`, `@MapKeyClass`, `@MapKeyEnumerated`, `@MapKeyTemporal`) and
+`@OrderColumn`, in join tables, collection tables, and the tables of the targets of inverse one-to-many relationships.
+Run of 2026-10-09: **627 pass, 1504 fail, 4 skipped**. Compared test by test with the run at 622: 5 tests pass that
+failed, none fails that passed — `core.annotations.mapkeyclass.Client#mapKeyClass`,
+`core.annotations.mapkeycolumn.Client#mapKey{Insertable,Updatable}FalseTest`,
+`core.annotations.mapkeyjoincolumn.Client#mapKeyJoinColumn`, `jpa22.repeatable.mapkeyjoincolumn.Client#mapKeyJoinColumnTest`.
+What still fails in `core.annotations.{mapkey,mapkeycolumn,ordercolumn}` reads its results with Jakarta Persistence
+queries (P7).
 
 ## P5, third slice — element collections: 615 → 622
 

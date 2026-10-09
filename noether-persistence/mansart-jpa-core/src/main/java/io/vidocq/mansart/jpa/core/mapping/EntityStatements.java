@@ -23,6 +23,7 @@ import io.vidocq.mansart.jpa.core.jdbc.type.ValueBinder;
 import io.vidocq.mansart.jpa.core.model.AssociationAttribute;
 import io.vidocq.mansart.jpa.core.model.AttributeModel;
 import io.vidocq.mansart.jpa.core.model.BasicAttribute;
+import io.vidocq.mansart.jpa.core.model.CollectionIndex;
 import io.vidocq.mansart.jpa.core.model.CollectionTableModel;
 import io.vidocq.mansart.jpa.core.model.ColumnModel;
 import io.vidocq.mansart.jpa.core.model.ElementCollectionAttribute;
@@ -182,7 +183,7 @@ public final class EntityStatements {
                 case AssociationAttribute association when !association.singleValued() ->
                     collections.add(collection(model, association, i, models, binders));
                 case ElementCollectionAttribute elements when elements.element() != null ->
-                    elementCollection(model, elements, i, binders, embeddables).ifPresent(elementCollections::add);
+                    elementCollection(model, elements, i, models, binders, embeddables).ifPresent(elementCollections::add);
                 default -> {
                     // inverse to-one sides have no column; element collections have their own tables
                 }
@@ -320,16 +321,18 @@ public final class EntityStatements {
      */
     private static CollectionMapping collection(EntityModel owner, AssociationAttribute association, int attribute,
             Function<Class<?>, EntityModel> models, Function<BasicAttribute, ValueBinder> binders) {
-        if (Map.class.isAssignableFrom(association.javaType())) {
-            return new CollectionMapping.Unsupported(attribute, association, "map collections");
-        }
         EntityModel target = models.apply(association.targetEntity());
         if (target == null) {
             throw new PersistenceException("The relationship " + association.name() + " of " + association.declaringClass().getName()
                 + " references " + association.targetEntity().getName() + ", which is not an entity of the persistence unit");
         }
+        Indexing indexing = index(association.name(), association.index(), target, models, binders, describe(association));
+        if (indexing.problem() != null) {
+            return new CollectionMapping.Unsupported(attribute, association, indexing.problem());
+        }
+        IndexMapping index = indexing.index();
         if (!association.owning()) {
-            return new CollectionMapping.MappedBy(attribute, association);
+            return inverse(association, attribute, target, index, binders);
         }
         if (association.kind() == AssociationAttribute.Kind.ONE_TO_MANY && association.joinTable() == null
                 && !association.joinColumns().isEmpty()) {
@@ -365,7 +368,82 @@ public final class EntityStatements {
         Table table = new Table(Identifier.of(tableName), written.schema() == null ? null : Identifier.of(written.schema()),
             written.catalog() == null ? null : Identifier.of(written.catalog()));
         return new CollectionMapping.JoinTable(attribute, association, table, ownerColumns, ownerBinders, targetColumns,
-            targetBinders);
+            targetBinders, index);
+    }
+
+    /**
+     * The inverse side {@code association} of a collection-valued relationship. Its index, when it has columns, lives
+     * in the table of the target, beside the foreign key of the owning side: this side writes it.
+     */
+    private static CollectionMapping inverse(AssociationAttribute association, int attribute, EntityModel target, IndexMapping index,
+            Function<BasicAttribute, ValueBinder> binders) {
+        if (index == null || !index.stored()) {
+            return new CollectionMapping.MappedBy(attribute, association, index, null, null);
+        }
+        AttributeModel owning = target.attribute(association.mappedBy()).orElse(null);
+        List<KeyColumn> targetKeys = keyColumns(target, binders);
+        if (!(owning instanceof AssociationAttribute side) || !side.singleValued() || side.joinTable() != null || targetKeys == null) {
+            return new CollectionMapping.Unsupported(attribute, association, "an index of an inverse side without a foreign key");
+        }
+        Update update = new Update(table(target.table()), index.columns(),
+            targetKeys.stream().map(k -> Identifier.of(k.name())).toList());
+        return new CollectionMapping.MappedBy(attribute, association, index, update,
+            targetKeys.stream().map(KeyColumn::binder).toList());
+    }
+
+    /** An index as mapped, or what P5 does not map yet. */
+    private record Indexing(IndexMapping index, String problem) {
+    }
+
+    /**
+     * The index of the collection {@code name}: for a {@code @MapKey}, the attribute of {@code target} it names; for a
+     * key or a position, its column; for a key entity, its foreign key columns, by default {@code <attribute>_KEY}
+     * (§11.1.35). {@code target} is {@code null} for an element collection.
+     */
+    private static Indexing index(String name, CollectionIndex index, EntityModel target, Function<Class<?>, EntityModel> models,
+            Function<BasicAttribute, ValueBinder> binders, String relationship) {
+        return switch (index) {
+            case null -> new Indexing(null, null);
+            case CollectionIndex.Unsupported unsupported -> new Indexing(null, unsupported.feature());
+            case CollectionIndex.ByAttribute byAttribute -> {
+                if (target == null) {
+                    yield new Indexing(null, "a @MapKey on an element collection");
+                }
+                int key = -1;
+                if (!byAttribute.name().isEmpty()) {
+                    key = target.attributes().indexOf(target.attribute(byAttribute.name()).orElseThrow(() -> new PersistenceException(
+                        "The @MapKey of " + relationship + " names " + byAttribute.name() + ", which " + target.entityName()
+                            + " does not have")));
+                }
+                yield new Indexing(new IndexMapping(index, key, null, List.of(), List.of(), false, false), null);
+            }
+            case CollectionIndex.ByColumn(BasicAttribute key) -> new Indexing(new IndexMapping(index, -1, null,
+                List.of(Identifier.of(key.column().name())), List.of(binders.apply(key)), key.column().insertable(),
+                key.column().updatable()), null);
+            case CollectionIndex.ByPosition(BasicAttribute position) -> new Indexing(new IndexMapping(index, -1, null,
+                List.of(Identifier.of(position.column().name())), List.of(binders.apply(position)), position.column().insertable(),
+                position.column().updatable()), null);
+            case CollectionIndex.ByEntity(Class<?> entity, List<JoinColumnModel> written) -> {
+                EntityModel keyModel = models.apply(entity);
+                if (keyModel == null) {
+                    throw new PersistenceException("The map key of " + relationship + " is " + entity.getName()
+                        + ", which is not an entity of the persistence unit");
+                }
+                List<KeyColumn> keys = keyColumns(keyModel, binders);
+                JoinColumnModel[] joins = keys == null ? null : byKeyPart("the map key of " + relationship, written, keys, keyModel);
+                if (joins == null) {
+                    yield new Indexing(null, "a map key entity with a derived identity, or referenced by a column that is not its key");
+                }
+                List<Identifier> columns = new ArrayList<>();
+                for (int k = 0; k < keys.size(); k++) {
+                    String column = joins[k].name() != null ? joins[k].name()
+                        : keys.size() == 1 ? name + "_KEY" : name + "_KEY_" + keys.get(k).name();
+                    columns.add(Identifier.of(column));
+                }
+                yield new Indexing(new IndexMapping(index, -1, entity, columns, keys.stream().map(KeyColumn::binder).toList(),
+                    joins[0].insertable(), joins[0].updatable()), null);
+            }
+        };
     }
 
     /**
@@ -374,7 +452,8 @@ public final class EntityStatements {
      * of its basic value or of its embeddable, overrides applied. Empty for an owner whose key P5 does not reference yet.
      */
     private static Optional<ElementCollectionMapping> elementCollection(EntityModel owner, ElementCollectionAttribute elements,
-            int attribute, Function<BasicAttribute, ValueBinder> binders, Function<EmbeddableModel, ManagedAccess> embeddables) {
+            int attribute, Function<Class<?>, EntityModel> models, Function<BasicAttribute, ValueBinder> binders,
+            Function<EmbeddableModel, ManagedAccess> embeddables) {
         List<KeyColumn> ownerKeys = keyColumns(owner, binders);
         if (ownerKeys == null) {
             return Optional.empty();
@@ -393,6 +472,11 @@ public final class EntityStatements {
             ownerBinders.add(ownerKeys.get(k).binder());
         }
         String tableName = written.name() != null ? written.name() : owner.entityName() + "_" + elements.name();
+        Indexing indexing = index(elements.name(), elements.index(), null, models, binders,
+            "the element collection " + elements.name() + " of " + elements.declaringClass().getName());
+        if (indexing.problem() != null) {
+            return Optional.empty();
+        }
         List<Column> columns = new ArrayList<>();
         switch (elements.element()) {
             case BasicAttribute basic -> columns.add(new Column(Identifier.of(basic.column().name()), binders.apply(basic), 0, new int[0],
@@ -403,7 +487,7 @@ public final class EntityStatements {
         }
         Table table = new Table(Identifier.of(tableName), written.schema() == null ? null : Identifier.of(written.schema()),
             written.catalog() == null ? null : Identifier.of(written.catalog()));
-        return Optional.of(new ElementCollectionMapping(attribute, elements, table, ownerColumns, ownerBinders, columns));
+        return Optional.of(new ElementCollectionMapping(attribute, elements, table, ownerColumns, ownerBinders, indexing.index(), columns));
     }
 
     /** The attribute of {@code target} that is the inverse side of {@code association} of {@code owner}, if any. */

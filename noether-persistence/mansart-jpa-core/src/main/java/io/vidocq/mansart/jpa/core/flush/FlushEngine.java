@@ -24,6 +24,7 @@ import io.vidocq.mansart.jpa.core.context.PersistenceContext;
 import io.vidocq.mansart.jpa.core.jdbc.type.ValueBinder;
 import io.vidocq.mansart.jpa.core.mapping.CollectionMapping;
 import io.vidocq.mansart.jpa.core.mapping.ElementCollectionMapping;
+import io.vidocq.mansart.jpa.core.mapping.IndexMapping;
 import io.vidocq.mansart.jpa.core.mapping.EntityStatements;
 import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
 import io.vidocq.mansart.jpa.dialect.Dialect;
@@ -111,6 +112,7 @@ public final class FlushEngine {
         List<Work> updates = new ArrayList<>();
         List<Work> deletes = new ArrayList<>();
         List<ManagedEntity> checks = new ArrayList<>();
+        List<Work> indexes = new ArrayList<>();
         for (ManagedEntity entry : context.entries()) {
             MappedEntity type = entry.type();
             switch (entry.status()) {
@@ -124,8 +126,13 @@ public final class FlushEngine {
                         updates.add(new Work(entry, read(type, entry.instance())));
                     } else if (Locks.forcesIncrement(entry.lockMode())) {
                         updates.add(new Work(entry, state)); // §3.5: a new version, without a change
-                    } else if (entry.lockMode() == LockModeType.OPTIMISTIC || entry.lockMode() == LockModeType.READ) {
-                        checks.add(entry);
+                    } else {
+                        if (entry.lockMode() == LockModeType.OPTIMISTIC || entry.lockMode() == LockModeType.READ) {
+                            checks.add(entry);
+                        }
+                        if (hasInverseIndexes(type)) {
+                            indexes.add(new Work(entry, state)); // an inverse index changes nothing of its owner's row
+                        }
                     }
                 }
                 case REMOVED -> {
@@ -150,13 +157,20 @@ public final class FlushEngine {
         for (Work work : inserts) { // the join rows reference rows of both sides: every row exists now
             writeJoinRows(work, null, connection);
             writeElements(work, true, connection);
+            writeInverseIndexes(work, null, connection);
         }
         for (List<Work> group : groups(updates)) {
             for (Work work : group) {
                 writeJoinRows(work, work.entry().snapshot(), connection);
                 writeElements(work, false, connection);
+                writeInverseIndexes(work, work.entry().snapshot(), connection);
             }
             update(group, context, connection);
+        }
+        for (Work work : indexes) {
+            if (writeInverseIndexes(work, work.entry().snapshot(), connection)) {
+                context.updated(work.entry(), work.type().state().snapshot(work.state()));
+            }
         }
         writeReferences(referencesBetween(deletes), true, connection);
         for (Work work : deletes) {
@@ -324,31 +338,46 @@ public final class FlushEngine {
             if (!(mapping instanceof CollectionMapping.JoinTable table)) {
                 continue;
             }
-            List<Object> before = CollectionMapping.elements(snapshot == null ? null : snapshot[table.attribute()]);
-            List<Object> now = CollectionMapping.elements(work.state()[table.attribute()]);
-            List<Object> lost = minus(before, now);
-            List<Object> gained = minus(now, before);
-            if (lost.isEmpty() && gained.isEmpty()) {
-                continue;
-            }
             Object[] owner = statements.keyValues(type.id(work.entry().instance()));
+            Object current = work.state()[table.attribute()];
             try {
-                joinRows(render(table.deleteRow()), table, owner, lost, statements, connection);
-                joinRows(render(table.insert()), table, owner, gained, statements, connection);
+                if (table.indexed()) {
+                    // keys and positions are written with the rows: a changed collection is written again whole
+                    if (snapshot != null && !type.state().collectionChanged(table.attribute(), snapshot[table.attribute()], current)) {
+                        continue;
+                    }
+                    if (snapshot != null) {
+                        try (PreparedStatement delete = connection.prepareStatement(render(table.deleteOwner()))) {
+                            bindOwner(delete, table.ownerBinders(), owner);
+                            delete.executeUpdate();
+                        }
+                    }
+                    joinRows(render(table.insert()), table, owner, CollectionMapping.elements(current), CollectionMapping.keys(current),
+                        statements, connection);
+                    continue;
+                }
+                List<Object> before = CollectionMapping.elements(snapshot == null ? null : snapshot[table.attribute()]);
+                List<Object> now = CollectionMapping.elements(current);
+                joinRows(render(table.deleteRow()), table, owner, minus(before, now), null, statements, connection);
+                joinRows(render(table.insert()), table, owner, minus(now, before), null, statements, connection);
             } catch (SQLException e) {
                 throw failure("write of the join table of " + table.association().name() + " of", type, e);
             }
         }
     }
 
-    /** One batch of {@code sql} — the owner key then the element key — per element. */
-    private void joinRows(String sql, CollectionMapping.JoinTable table, Object[] owner, List<Object> elements,
+    /**
+     * One batch of {@code sql} — the owner key, the element key, then its index ({@code keys}: the map key or the
+     * position of each element, {@code null} for none) — per element.
+     */
+    private void joinRows(String sql, CollectionMapping.JoinTable table, Object[] owner, List<Object> elements, List<Object> keys,
             EntityStatements statements, Connection connection) throws SQLException {
         if (elements.isEmpty()) {
             return;
         }
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
-            for (Object element : elements) {
+            for (int e = 0; e < elements.size(); e++) {
+                Object element = elements.get(e);
                 Object[] target = statements.targetKey(element, table.association().targetEntity());
                 if (target == null) {
                     throw new PersistenceException("An element of " + table.association().name() + " of "
@@ -361,10 +390,69 @@ public final class FlushEngine {
                 for (int k = 0; k < target.length; k++) {
                     table.targetBinders().get(k).bind(dialect, statement, index++, target[k]);
                 }
+                if (keys != null) {
+                    bindIndex(statement, index, table.index(), keys.get(e), statements);
+                }
                 statement.addBatch();
             }
             statement.executeBatch();
         }
+    }
+
+    /** Binds the index columns for {@code key}, a map key or a position, from parameter {@code index}; returns the next. */
+    private int bindIndex(PreparedStatement statement, int index, IndexMapping mapping, Object key, EntityStatements statements)
+            throws SQLException {
+        Object[] values = mapping.values(key, statements);
+        for (int k = 0; k < values.length; k++) {
+            mapping.binders().get(k).bind(dialect, statement, index++, values[k]);
+        }
+        return index;
+    }
+
+    // ---- the indexes an inverse side writes (§11.1.33, §11.1.42) --------------------------------------------
+
+    private static boolean hasInverseIndexes(MappedEntity type) {
+        return type.statements().collections().stream()
+            .anyMatch(c -> c instanceof CollectionMapping.MappedBy inverse && inverse.indexUpdate() != null);
+    }
+
+    /**
+     * Writes the keys or positions that the inverse collections of {@code work} keep in the table of their elements:
+     * all of them for a new owner ({@code snapshot} {@code null}) unless they are not insertable, those of a collection
+     * changed since the snapshot unless they are not updatable. Whether anything was written.
+     */
+    private boolean writeInverseIndexes(Work work, Object[] snapshot, Connection connection) {
+        MappedEntity type = work.type();
+        boolean written = false;
+        for (CollectionMapping mapping : type.statements().collections()) {
+            if (!(mapping instanceof CollectionMapping.MappedBy inverse) || inverse.indexUpdate() == null) {
+                continue;
+            }
+            Object current = work.state()[inverse.attribute()];
+            boolean write = snapshot == null ? inverse.index().insertable()
+                : inverse.index().updatable() && type.state().collectionChanged(inverse.attribute(), snapshot[inverse.attribute()], current);
+            List<Object> elements = CollectionMapping.elements(current);
+            if (!write || elements.isEmpty()) {
+                continue;
+            }
+            List<Object> keys = CollectionMapping.keys(current);
+            Class<?> target = inverse.association().targetEntity();
+            try (PreparedStatement statement = connection.prepareStatement(render(inverse.indexUpdate()))) {
+                for (int e = 0; e < elements.size(); e++) {
+                    int index = bindIndex(statement, 1, inverse.index(), keys.get(e), type.statements());
+                    Object[] key = type.statements().targetKey(elements.get(e), target);
+                    for (int k = 0; k < key.length; k++) {
+                        inverse.targetBinders().get(k).bind(dialect, statement, index++, key[k]);
+                    }
+                    statement.addBatch();
+                }
+                statement.executeBatch();
+            } catch (SQLException e) {
+                throw failure("write of the index of " + inverse.association().name() + " of", type, e);
+            }
+            written = true;
+        }
+        return written;
     }
 
     /** Deletes every join row of the owned collections of a row about to be deleted. */
@@ -412,8 +500,13 @@ public final class FlushEngine {
             }
             Object[] owner = type.statements().keyValues(type.id(work.entry().instance()));
             try (PreparedStatement statement = connection.prepareStatement(render(elements.insert()))) {
-                for (Object value : values) {
+                List<Object> keys = CollectionMapping.keys(work.state()[elements.attribute()]);
+                for (int v = 0; v < values.size(); v++) {
+                    Object value = values.get(v);
                     int index = bindOwner(statement, elements.ownerBinders(), owner);
+                    if (elements.index() != null) {
+                        index = bindIndex(statement, index, elements.index(), keys.get(v), type.statements());
+                    }
                     Object[] columns = elements.values(value);
                     for (int c = 0; c < columns.length; c++) {
                         elements.columns().get(c).binder().bind(dialect, statement, index++, columns[c]);

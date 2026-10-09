@@ -24,6 +24,7 @@ import io.vidocq.mansart.jpa.core.context.ManagedEntity;
 import io.vidocq.mansart.jpa.core.context.PersistenceContext;
 import io.vidocq.mansart.jpa.core.generation.IdGenerators;
 import io.vidocq.mansart.jpa.core.mapping.CollectionMapping;
+import io.vidocq.mansart.jpa.core.mapping.IndexMapping;
 import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
 import io.vidocq.mansart.jpa.core.mapping.MappedUnit;
 import io.vidocq.mansart.jpa.core.model.AssociationAttribute;
@@ -50,7 +51,7 @@ import java.util.function.Function;
 /**
  * The entity operations of §3.2 on the persistence context of one entity manager — persist, remove, merge, refresh,
  * detach — with their cascades through the relationships of the object graph (§3.2.2 to §3.2.7), and the orphan
- * removal (§2.9). Map collections come later in P5.
+ * removal (§2.9).
  */
 final class EntityOperations {
 
@@ -215,8 +216,13 @@ final class EntityOperations {
                     } else if (!sameElements(collection, elements)) {
                         replace(collection, elements); // a managed instance keeps its collection, with the managed elements
                     }
-                } else if (value instanceof Map<?, ?>) {
-                    targets(value, target -> merge(target, merged)); // map collections come later in P5
+                } else if (value instanceof Map<?, ?> map) {
+                    Map<Object, Object> entries = mappedMap(association, map, this::managedKey, target -> merge(target, merged));
+                    if (managed != entity) {
+                        type.access().set(managed, i, entries);
+                    } else {
+                        replace(map, entries); // a managed instance keeps its map, with the managed keys and values
+                    }
                 } else if (value != null) {
                     type.access().set(managed, i, merge(value, merged));
                 }
@@ -240,14 +246,19 @@ final class EntityOperations {
             }
             if (attributes.get(i) instanceof EmbeddedAttribute embedded) {
                 state[i] = copy(embedded.embeddable(), state[i]);
-            } else if (attributes.get(i) instanceof ElementCollectionAttribute elements && state[i] instanceof Collection<?> values) {
+            } else if (attributes.get(i) instanceof ElementCollectionAttribute elements) {
                 // values, not instances: a collection of its own, embeddables copied
-                Collection<Object> copy = CollectionMapping.newCollection(elements.javaType());
-                for (Object value : values) {
-                    copy.add(value != null && elements.element() instanceof EmbeddedAttribute embedded
-                        ? copy(embedded.embeddable(), value) : value);
+                Function<Object, Object> value = v -> v != null && elements.element() instanceof EmbeddedAttribute embedded
+                    ? copy(embedded.embeddable(), v) : v;
+                if (state[i] instanceof Collection<?> values) {
+                    Collection<Object> copy = CollectionMapping.newCollection(elements.javaType());
+                    values.forEach(v -> copy.add(value.apply(v)));
+                    state[i] = copy;
+                } else if (state[i] instanceof Map<?, ?> map) {
+                    Map<Object, Object> copy = IndexMapping.newMap(elements.javaType());
+                    map.forEach((k, v) -> copy.put(k, value.apply(v)));
+                    state[i] = copy;
                 }
-                state[i] = copy;
             } else if (attributes.get(i) instanceof AssociationAttribute association) {
                 if (association.singleValued()) {
                     if (!association.cascades(CascadeType.MERGE)) {
@@ -256,6 +267,9 @@ final class EntityOperations {
                 } else if (state[i] instanceof Collection<?> collection) {
                     // a collection of its own: the managed instances of its elements, or the merged ones (cascadeMerge)
                     state[i] = mapped(association, collection,
+                        association.cascades(CascadeType.MERGE) ? element -> element : this::managedReference);
+                } else if (state[i] instanceof Map<?, ?> map) {
+                    state[i] = mappedMap(association, map, this::managedKey,
                         association.cascades(CascadeType.MERGE) ? element -> element : this::managedReference);
                 }
             }
@@ -273,6 +287,23 @@ final class EntityOperations {
         return mapped;
     }
 
+    /**
+     * A new map of the declared type of {@code association}, of the entries of {@code map}, keys and values mapped.
+     */
+    private static Map<Object, Object> mappedMap(AssociationAttribute association, Map<?, ?> map, Function<Object, Object> keys,
+            Function<Object, Object> values) {
+        Map<Object, Object> mapped = IndexMapping.newMap(association.javaType());
+        for (Map.Entry<?, ?> entry : List.copyOf(map.entrySet())) {
+            mapped.put(keys.apply(entry.getKey()), entry.getValue() == null ? null : values.apply(entry.getValue()));
+        }
+        return mapped;
+    }
+
+    /** A map key as the managed map holds it: the managed instance of an entity key, any other value as it is. */
+    private Object managedKey(Object key) {
+        return key != null && factory.mapping().entity(key.getClass()).isPresent() ? managedReference(key) : key;
+    }
+
     private static boolean sameElements(Collection<?> collection, Collection<Object> elements) {
         List<?> before = List.copyOf(collection.stream().filter(Objects::nonNull).toList());
         List<Object> after = List.copyOf(elements);
@@ -282,6 +313,12 @@ final class EntityOperations {
             }
         }
         return true;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void replace(Map<?, ?> map, Map<Object, Object> entries) {
+        map.clear();
+        ((Map<Object, Object>) map).putAll(entries);
     }
 
     @SuppressWarnings("unchecked")

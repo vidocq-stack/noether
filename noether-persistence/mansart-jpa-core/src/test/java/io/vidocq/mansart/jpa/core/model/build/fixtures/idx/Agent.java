@@ -17,12 +17,38 @@
  *
  * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
  */
-package io.vidocq.mansart.jpa.core.model;
+package io.vidocq.mansart.jpa.core.model.build.fixtures.idx;
 
-/**
- * The column keeping the order of a list (§11.1.42).
- *
- * @param name the column, or {@code null} for the default {@code <attribute>_ORDER}
- */
-public record OrderColumnModel(String name, boolean nullable, boolean insertable, boolean updatable) {
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.ManyToOne;
+
+/** The element of indexed relationships; its table also holds the indexes its bureau writes (DESK, roster_ORDER). */
+@Entity
+public class Agent {
+    @Id
+    private long id;
+    private String name;
+    @ManyToOne
+    private Bureau bureau;
+
+    protected Agent() {
+    }
+
+    public Agent(long id, String name) {
+        this.id = id;
+        this.name = name;
+    }
+
+    public long id() {
+        return id;
+    }
+
+    public String name() {
+        return name;
+    }
+
+    public void bureau(Bureau bureau) {
+        this.bureau = bureau;
+    }
 }

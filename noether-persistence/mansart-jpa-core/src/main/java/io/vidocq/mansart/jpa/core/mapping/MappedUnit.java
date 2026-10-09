@@ -27,6 +27,7 @@ import io.vidocq.mansart.jpa.core.model.AssociationAttribute;
 import io.vidocq.mansart.jpa.core.model.AttributeModel;
 import io.vidocq.mansart.jpa.core.model.BasicAttribute;
 import io.vidocq.mansart.jpa.core.model.CallbackModel;
+import io.vidocq.mansart.jpa.core.model.CollectionIndex;
 import io.vidocq.mansart.jpa.core.model.ColumnModel;
 import io.vidocq.mansart.jpa.core.model.ElementCollectionAttribute;
 import io.vidocq.mansart.jpa.core.model.EmbeddableModel;
@@ -249,11 +250,27 @@ public final class MappedUnit {
                         prepare(embeddable.attributes(), valueBinders, generated, embeddables, binders);
                     }
                 }
-                case ElementCollectionAttribute elements when elements.element() != null ->
-                    prepare(List.of(elements.element()), valueBinders, generated, embeddables, binders);
+                case ElementCollectionAttribute elements -> {
+                    if (elements.element() != null) {
+                        prepare(List.of(elements.element()), valueBinders, generated, embeddables, binders);
+                    }
+                    prepareIndex(elements.index(), valueBinders, binders);
+                }
+                case AssociationAttribute association -> prepareIndex(association.index(), valueBinders, binders);
                 default -> {
                     // relationships are bound with their target; pending attributes with their mapping file
                 }
+            }
+        }
+    }
+
+    /** The binder of the column of a map key or of a list position. */
+    private static void prepareIndex(CollectionIndex index, ValueBinders valueBinders, Map<BasicAttribute, ValueBinder> binders) {
+        switch (index) {
+            case CollectionIndex.ByColumn(BasicAttribute key) -> binders.put(key, bind(valueBinders, key));
+            case CollectionIndex.ByPosition(BasicAttribute position) -> binders.put(position, bind(valueBinders, position));
+            case null, default -> {
+                // no column of its own, or the columns of a key entity: bound with that entity
             }
         }
     }
