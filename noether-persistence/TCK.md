@@ -14,6 +14,16 @@ Official suite: **Jakarta Persistence 3.2.1** TCK (bundle from eclipse.org, SHA-
 | P2b — accesses generated at build time (the TCK compiles nothing with the processor: runtime path unchanged) | 2026-10-08 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 220 | 1911 | 4 |
 | P3 — persistence context and flush engine (flush at every commit, PostgreSQL dialect on the class path) | 2026-10-08 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 220 | 1911 | 4 |
 | P4 — entity operations, identifier generation, callbacks, locking, secondary tables, native updates | 2026-10-08 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 609 | 1522 | 4 |
+| P5 (in progress) — single-valued relationships: foreign keys, loading, orphan removal | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 611 | 1520 | 4 |
+
+## P5, first slice — single-valued relationships: 609 → 611
+
+Foreign key columns of `@ManyToOne` / `@OneToOne`, written in an order the constraints accept (cycles fixed by an
+update), the targets loaded with their owner, the inverse side of a one-to-one, orphan removal and merge of single-valued
+relationships. Run of 2026-10-09: **611 pass, 1520 fail, 4 skipped**. Compared test by test with the final P4 run: two
+tests pass that failed (`core.annotations.mapkey.Client2#joinColumnInsertable`, `#joinColumnUpdatable`), none fails
+that passed. The relationship areas wait for the collections (`@OneToMany`, `@ManyToMany`, element collections), which
+most of their tests read back, and for `PersistenceUnitUtil` and derived identities.
 
 ## P4 — the entity operations open the suite: 220 → 609
 

@@ -22,6 +22,7 @@ package io.vidocq.mansart.jpa.core.model.build;
 import io.vidocq.mansart.jpa.core.model.source.ClassFileSource;
 import io.vidocq.mansart.jpa.core.model.source.ClassInfo;
 import java.lang.classfile.ClassSignature;
+import java.lang.classfile.MethodSignature;
 import java.lang.classfile.Signature;
 import java.lang.constant.ClassDesc;
 import java.util.ArrayList;
@@ -42,6 +43,21 @@ final class GenericSignatures {
     /** The erased type arguments given to {@code interfaceName}, or {@code null} if they cannot be resolved. */
     static List<Class<?>> typeArguments(String className, String interfaceName, ClassFileSource source, ClassLoader loader) {
         return search(className, interfaceName, Map.of(), source, loader);
+    }
+
+    /**
+     * The erased type arguments of the declared type of a member, from its generic signature: a field's, or the
+     * return type of a getter's ({@code method}); {@code null} if the member has none (a raw type).
+     */
+    static List<Class<?>> memberTypeArguments(String signature, boolean method, ClassLoader loader) {
+        if (signature == null) {
+            return null;
+        }
+        Signature type = method ? MethodSignature.parseFrom(signature).result() : Signature.parseFrom(signature);
+        if (!(type instanceof Signature.ClassTypeSig classType) || classType.typeArgs().isEmpty()) {
+            return null;
+        }
+        return classType.typeArgs().stream().<Class<?>>map(a -> argument(a, Map.of(), loader)).toList();
     }
 
     private static List<Class<?>> search(String className, String interfaceName, Map<String, Class<?>> bindings,

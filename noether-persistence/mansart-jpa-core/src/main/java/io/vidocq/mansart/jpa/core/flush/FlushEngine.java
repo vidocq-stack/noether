@@ -37,9 +37,12 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -47,7 +50,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * updated (their snapshot tells, no enhancement), the removed ones deleted. Statements run in a deterministic order —
  * inserts, entities after those they reference, then updates, then deletes in reverse — and consecutive statements of
  * an entity share one batch. A versioned entity is updated and deleted only if its row still has the version it was
- * read with (§3.4.2), else {@link OptimisticLockException}.
+ * read with (§3.4.2), else {@link OptimisticLockException}. Foreign keys that no order satisfies (a cycle, an instance
+ * of the same entity met later) are inserted {@code NULL} and written once every row exists, and cleared before the
+ * deletes of rows that reference each other: the constraints never need to be deferred.
  *
  * <p>One engine per factory, shared by its entity managers: its state is the dialect and the SQL it rendered, cached
  * without lock contention ({@link ConcurrentHashMap}, pure computation). A flush runs on the calling thread, on the
@@ -71,6 +76,10 @@ public final class FlushEngine {
         MappedEntity type() {
             return entry.type();
         }
+    }
+
+    /** A foreign key written alone, by an update: after the inserts (a cycle), or {@code NULL} before the deletes. */
+    private record ReferenceWrite(Work work, EntityStatements.Reference reference) {
     }
 
     private static final Comparator<Work> INSERT_ORDER = Comparator.<Work>comparingInt(w -> w.type().rank())
@@ -125,12 +134,17 @@ public final class FlushEngine {
         }
         inserts.sort(INSERT_ORDER);
         deletes.sort(DELETE_ORDER);
+        Set<Object> pending = identitySet();
+        inserts.forEach(work -> pending.add(work.entry().instance()));
+        List<ReferenceWrite> later = new ArrayList<>();
         for (List<Work> group : groups(inserts)) {
-            insert(group, context, connection);
+            insert(group, context, connection, pending, later);
         }
+        writeReferences(later, false, connection);
         for (List<Work> group : groups(updates)) {
             update(group, context, connection);
         }
+        writeReferences(referencesBetween(deletes), true, connection);
         for (List<Work> group : groups(deletes)) {
             delete(group, context, connection);
         }
@@ -143,7 +157,13 @@ public final class FlushEngine {
 
     // ---- inserts ------------------------------------------------------------------------------------------
 
-    private void insert(List<Work> group, PersistenceContext context, Connection connection) {
+    /**
+     * Inserts the rows of {@code group}. A foreign key referencing an instance of {@code pending}, whose row comes later
+     * in this flush (a cycle, or an instance of the same entity met later), is inserted {@code NULL} and added to
+     * {@code later}, written once every row exists.
+     */
+    private void insert(List<Work> group, PersistenceContext context, Connection connection, Set<Object> pending,
+            List<ReferenceWrite> later) {
         MappedEntity type = group.getFirst().type();
         EntityStatements statements = type.statements();
         Sql sql = sql(type);
@@ -156,7 +176,8 @@ public final class FlushEngine {
                 try (PreparedStatement statement = connection.prepareStatement(sql.tables().getFirst().insert(), sql.generatedKey())) {
                     for (Work work : group) {
                         initialVersion(type, work, version);
-                        bind(statement, statements.insertParameters(), statements, statements.values(work.state()), null);
+                        bind(statement, statements.insertParameters(), statements, insertValues(work, pending, later), null);
+                        pending.remove(work.entry().instance());
                         statement.executeUpdate();
                         try (ResultSet keys = statement.getGeneratedKeys()) {
                             if (!keys.next()) {
@@ -171,17 +192,18 @@ public final class FlushEngine {
                 }
             } else {
                 try (PreparedStatement statement = connection.prepareStatement(sql.tables().getFirst().insert())) {
-                    int pending = 0;
+                    int batched = 0;
                     for (Work work : group) {
                         initialVersion(type, work, version);
-                        bind(statement, statements.insertParameters(), statements, statements.values(work.state()), null);
+                        bind(statement, statements.insertParameters(), statements, insertValues(work, pending, later), null);
+                        pending.remove(work.entry().instance()); // a batch runs its rows in order
                         statement.addBatch();
-                        if (++pending == batchSize) {
+                        if (++batched == batchSize) {
                             statement.executeBatch();
-                            pending = 0;
+                            batched = 0;
                         }
                     }
-                    if (pending > 0) {
+                    if (batched > 0) {
                         statement.executeBatch();
                     }
                 }
@@ -208,6 +230,69 @@ public final class FlushEngine {
             context.inserted(work.entry(), type.id(work.entry().instance()), type.state().snapshot(work.state()));
             type.callback("PostPersist", work.entry().instance());
         }
+    }
+
+    /** The column values of the row of {@code work}, foreign keys to rows not inserted yet left {@code NULL}. */
+    private static Object[] insertValues(Work work, Set<Object> pending, List<ReferenceWrite> later) {
+        EntityStatements statements = work.type().statements();
+        Object[] values = statements.values(work.state());
+        for (EntityStatements.Reference reference : statements.references()) {
+            Object target = work.state()[reference.attribute()];
+            if (target != null && pending.contains(target)) {
+                for (int c : reference.columns()) {
+                    values[c] = null;
+                }
+                later.add(new ReferenceWrite(work, reference));
+            }
+        }
+        return values;
+    }
+
+    /**
+     * The foreign keys of rows about to be deleted that reference other rows deleted in the same flush: written
+     * {@code NULL} first, so that the deletes satisfy the constraints whatever their order (a cycle).
+     */
+    private static List<ReferenceWrite> referencesBetween(List<Work> deletes) {
+        if (deletes.size() < 2) {
+            return List.of();
+        }
+        Set<Object> deleted = identitySet();
+        deletes.forEach(work -> deleted.add(work.entry().instance()));
+        List<ReferenceWrite> writes = new ArrayList<>();
+        for (Work work : deletes) {
+            Object[] row = work.entry().snapshot(); // what the row holds
+            for (EntityStatements.Reference reference : work.type().statements().references()) {
+                Object target = row[reference.attribute()];
+                if (target != null && target != work.entry().instance() && deleted.contains(target)) {
+                    writes.add(new ReferenceWrite(work, reference));
+                }
+            }
+        }
+        return writes;
+    }
+
+    /** Writes foreign keys alone: their current values, or {@code NULL} ({@code clear}). */
+    private void writeReferences(List<ReferenceWrite> writes, boolean clear, Connection connection) {
+        for (ReferenceWrite write : writes) {
+            MappedEntity type = write.work().type();
+            EntityStatements statements = type.statements();
+            Object[] values = statements.values(write.work().state());
+            if (clear) {
+                for (int c : write.reference().columns()) {
+                    values[c] = null;
+                }
+            }
+            try (PreparedStatement statement = connection.prepareStatement(dialect.render(statements.referenceUpdate(write.reference())))) {
+                bind(statement, statements.referenceUpdateParameters(write.reference()), statements, values, null);
+                statement.executeUpdate();
+            } catch (SQLException e) {
+                throw failure("update of a foreign key", type, e);
+            }
+        }
+    }
+
+    private static Set<Object> identitySet() {
+        return Collections.newSetFromMap(new IdentityHashMap<>());
     }
 
     // ---- updates ------------------------------------------------------------------------------------------

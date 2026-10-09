@@ -20,6 +20,7 @@
 package io.vidocq.mansart.jpa.core.mapping;
 
 import io.vidocq.mansart.jpa.core.jdbc.type.ValueBinder;
+import io.vidocq.mansart.jpa.core.model.AssociationAttribute;
 import io.vidocq.mansart.jpa.core.model.AttributeModel;
 import io.vidocq.mansart.jpa.core.model.BasicAttribute;
 import io.vidocq.mansart.jpa.core.model.ColumnModel;
@@ -27,6 +28,7 @@ import io.vidocq.mansart.jpa.core.model.EmbeddableModel;
 import io.vidocq.mansart.jpa.core.model.EmbeddedAttribute;
 import io.vidocq.mansart.jpa.core.model.EntityModel;
 import io.vidocq.mansart.jpa.core.model.IdModel;
+import io.vidocq.mansart.jpa.core.model.JoinColumnModel;
 import io.vidocq.mansart.jpa.core.model.TableModel;
 import io.vidocq.mansart.jpa.core.session.NotYet;
 import io.vidocq.mansart.jpa.core.spi.ManagedAccess;
@@ -37,6 +39,7 @@ import io.vidocq.mansart.jpa.dialect.sql.Select;
 import io.vidocq.mansart.jpa.dialect.sql.Table;
 import io.vidocq.mansart.jpa.dialect.sql.Update;
 import jakarta.persistence.GenerationType;
+import jakarta.persistence.PersistenceException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -61,9 +64,27 @@ public final class EntityStatements {
      * @param path the indexes, in the nested embeddables, that lead from the attribute to the column; empty for a basic
      *        attribute
      * @param accesses the access of each embeddable along {@code path}
+     * @param foreignKey for a column of an owned single-valued relationship, the part of the target's key it holds;
+     *        {@code null} otherwise
      */
     public record Column(Identifier name, ValueBinder binder, int attribute, int[] path, ManagedAccess[] accesses, boolean id,
-            boolean version, boolean insertable, boolean updatable, int table) {
+            boolean version, boolean insertable, boolean updatable, int table, ForeignKey foreignKey) {
+    }
+
+    /**
+     * What a foreign key column holds: part {@code part} of the key of the instance its relationship references, in
+     * the order of {@link #keyValues(Object)} of the target.
+     */
+    public record ForeignKey(Class<?> target, int part) {
+    }
+
+    /**
+     * An owned single-valued relationship (§2.10): the attribute and its foreign key columns, in the order of the
+     * target's key parts.
+     *
+     * @param columns the indexes, in {@link #columns()}, of its foreign key columns
+     */
+    public record Reference(int attribute, Class<?> target, int[] columns) {
     }
 
     /**
@@ -88,23 +109,33 @@ public final class EntityStatements {
 
     private final String entity;
     private final String unsupported;
+    private final Function<Class<?>, MappedEntity> entities;
+    private final List<Reference> references;
     private final List<Column> columns;
     private final List<TableStatements> tables;
     private final Integer version;
     private final Select versionSelect;
 
-    private EntityStatements(String entity, String unsupported, List<Column> columns, List<TableStatements> tables, Integer version,
-            Select versionSelect) {
+    private EntityStatements(String entity, String unsupported, Function<Class<?>, MappedEntity> entities, List<Reference> references,
+            List<Column> columns, List<TableStatements> tables, Integer version, Select versionSelect) {
         this.entity = entity;
         this.unsupported = unsupported;
+        this.entities = entities;
+        this.references = references;
         this.columns = columns;
         this.tables = tables;
         this.version = version;
         this.versionSelect = versionSelect;
     }
 
+    /**
+     * @param models the entity models of the unit, by class: the targets of relationships
+     * @param entities the mapped entities of the unit, by class, looked up when values are computed (not before: the
+     *        unit is still being mapped when this is called)
+     */
     static EntityStatements of(EntityModel model, int[] idAttributes, Function<BasicAttribute, ValueBinder> binders,
-            Function<EmbeddableModel, ManagedAccess> embeddables) {
+            Function<EmbeddableModel, ManagedAccess> embeddables, Function<Class<?>, EntityModel> models,
+            Function<Class<?>, MappedEntity> entities) {
         if (model.superEntity().isPresent()) {
             return unsupported(model, "P6", "entity inheritance");
         }
@@ -121,17 +152,24 @@ public final class EntityStatements {
         tableNames.add(model.table().name());
         model.secondaryTables().forEach(t -> tableNames.add(t.table().name()));
         List<Column> columns = new ArrayList<>();
+        List<Reference> references = new ArrayList<>();
         List<AttributeModel> attributes = model.attributes();
         for (int i = 0; i < attributes.size(); i++) {
             boolean id = ids.contains(i);
             switch (attributes.get(i)) {
                 case BasicAttribute basic -> columns.add(new Column(Identifier.of(basic.column().name()), binders.apply(basic), i,
                     new int[0], new ManagedAccess[0], id, basic.version(), basic.column().insertable(), basic.column().updatable(),
-                    tableIndex(basic.column().table(), tableNames)));
+                    tableIndex(basic.column().table(), tableNames), null));
                 case EmbeddedAttribute embedded -> flatten(embedded, embedded.embeddable(), "", i, new int[0], new ManagedAccess[0], id,
                     binders, embeddables, tableNames, columns);
+                case AssociationAttribute association when association.singleValued() && association.owning() -> {
+                    String problem = foreignKey(association, i, models, binders, tableNames, columns, references);
+                    if (problem != null) {
+                        return unsupported(model, "P5", problem);
+                    }
+                }
                 default -> {
-                    // relationship columns come with P5, element collections with their own tables (P5)
+                    // inverse sides have no column; collections and element collections have their own tables
                 }
             }
         }
@@ -170,7 +208,105 @@ public final class EntityStatements {
         TableStatements primary = tables.getFirst();
         Select versionSelect = new Select(primary.select().table(), List.of(columns.get(version != null ? version : keys.getFirst()).name()),
             primary.select().conditions());
-        return new EntityStatements(model.entityName(), null, List.copyOf(columns), List.copyOf(tables), version, versionSelect);
+        return new EntityStatements(model.entityName(), null, entities, List.copyOf(references), List.copyOf(columns),
+            List.copyOf(tables), version, versionSelect);
+    }
+
+    // ---- foreign keys (§2.10, §11.1.25) -------------------------------------------------------------------
+
+    /** A key column of an entity: its name and binder, in the order of {@link #keyValues(Object)}. */
+    private record KeyColumn(String name, ValueBinder binder) {
+    }
+
+    /**
+     * Adds the foreign key columns of the owned single-valued relationship {@code association}: one per key column of
+     * its target, named by its {@code @JoinColumn}s or by default {@code <attribute>_<referenced column>} (§2.10.3.1,
+     * §11.1.25). Returns what P5 does not map yet, or {@code null}.
+     */
+    private static String foreignKey(AssociationAttribute association, int attribute, Function<Class<?>, EntityModel> models,
+            Function<BasicAttribute, ValueBinder> binders, List<String> tableNames, List<Column> columns, List<Reference> references) {
+        if (association.joinTable() != null) {
+            return "a single-valued relationship through a join table";
+        }
+        EntityModel target = models.apply(association.targetEntity());
+        if (target == null) {
+            throw new PersistenceException("The relationship " + association.name() + " of " + association.declaringClass().getName()
+                + " references " + association.targetEntity().getName() + ", which is not an entity of the persistence unit");
+        }
+        List<KeyColumn> keys = keyColumns(target, binders);
+        if (keys == null) {
+            return "a relationship to an entity with a derived identity or a nested embedded identifier";
+        }
+        List<JoinColumnModel> written = association.joinColumns();
+        if (!written.isEmpty() && written.size() != keys.size()) {
+            throw new PersistenceException("The relationship " + association.name() + " of " + association.declaringClass().getName()
+                + " has " + written.size() + " join columns, its target " + target.entityName() + " a key of " + keys.size());
+        }
+        int[] indexes = new int[keys.size()];
+        boolean[] mapped = new boolean[keys.size()];
+        for (int k = 0; k < keys.size(); k++) {
+            JoinColumnModel join = written.isEmpty() ? JoinColumnModel.defaults() : written.get(k);
+            int part = k;
+            if (join.referencedColumnName() != null) {
+                part = -1;
+                for (int candidate = 0; candidate < keys.size(); candidate++) {
+                    if (keys.get(candidate).name().equalsIgnoreCase(join.referencedColumnName())) {
+                        part = candidate;
+                    }
+                }
+                if (part < 0) {
+                    return "a join column referencing " + join.referencedColumnName() + ", which is not a key column of "
+                        + target.entityName();
+                }
+            } else if (written.size() > 1) {
+                throw new PersistenceException("The join columns of " + association.name() + " of "
+                    + association.declaringClass().getName() + " must name their referencedColumnName (§11.1.25)");
+            }
+            if (mapped[part]) {
+                throw new PersistenceException("Two join columns of " + association.name() + " of "
+                    + association.declaringClass().getName() + " reference " + keys.get(part).name());
+            }
+            mapped[part] = true;
+            String name = join.name() != null ? join.name() : association.name() + "_" + keys.get(part).name();
+            indexes[part] = columns.size();
+            columns.add(new Column(Identifier.of(name), keys.get(part).binder(), attribute, new int[0], new ManagedAccess[0], false,
+                false, join.insertable(), join.updatable(), tableIndex(join.table(), tableNames),
+                new ForeignKey(association.targetEntity(), part)));
+        }
+        references.add(new Reference(attribute, association.targetEntity(), indexes));
+        return null;
+    }
+
+    /**
+     * The key columns of {@code entity}, in the order of its key parts: its {@code @Id}, the attributes of its
+     * {@code @EmbeddedId}, or its {@code @IdClass} parts; {@code null} for keys P5 does not reference yet.
+     */
+    private static List<KeyColumn> keyColumns(EntityModel entity, Function<BasicAttribute, ValueBinder> binders) {
+        return switch (entity.id()) {
+            case IdModel.Single single -> List.of(new KeyColumn(single.attribute().column().name(), binders.apply(single.attribute())));
+            case IdModel.Embedded embedded -> {
+                List<KeyColumn> keys = new ArrayList<>();
+                for (AttributeModel part : embedded.attribute().embeddable().attributes()) {
+                    if (!(part instanceof BasicAttribute basic)) {
+                        yield null;
+                    }
+                    ColumnModel column = embedded.attribute().column(basic.name()).orElse(basic.column());
+                    keys.add(new KeyColumn(column.name(), binders.apply(basic)));
+                }
+                yield keys;
+            }
+            case IdModel.ByIdClass byIdClass -> {
+                List<KeyColumn> keys = new ArrayList<>();
+                for (AttributeModel part : byIdClass.attributes()) {
+                    if (!(part instanceof BasicAttribute basic)) {
+                        yield null;
+                    }
+                    keys.add(new KeyColumn(basic.column().name(), binders.apply(basic)));
+                }
+                yield keys;
+            }
+            case IdModel.Derived _ -> null;
+        };
     }
 
     /** The statements of table {@code t}; {@code null} for a secondary table no column is mapped to. */
@@ -249,7 +385,7 @@ public final class EntityStatements {
                 case BasicAttribute basic -> {
                     ColumnModel column = owner.column(prefix + basic.name()).orElse(basic.column());
                     columns.add(new Column(Identifier.of(column.name()), binders.apply(basic), attribute, nested, along, id, false,
-                        column.insertable(), column.updatable(), tableIndex(column.table(), tableNames)));
+                        column.insertable(), column.updatable(), tableIndex(column.table(), tableNames), null));
                 }
                 case EmbeddedAttribute inner -> flatten(owner, inner.embeddable(), prefix + inner.name() + ".", attribute, nested,
                     along, id, binders, embeddableAccess, tableNames, columns);
@@ -266,7 +402,7 @@ public final class EntityStatements {
     }
 
     private static EntityStatements unsupported(EntityModel model, String milestone, String feature) {
-        return new EntityStatements(model.entityName(), milestone + ":" + feature, List.of(), List.of(), null, null);
+        return new EntityStatements(model.entityName(), milestone + ":" + feature, null, List.of(), List.of(), List.of(), null, null);
     }
 
     private void check() {
@@ -289,12 +425,112 @@ public final class EntityStatements {
         for (int c = 0; c < values.length; c++) {
             Column column = columns.get(c);
             Object value = state[column.attribute()];
+            if (column.foreignKey() != null) {
+                values[c] = value == null ? null : keyPart(value, column.foreignKey());
+                continue;
+            }
             for (int step = 0; step < column.path().length && value != null; step++) {
                 value = column.accesses()[step].get(value, column.path()[step]);
             }
             values[c] = value;
         }
         return values;
+    }
+
+    /** The part of the key of {@code target} a foreign key column holds; {@code null} while the key is not assigned. */
+    private Object keyPart(Object target, ForeignKey foreignKey) {
+        MappedEntity type = entities.apply(target.getClass());
+        if (type == null) {
+            type = entities.apply(foreignKey.target());
+        }
+        Object id = type.id(target);
+        return id == null ? null : type.statements().keyValues(id)[foreignKey.part()];
+    }
+
+    /** The owned single-valued relationships, with their foreign key columns. */
+    public List<Reference> references() {
+        check();
+        return references;
+    }
+
+    /**
+     * The identity of the instance a reference holds, from the values of its foreign key columns in a row; {@code null}
+     * when they are all SQL {@code NULL}.
+     */
+    public Object referencedKey(Reference reference, Object[] values) {
+        check();
+        Object[] parts = new Object[reference.columns().length];
+        boolean empty = true;
+        for (int k = 0; k < parts.length; k++) {
+            parts[k] = values[reference.columns()[k]];
+            empty &= parts[k] == null;
+        }
+        if (empty) {
+            return null;
+        }
+        return parts.length == 1 ? parts[0] : CompositeId.of(parts);
+    }
+
+    /** The reference whose foreign key columns hold the relationship attribute {@code attribute}, if this side owns it. */
+    public Optional<Reference> reference(int attribute) {
+        check();
+        return references.stream().filter(r -> r.attribute() == attribute).findFirst();
+    }
+
+    /**
+     * The select of the identifiers of the rows whose foreign key columns of {@code reference} hold given values, in
+     * the order of {@link #keyValues(Object)}: how the inverse side of a relationship finds its owners (§2.10). Its
+     * parameters are the foreign key columns.
+     */
+    public Select ownersSelect(Reference reference) {
+        check();
+        List<Identifier> conditions = new ArrayList<>();
+        for (int c : reference.columns()) {
+            if (columns.get(c).table() != 0) {
+                throw NotYet.milestone("P5", "a foreign key in a secondary table on the inverse side of a relationship (entity "
+                    + entity + ")");
+            }
+            conditions.add(columns.get(c).name());
+        }
+        TableStatements primary = tables.getFirst();
+        return new Select(primary.select().table(), primary.select().conditions(), conditions);
+    }
+
+    /** The identity whose key columns hold {@code values}, in the order of {@link #keyValues(Object)}. */
+    public Object key(Object[] values) {
+        check();
+        return values.length == 1 ? values[0] : CompositeId.of(values);
+    }
+
+    /** The key columns, in the order of {@link #keyValues(Object)}: the parameters of a select by identifier. */
+    public List<Column> keyColumns() {
+        check();
+        return tables.getFirst().selectParameters().stream().map(p -> columns.get(p.column())).toList();
+    }
+
+    /**
+     * The update writing the foreign key of {@code reference} alone: the keys of instances inserted later in a flush
+     * (a cycle), or the {@code NULL} written before a delete. Its parameters are {@link #referenceUpdateParameters}.
+     */
+    public Update referenceUpdate(Reference reference) {
+        check();
+        TableStatements statements = tables.get(columns.get(reference.columns()[0]).table());
+        List<Identifier> set = new ArrayList<>();
+        for (int c : reference.columns()) {
+            set.add(columns.get(c).name());
+        }
+        return new Update(statements.delete().table(), set, statements.select().conditions());
+    }
+
+    /** The parameters of {@link #referenceUpdate(Reference)}: the foreign key columns, then the key. */
+    public List<Parameter> referenceUpdateParameters(Reference reference) {
+        check();
+        List<Parameter> parameters = new ArrayList<>();
+        for (int c : reference.columns()) {
+            parameters.add(new Parameter(c, false));
+        }
+        parameters.addAll(tables.get(columns.get(reference.columns()[0]).table()).selectParameters());
+        return List.copyOf(parameters);
     }
 
     /**
@@ -308,6 +544,10 @@ public final class EntityStatements {
         int c = 0;
         while (c < columns.size()) {
             Column column = columns.get(c);
+            if (column.foreignKey() != null) {
+                c++; // the loader resolves the instance it references
+                continue;
+            }
             if (column.path().length == 0) {
                 state[column.attribute()] = values[c++];
                 continue;

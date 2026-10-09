@@ -134,7 +134,7 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
 
     /** Builds managed instances from rows, with the dialect and SQL of the flush engine. */
     EntityLoader loader(Connection connection) {
-        return new EntityLoader(flushEngine(connection));
+        return new EntityLoader(flushEngine(connection), mapping());
     }
 
     /** The mapped persistence unit: entity model, generated access and binders. */

@@ -111,7 +111,8 @@ public final class MappedUnit {
             ManagedAccess idClass = entity.id() instanceof IdModel.ByIdClass byIdClass ? idClassAccess(byIdClass, loader) : null;
             StatePolicy state = StatePolicy.of(entity.attributes(), embeddables::get, valueBinders);
             mapped.put(entity.javaType(), new MappedEntity(entity, entities.get(entity.javaType()), root(model, entity), embeddedId,
-                idClass, state, m -> EntityStatements.of(m, MappedEntity.idIndexes(m), binders::get, embeddables::get),
+                idClass, state, m -> EntityStatements.of(m, MappedEntity.idIndexes(m), binders::get, embeddables::get,
+                    target -> model.entity(target).orElse(null), mapped::get),
                 ranks.get(entity.javaType())));
         }
         return new MappedUnit(model, entities, embeddables, binders, mapped);
@@ -119,7 +120,8 @@ public final class MappedUnit {
 
     /**
      * Orders the entities for inserts (Kahn): an entity after those its owned to-one relationships reference. Entities
-     * of a cycle keep the order of the unit, after the others; the database then needs deferred constraints.
+     * of a cycle keep the order of the unit, after the others; the flush writes the foreign keys a cycle leaves
+     * dangling with an update once the rows exist.
      */
     private static Map<Class<?>, Integer> ranks(PersistenceUnitModel model) {
         Set<Class<?>> entities = new LinkedHashSet<>();
@@ -128,11 +130,9 @@ public final class MappedUnit {
         for (EntityModel entity : model.entities()) {
             Set<Class<?>> targets = new LinkedHashSet<>();
             for (AttributeModel attribute : entity.attributes()) {
-                if (attribute instanceof AssociationAttribute association && association.mappedBy() == null
-                        && (association.kind() == AssociationAttribute.Kind.MANY_TO_ONE
-                        || association.kind() == AssociationAttribute.Kind.ONE_TO_ONE)
-                        && entities.contains(association.javaType()) && association.javaType() != entity.javaType()) {
-                    targets.add(association.javaType());
+                if (attribute instanceof AssociationAttribute association && association.owning() && association.singleValued()
+                        && entities.contains(association.targetEntity()) && association.targetEntity() != entity.javaType()) {
+                    targets.add(association.targetEntity());
                 }
             }
             references.put(entity.javaType(), targets);

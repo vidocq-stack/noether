@@ -55,9 +55,9 @@ class OperationsTest {
         String url = "jdbc:h2:mem:operations-" + DATABASES.incrementAndGet() + ";DB_CLOSE_DELAY=-1";
         database = DriverManager.getConnection(url, "sa", "");
         try (Statement ddl = database.createStatement()) {
-            // relationship columns come with P5: the rows hold the basic attributes only
             ddl.execute("create table Crew (id bigint primary key, name varchar(50), version int)");
-            ddl.execute("create table Sailor (id bigint primary key, name varchar(50))");
+            ddl.execute("create table Sailor (id bigint primary key, name varchar(50), crew_id bigint references Crew(id), "
+                + "formerCrew_id bigint references Crew(id))");
         }
         emf = new PersistenceConfiguration("operations").provider("io.vidocq.mansart.jpa.core.MansartPersistenceProvider")
             .managedClass(Crew.class).managedClass(Sailor.class).property(PersistenceConfiguration.JDBC_URL, url)

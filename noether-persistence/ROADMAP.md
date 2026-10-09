@@ -370,14 +370,25 @@ Spec: ch. 3 (entity operations), §3.6 (callbacks), §3.5 (optimistic / pessimis
 `core.exceptions`, `se.entityManager`. Closed at 609 / 2135 on 2026-10-08 (P3: 220); no failure of the gate areas is P4's (see
 [`TCK.md`](TCK.md)).
 
-### P5 — Relationships and collections ⏳
+### P5 — Relationships and collections 🚧
 
 Spec: ch. 2.10–2.12 (relationships, defaults), ch. 2.4.2 (derived identities), ch. 11
 (join columns / tables, collection tables, map keys, ordering).
 
-- [ ] `@OneToOne`, `@ManyToOne`, `@OneToMany`, `@ManyToMany`; owning / inverse sides,
-      `mappedBy`, join columns and join tables, unidirectional one-to-many.
-- [ ] Cascades, `orphanRemoval`, bidirectional consistency on flush.
+- [x] Relationship model (`model.AssociationAttribute`): target entity (`targetEntity`, the declared type, the element
+      type of a collection, the value type of a map), `mappedBy`, fetch, `optional`, `@JoinColumn(s)`, `@JoinTable`,
+      `@OrderBy`, `@OrderColumn`, `@MapsId`, as written; defaults that depend on the target applied at mapping.
+- [x] Single-valued relationships through foreign keys (`ToOneTest`): one column per key column of the target, named
+      `<attribute>_<referenced column>` by default or by `@JoinColumn` (`referencedColumnName` for composite keys);
+      inserts ordered by the target; a foreign key no order satisfies (a cycle, an instance of the same entity met
+      later) inserted `NULL` then written by an update, and cleared before the deletes of rows that reference each
+      other (no deferred constraints needed). Loaded with their owner (LAZY treated as EAGER for now, one select per
+      target — joins with the AST of P7), the inverse side of a one-to-one from the owner's key, one instance per
+      identity, cycles closed on the instance being loaded; `refresh` re-reads them.
+- [ ] `@OneToMany`, `@ManyToMany`, unidirectional one-to-many; join tables (single-valued ones included).
+- [x] `orphanRemoval` of single-valued relationships (§2.9): the remove cascades, a target let go is removed at flush;
+      `merge` without cascade points to the managed instance of the same identity (§3.2.7.1).
+- [ ] `orphanRemoval` and merge of collections, bidirectional consistency on flush.
 - [ ] Fetching: EAGER via joins or secondary selects; LAZY collections through Mansart collection
       wrappers; LAZY to-one through Class-File API subclasses (or treated as EAGER first — LAZY
       is only a hint to the provider). `PersistenceUnitUtil.isLoaded` / `PersistenceUtil` semantics.

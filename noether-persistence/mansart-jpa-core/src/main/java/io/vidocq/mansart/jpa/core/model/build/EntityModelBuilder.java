@@ -32,6 +32,9 @@ import io.vidocq.mansart.jpa.core.model.EmbeddedAttribute;
 import io.vidocq.mansart.jpa.core.model.EntityModel;
 import io.vidocq.mansart.jpa.core.model.GenerationModel;
 import io.vidocq.mansart.jpa.core.model.IdModel;
+import io.vidocq.mansart.jpa.core.model.JoinColumnModel;
+import io.vidocq.mansart.jpa.core.model.JoinTableModel;
+import io.vidocq.mansart.jpa.core.model.OrderColumnModel;
 import io.vidocq.mansart.jpa.core.model.PendingAttribute;
 import io.vidocq.mansart.jpa.core.model.PersistenceUnitModel;
 import io.vidocq.mansart.jpa.core.model.SecondaryTableModel;
@@ -45,6 +48,7 @@ import io.vidocq.mansart.jpa.core.model.source.AnnotationInfo;
 import io.vidocq.mansart.jpa.core.model.source.ClassFileSource;
 import io.vidocq.mansart.jpa.core.model.source.ClassInfo;
 import io.vidocq.mansart.jpa.core.model.source.FieldInfo;
+import io.vidocq.mansart.jpa.core.model.source.MethodInfo;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GenerationType;
@@ -240,13 +244,7 @@ public final class EntityModelBuilder {
         for (Map.Entry<String, AssociationAttribute.Kind> association : ASSOCIATIONS.entrySet()) {
             Optional<AnnotationInfo> annotation = element.annotation(association.getKey());
             if (annotation.isPresent()) {
-                AnnotationInfo relationship = annotation.get();
-                String mappedBy = relationship.has("mappedBy") ? nonEmpty(relationship.string("mappedBy")) : null;
-                Set<CascadeType> cascade = EnumSet.noneOf(CascadeType.class);
-                relationship.enumConstants("cascade").forEach(constant -> cascade.add(CascadeType.valueOf(constant)));
-                boolean orphanRemoval = relationship.has("orphanRemoval") && relationship.bool("orphanRemoval");
-                return new AssociationAttribute(member.name(), type, member.access(), declaring, association.getValue(),
-                    member.signature(), mappedBy, cascade, orphanRemoval);
+                return association(member, type, declaring, association.getValue(), annotation.get());
             }
         }
         if (element.isAnnotated(JPA + "ElementCollection")) {
@@ -266,6 +264,71 @@ public final class EntityModelBuilder {
                 + type.getName() + ", which is neither basic, embeddable, serializable nor converted (§2.8)");
         }
         return basic(member, type, declaring, entityOverrides.get(member.name()), conversion);
+    }
+
+    // ---- relationships (§2.10, §11.1.25 to §11.1.43) -------------------------------------------------------
+
+    private AttributeModel association(Member member, Class<?> type, Class<?> declaring, AssociationAttribute.Kind kind,
+            AnnotationInfo relationship) {
+        Annotated element = member.element();
+        Class<?> target = target(member, type, kind, relationship);
+        if (target == null) {
+            if (mappingFiles) {
+                return new PendingAttribute(member.name(), type, member.access(), declaring, member.signature());
+            }
+            throw new PersistenceException("The relationship " + member.name() + " of " + member.owner().name() + " is a raw "
+                + type.getName() + ": give its targetEntity, or the type of its elements (§2.10)");
+        }
+        String mappedBy = relationship.has("mappedBy") ? nonEmpty(relationship.string("mappedBy")) : null;
+        Set<CascadeType> cascade = EnumSet.noneOf(CascadeType.class);
+        relationship.enumConstants("cascade").forEach(constant -> cascade.add(CascadeType.valueOf(constant)));
+        boolean orphanRemoval = relationship.has("orphanRemoval") && relationship.bool("orphanRemoval");
+        FetchType fetch = FetchType.valueOf(relationship.enumConstant("fetch"));
+        boolean optional = !relationship.has("optional") || relationship.bool("optional");
+        JoinTableModel joinTable = element.annotation(JPA + "JoinTable").map(t -> new JoinTableModel(nonEmpty(t.string("name")),
+            nonEmpty(t.string("schema")), nonEmpty(t.string("catalog")), t.annotations("joinColumns").stream()
+                .map(EntityModelBuilder::joinColumn).toList(),
+            t.annotations("inverseJoinColumns").stream().map(EntityModelBuilder::joinColumn).toList())).orElse(null);
+        String orderBy = element.annotation(JPA + "OrderBy").map(o -> o.string("value").trim()).orElse(null);
+        OrderColumnModel orderColumn = element.annotation(JPA + "OrderColumn").map(o -> new OrderColumnModel(nonEmpty(o.string("name")),
+            o.bool("nullable"), o.bool("insertable"), o.bool("updatable"))).orElse(null);
+        String mapsId = element.annotation(JPA + "MapsId").map(m -> m.string("value")).orElse(null);
+        return new AssociationAttribute(member.name(), type, member.access(), declaring, kind, target, mappedBy, cascade, orphanRemoval, fetch, optional, joinColumns(element), joinTable, orderBy, orderColumn, mapsId);
+    }
+
+    /**
+     * The entity a relationship references (§11.1.26, §11.1.30, §11.1.38, §11.1.40): its {@code targetEntity}, else the
+     * declared type of a single-valued relationship, the element type of a collection, the value type of a map;
+     * {@code null} for a raw collection without {@code targetEntity}.
+     */
+    private Class<?> target(Member member, Class<?> type, AssociationAttribute.Kind kind, AnnotationInfo relationship) {
+        ClassDesc written = relationship.type("targetEntity");
+        if (written != null && !written.descriptorString().equals("V")) {
+            return Types.load(written, loader);
+        }
+        if (kind == AssociationAttribute.Kind.MANY_TO_ONE || kind == AssociationAttribute.Kind.ONE_TO_ONE) {
+            return type;
+        }
+        List<Class<?>> arguments = GenericSignatures.memberTypeArguments(member.signature(), member.element() instanceof MethodInfo,
+            loader);
+        if (arguments == null) {
+            return null;
+        }
+        return Map.class.isAssignableFrom(type) && arguments.size() == 2 ? arguments.get(1) : arguments.getFirst();
+    }
+
+    /** The {@code @JoinColumn}s written on an element, in order. */
+    private static List<JoinColumnModel> joinColumns(Annotated element) {
+        List<JoinColumnModel> columns = new ArrayList<>();
+        element.annotation(JPA + "JoinColumn").ifPresent(c -> columns.add(joinColumn(c)));
+        element.annotation(JPA + "JoinColumns").ifPresent(container ->
+            container.annotations("value").forEach(c -> columns.add(joinColumn(c))));
+        return columns;
+    }
+
+    private static JoinColumnModel joinColumn(AnnotationInfo column) {
+        return new JoinColumnModel(nonEmpty(column.string("name")), nonEmpty(column.string("referencedColumnName")),
+            nonEmpty(column.string("table")), column.bool("nullable"), column.bool("insertable"), column.bool("updatable"));
     }
 
     // ---- basic attributes (§2.8, §11.1.6) ----------------------------------------------------------------

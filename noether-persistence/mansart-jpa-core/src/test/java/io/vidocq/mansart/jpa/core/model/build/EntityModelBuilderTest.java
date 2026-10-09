@@ -21,6 +21,7 @@ package io.vidocq.mansart.jpa.core.model.build;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 import io.vidocq.mansart.jpa.core.model.AccessKind;
 import io.vidocq.mansart.jpa.core.model.AssociationAttribute;
@@ -33,6 +34,7 @@ import io.vidocq.mansart.jpa.core.model.ConverterModel;
 import io.vidocq.mansart.jpa.core.model.EntityModel;
 import io.vidocq.mansart.jpa.core.model.PendingAttribute;
 import io.vidocq.mansart.jpa.core.model.IdModel;
+import io.vidocq.mansart.jpa.core.model.JoinColumnModel;
 import io.vidocq.mansart.jpa.core.model.PersistenceUnitModel;
 import io.vidocq.mansart.jpa.core.model.ValueConversion;
 import io.vidocq.mansart.jpa.core.model.build.fixtures.*;
@@ -41,6 +43,12 @@ import io.vidocq.mansart.jpa.core.model.build.fixtures.DependentKey;
 import io.vidocq.mansart.jpa.core.model.build.fixtures.NamedDependent;
 import io.vidocq.mansart.jpa.core.model.build.fixtures.Parent;
 import io.vidocq.mansart.jpa.core.model.build.fixtures.XmlMapped;
+import io.vidocq.mansart.jpa.core.model.build.fixtures.rel.Dept;
+import io.vidocq.mansart.jpa.core.model.build.fixtures.rel.Desk;
+import io.vidocq.mansart.jpa.core.model.build.fixtures.rel.Emp;
+import io.vidocq.mansart.jpa.core.model.build.fixtures.rel.Meeting;
+import io.vidocq.mansart.jpa.core.model.build.fixtures.rel.Room;
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.PersistenceException;
@@ -364,17 +372,45 @@ class EntityModelBuilderTest {
         assertThat(mapped.attribute("parents").orElseThrow()).isInstanceOf(PendingAttribute.class);
     }
 
-    // ---- relationships (P5) and invalid mappings ------------------------------------------------------------
+    // ---- relationships (§2.10, §11.1) and invalid mappings ---------------------------------------------------
+
+    private static AssociationAttribute association(EntityModel entity, String name) {
+        return (AssociationAttribute) entity.attribute(name).orElseThrow();
+    }
 
     @Test
-    void relationshipsAndElementCollectionsAreRecordedForLater() {
+    void aRelationshipKnowsItsTargetFromItsTypeItsElementsOrItsTargetEntity() { // §2.10
         PersistenceUnitModel unit = build(Author.class, Book.class);
-        EntityModel author = unit.entity(Author.class).orElseThrow();
-        assertThat(author.attribute("books").orElseThrow()).isInstanceOfSatisfying(AssociationAttribute.class, a ->
-            assertThat(a.kind()).isEqualTo(AssociationAttribute.Kind.ONE_TO_MANY));
-        assertThat(author.attribute("aliases").orElseThrow()).isInstanceOf(ElementCollectionAttribute.class);
-        assertThat(unit.entity(Book.class).orElseThrow().attribute("author").orElseThrow())
-            .isInstanceOfSatisfying(AssociationAttribute.class, a -> assertThat(a.kind()).isEqualTo(AssociationAttribute.Kind.MANY_TO_ONE));
+        AssociationAttribute books = association(unit.entity(Author.class).orElseThrow(), "books");
+        assertThat(books.kind()).isEqualTo(AssociationAttribute.Kind.ONE_TO_MANY);
+        assertThat(books.targetEntity()).isEqualTo(Book.class); // List<Book>
+        assertThat(books.fetch()).isEqualTo(FetchType.LAZY);
+        assertThat(unit.entity(Author.class).orElseThrow().attribute("aliases").orElseThrow())
+            .isInstanceOf(ElementCollectionAttribute.class);
+        AssociationAttribute author = association(unit.entity(Book.class).orElseThrow(), "author");
+        assertThat(author.kind()).isEqualTo(AssociationAttribute.Kind.MANY_TO_ONE);
+        assertThat(author.targetEntity()).isEqualTo(Author.class);
+        assertThat(author.fetch()).isEqualTo(FetchType.EAGER);
+    }
+
+    @Test
+    void theJoinColumnsFetchAndOptionalityAreReadAsWritten() { // §11.1.25, §11.1.26, §11.1.40
+        EntityModel emp = entity(Emp.class, Dept.class, Desk.class);
+        AssociationAttribute dept = association(emp, "dept");
+        assertThat(dept.joinColumns()).isEmpty(); // the defaults depend on Dept, applied when the unit is mapped
+        assertThat(dept.owning()).isTrue();
+        assertThat(dept.optional()).isTrue();
+        AssociationAttribute manager = association(emp, "manager");
+        assertThat(manager.fetch()).isEqualTo(FetchType.LAZY);
+        assertThat(manager.joinColumns()).extracting(JoinColumnModel::name).containsExactly("MGR");
+        AssociationAttribute desk = association(emp, "desk");
+        assertThat(desk.orphanRemoval()).isTrue();
+        assertThat(desk.cascades(CascadeType.PERSIST)).isTrue();
+        assertThat(association(entity(Desk.class, Emp.class, Dept.class), "emp").mappedBy()).isEqualTo("desk");
+        AssociationAttribute room = association(entity(Meeting.class, Room.class), "room");
+        assertThat(room.optional()).isFalse();
+        assertThat(room.joinColumns()).extracting(JoinColumnModel::name, JoinColumnModel::referencedColumnName)
+            .containsExactly(tuple("BLDG", "building"), tuple("NUM", "number"));
     }
 
     @Test

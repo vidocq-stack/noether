@@ -47,9 +47,8 @@ import java.util.function.Function;
 
 /**
  * The entity operations of §3.2 on the persistence context of one entity manager — persist, remove, merge, refresh,
- * detach — with their cascades through the relationships of the object graph (§3.2.2 to §3.2.7). Relationship
- * columns, orphan removal and the merge of collections come with P5; identifier generation and callbacks with the
- * next slices of P4.
+ * detach — with their cascades through the relationships of the object graph (§3.2.2 to §3.2.7), and the orphan
+ * removal of single-valued relationships (§2.9). Collections, their orphans and their merge come with the rest of P5.
  */
 final class EntityOperations {
 
@@ -216,17 +215,48 @@ final class EntityOperations {
         }
     }
 
-    /** Copies the state of {@code from} onto {@code to}: values as they are, embeddables as new copies. */
+    /**
+     * Copies the state of {@code from} onto {@code to}: values as they are, embeddables as new copies, the target of a
+     * single-valued relationship that does not cascade merge replaced by the managed instance of its identity
+     * (§3.2.7.1); the relationships cascading merge are set by {@link #cascadeMerge}.
+     */
     private void copy(MappedEntity type, Object from, Object to) {
         Object[] state = new Object[type.model().attributes().size()];
         type.access().read(from, state);
         List<AttributeModel> attributes = type.model().attributes();
         for (int i = 0; i < state.length; i++) {
-            if (attributes.get(i) instanceof EmbeddedAttribute embedded && state[i] != null) {
+            if (state[i] == null) {
+                continue;
+            }
+            if (attributes.get(i) instanceof EmbeddedAttribute embedded) {
                 state[i] = copy(embedded.embeddable(), state[i]);
+            } else if (attributes.get(i) instanceof AssociationAttribute association && association.singleValued()
+                    && !association.cascades(CascadeType.MERGE)) {
+                state[i] = managedReference(state[i]);
             }
         }
         type.access().write(to, state);
+    }
+
+    /**
+     * The managed instance with the identity of {@code target}: itself if managed, else the context's or the one
+     * loaded; {@code target} unchanged if it is new (the flush then tells, §3.2.4).
+     */
+    private Object managedReference(Object target) {
+        if (context.entry(target).isPresent()) {
+            return target;
+        }
+        MappedEntity type = type(target);
+        Object id = type.id(target);
+        if (id == null) {
+            return target;
+        }
+        Optional<ManagedEntity> known = context.find(new EntityKey(type.root(), id));
+        if (known.isPresent()) {
+            return known.get().instance();
+        }
+        Object loaded = connections.on(connection -> factory.loader(connection).load(type, id, connection, context));
+        return loaded != null ? loaded : target;
     }
 
     private Object copy(EmbeddableModel embeddable, Object value) {
@@ -261,7 +291,7 @@ final class EntityOperations {
         ManagedEntity entry = context.entry(entity).filter(e -> e.status() == ManagedEntity.Status.MANAGED)
             .orElseThrow(() -> new IllegalArgumentException("Only a managed instance can be refreshed (§3.2.5)"));
         Object id = entry.key().id();
-        Object[] snapshot = connections.on(connection -> factory.loader(connection).refresh(type, id, entity, connection));
+        Object[] snapshot = connections.on(connection -> factory.loader(connection).refresh(type, id, entity, connection, context));
         if (snapshot == null) {
             throw new EntityNotFoundException("The row of " + type.model().entityName() + " " + id + " no longer exists");
         }
@@ -294,6 +324,7 @@ final class EntityOperations {
      * cascade persist must be managed or detached, a new one is an {@link IllegalStateException}.
      */
     void beforeFlush() {
+        removeOrphans();
         Set<Object> visited = visited();
         for (ManagedEntity entry : context.entries()) {
             if (entry.status() != ManagedEntity.Status.MANAGED) {
@@ -307,6 +338,30 @@ final class EntityOperations {
                 // any relationship from X, the inverse side as well as the owning one
                 if (attributes.get(i) instanceof AssociationAttribute association && !association.cascades(CascadeType.PERSIST)) {
                     targets(type.access().get(entity, i), target -> requireNotNew(entity, association, target));
+                }
+            }
+        }
+    }
+
+    /**
+     * §2.9: the target a single-valued relationship with {@code orphanRemoval} held at the last flush, and no longer
+     * holds, is removed. Done before the persist cascade, so that an orphan given to another owner that cascades
+     * persist is managed again.
+     */
+    private void removeOrphans() {
+        Set<Object> visited = visited();
+        for (ManagedEntity entry : context.entries()) {
+            if (entry.status() != ManagedEntity.Status.MANAGED || entry.snapshot() == null) {
+                continue;
+            }
+            List<AttributeModel> attributes = entry.type().model().attributes();
+            for (int i = 0; i < attributes.size(); i++) {
+                if (attributes.get(i) instanceof AssociationAttribute association && association.orphanRemoval()
+                        && association.singleValued()) {
+                    Object previous = entry.snapshot()[i];
+                    if (previous != null && previous != entry.type().access().get(entry.instance(), i) && context.contains(previous)) {
+                        remove(previous, visited);
+                    }
                 }
             }
         }

@@ -20,26 +20,51 @@
 package io.vidocq.mansart.jpa.core.model;
 
 import jakarta.persistence.CascadeType;
+import jakarta.persistence.FetchType;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Set;
 
 /**
- * A relationship (§2.10). Recorded by the model; its mapping (join columns, join tables, fetching, cascades) is
- * milestone P5.
+ * A relationship (§2.10, §11.1.26, §11.1.30, §11.1.38, §11.1.40), as its annotations write it: the defaults that
+ * depend on the other entities (join column names, the join table) are applied when the unit is mapped.
  *
- * @param genericSignature the generic signature of the attribute, to find the target entity of a collection
+ * @param targetEntity the entity it references: {@code targetEntity}, else the declared type of a single-valued
+ *        relationship, the element type of a collection, the value type of a map
  * @param mappedBy the {@code mappedBy} of the inverse side, or {@code null} on the owning side
+ * @param optional whether a single-valued relationship may be {@code null} ({@code optional}, §11.1.26 and §11.1.40)
+ * @param joinColumns the {@code @JoinColumn}s written on it, empty for the defaults
+ * @param joinTable its {@code @JoinTable}, or {@code null} if none is written
+ * @param orderBy the {@code @OrderBy} of a collection ({@code ""}: by primary key), or {@code null}
+ * @param orderColumn the {@code @OrderColumn} of a list, or {@code null}
+ * @param mapsId the {@code @MapsId} of a derived identity ({@code ""}: the whole identifier), or {@code null}
  */
 public record AssociationAttribute(String name, Class<?> javaType, AccessKind access, Class<?> declaringClass, Kind kind,
-        String genericSignature, String mappedBy, Set<CascadeType> cascade, boolean orphanRemoval) implements AttributeModel {
+        Class<?> targetEntity, String mappedBy, Set<CascadeType> cascade, boolean orphanRemoval, FetchType fetch, boolean optional,
+        List<JoinColumnModel> joinColumns, JoinTableModel joinTable, String orderBy, OrderColumnModel orderColumn, String mapsId)
+        implements AttributeModel {
 
     public AssociationAttribute {
         cascade = cascade.isEmpty() ? Set.of() : Set.copyOf(EnumSet.copyOf(cascade));
+        joinColumns = List.copyOf(joinColumns);
     }
 
-    /** Whether operation {@code type} cascades through this relationship (§3.2: {@code ALL} cascades every one). */
+    /**
+     * Whether operation {@code type} cascades through this relationship (§3.2: {@code ALL} cascades every one; §2.9:
+     * {@code orphanRemoval} cascades the remove).
+     */
     public boolean cascades(CascadeType type) {
-        return cascade.contains(type) || cascade.contains(CascadeType.ALL);
+        return cascade.contains(type) || cascade.contains(CascadeType.ALL) || type == CascadeType.REMOVE && orphanRemoval;
+    }
+
+    /** Whether it holds one instance ({@code @ManyToOne}, {@code @OneToOne}) rather than a collection or a map. */
+    public boolean singleValued() {
+        return kind == Kind.MANY_TO_ONE || kind == Kind.ONE_TO_ONE;
+    }
+
+    /** Whether this side owns the relationship (§2.10: the side without {@code mappedBy}). */
+    public boolean owning() {
+        return mappedBy == null;
     }
 
     /** The four relationship annotations. */
