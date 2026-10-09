@@ -29,6 +29,7 @@ import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
 import io.vidocq.mansart.jpa.core.mapping.MappedUnit;
 import io.vidocq.mansart.jpa.core.model.AssociationAttribute;
 import io.vidocq.mansart.jpa.core.model.AttributeModel;
+import io.vidocq.mansart.jpa.core.model.CollectionIndex;
 import io.vidocq.mansart.jpa.core.model.ElementCollectionAttribute;
 import io.vidocq.mansart.jpa.core.model.EmbeddableModel;
 import io.vidocq.mansart.jpa.core.model.EmbeddedAttribute;
@@ -219,7 +220,8 @@ final class EntityOperations {
                         replace(collection, elements); // a managed instance keeps its collection, with the managed elements
                     }
                 } else if (value instanceof Map<?, ?> map) {
-                    Map<Object, Object> entries = mappedMap(association, map, this::managedKey, target -> merge(target, merged));
+                    Map<Object, Object> entries = mappedMap(association, map, key -> managedKey(association, key),
+                        target -> merge(target, merged));
                     if (managed != entity) {
                         type.access().set(managed, i, entries);
                     } else {
@@ -258,7 +260,9 @@ final class EntityOperations {
                     state[i] = copy;
                 } else if (state[i] instanceof Map<?, ?> map) {
                     Map<Object, Object> copy = IndexMapping.newMap(elements.javaType());
-                    map.forEach((k, v) -> copy.put(k, value.apply(v)));
+                    map.forEach((k, v) -> copy.put(elements.index()
+                        instanceof CollectionIndex.ByEmbedded key
+                            ? copy(key.key().embeddable(), k) : k, value.apply(v)));
                     state[i] = copy;
                 }
             } else if (attributes.get(i) instanceof AssociationAttribute association) {
@@ -271,7 +275,7 @@ final class EntityOperations {
                     state[i] = mapped(association, collection,
                         association.cascades(CascadeType.MERGE) ? element -> element : this::managedReference);
                 } else if (state[i] instanceof Map<?, ?> map) {
-                    state[i] = mappedMap(association, map, this::managedKey,
+                    state[i] = mappedMap(association, map, key -> managedKey(association, key),
                         association.cascades(CascadeType.MERGE) ? element -> element : this::managedReference);
                 }
             }
@@ -301,8 +305,11 @@ final class EntityOperations {
         return mapped;
     }
 
-    /** A map key as the managed map holds it: the managed instance of an entity key, any other value as it is. */
-    private Object managedKey(Object key) {
+    /** A managed entity key, a copied embeddable key, or an unchanged basic key. */
+    private Object managedKey(AssociationAttribute association, Object key) {
+        if (association.index() instanceof CollectionIndex.ByEmbedded embedded) {
+            return copy(embedded.key().embeddable(), key);
+        }
         return key != null && factory.mapping().entity(key.getClass()).isPresent() ? managedReference(key) : key;
     }
 

@@ -22,6 +22,7 @@ package io.vidocq.mansart.jpa.core.query;
 import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
 import io.vidocq.mansart.jpa.core.mapping.MappedUnit;
 import io.vidocq.mansart.jpa.core.model.SqlResultSetMappingModel;
+import io.vidocq.mansart.jpa.dialect.sql.Identifier;
 import jakarta.persistence.CacheRetrieveMode;
 import jakarta.persistence.CacheStoreMode;
 import jakarta.persistence.FlushModeType;
@@ -247,7 +248,7 @@ public class NativeQuery extends AbstractQuery implements Query {
             return mappedResult(row, metadata, mapping);
         }
         if (resultClass != null && runtime.mapping().entity(resultClass).isPresent()) {
-            return entityResult(row, metadata, resultClass, List.of());
+            return entityResult(row, metadata, resultClass, List.of(), "");
         }
         if (columns == 1) {
             return convert(row.getObject(1), resultClass);
@@ -268,7 +269,7 @@ public class NativeQuery extends AbstractQuery implements Query {
             SqlResultSetMappingModel.Result result = mapping.results().get(i);
             values[i] = switch (result) {
                 case SqlResultSetMappingModel.EntityResult entity ->
-                    entityResult(row, metadata, entity.entityClass(), entity.fields());
+                    entityResult(row, metadata, entity.entityClass(), entity.fields(), entity.discriminatorColumn());
                 case SqlResultSetMappingModel.ConstructorResult constructor -> constructorResult(row, metadata, constructor);
                 case SqlResultSetMappingModel.ColumnResult column ->
                     convert(row.getObject(columnIndex(metadata, column.column())), column.type());
@@ -325,8 +326,8 @@ public class NativeQuery extends AbstractQuery implements Query {
         return type;
     }
 
-    private static int columnIndex(ResultSetMetaData metadata, String label) throws SQLException {
-        int column = findColumn(metadata, label);
+    private int columnIndex(ResultSetMetaData metadata, String label) throws SQLException {
+        int column = findColumn(metadata, runtime.mapping().identifier(label));
         if (column < 0) {
             throw new PersistenceException("The native result has no column " + label);
         }
@@ -334,21 +335,32 @@ public class NativeQuery extends AbstractQuery implements Query {
     }
 
     private Object entityResult(ResultSet row, ResultSetMetaData metadata, Class<?> type,
-            List<SqlResultSetMappingModel.FieldResult> fields) throws SQLException {
+            List<SqlResultSetMappingModel.FieldResult> fields, String discriminatorColumn) throws SQLException {
+        if (discriminatorColumn != null && !discriminatorColumn.isEmpty()) {
+            var inheritance = runtime.mapping().inheritance(type);
+            Class<?> concrete = (Class<?>) inheritance.binder(true).read(row, columnIndex(metadata, discriminatorColumn));
+            if (concrete == null || !type.isAssignableFrom(concrete)) {
+                throw new PersistenceException("Invalid native discriminator for " + type.getName());
+            }
+            type = concrete;
+        }
+        for (var field : fields) {
+            columnIndex(metadata, field.column());
+        }
         MappedEntity entity = runtime.mapping().entity(type).orElseThrow();
         List<io.vidocq.mansart.jpa.core.mapping.EntityStatements.Column> keyColumns = entity.statements().keyColumns();
         Object[] key = new Object[keyColumns.size()];
         for (int k = 0; k < keyColumns.size(); k++) {
-            String columnName = keyColumns.get(k).name().name();
+            Identifier columnName = keyColumns.get(k).name();
             if (!fields.isEmpty()) {
-                String keyColumnName = columnName;
+                Identifier keyColumnName = columnName;
                 String attribute = entity.model().attributes().stream()
                     .filter(a -> a instanceof io.vidocq.mansart.jpa.core.model.BasicAttribute basic
-                        && basic.column().name().equalsIgnoreCase(keyColumnName))
+                        && keyColumnName.equals(runtime.mapping().identifier(basic.column().name())))
                     .map(io.vidocq.mansart.jpa.core.model.AttributeModel::name).findFirst().orElse(null);
                 if (attribute != null) {
                     columnName = fields.stream().filter(field -> field.name().equals(attribute))
-                        .map(SqlResultSetMappingModel.FieldResult::column).findFirst().orElse(columnName);
+                        .map(field -> runtime.mapping().identifier(field.column())).findFirst().orElse(columnName);
                 }
             }
             int column = findColumn(metadata, columnName);
@@ -360,13 +372,18 @@ public class NativeQuery extends AbstractQuery implements Query {
         return runtime.find(entity, entity.statements().key(key), row.getStatement().getConnection());
     }
 
-    private static int findColumn(ResultSetMetaData metadata, String name) throws SQLException {
+    private static int findColumn(ResultSetMetaData metadata, Identifier name) throws SQLException {
+        int found = -1;
         for (int column = 1; column <= metadata.getColumnCount(); column++) {
-            if (name.equalsIgnoreCase(metadata.getColumnLabel(column)) || name.equalsIgnoreCase(metadata.getColumnName(column))) {
-                return column;
+            String label = metadata.getColumnLabel(column);
+            if (name.quoted() ? name.name().equals(label) : name.name().equalsIgnoreCase(label)) {
+                if (found >= 0) {
+                    throw new PersistenceException("Ambiguous native result column " + name.name());
+                }
+                found = column;
             }
         }
-        return -1;
+        return found;
     }
 
     private static Object convert(Object value, Class<?> type) {

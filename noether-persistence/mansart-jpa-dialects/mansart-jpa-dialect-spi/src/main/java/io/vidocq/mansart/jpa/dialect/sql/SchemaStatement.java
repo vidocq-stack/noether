@@ -5,11 +5,13 @@ import java.util.List;
 
 /** Schema-generation AST (§9.4); database-specific SQL belongs to the dialect, not the provider core. */
 public record SchemaStatement(Operation operation, Table table, List<Column> columns, List<Identifier> primaryKey,
-        Identifier objectName, List<String> indexColumns, boolean unique, long initialValue, int increment) implements Statement {
+        Identifier objectName, List<IndexColumn> indexColumns, boolean unique, long initialValue, int increment) implements Statement {
     public enum Operation { CREATE_TABLE, DROP_TABLE, CREATE_SEQUENCE, DROP_SEQUENCE, CREATE_SCHEMA, DROP_SCHEMA, CREATE_INDEX, TRUNCATE }
 
     public record Column(Identifier name, JDBCType type, int length, int precision, int scale,
             boolean nullable, boolean identity, boolean unique, String definition) {}
+
+    public record IndexColumn(Identifier name, boolean descending) {}
 
     public SchemaStatement {
         columns = List.copyOf(columns);

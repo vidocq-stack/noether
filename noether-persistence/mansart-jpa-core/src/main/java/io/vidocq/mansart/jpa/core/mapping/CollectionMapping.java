@@ -140,6 +140,7 @@ public sealed interface CollectionMapping {
     /** The keys of a map value, in the order of {@link #elements(Object)}; the positions of any other collection. */
     static List<Object> keys(Object value) {
         return switch (value) {
+            case null -> List.of();
             case Map<?, ?> map -> new ArrayList<>(map.keySet());
             case MapSnapshot snapshot -> new ArrayList<>(snapshot.keys());
             default -> {

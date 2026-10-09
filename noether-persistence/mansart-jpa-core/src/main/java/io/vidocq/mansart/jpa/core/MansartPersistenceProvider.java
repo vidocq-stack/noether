@@ -22,11 +22,16 @@ package io.vidocq.mansart.jpa.core;
 import io.vidocq.mansart.jpa.core.bootstrap.BeanValidation;
 import io.vidocq.mansart.jpa.core.bootstrap.Definitions;
 import io.vidocq.mansart.jpa.core.bootstrap.ManagedClasses;
+import io.vidocq.mansart.jpa.core.bootstrap.MappingFiles;
 import io.vidocq.mansart.jpa.core.bootstrap.PersistenceUnitDefinition;
 import io.vidocq.mansart.jpa.core.bootstrap.PersistenceUnits;
 import io.vidocq.mansart.jpa.core.bootstrap.UnitSettings;
 import io.vidocq.mansart.jpa.core.jdbc.ConnectionSources;
 import io.vidocq.mansart.jpa.core.mapping.MappedUnit;
+import io.vidocq.mansart.jpa.core.model.source.ClassFileSource;
+import io.vidocq.mansart.jpa.core.model.source.ClassInfos;
+import io.vidocq.mansart.jpa.core.model.xml.MappingFile;
+import io.vidocq.mansart.jpa.core.model.xml.OrmOverlay;
 import io.vidocq.mansart.jpa.core.session.EntityManagerFactoryImpl;
 import io.vidocq.mansart.jpa.core.spi.ManagedAccessProvider;
 import jakarta.persistence.EntityManagerFactory;
@@ -38,6 +43,7 @@ import jakarta.persistence.spi.LoadState;
 import jakarta.persistence.spi.PersistenceProvider;
 import jakarta.persistence.spi.PersistenceUnitInfo;
 import jakarta.persistence.spi.ProviderUtil;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.ServiceLoader;
@@ -162,7 +168,9 @@ public final class MansartPersistenceProvider implements PersistenceProvider {
     }
 
     private static MappedUnit mapping(UnitSettings settings, ClassLoader loader) {
-        return MappedUnit.of(ManagedClasses.of(settings.definition()), loader,
-            ManagedClasses.hasMappingFiles(settings.definition(), loader), ServiceLoader.load(ManagedAccessProvider.class, loader));
+        List<MappingFile> files = MappingFiles.of(settings.definition(), loader);
+        ClassInfos source = files.isEmpty() ? new ClassFileSource(loader) : OrmOverlay.of(files, loader);
+        return MappedUnit.of(ManagedClasses.of(settings.definition()), loader, source,
+            ServiceLoader.load(ManagedAccessProvider.class, loader));
     }
 }

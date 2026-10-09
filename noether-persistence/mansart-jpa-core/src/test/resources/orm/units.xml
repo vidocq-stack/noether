@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Mapping file of OrmXmlTest: XML-only classes, overrides of annotated ones, callbacks and unit-level queries. -->
+<entity-mappings xmlns="https://jakarta.ee/xml/ns/persistence/orm" version="3.2">
+    <persistence-unit-metadata>
+        <persistence-unit-defaults>
+            <entity-listeners>
+                <entity-listener class="io.vidocq.mansart.jpa.core.model.xml.fixtures.AuditListener">
+                    <pre-persist method-name="stamp"/>
+                </entity-listener>
+            </entity-listeners>
+        </persistence-unit-defaults>
+    </persistence-unit-metadata>
+    <package>io.vidocq.mansart.jpa.core.model.xml.fixtures</package>
+    <access>FIELD</access>
+    <named-query name="Plain.byLabel">
+        <query>SELECT p FROM Plain p WHERE p.label = :label</query>
+    </named-query>
+    <named-query name="Annotated.byLabel">
+        <query>SELECT a FROM Renamed a WHERE a.label = :label</query>
+    </named-query>
+    <named-native-query name="Plain.labels" result-set-mapping="Plain.labelColumn">
+        <query>SELECT P_LABEL FROM PLAIN_T ORDER BY P_LABEL</query>
+    </named-native-query>
+    <sql-result-set-mapping name="Plain.labelColumn">
+        <column-result name="P_LABEL"/>
+    </sql-result-set-mapping>
+    <entity class="Plain">
+        <table name="PLAIN_T"/>
+        <attributes>
+            <id name="id"/>
+            <basic name="label">
+                <column name="P_LABEL" length="40" nullable="false"/>
+            </basic>
+            <basic name="price"/>
+            <element-collection name="tags" target-class="java.lang.String">
+                <column name="TAG"/>
+                <collection-table name="PLAIN_TAGS">
+                    <join-column name="PLAIN_ID"/>
+                </collection-table>
+            </element-collection>
+            <embedded name="address">
+                <attribute-override name="city">
+                    <column name="P_CITY"/>
+                </attribute-override>
+            </embedded>
+            <transient name="note"/>
+        </attributes>
+    </entity>
+    <entity class="Annotated" name="Renamed">
+        <table name="REN_T"/>
+        <attributes>
+            <basic name="label">
+                <column name="X_LABEL"/>
+            </basic>
+            <transient name="note"/>
+        </attributes>
+    </entity>
+    <entity class="Complete" metadata-complete="true">
+        <attributes>
+            <id name="id"/>
+            <basic name="kept"/>
+            <transient name="dropped"/>
+        </attributes>
+    </entity>
+    <entity class="Owner">
+        <attributes>
+            <id name="id"/>
+            <basic name="name"/>
+            <one-to-many name="items" mapped-by="owner">
+                <order-by>title</order-by>
+                <cascade>
+                    <cascade-persist/>
+                </cascade>
+            </one-to-many>
+        </attributes>
+    </entity>
+    <entity class="Item">
+        <attributes>
+            <id name="id"/>
+            <basic name="title"/>
+            <many-to-one name="owner">
+                <join-column name="OWNER_FK"/>
+            </many-to-one>
+        </attributes>
+    </entity>
+    <entity class="Watched">
+        <entity-listeners>
+            <entity-listener class="WatchListener"/>
+        </entity-listeners>
+        <pre-persist method-name="onPersist"/>
+        <attributes>
+            <id name="id"/>
+        </attributes>
+    </entity>
+    <entity class="Excluded">
+        <exclude-default-listeners/>
+        <attributes>
+            <id name="id"/>
+        </attributes>
+    </entity>
+    <embeddable class="Address">
+        <attributes>
+            <basic name="city"/>
+            <basic name="zip">
+                <column name="ZIP_CODE"/>
+            </basic>
+        </attributes>
+    </embeddable>
+</entity-mappings>

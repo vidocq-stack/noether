@@ -20,7 +20,10 @@
 package io.vidocq.mansart.jpa.processorit.closed;
 
 import jakarta.persistence.Entity;
+import jakarta.persistence.ElementCollection;
 import jakarta.persistence.Id;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /** An entity with private state in a package Mansart is not given access to. */
 @Entity
@@ -29,7 +32,18 @@ public class Ledger {
     private long id;
     private String owner;
     private Balance balance;
+    @ElementCollection
+    private Map<Balance, String> balances = new LinkedHashMap<>();
 
     protected Ledger() {
+    }
+
+    public Ledger(long id) {
+        this.id = id;
+        this.balance = new Balance(0, "EUR");
+    }
+
+    public Map<Balance, String> balances() {
+        return balances;
     }
 }

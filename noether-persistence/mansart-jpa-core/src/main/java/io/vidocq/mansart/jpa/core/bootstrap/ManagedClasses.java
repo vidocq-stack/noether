@@ -68,14 +68,6 @@ public final class ManagedClasses {
         return List.copyOf(classes);
     }
 
-    /**
-     * Whether the unit has XML mapping files (§8.2.1.6.2): {@code mapping-file} elements, or a
-     * {@code META-INF/orm.xml} visible to its class loader.
-     */
-    public static boolean hasMappingFiles(PersistenceUnitDefinition unit, ClassLoader loader) {
-        return !unit.mappingFileNames().isEmpty() || loader.getResource("META-INF/orm.xml") != null;
-    }
-
     private static void scan(URL location, Set<String> into) {
         try {
             if ("file".equals(location.getProtocol()) && Files.isDirectory(Path.of(location.toURI()))) {

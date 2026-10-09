@@ -23,7 +23,7 @@ import io.vidocq.mansart.jpa.core.jdbc.type.ValueBinder;
 import io.vidocq.mansart.jpa.core.model.EntityModel;
 import io.vidocq.mansart.jpa.core.model.PersistenceUnitModel;
 import io.vidocq.mansart.jpa.core.model.SecondaryTableModel;
-import io.vidocq.mansart.jpa.core.model.source.ClassFileSource;
+import io.vidocq.mansart.jpa.core.model.source.ClassInfos;
 import io.vidocq.mansart.jpa.core.model.source.ClassInfo;
 import io.vidocq.mansart.jpa.dialect.Dialect;
 import io.vidocq.mansart.jpa.dialect.sql.Identifier;
@@ -47,9 +47,9 @@ public final class InheritanceMapping {
     private final String discriminatorType;
     private final Object value;
     private final Map<Class<?>, Object> discriminatorValues;
-    private final ClassFileSource source;
+    private final ClassInfos source;
 
-    InheritanceMapping(EntityModel model, PersistenceUnitModel unit, ClassFileSource source) {
+    InheritanceMapping(EntityModel model, PersistenceUnitModel unit, ClassInfos source) {
         this.source = source;
         List<EntityModel> ancestors = new ArrayList<>();
         for (EntityModel current = model; current != null;
@@ -206,13 +206,19 @@ public final class InheritanceMapping {
             List<Identifier> next = new ArrayList<>();
             for (int k = 0; k < keys.size(); k++) {
                 Identifier referenced = keys.get(k);
-                var join = joins.stream().filter(a -> a.string("referencedColumnName").equalsIgnoreCase(referenced.name()))
+                var join = joins.stream().filter(a -> {
+                    String name = a.string("referencedColumnName");
+                    if (name.isBlank()) return false;
+                    Identifier written = Identifier.of(name, source.delimitedIdentifiers());
+                    return written.quoted() || referenced.quoted()
+                        ? written.name().equals(referenced.name()) : written.name().equalsIgnoreCase(referenced.name());
+                })
                     .findFirst().orElse(joins.get(k).string("referencedColumnName").isBlank() ? joins.get(k) : null);
                 if (join == null) {
                     throw new PersistenceException("No primary key join column references " + referenced + " in "
                         + chain.get(t).entityName());
                 }
-                next.add(join.string("name").isBlank() ? referenced : Identifier.of(join.string("name")));
+                next.add(join.string("name").isBlank() ? referenced : Identifier.of(join.string("name"), source.delimitedIdentifiers()));
             }
             keys = List.copyOf(next);
         }

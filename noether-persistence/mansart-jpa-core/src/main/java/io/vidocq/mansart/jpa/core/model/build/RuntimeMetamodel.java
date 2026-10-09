@@ -6,6 +6,7 @@ package io.vidocq.mansart.jpa.core.model.build;
 
 import io.vidocq.mansart.jpa.core.model.*;
 import io.vidocq.mansart.jpa.core.model.source.ClassFileSource;
+import io.vidocq.mansart.jpa.core.model.source.ClassInfos;
 import jakarta.persistence.PersistenceException;
 import jakarta.persistence.metamodel.*;
 import java.lang.invoke.MethodHandles;
@@ -16,12 +17,17 @@ import java.util.function.Predicate;
 /** The chapter 5 model is a view of the mapped attributes, never a second access planner. */
 public final class RuntimeMetamodel implements Metamodel {
     private final Map<Class<?>, Managed<?>> managed = new LinkedHashMap<>();
-    private final ClassFileSource source;
+    private final ClassInfos source;
     private final ClassLoader loader;
 
     public RuntimeMetamodel(PersistenceUnitModel unit, ClassLoader loader) {
+        this(unit, new ClassFileSource(loader), loader);
+    }
+
+    /** The metamodel of {@code unit}, whose classes {@code source} describes as its model was built from them. */
+    public RuntimeMetamodel(PersistenceUnitModel unit, ClassInfos source, ClassLoader loader) {
         this.loader = loader;
-        source = new ClassFileSource(loader);
+        this.source = source;
         for (EntityModel entity : unit.entities()) {
             managed.put(entity.javaType(), new Entity<>(entity));
         }
@@ -56,6 +62,9 @@ public final class RuntimeMetamodel implements Metamodel {
             } else if (attribute instanceof ElementCollectionAttribute collection && collection.element() != null) {
                 collectEmbeddables(List.of(collection.element()));
             }
+            CollectionIndex index = attribute instanceof ElementCollectionAttribute c ? c.index()
+                : attribute instanceof AssociationAttribute a ? a.index() : null;
+            if (index instanceof CollectionIndex.ByEmbedded key) collectEmbeddables(List.of(key.key()));
         }
     }
 
@@ -356,6 +365,7 @@ public final class RuntimeMetamodel implements Metamodel {
             CollectionIndex index = model instanceof AssociationAttribute a ? a.index() : ((ElementCollectionAttribute) model).index();
             Class<?> keyType = switch (index) {
                 case CollectionIndex.ByColumn c -> c.key().javaType();
+                case CollectionIndex.ByEmbedded e -> e.key().javaType();
                 case CollectionIndex.ByEntity e -> e.entity();
                 case CollectionIndex.ByAttribute a -> {
                     var target = managed.get(element);

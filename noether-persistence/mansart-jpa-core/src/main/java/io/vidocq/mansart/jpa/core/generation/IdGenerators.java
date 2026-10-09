@@ -111,11 +111,18 @@ public final class IdGenerators {
 
     private final Dialect dialect;
     private final ConnectionSource connections;
+    private final java.util.function.Function<String, Identifier> identifiers;
     private final Map<String, Generator> generators = new ConcurrentHashMap<>();
 
     public IdGenerators(Dialect dialect, ConnectionSource connections) {
+        this(dialect, connections, Identifier::of);
+    }
+
+    public IdGenerators(Dialect dialect, ConnectionSource connections,
+            java.util.function.Function<String, Identifier> identifiers) {
         this.dialect = dialect;
         this.connections = connections;
+        this.identifiers = identifiers;
     }
 
     /**
@@ -163,7 +170,7 @@ public final class IdGenerators {
     /** A sequence incremented by {@code allocationSize}: the value read starts a block of that size. */
     private Generator sequence(SequenceGeneratorModel model) {
         String name = model.sequenceName() != null ? model.sequenceName() : model.name();
-        String sql = dialect.render(new NextValue(Identifier.of(name), identifier(model.schema()), identifier(model.catalog())));
+        String sql = dialect.render(new NextValue(identifier(name), identifier(model.schema()), identifier(model.catalog())));
         int allocation = Math.max(1, model.allocationSize());
         return generators.computeIfAbsent("sequence:" + sql, k -> new Blocks(caller -> {
             try (PreparedStatement next = caller.prepareStatement(sql); ResultSet value = next.executeQuery()) {
@@ -179,10 +186,10 @@ public final class IdGenerators {
      * caller must not hand the same values out again); a missing row is created at {@code initialValue}.
      */
     private Generator table(TableGeneratorModel model) {
-        Table table = new Table(Identifier.of(model.table() != null ? model.table() : "SEQUENCE"), identifier(model.schema()),
+        Table table = new Table(identifier(model.table() != null ? model.table() : "SEQUENCE"), identifier(model.schema()),
             identifier(model.catalog()));
-        Identifier key = Identifier.of(model.pkColumnName() != null ? model.pkColumnName() : "SEQ_NAME");
-        Identifier value = Identifier.of(model.valueColumnName() != null ? model.valueColumnName() : "SEQ_COUNT");
+        Identifier key = identifier(model.pkColumnName() != null ? model.pkColumnName() : "SEQ_NAME");
+        Identifier value = identifier(model.valueColumnName() != null ? model.valueColumnName() : "SEQ_COUNT");
         String row = model.pkColumnValue() != null ? model.pkColumnValue() : model.name() != null ? model.name() : "SEQ_GEN";
         String increment = dialect.render(new Increment(table, value, key));
         String select = dialect.render(new Select(table, List.of(value), List.of(key)));
@@ -228,8 +235,8 @@ public final class IdGenerators {
         }
     }
 
-    private static Identifier identifier(String name) {
-        return name == null || name.isBlank() ? null : Identifier.of(name);
+    private Identifier identifier(String name) {
+        return name == null || name.isBlank() ? null : identifiers.apply(name);
     }
 
     /** A generated value as the identifier type: §2.4 integral types, their wrappers, BigInteger, BigDecimal. */

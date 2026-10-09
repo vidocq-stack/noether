@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entity-mappings xmlns="https://jakarta.ee/xml/ns/persistence/orm" version="3.2">
+  <entity class="io.vidocq.mansart.jpa.core.model.xml.fixtures.EmbeddedLinks$Holder">
+    <association-override name="nested.links.target">
+      <join-column name="XmlNestedFk"/>
+    </association-override>
+    <attributes>
+      <embedded name="value">
+        <association-override name="target">
+          <join-column name="XmlEmbeddedFk">
+            <foreign-key constraint-mode="NO_CONSTRAINT"/>
+          </join-column>
+        </association-override>
+        <association-override name="targets">
+          <join-table name="XmlEmbeddedTargets">
+            <join-column name="HolderId"/>
+            <inverse-join-column name="TargetId"/>
+          </join-table>
+        </association-override>
+      </embedded>
+    </attributes>
+  </entity>
+</entity-mappings>

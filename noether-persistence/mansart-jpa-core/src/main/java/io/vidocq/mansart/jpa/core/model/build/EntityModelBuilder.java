@@ -38,7 +38,6 @@ import io.vidocq.mansart.jpa.core.model.NamedQueryModel;
 import io.vidocq.mansart.jpa.core.model.NamedStoredProcedureModel;
 import io.vidocq.mansart.jpa.core.model.JoinColumnModel;
 import io.vidocq.mansart.jpa.core.model.JoinTableModel;
-import io.vidocq.mansart.jpa.core.model.PendingAttribute;
 import io.vidocq.mansart.jpa.core.model.PersistenceUnitModel;
 import io.vidocq.mansart.jpa.core.model.SecondaryTableModel;
 import io.vidocq.mansart.jpa.core.model.SqlResultSetMappingModel;
@@ -50,6 +49,7 @@ import io.vidocq.mansart.jpa.core.model.build.AccessPlanner.Member;
 import io.vidocq.mansart.jpa.core.model.source.Annotated;
 import io.vidocq.mansart.jpa.core.model.source.AnnotationInfo;
 import io.vidocq.mansart.jpa.core.model.source.ClassFileSource;
+import io.vidocq.mansart.jpa.core.model.source.ClassInfos;
 import io.vidocq.mansart.jpa.core.model.source.ClassInfo;
 import io.vidocq.mansart.jpa.core.model.source.FieldInfo;
 import io.vidocq.mansart.jpa.core.model.source.MethodInfo;
@@ -67,6 +67,7 @@ import java.util.Collection;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -91,37 +92,36 @@ public final class EntityModelBuilder {
         JPA + "OneToOne", AssociationAttribute.Kind.ONE_TO_ONE, JPA + "ManyToOne", AssociationAttribute.Kind.MANY_TO_ONE,
         JPA + "OneToMany", AssociationAttribute.Kind.ONE_TO_MANY, JPA + "ManyToMany", AssociationAttribute.Kind.MANY_TO_MANY);
 
-    private final ClassFileSource source;
+    private final ClassInfos source;
     private final AccessPlanner planner;
     private final ClassLoader loader;
-    private final boolean mappingFiles;
     private final List<ClassInfo> listed = new ArrayList<>();
     private final List<ConverterModel> converters = new ArrayList<>();
     private final Map<String, EmbeddableModel> embeddables = new HashMap<>();
 
-    private EntityModelBuilder(ClassFileSource source, ClassLoader loader, boolean mappingFiles) {
+    private EntityModelBuilder(ClassInfos source, ClassLoader loader) {
         this.source = source;
         this.planner = new AccessPlanner(source);
         this.loader = loader;
-        this.mappingFiles = mappingFiles;
     }
 
-    /** The model of the managed classes named {@code classNames}, loaded with {@code loader}. */
+    /** The model of the managed classes named {@code classNames}, read from their class files with {@code loader}. */
     public static PersistenceUnitModel build(Collection<String> classNames, ClassLoader loader) {
-        return build(classNames, loader, false);
+        return build(classNames, new ClassFileSource(loader), loader);
     }
 
     /**
-     * The model of the managed classes named {@code classNames}, loaded with {@code loader}; with
-     * {@code mappingFiles}, the attributes the annotations cannot map are left to the unit's mapping files
-     * ({@link PendingAttribute}) instead of being errors.
+     * The model of the managed classes named {@code classNames} and of those the mapping files of {@code source} map,
+     * as {@code source} describes them, loaded with {@code loader}.
      */
-    public static PersistenceUnitModel build(Collection<String> classNames, ClassLoader loader, boolean mappingFiles) {
-        return new EntityModelBuilder(new ClassFileSource(loader), loader, mappingFiles).build(classNames);
+    public static PersistenceUnitModel build(Collection<String> classNames, ClassInfos source, ClassLoader loader) {
+        return new EntityModelBuilder(source, loader).build(classNames);
     }
 
     private PersistenceUnitModel build(Collection<String> classNames) {
-        for (String name : classNames) {
+        Set<String> names = new LinkedHashSet<>(classNames);
+        names.addAll(source.mappedClassNames());
+        for (String name : names) {
             listed.add(source.read(name).orElseThrow(() -> new PersistenceException("The managed class " + name
                 + " of the persistence unit cannot be found")));
         }
@@ -142,7 +142,26 @@ public final class EntityModelBuilder {
             resultSetMappings.addAll(sqlResultSetMappings(info));
             namedStoredProcedures.addAll(namedStoredProcedures(info));
         }
+        // §12.2.2: the queries and mappings of the mapping files replace the annotated ones of the same name
+        for (ClassInfo unit : mappingFileAnnotations()) {
+            replaceByName(namedQueries, namedQueries(unit), NamedQueryModel::name);
+            replaceByName(resultSetMappings, sqlResultSetMappings(unit), SqlResultSetMappingModel::name);
+            replaceByName(namedStoredProcedures, namedStoredProcedures(unit), NamedStoredProcedureModel::name);
+        }
         return new PersistenceUnitModel(entities, converters, namedQueries, resultSetMappings, namedStoredProcedures);
+    }
+
+    /** The annotations the mapping files write outside any class, each as the only annotation of a pseudo class. */
+    private List<ClassInfo> mappingFileAnnotations() {
+        return source.unitAnnotations().stream().map(annotation -> new ClassInfo("<mapping files>", null, List.of(), 0, null, false,
+            List.of(annotation), List.of(), List.<MethodInfo>of())).toList();
+    }
+
+    private static <T> void replaceByName(List<T> known, List<T> written, java.util.function.Function<T, String> name) {
+        for (T value : written) {
+            known.removeIf(k -> name.apply(k).equals(name.apply(value)));
+            known.add(value);
+        }
     }
 
     private List<NamedStoredProcedureModel> namedStoredProcedures(ClassInfo info) {
@@ -174,7 +193,8 @@ public final class EntityModelBuilder {
             for (AnnotationInfo entity : mapping.annotations("entities")) {
                 List<SqlResultSetMappingModel.FieldResult> fields = entity.annotations("fields").stream()
                     .map(field -> new SqlResultSetMappingModel.FieldResult(field.string("name"), field.string("column"))).toList();
-                items.add(new SqlResultSetMappingModel.EntityResult(Types.load(entity.type("entityClass"), loader), fields));
+                items.add(new SqlResultSetMappingModel.EntityResult(Types.load(entity.type("entityClass"), loader), fields,
+                    entity.string("discriminatorColumn")));
             }
             for (AnnotationInfo constructor : mapping.annotations("classes")) {
                 List<SqlResultSetMappingModel.ColumnResult> columns = constructor.annotations("columns").stream()
@@ -251,6 +271,12 @@ public final class EntityModelBuilder {
         AccessKind access = planner.defaultAccess(info, hierarchy);
         Map<String, AnnotationInfo> overrides = overrides(info);
         Map<String, AnnotationInfo> converts = converts(info);
+        Map<String, AnnotationInfo> associationOverrides = new LinkedHashMap<>();
+        for (ClassInfo declaring : hierarchy) {
+            declaring.annotation(JPA + "AssociationOverride").ifPresent(o -> associationOverrides.put(o.string("name"), o));
+            declaring.annotation(JPA + "AssociationOverrides").ifPresent(container ->
+                container.annotations("value").forEach(o -> associationOverrides.put(o.string("name"), o)));
+        }
 
         List<AttributeModel> attributes = new ArrayList<>();
         Map<AttributeModel, Member> members = new LinkedHashMap<>();
@@ -258,9 +284,28 @@ public final class EntityModelBuilder {
             for (Member member : planner.members(declaring, AccessPlanner.classAccess(declaring, access))) {
                 boolean inherited = declaring != info;
                 AttributeModel attribute = attribute(member, inherited ? overrides : Map.of(), inherited ? converts : Map.of());
+                if (attribute instanceof EmbeddedAttribute embedded) {
+                    Map<String, AnnotationInfo> nested = prefixed(associationOverrides, member.name() + ".");
+                    attribute = new EmbeddedAttribute(embedded.name(), embedded.javaType(), embedded.access(),
+                        embedded.declaringClass(), associationOverrides(embedded.embeddable(), nested), embedded.columns());
+                    associationOverrides.keySet().removeIf(path -> path.startsWith(member.name() + "."));
+                }
+                AnnotationInfo associationOverride = associationOverrides.remove(member.name());
+                if (associationOverride != null) {
+                    if (!inherited || !declaring.isAnnotated(JPA + "MappedSuperclass")
+                            || !(attribute instanceof AssociationAttribute relationship)) {
+                        throw new PersistenceException("The @AssociationOverride " + member.name() + " of " + info.name()
+                            + " must name a relationship inherited from a mapped superclass (§11.1.2)");
+                    }
+                    attribute = associationOverride(relationship, associationOverride);
+                }
                 attributes.add(attribute);
                 members.put(attribute, member);
             }
+        }
+        if (!associationOverrides.isEmpty()) {
+            throw new PersistenceException("The @AssociationOverride paths " + associationOverrides.keySet() + " of "
+                + info.name() + " are unknown");
         }
         IdModel id = id(info, hierarchy, members);
         Optional<BasicAttribute> version = attributes.stream().<BasicAttribute>mapMulti((attribute, versions) -> {
@@ -348,9 +393,6 @@ public final class EntityModelBuilder {
         ValueConversion conversion = entityConvert == null ? conversion(member, type)
             : explicit(entityConvert).orElseGet(() -> conversion(member, type));
         if (!(conversion instanceof ValueConversion.Converted) && !Types.isBasic(type) && !Serializable.class.isAssignableFrom(type)) {
-            if (mappingFiles) {
-                return new PendingAttribute(member.name(), type, member.access(), declaring, member.signature());
-            }
             throw new PersistenceException("The attribute " + member.name() + " of " + member.owner().name() + " has type "
                 + type.getName() + ", which is neither basic, embeddable, serializable nor converted (§2.8)");
         }
@@ -359,14 +401,37 @@ public final class EntityModelBuilder {
 
     // ---- relationships (§2.10, §11.1.25 to §11.1.43) -------------------------------------------------------
 
+    private static AssociationAttribute associationOverride(AssociationAttribute base, AnnotationInfo override) {
+        if (!base.owning()) {
+            throw new PersistenceException("The @AssociationOverride " + base.name() + " must name an owning relationship (§11.1.2)");
+        }
+        List<JoinColumnModel> columns = override.annotations("joinColumns").stream()
+            .map(EntityModelBuilder::joinColumn).toList();
+        boolean tableWritten = override.isWritten("joinTable");
+        if (tableWritten && !columns.isEmpty()) {
+            throw new PersistenceException("The @AssociationOverride " + base.name() + " cannot specify both joinColumns and joinTable");
+        }
+        boolean usesJoinTable = base.joinTable() != null || base.kind() == AssociationAttribute.Kind.MANY_TO_MANY
+            || base.kind() == AssociationAttribute.Kind.ONE_TO_MANY && base.joinColumns().isEmpty();
+        if (tableWritten && !usesJoinTable || !tableWritten && usesJoinTable && !columns.isEmpty()) {
+            throw new PersistenceException("The @AssociationOverride " + base.name()
+                + " must retain the relationship's foreign-key or join-table mapping (§11.1.2)");
+        }
+        AnnotationInfo table = tableWritten ? override.annotation("joinTable") : null;
+        JoinTableModel joinTable = table == null ? base.joinTable() : new JoinTableModel(nonEmpty(table.string("name")),
+            nonEmpty(table.string("schema")), nonEmpty(table.string("catalog")),
+            table.annotations("joinColumns").stream().map(EntityModelBuilder::joinColumn).toList(),
+            table.annotations("inverseJoinColumns").stream().map(EntityModelBuilder::joinColumn).toList());
+        return new AssociationAttribute(base.name(), base.javaType(), base.access(), base.declaringClass(), base.kind(),
+            base.targetEntity(), base.mappedBy(), base.cascade(), base.orphanRemoval(), base.fetch(), base.optional(),
+            tableWritten ? List.of() : columns, joinTable, base.orderBy(), base.index(), base.mapsId());
+    }
+
     private AttributeModel association(Member member, Class<?> type, Class<?> declaring, AssociationAttribute.Kind kind,
             AnnotationInfo relationship) {
         Annotated element = member.element();
         Class<?> target = target(member, type, kind, relationship);
         if (target == null) {
-            if (mappingFiles) {
-                return new PendingAttribute(member.name(), type, member.access(), declaring, member.signature());
-            }
             throw new PersistenceException("The relationship " + member.name() + " of " + member.owner().name() + " is a raw "
                 + type.getName() + ": give its targetEntity, or the type of its elements (§2.10)");
         }
@@ -427,9 +492,6 @@ public final class EntityModelBuilder {
                 : arguments.getFirst();
         }
         if (elementType == null) {
-            if (mappingFiles) {
-                return new PendingAttribute(member.name(), type, member.access(), declaring, member.signature());
-            }
             throw new PersistenceException("The element collection " + member.name() + " of " + member.owner().name() + " is a raw "
                 + type.getName() + ": give its targetClass, or the type of its elements (§2.7)");
         }
@@ -485,7 +547,8 @@ public final class EntityModelBuilder {
             return new CollectionIndex.ByEntity(keyType, keyJoins);
         }
         if (keyInfo.map(i -> i.isAnnotated(JPA + "Embeddable")).orElse(false)) {
-            return new CollectionIndex.Unsupported("embeddable map keys");
+            return new CollectionIndex.ByEmbedded(embedded(member, keyType, declaring,
+                prefixed(converts(element), "key."), "key."));
         }
         String defaultName = member.name() + "_KEY";
         ColumnModel column = element.annotation(JPA + "MapKeyColumn").map(c -> column(c, defaultName))
@@ -639,6 +702,16 @@ public final class EntityModelBuilder {
         Map<String, AnnotationInfo> converts = new LinkedHashMap<>(entityConverts);
         converts.putAll(converts(member.element())); // the attribute's own win
         EmbeddableModel embeddable = converted(embeddable(type, member.access()), converts);
+        List<AnnotationInfo> associationOverrides = new ArrayList<>();
+        source.read(type.getName()).ifPresent(info -> {
+            info.annotation(JPA + "AssociationOverride").ifPresent(associationOverrides::add);
+            info.annotation(JPA + "AssociationOverrides").ifPresent(a -> associationOverrides.addAll(a.annotations("value")));
+        });
+        member.element().annotation(JPA + "AssociationOverride").ifPresent(associationOverrides::add);
+        member.element().annotation(JPA + "AssociationOverrides").ifPresent(a -> associationOverrides.addAll(a.annotations("value")));
+        Map<String, AnnotationInfo> effective = new LinkedHashMap<>();
+        associationOverrides.forEach(a -> effective.put(a.string("name"), a));
+        embeddable = associationOverrides(embeddable, effective);
         Map<String, ColumnModel> columns = new LinkedHashMap<>();
         flatten(embeddable, "", columns);
         overrides(member.element()).forEach((written, override) -> {
@@ -648,6 +721,34 @@ public final class EntityModelBuilder {
             }
         });
         return new EmbeddedAttribute(member.name(), type, member.access(), declaring, embeddable, columns);
+    }
+
+    private static EmbeddableModel associationOverrides(EmbeddableModel model, Map<String, AnnotationInfo> overrides) {
+        if (overrides.isEmpty()) return model;
+        Map<String, AnnotationInfo> remaining = new LinkedHashMap<>(overrides);
+        List<AttributeModel> attributes = new ArrayList<>();
+        for (AttributeModel attribute : model.attributes()) {
+            AnnotationInfo override = remaining.remove(attribute.name());
+            if (override != null) {
+                if (!(attribute instanceof AssociationAttribute association)) {
+                    throw new PersistenceException("The @AssociationOverride " + attribute.name() + " of "
+                        + model.javaType().getName() + " does not name a relationship");
+                }
+                attribute = associationOverride(association, override);
+            }
+            if (attribute instanceof EmbeddedAttribute nested) {
+                Map<String, AnnotationInfo> paths = prefixed(remaining, nested.name() + ".");
+                attribute = new EmbeddedAttribute(nested.name(), nested.javaType(), nested.access(), nested.declaringClass(),
+                    associationOverrides(nested.embeddable(), paths), nested.columns());
+                remaining.keySet().removeIf(path -> path.startsWith(nested.name() + "."));
+            }
+            attributes.add(attribute);
+        }
+        if (!remaining.isEmpty()) {
+            throw new PersistenceException("The @AssociationOverride paths " + remaining.keySet() + " of "
+                + model.javaType().getName() + " are unknown");
+        }
+        return new EmbeddableModel(model.javaType(), model.access(), model.isRecord(), attributes);
     }
 
     /**
@@ -730,7 +831,6 @@ public final class EntityModelBuilder {
                     // §2.4.1: a derived identity, the relationship to the parent entity is (part of) the identifier
                     case AssociationAttribute relationship when relationship.kind() == AssociationAttribute.Kind.MANY_TO_ONE
                         || relationship.kind() == AssociationAttribute.Kind.ONE_TO_ONE -> ids.add(relationship);
-                    case PendingAttribute pending -> ids.add(pending);
                     default -> throw new PersistenceException("The identifier " + entry.getKey().name() + " of " + entity.name()
                         + " must be a basic attribute or a many-to-one or one-to-one relationship; an identifier of an "
                         + "embeddable type is an @EmbeddedId (§2.4)");
@@ -753,7 +853,7 @@ public final class EntityModelBuilder {
             case BasicAttribute basic -> new IdModel.Single(basic, generation(single, entity));
             case AssociationAttribute relationship -> new IdModel.Derived(relationship);
             default -> throw new PersistenceException("The identifier " + ids.getFirst().name() + " of " + entity.name()
-                + " is mapped by a mapping file, which Mansart does not read yet");
+                + " must be a basic attribute or a many-to-one or one-to-one relationship (§2.4)");
         };
     }
 
@@ -783,6 +883,8 @@ public final class EntityModelBuilder {
         places.add(idElement);
         places.add(entity);
         if (name != null) {
+            // the generators of the mapping files, outside any class, override the annotated ones (§12.2.2)
+            places.addAll(mappingFileAnnotations());
             for (ClassInfo info : listed) {
                 places.add(info);
                 places.addAll(info.fields());

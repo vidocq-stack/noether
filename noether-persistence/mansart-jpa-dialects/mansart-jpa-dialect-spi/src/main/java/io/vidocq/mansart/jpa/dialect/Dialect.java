@@ -67,10 +67,16 @@ public interface Dialect {
         });
     }
 
-    /** The JDBC call escape for {@code call}, in its declared parameter order (§3.11.12). */
+    /** The SQL invocation for {@code call}, preserving the ordinal JDBC parameter order (§3.11.12). */
     default String renderProcedureCall(ProcedureCall call) {
-        return "CALL " + call.procedureName() + "(" + String.join(", ",
+        return "CALL " + String.join(".", call.procedureName().stream().map(this::renderIdentifier).toList())
+            + "(" + String.join(", ",
             java.util.Collections.nCopies(call.parameters().size(), "?")) + ")";
+    }
+
+    /** A database object name, preserving delimited case and escaping embedded delimiters. */
+    default String renderIdentifier(Identifier identifier) {
+        return identifier.quoted() ? '"' + identifier.name().replace("\"", "\"\"") + '"' : identifier.name();
     }
 
     /** SQL that opens the result set behind a REF_CURSOR returned by a procedure. */

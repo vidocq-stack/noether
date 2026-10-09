@@ -270,3 +270,166 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
 - **Cause hypothesis**: the nontransactional no-op branch skipped the underlying entity manager's validation.
 - **Investigation**: 2026-10-09: the lifecycle regression was red. Require an open facade, and use a transient
   detached context to preserve entity argument validation for nontransactional `contains`/`detach`.
+
+## BUG-20261009-19 — Removing related rows together nulls NOT NULL foreign keys
+
+- **Date**: 2026-10-09
+- **Status**: FIXED (P10 working tree; no commit requested)
+- **Module**: `mansart-jpa-core`, `FlushEngine`
+- **Symptom**: removing an entity and the entity it references in one flush first issues
+  `UPDATE ... SET fk = NULL`, which fails on a `NOT NULL` foreign key (official TCK
+  `core.override.joincolumn.Client#testOverrideJoinColumns`, exposed once P10 mapped its orm.xml).
+- **Minimal reproduction**: `FlushEngineTest#rowsDeletedTogetherAreDeletedReferencingFirstWithoutClearingNotNullForeignKeys`;
+  `Book.author_id NOT NULL`, remove the author then the book, flush.
+- **Cause hypothesis**: `referencesBetween` cleared every reference between rows deleted in the same flush, even
+  when the delete order (referencing rows first) already satisfied the constraint.
+- **Investigation**: 2026-10-09: the H2 regression was red with the TCK's error. Only references whose target is
+  deleted earlier in the sorted delete list (a cycle or an order the ranks cannot give) are now cleared first.
+
+## BUG-20261009-20 — orm.xml `<delimited-identifiers/>` does not quote identifiers
+
+- **Date**: 2026-10-09
+- **Status**: FIXED (P10 hardening working tree; no commit requested)
+- **Module**: `mansart-jpa-core`, `OrmOverlay`
+- **Symptom**: a mapping file declaring `<persistence-unit-defaults><delimited-identifiers/>` is accepted with a
+  WARNING naming the file and line; identifiers are rendered unquoted (JPA 3.2 §2.13 requires them delimited).
+- **Minimal reproduction**: official TCK `core/entitytest/apitests/orm.xml` and `core/annotations/nativequery/orm.xml`.
+- **Cause hypothesis**: the dialect SPI has no delimited-identifier rendering; the official PostgreSQL TCK DDL
+  creates unquoted (folded) names, so quoting would also need case-preserving DDL to pass.
+- **Investigation**: 2026-10-09: kept as a logged warning rather than a silent success; quoting needs a dialect
+  identifier-rendering contract (outside P10's descriptor scope).
+  - 2026-10-09: the existing `Identifier` and dialects already support case-preserving quotation. The missing part
+    was propagating the unit default to all identifier construction sites. The overlay now exposes the policy;
+    schema generation, flush/load SQL, JPQL/Criteria discriminator expressions and sequence/table/identity
+    generation share it. Index/unique columns also carry `Identifier`, not untyped SQL fragments.
+  - Red/green H2 tests: `OrmXmlTest#delimitedIdentifiersApplyToDefaultsAnnotationsAndOtherMappingFiles`,
+    `#delimitedMixedCaseGeneratorsIndexesAndGeneratedKeysMatchTheirSchema`,
+    `#explicitDelimitedNamesAndDefaultForeignKeysWorkWithoutUnitDefaults`. Defaults, XML and annotated names,
+    embedded basics, collection/join tables, updates/deletes, mixed case and escaped explicit quotes are exercised.
+  - The untouched PostgreSQL TCK's two delimited-default fixtures conflict with its unquoted, lowercase-folded
+    DDL. The warning/ignore deviation is removed, not replaced by case folding or an official-DDL edit.
+    The resulting compatibility failures and exact counters are recorded in `TCK.md`.
+  - The current specification reference is §2.15 / §12.2.1.3 (the initial investigation cited §2.13).
+    Joined primary-key reference matching now respects delimited case as well; the H2 wrong-case regression is
+    `OrmXmlTest#aDelimitedPrimaryKeyReferenceCannotMatchADifferentlyCasedColumn`.
+  - 2026-10-09: the remaining native-result/stored-procedure identifier surface is fixed and tested separately
+    in BUG-20261009-23. This does not weaken case preservation or change the known official fixture/DDL conflict.
+
+## BUG-20261009-21 — Association overrides are rejected in XML and ignored in annotations
+
+- **Date**: 2026-10-09
+- **Status**: FIXED for inherited mapped-superclass relationships (working tree); embedded scope remains BUG-20261009-22
+- **Module**: `mansart-jpa-core`, `OrmOverlay`, `EntityModelBuilder`, `SchemaPlan`
+- **Symptom**: `@AssociationOverride` on an inherited relationship keeps the base foreign key/join table;
+  the XML equivalent fails as unsupported. Override foreign-key metadata does not reach schema generation.
+- **Minimal reproduction**: `OrmXmlTest#annotationAssociationOverridesRetainTheInheritedRelationshipContract`,
+  `#xmlAssociationOverridesReplaceAnnotationsWithoutReplacingRelationshipDefaults`,
+  `#overriddenInheritedJoinsStoreAndLoadWithTheUnitIdentifierPolicy`.
+- **Cause hypothesis**: the annotation builder had no association-override consumer; the XML overlay therefore
+  rejected the element. Schema generation separately reread the member's original join annotations.
+- **Investigation**:
+  - 2026-10-09: red annotation/model/XML and quoted H2 storage tests precede production changes. The same builder
+    now applies annotation/XML overrides to inherited mapped-superclass relationships, retaining target, access,
+    cascade, fetch, optionality and other base metadata. XML overrides annotated declarations by name.
+  - 2026-10-09: schema generation uses effective override join-table/foreign-key metadata, including
+    `NO_CONSTRAINT`; quoted H2 storage/loading and native constraint checks pass.
+  - 2026-10-09: overrides cannot silently change a default join-table relationship to foreign-key columns;
+    `OrmXmlTest#joinColumnsCannotSilentlyOverrideADefaultJoinTable` is red before the mapping-shape validation fix.
+
+## BUG-20261009-22 — Embedded relationship overrides have no executable mapping
+
+- **Date**: 2026-10-09
+- **Status**: FIXED (working tree; executable entity-owned embedded relationship overrides)
+- **Module**: `mansart-jpa-core`, embedded relationship mapping
+- **Symptom**: the model/metamodel can describe embedded relationships, but statement flattening has no nested
+  foreign-key/collection execution path. Accepting an override would misleadingly omit it from SQL.
+- **Minimal reproduction**: `OrmXmlTest#anEmbeddedRelationshipOverrideCannotBeAcceptedAndThenOmittedFromSql`;
+  an embedded `@ManyToOne` with `@AssociationOverride(name="target", ...)`.
+- **Cause hypothesis**: embedded column paths support basic values; nested references/collections are not mapped
+  by the current flush/load/cascade planners. Merely adding an XML annotation would not implement the contract.
+- **Investigation**:
+  - 2026-10-09: the regression originally raised no error. Embedded association overrides are now rejected at
+    bootstrap on annotation and XML paths (XML includes file/line). Existing embeddable metadata remains usable;
+    no unrelated metadata-only TCK regression is introduced. Full executable embedded joins remain undelivered.
+  - 2026-10-09: red H2 schema/CRUD tests now precede executable mapping. `EmbeddedPaths` lowers nested
+    associations and element collections to dotted execution-state slots, composing existing generated accesses;
+    the semantic model/metamodel stays hierarchical. The existing foreign-key, join-table, load, cascade,
+    merge, orphan-removal and snapshot planners consume those slots, rather than introducing a second engine.
+  - 2026-10-09: annotation/XML member and class dotted overrides clone the owner's embeddable view, retain the
+    relationship contract and never mutate the shared embeddable. JPQL/Criteria navigation, explicit joins,
+    collection predicates, inverse `mappedBy` dotted paths and effective schema foreign-key metadata are tested.
+    Nullable foreign keys no longer inherit the referenced identifier's non-nullability; a null embedded
+    indexed collection has no positions rather than throwing during flush.
+  - 2026-10-09: green real-schema regressions cover two uses of the same embeddable with distinct overrides,
+    ordered join tables, embedded basic element collections, persist/merge/refresh/detach/remove cascades,
+    dirty updates/nulls, orphan removal, record reconstruction and `NO_CONSTRAINT`. A closed application
+    Java module also executes through APT-generated access providers without new exports/opens.
+  - 2026-10-09: existing P5 boundaries remain explicit: to-one join tables, unidirectional one-to-many
+    foreign-key collections and relationships inside collection-table embeddable elements are not implemented
+    by this fix. Unsupported embedded collection shapes fail bootstrap instead of silently dropping state.
+    No official TCK sources/DDL, identifier case policy, delivered Data/Pool/Transactions modules or commits changed.
+
+## BUG-20261009-23 — Native result labels and stored-procedure names lose delimited identifier semantics
+
+- **Date**: 2026-10-09
+- **Status**: FIXED (query identifier working tree; no commit requested)
+- **Module**: `mansart-jpa-core` native/procedure execution; JPA dialect SPI and PostgreSQL dialect
+- **Symptom**: native result mappings cannot find explicitly quoted labels, silently choose ambiguous folded
+  labels, and ignore unit-wide exact case. `EntityResult.discriminatorColumn` is omitted from the model.
+  Quoted qualified routine names are rejected only on execution; unquoted dynamic/named routine names ignore
+  the unit default, and named parameter targets are discarded in favor of registration order.
+- **Minimal reproduction**:
+  ```bash
+  ./mvnw -ntp -pl mansart-persistence/mansart-jpa-core -am test \
+    -Dtest=NativeUpdateTest,StoredProcedureQueryTest,InheritanceTest -Dsurefire.failIfNoSpecifiedTests=false
+  ```
+  PostgreSQL reproduction: provider-owned `DelimitedProcedureTest` (command in the runner README).
+- **Cause hypothesis**: native lookup compared raw annotation strings case-insensitively against labels and
+  underlying column names; routine AST carried a restricted raw string and no argument identifiers.
+- **Investigation**:
+  - 2026-10-09: genuine execution red showed six initial failures (quoted labels/routines, unit defaults,
+    ambiguous labels, late validation); discriminator and non-key field tests added three independent failures.
+    The provider-owned PostgreSQL test was red against the pre-fix installed runtime, and the named-target
+    dialect test was red with positional SQL.
+  - 2026-10-09: mapped `Identifier` policy now resolves JDBC labels by exact unescaped delimited text, or by
+    case-insensitive lookup only when unambiguous. Field/discriminator/constructor/scalar mappings share it;
+    discriminator values use the existing inheritance binder and generated-access entity loading.
+  - 2026-10-09: qualified routines parse quoted dots and doubled quotes; malformed/unclosed or unsafe unquoted
+    parts fail before execution. SQL punctuation inside a delimited name is re-escaped, never executed as SQL.
+    Parameter API keys stay unchanged; PostgreSQL named target aliases are rendered while JDBC binds/reads
+    by ordinal. H2 retains registration order.
+  - 2026-10-09: targeted and smallest core/dialect reactor tests are green; two provider-owned real PostgreSQL
+    tests verify explicit/default quotation for named/dynamic calls, reversed IN/INOUT registration, output
+    retrieval, mixed case and escaped quotes. No full TCK, official fixture edits, P11 or Data changes.
+
+## BUG-20261009-24 — Embedded embeddable-key maps reject otherwise valid persistence units
+
+- **Date**: 2026-10-09
+- **Status**: FIXED (working tree; no commit requested)
+- **Module**: `mansart-jpa-core` collection index model and executable mapping
+- **Symptom**: 51 official `core.metamodelapi.embeddabletype` scenarios fail bootstrap after embedded
+  collections become executable: `address.mZipcode` has no executable collection-table mapping.
+- **Minimal reproduction**:
+  ```bash
+  mansart-persistence/mansart-jpa-tck/run-official-tck-persistence-3.2.sh --area core.metamodelapi.embeddabletype
+  ./mvnw -ntp -pl mansart-persistence/mansart-jpa-core -am test \
+    -Dtest=EmbeddableMapKeyTest -Dsurefire.failIfNoSpecifiedTests=false
+  ```
+- **Cause hypothesis**: the collection index marks embeddable keys unsupported; index binders,
+  generated key access, flattened key columns, reconstruction and key snapshots are missing.
+- **Investigation**:
+  - 2026-10-09: retained strict embedded mapping validation; added schema/CRUD regression coverage for
+    default tables, reusable embedded collections, nested mutable and record keys, overrides and key projection.
+  - 2026-10-09: all five initial H2 regressions reproduced the same bootstrap failure before implementation.
+    `ByEmbedded` now carries the owner-specific key mapping; the existing generated-access preparation,
+    column flattening, binders and hydration execute keys in element collections and relationship maps.
+    Key/value overrides and converters remain independent, including nested paths and quoted identifiers;
+    schema generation preserves effective key types, length and nullability.
+  - 2026-10-09: key snapshots compare independent persistent state, including in-place mutations, while basic/entity
+    key comparisons retain their existing lookup path. Merge copies embedded keys, including nested record state.
+    Seven real H2 schema/CRUD tests and a closed-module APT access test pass without new opens or dependencies.
+  - 2026-10-09: final untouched official PostgreSQL 17 gate at 20:40:50Z passes **51/51**, with zero failures,
+    errors or skips. Final persistence `clean install` passes **549 tests**, including **459 core tests**.
+    Reports: `mansart-jpa-tck/target/failsafe-reports/execution-1/`; reactor log:
+    `mansart-jpa-tck/target/embeddable-keys-clean-reactor.log`. No full TCK run, official fixture/DDL edits,
+    delivered Data/Pool/Transactions changes, commit or push.

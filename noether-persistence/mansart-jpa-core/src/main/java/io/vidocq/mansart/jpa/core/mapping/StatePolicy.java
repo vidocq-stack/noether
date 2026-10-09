@@ -266,10 +266,12 @@ public final class StatePolicy {
                 : byType(basic.javaType());
             case EmbeddedAttribute embedded -> embedded(embedded.embeddable(), embeddables, converters);
             case AssociationAttribute association when !association.singleValued() -> keyed(association.javaType(), association.index())
-                ? indexed(Map.class.isAssignableFrom(association.javaType()), REFERENCE, association.owning())
+                ? indexed(Map.class.isAssignableFrom(association.javaType()), keyCopier(association.index(), embeddables, converters),
+                    REFERENCE, association.owning())
                 : association.owning() ? OWNED_COLLECTION : INVERSE_COLLECTION;
             case ElementCollectionAttribute elements when elements.element() != null -> keyed(elements.javaType(), elements.index())
-                ? indexed(Map.class.isAssignableFrom(elements.javaType()), copier(elements.element(), embeddables, converters), true)
+                ? indexed(Map.class.isAssignableFrom(elements.javaType()), keyCopier(elements.index(), embeddables, converters),
+                    copier(elements.element(), embeddables, converters), true)
                 : elementCollection(copier(elements.element(), embeddables, converters));
             default -> REFERENCE;
         };
@@ -319,7 +321,13 @@ public final class StatePolicy {
      */
     private static boolean keyed(Class<?> type, CollectionIndex index) {
         return index instanceof CollectionIndex.ByPosition
-            || Map.class.isAssignableFrom(type) && (index instanceof CollectionIndex.ByColumn || index instanceof CollectionIndex.ByEntity);
+            || Map.class.isAssignableFrom(type) && (index instanceof CollectionIndex.ByColumn
+                || index instanceof CollectionIndex.ByEntity || index instanceof CollectionIndex.ByEmbedded);
+    }
+
+    private static Copier keyCopier(CollectionIndex index, Function<EmbeddableModel, ManagedAccess> embeddables,
+            ValueBinders converters) {
+        return index instanceof CollectionIndex.ByEmbedded key ? copier(key.key(), embeddables, converters) : IMMUTABLE;
     }
 
     /**
@@ -327,13 +335,15 @@ public final class StatePolicy {
      * element, in order). Another key, or another position, is a change. {@code dirties}: whether a change changes the
      * owner — not for an inverse side, whose index only its own write follows ({@link #collectionChanged}).
      */
-    private static Copier indexed(boolean map, Copier element, boolean dirties) {
+    private static Copier indexed(boolean map, Copier key, Copier element, boolean dirties) {
         return new Copier() {
             @Override
             public Object copy(Object value) {
                 List<Object> values = new ArrayList<>();
                 CollectionMapping.elements(value).forEach(e -> values.add(element.copy(e)));
-                return map ? new CollectionMapping.MapSnapshot(value == null ? List.of() : CollectionMapping.keys(value), values) : values;
+                List<Object> keys = new ArrayList<>();
+                if (map && value != null) CollectionMapping.keys(value).forEach(k -> keys.add(key.copy(k)));
+                return map ? new CollectionMapping.MapSnapshot(keys, values) : values;
             }
 
             @Override
@@ -357,12 +367,28 @@ public final class StatePolicy {
                     return false;
                 }
                 List<Object> keys = CollectionMapping.keys(snapshot);
-                @SuppressWarnings("unchecked")
-                Map<Object, Object> currentMap = (Map<Object, Object>) current;
-                for (int i = 0; i < keys.size(); i++) {
-                    if (!currentMap.containsKey(keys.get(i)) || !element.same(before.get(i), currentMap.get(keys.get(i)))) {
-                        return true;
+                if (key == IMMUTABLE) {
+                    @SuppressWarnings("unchecked")
+                    Map<Object, Object> currentMap = (Map<Object, Object>) current;
+                    for (int i = 0; i < keys.size(); i++) {
+                        if (!currentMap.containsKey(keys.get(i)) || !element.same(before.get(i), currentMap.get(keys.get(i)))) {
+                            return true;
+                        }
                     }
+                    return false;
+                }
+                List<Object> currentKeys = current == null ? List.of() : CollectionMapping.keys(current);
+                boolean[] matched = new boolean[currentKeys.size()];
+                for (int i = 0; i < keys.size(); i++) {
+                    boolean found = false;
+                    for (int j = 0; j < currentKeys.size(); j++) {
+                        if (!matched[j] && key.same(keys.get(i), currentKeys.get(j)) && element.same(before.get(i), now.get(j))) {
+                            matched[j] = true;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) return true;
                 }
                 return false;
             }

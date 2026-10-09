@@ -211,15 +211,20 @@ public final class AccessPlanner {
      * The lifecycle callbacks of an entity, in the order §3.6.4 invokes those of a same event: the methods of its entity
      * listeners, the listeners of its superclasses first (unless a class excludes them with
      * {@code @ExcludeSuperclassListeners}), then its own lifecycle methods, superclasses first; an overridden method
-     * keeps the place of the superclass method and is called once, the override (virtual dispatch). Default listeners
-     * come from mapping files (P10).
+     * keeps the place of the superclass method and is called once, the override (virtual dispatch). The default
+     * listeners of the mapping files come first, unless a class of the hierarchy excludes them with
+     * {@code @ExcludeDefaultListeners} (§3.6.2, §12.2.1.x).
      */
     public List<Callback> callbacks(ClassInfo entity) {
         List<ClassInfo> hierarchy = hierarchy(entity);
         List<String> listeners = new ArrayList<>();
+        if (hierarchy.stream().noneMatch(info -> info.isAnnotated(JPA + "ExcludeDefaultListeners"))) {
+            listeners.addAll(source.defaultListeners());
+        }
+        int defaults = listeners.size();
         for (ClassInfo info : hierarchy) {
             if (info.isAnnotated(JPA + "ExcludeSuperclassListeners")) {
-                listeners.clear();
+                listeners.subList(defaults, listeners.size()).clear();
             }
             info.annotation(JPA + "EntityListeners").ifPresent(a -> a.types("value")
                 .forEach(type -> listeners.add(ClassFileSource.binaryName(type))));
@@ -265,7 +270,7 @@ public final class AccessPlanner {
     }
 
     /** JavaBeans: {@code getX()}, or {@code isX()} for a {@code boolean}; {@code null} if not a getter. */
-    static String propertyName(MethodInfo method) {
+    public static String propertyName(MethodInfo method) {
         if (method.isStatic() || method.isSynthetic() || method.type().parameterCount() != 0) {
             return null;
         }

@@ -20,6 +20,7 @@
 package io.vidocq.mansart.jpa.core.query;
 
 import io.vidocq.mansart.jpa.dialect.sql.ProcedureCall;
+import io.vidocq.mansart.jpa.dialect.sql.Identifier;
 import jakarta.persistence.Parameter;
 import jakarta.persistence.ParameterMode;
 import jakarta.persistence.FlushModeType;
@@ -57,6 +58,7 @@ import java.util.Set;
 public final class StoredProcedureQueryImpl extends NativeQuery implements StoredProcedureQuery {
 
     private final String procedureName;
+    private final List<Identifier> routineName;
     private final List<Class<?>> resultClasses;
     private final List<String> resultMappings;
     private final List<ProcedureParameter> parameters = new ArrayList<>();
@@ -90,6 +92,7 @@ public final class StoredProcedureQueryImpl extends NativeQuery implements Store
             FlushModeType flushMode, Executor executor, QueryRuntime runtime, java.util.function.BooleanSupplier open) {
         super("select 1", flushMode, executor, runtime, null, null, open);
         this.procedureName = procedureName;
+        this.routineName = runtime.mapping().routineName(procedureName);
         this.resultClasses = List.copyOf(resultClasses);
         this.resultMappings = List.copyOf(resultMappings);
         this.namedParameters = false;
@@ -98,12 +101,14 @@ public final class StoredProcedureQueryImpl extends NativeQuery implements Store
     private static final class ProcedureParameter implements Parameter<Object> {
         private final int position;
         private final String name;
+        private final ProcedureCall.Parameter callParameter;
         private final Class<?> type;
         private final ParameterMode mode;
 
-        private ProcedureParameter(int position, String name, Class<?> type, ParameterMode mode) {
+        private ProcedureParameter(int position, String name, ProcedureCall.Parameter callParameter, Class<?> type, ParameterMode mode) {
             this.position = position;
             this.name = name;
+            this.callParameter = callParameter;
             this.type = type;
             this.mode = mode;
         }
@@ -130,12 +135,14 @@ public final class StoredProcedureQueryImpl extends NativeQuery implements Store
         if (name == null || name.isBlank() || (!parameters.isEmpty() && !namedParameters) || type == null || mode == null) {
             throw new IllegalArgumentException("Invalid named stored-procedure parameter");
         }
-        namedParameters = true;
         register(parameters.size() + 1, name, type, mode);
+        namedParameters = true;
         return this;
     }
 
     private void register(int position, String name, Class<?> type, ParameterMode mode) {
+        Identifier targetName = runtime().mapping().identifier(name);
+        ProcedureCall.Parameter callParameter = new ProcedureCall.Parameter(callMode(mode), jdbcType(type, mode), targetName);
         if (position != parameters.size() + 1) {
             throw new IllegalArgumentException("Stored-procedure parameters must be registered once in contiguous order");
         }
@@ -145,7 +152,7 @@ public final class StoredProcedureQueryImpl extends NativeQuery implements Store
         if (name != null && byName.containsKey(name) || name == null && byName.containsKey(position)) {
             throw new IllegalArgumentException("Stored-procedure parameter is already registered: " + (name == null ? position : name));
         }
-        ProcedureParameter parameter = new ProcedureParameter(position, name, type, mode);
+        ProcedureParameter parameter = new ProcedureParameter(position, name, callParameter, type, mode);
         parameters.add(parameter);
         byName.put(name == null ? position : name, parameter);
         reset();
@@ -199,8 +206,8 @@ public final class StoredProcedureQueryImpl extends NativeQuery implements Store
         List<ProcedureResult> read = new ArrayList<>();
         Map<ProcedureParameter, Object> out = new LinkedHashMap<>();
         var dialect = runtime().dialect(connection);
-        String sql = dialect.renderProcedureCall(new ProcedureCall(procedureName, called.stream()
-            .map(parameter -> new ProcedureCall.Parameter(callMode(parameter.mode), jdbcType(parameter.type, parameter.mode)))
+        String sql = dialect.renderProcedureCall(new ProcedureCall(routineName, called.stream()
+            .map(parameter -> parameter.callParameter)
             .toList()));
         try (CallableStatement statement = connection.prepareCall(sql)) {
             for (ProcedureParameter parameter : called) {

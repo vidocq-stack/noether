@@ -17,15 +17,19 @@
  *
  * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
  */
-package io.vidocq.mansart.jpa.core.model;
+package io.vidocq.mansart.jpa.core.model.xml;
+
+import java.net.URL;
+import java.util.Objects;
 
 /**
- * An attribute the annotations leave unmapped in a unit that has mapping files (§8.2.1.6.2, ch. 12): its mapping is
- * given by the {@code orm.xml}, which the XML descriptor milestone reads. Without mapping files such an attribute is a
- * mapping error.
- *
- * @param genericSignature the generic signature of the field or getter, or {@code null}
+ * A mapping file of a persistence unit (§8.2.1.6.2): the name it is known by — the {@code mapping-file} element, or
+ * {@code META-INF/orm.xml} — and where it was found.
  */
-public record PendingAttribute(String name, Class<?> javaType, AccessKind access, Class<?> declaringClass,
-        String genericSignature) implements AttributeModel {
+public record MappingFile(String name, URL url) {
+
+    public MappingFile {
+        Objects.requireNonNull(name, "name");
+        Objects.requireNonNull(url, "url");
+    }
 }

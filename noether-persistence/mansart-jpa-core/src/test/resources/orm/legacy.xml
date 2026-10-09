@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entity-mappings xmlns="http://xmlns.jcp.org/xml/ns/persistence/orm" version="2.2">
+    <entity class="io.vidocq.mansart.jpa.core.model.xml.fixtures.Excluded" metadata-complete="true">
+        <table name="LEGACY_T"/>
+        <attributes>
+            <id name="id"/>
+        </attributes>
+    </entity>
+</entity-mappings>

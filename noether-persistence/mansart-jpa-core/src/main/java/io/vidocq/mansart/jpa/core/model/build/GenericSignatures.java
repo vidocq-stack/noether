@@ -19,7 +19,7 @@
  */
 package io.vidocq.mansart.jpa.core.model.build;
 
-import io.vidocq.mansart.jpa.core.model.source.ClassFileSource;
+import io.vidocq.mansart.jpa.core.model.source.ClassInfos;
 import io.vidocq.mansart.jpa.core.model.source.ClassInfo;
 import java.lang.classfile.ClassSignature;
 import java.lang.classfile.MethodSignature;
@@ -41,7 +41,7 @@ final class GenericSignatures {
     }
 
     /** The erased type arguments given to {@code interfaceName}, or {@code null} if they cannot be resolved. */
-    static List<Class<?>> typeArguments(String className, String interfaceName, ClassFileSource source, ClassLoader loader) {
+    static List<Class<?>> typeArguments(String className, String interfaceName, ClassInfos source, ClassLoader loader) {
         return search(className, interfaceName, Map.of(), source, loader);
     }
 
@@ -61,7 +61,7 @@ final class GenericSignatures {
     }
 
     private static List<Class<?>> search(String className, String interfaceName, Map<String, Class<?>> bindings,
-            ClassFileSource source, ClassLoader loader) {
+            ClassInfos source, ClassLoader loader) {
         ClassInfo info = source.read(className).orElse(null);
         if (info == null || info.genericSignature() == null) {
             return null;

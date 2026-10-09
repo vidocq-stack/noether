@@ -148,6 +148,32 @@ class FlushEngineTest {
     }
 
     @Test
+    void rowsDeletedTogetherAreDeletedReferencingFirstWithoutClearingNotNullForeignKeys() throws SQLException { // §3.2.4
+        try (Statement ddl = database.createStatement()) {
+            ddl.execute("create table Author (id bigint primary key)");
+            ddl.execute("create table Author_aliases (Author_id bigint, aliases varchar(50))");
+            ddl.execute("create table Book (id bigint primary key, author_id bigint not null references Author(id))");
+        }
+        MappedEntity authors = type(Author.class);
+        MappedEntity books = type(Book.class);
+        Object author = authors.access().instantiate();
+        authors.access().set(author, index(authors, "id"), 1L);
+        Object book = books.access().instantiate();
+        books.access().set(book, index(books, "id"), 2L);
+        books.access().set(book, index(books, "author"), author);
+        context.persist(author, authors);
+        context.persist(book, books);
+        engine.flush(context, connection);
+        context.remove(author); // the referenced row is removed first: the delete order, not NULL, satisfies the key
+        context.remove(book);
+        recorder.calls.clear();
+        engine.flush(context, connection);
+        assertThat(column("select count(*) from Book")).isEqualTo(0L);
+        assertThat(column("select count(*) from Author")).isEqualTo(0L);
+        assertThat(recorder.calls).noneMatch(call -> call.startsWith("prepare UPDATE"));
+    }
+
+    @Test
     void anInstanceRemovedBeforeItsInsertNeverReachesTheDatabase() {
         Object customer = customer(1, "Vidocq");
         context.persist(customer, type(Customer.class));

@@ -51,6 +51,50 @@ class InheritanceTest {
     }
 
     @Test
+    void nativeDiscriminatorAliasesRespectExplicitDelimiters() throws Exception { // §2.15, §3.11.11
+        try (var emf = factory("create table Animal (id bigint primary key, name varchar(50), version int, "
+                + "DTYPE varchar(31), lives int, bark varchar(20))", Animal.class, Cat.class, Dog.class);
+             var em = emf.createEntityManager()) {
+            em.getTransaction().begin();
+            em.persist(new Cat(1, "cat", 9));
+            em.getTransaction().commit();
+            em.clear();
+            assertThat(em.createNativeQuery("SELECT id AS \"Key\", DTYPE AS \"Kind\"\"Label\" FROM Animal",
+                "animal-quoted").getSingleResult()).isInstanceOf(Cat.class);
+            assertThatThrownBy(() -> em.createNativeQuery("SELECT id AS \"Key\", DTYPE AS \"kind\"\"label\" FROM Animal",
+                "animal-quoted").getSingleResult()).isInstanceOf(PersistenceException.class).hasMessageContaining("Kind");
+            assertThatThrownBy(() -> em.createNativeQuery("SELECT id AS \"Key\", 'NotAnAnimal' AS \"Kind\"\"Label\" FROM Animal",
+                "animal-quoted").getSingleResult()).isInstanceOf(PersistenceException.class).hasMessageContaining("discriminator");
+        }
+    }
+
+    @Test
+    void nativeDiscriminatorAndFieldAliasesUseUnitDefaults() {
+        try (var emf = new PersistenceConfiguration("delimited-native-inheritance")
+                .provider("io.vidocq.mansart.jpa.core.MansartPersistenceProvider")
+                .managedClass(Animal.class).managedClass(Cat.class).managedClass(Dog.class)
+                .mappingFile("orm/delimited.xml")
+                .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:delimited-native-inheritance")
+                .property(PersistenceConfiguration.JDBC_USER, "sa")
+                .property(PersistenceConfiguration.SCHEMAGEN_DATABASE_ACTION, "drop-and-create")
+                .createEntityManagerFactory();
+             var em = emf.createEntityManager()) {
+            em.getTransaction().begin();
+            em.persist(new Cat(1, "cat", 9));
+            em.getTransaction().commit();
+            em.clear();
+            assertThat(em.createNativeQuery("SELECT \"id\" AS \"keyLabel\", \"DTYPE\" AS \"kindLabel\" FROM \"Animal\"",
+                "animal-default").getSingleResult()).isInstanceOf(Cat.class);
+            assertThatThrownBy(() -> em.createNativeQuery(
+                "SELECT \"id\" AS \"keyLabel\", \"DTYPE\" AS \"KINDLABEL\" FROM \"Animal\"", "animal-default").getSingleResult())
+                .isInstanceOf(PersistenceException.class).hasMessageContaining("kindLabel");
+            assertThatThrownBy(() -> em.createNativeQuery(
+                "SELECT \"id\" AS \"KEYLABEL\", \"DTYPE\" AS \"kindLabel\" FROM \"Animal\"", "animal-default").getSingleResult())
+                .isInstanceOf(PersistenceException.class).hasMessageContaining("keyLabel");
+        }
+    }
+
+    @Test
     void defaultSingleTableIsPolymorphicAndSharesIdentity() throws Exception { // §2.14.1, §3.3, §4.4.8
         try (var emf = factory("create table Animal (id bigint primary key, name varchar(50), version int, "
                 + "DTYPE varchar(31), lives int, bark varchar(20))", Animal.class, Cat.class, Dog.class);
@@ -624,6 +668,10 @@ class InheritanceTest {
     @Entity(name = "LetterLeaf")
     public static class LetterLeaf extends LetterBase { public LetterLeaf() {} }
 
+    @SqlResultSetMapping(name = "animal-quoted", entities = @EntityResult(entityClass = Animal.class,
+        discriminatorColumn = "\"Kind\"\"Label\"", fields = @FieldResult(name = "id", column = "\"Key\"")))
+    @SqlResultSetMapping(name = "animal-default", entities = @EntityResult(entityClass = Animal.class,
+        discriminatorColumn = "kindLabel", fields = @FieldResult(name = "id", column = "keyLabel")))
     @Entity(name = "Animal")
     public abstract static class Animal {
         @Id public long id;

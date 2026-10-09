@@ -17,13 +17,14 @@ final class SchemaPlan {
     private final List<SchemaStatement> sequences = new ArrayList<>();
     private final List<SchemaStatement> indexes = new ArrayList<>();
     private final List<ForeignKeyStatement> foreignKeys = new ArrayList<>();
-    private final ClassFileSource source;
+    private final ClassInfos source;
 
     SchemaPlan(MappedUnit unit) {
         this.unit = unit;
-        source = new ClassFileSource(unit.loader());
-        for (EntityModel model : unit.model().entities()) {
-            MappedEntity entity = unit.entity(model.javaType()).orElseThrow();
+        source = unit.source();
+        for (EntityModel semantic : unit.model().entities()) {
+            MappedEntity entity = unit.entity(semantic.javaType()).orElseThrow();
+            EntityModel model = entity.model();
             EntityStatements statements = entity.statements();
             List<EntityStatements.Column> columns = statements.columns();
             List<EntityStatements.TableStatements> mappedTables = statements.tables();
@@ -43,6 +44,15 @@ final class SchemaPlan {
                     }
                     SchemaStatement.Column definition = definition(column.name(), basic, column.id(),
                         column.name().equals(mapped.insert().generatedKey()));
+                    if (column.foreignKey() != null) {
+                        AssociationAttribute association = (AssociationAttribute) model.attributes().get(column.attribute());
+                        boolean nullable = association.joinColumns().stream()
+                            .filter(j -> j.name() == null || identifier(j.name()).equals(column.name()))
+                            .allMatch(JoinColumnModel::nullable);
+                        definition = new SchemaStatement.Column(definition.name(), definition.type(), definition.length(),
+                            definition.precision(), definition.scale(), !column.id() && association.optional() && nullable,
+                            definition.identity(), false, null);
+                    }
                     if (column.attribute() < 0) {
                         var inheritance = unit.inheritance(model.javaType());
                         Class<?> discriminatorType = inheritance != null && inheritance.value() instanceof Number ? int.class : String.class;
@@ -76,9 +86,11 @@ final class SchemaPlan {
             for (var reference : statements.references()) {
                 var association = (AssociationAttribute) model.attributes().get(reference.attribute());
                 AnnotationInfo annotation = attributeAnnotation(model, association, "jakarta.persistence.JoinColumn");
+                AnnotationInfo override = associationOverride(model, association);
                 var names = Arrays.stream(reference.columns()).mapToObj(c -> columns.get(c).name()).toList();
                 foreignKey(statements.select().table(), names, unit.entity(reference.target()).orElseThrow(),
-                    annotation == null ? null : annotation.annotation("foreignKey"));
+                    override != null && override.isWritten("foreignKey") ? override.annotation("foreignKey")
+                        : annotation == null ? null : annotation.annotation("foreignKey"));
             }
             for (var collection : statements.elementCollections()) {
                 var columnsByName = tables.computeIfAbsent(collection.table(), _ -> new LinkedHashMap<>());
@@ -122,9 +134,31 @@ final class SchemaPlan {
 
     private void addIndex(Map<Identifier, SchemaStatement.Column> columns, IndexMapping index) {
         if (index == null) return;
-        for (Identifier name : index.columns()) {
-            columns.putIfAbsent(name, definition(name, null, false, false));
+        for (int i = 0; i < index.columns().size(); i++) {
+            Identifier name = index.columns().get(i);
+            BasicAttribute attribute = switch (index.index()) {
+                case CollectionIndex.ByColumn key -> key.key();
+                case CollectionIndex.ByPosition position -> position.position();
+                case CollectionIndex.ByEmbedded key ->
+                    embeddedKeyAttribute(key.key(), index.keyColumns().get(i).path());
+                default -> null;
+            };
+            columns.putIfAbsent(name, definition(name, attribute, false, false));
         }
+    }
+
+    private BasicAttribute embeddedKeyAttribute(EmbeddedAttribute key, int[] path) {
+        AttributeModel attribute = key;
+        StringBuilder name = new StringBuilder();
+        for (int step : path) {
+            attribute = ((EmbeddedAttribute) attribute).embeddable().attributes().get(step);
+            if (!name.isEmpty()) name.append('.');
+            name.append(attribute.name());
+        }
+        BasicAttribute basic = (BasicAttribute) attribute;
+        ColumnModel column = key.columns().getOrDefault(name.toString(), basic.column());
+        return new BasicAttribute(basic.name(), basic.javaType(), basic.access(), basic.declaringClass(), column,
+            basic.optional(), basic.fetch(), basic.lob(), basic.conversion(), basic.version());
     }
 
     private BasicAttribute basic(AttributeModel attribute, int[] path) {
@@ -206,7 +240,7 @@ final class SchemaPlan {
         for (Object value : annotation.annotations("indexes")) {
             var index = (AnnotationInfo) value;
             String name = index.string("name");
-            List<String> columns = Arrays.asList(index.string("columnList").split(","));
+            List<SchemaStatement.IndexColumn> columns = indexColumns(index.string("columnList"));
             indexes.add(new SchemaStatement(CREATE_INDEX, table, List.of(), List.of(),
                 identifier(name == null || name.isBlank() ? table.name().name() + "_idx_" + indexes.size() : name),
                 columns, index.bool("unique"), 1, 1));
@@ -216,8 +250,36 @@ final class SchemaPlan {
             String name = constraint.string("name");
             indexes.add(new SchemaStatement(CREATE_INDEX, table, List.of(), List.of(),
                 identifier(name == null || name.isBlank() ? table.name().name() + "_uk_" + indexes.size() : name),
-                constraint.strings("columnNames"), true, 1, 1));
+                constraint.strings("columnNames").stream().map(c -> new SchemaStatement.IndexColumn(identifier(c), false)).toList(),
+                true, 1, 1));
         }
+    }
+
+    private List<SchemaStatement.IndexColumn> indexColumns(String list) {
+        List<SchemaStatement.IndexColumn> columns = new ArrayList<>();
+        boolean quoted = false;
+        int start = 0;
+        for (int i = 0; i <= list.length(); i++) {
+            if (i < list.length() && list.charAt(i) == '"') {
+                if (quoted && i + 1 < list.length() && list.charAt(i + 1) == '"') {
+                    i++;
+                } else {
+                    quoted = !quoted;
+                }
+            } else if (i == list.length() || !quoted && list.charAt(i) == ',') {
+                var part = java.util.regex.Pattern.compile("(?is)^(.*?)(?:\\s+(ASC|DESC))?$")
+                    .matcher(list.substring(start, i).strip());
+                if (!part.matches() || part.group(1).isBlank()) {
+                    throw new jakarta.persistence.PersistenceException("Invalid index column list: " + list);
+                }
+                columns.add(new SchemaStatement.IndexColumn(identifier(part.group(1)), "DESC".equalsIgnoreCase(part.group(2))));
+                start = i + 1;
+            }
+        }
+        if (quoted) {
+            throw new jakarta.persistence.PersistenceException("Unclosed quoted identifier in index column list: " + list);
+        }
+        return columns;
     }
 
     List<Statement> create(boolean schemas) {
@@ -267,16 +329,73 @@ final class SchemaPlan {
     }
 
     private AnnotationInfo attributeAnnotation(EntityModel model, AttributeModel attribute, String type) {
-        return source.read(attribute.declaringClass().getName()).map(info -> {
-            var field = info.field(attribute.name());
-            if (field.isPresent()) {
-                var annotation = field.get().annotation(type);
-                if (annotation.isPresent()) return annotation.get();
+        AnnotationInfo override = associationOverride(model, attribute);
+        if (override != null) {
+            if (type.equals("jakarta.persistence.JoinTable") && override.isWritten("joinTable")) {
+                return override.annotation("joinTable");
             }
-            String getter = "get" + Character.toUpperCase(attribute.name().charAt(0)) + attribute.name().substring(1);
-            return info.methods().stream().filter(m -> m.name().equals(getter)).flatMap(m -> m.annotation(type).stream())
-                .findFirst().orElse(null);
-        }).orElse(null);
+            if (type.equals("jakarta.persistence.JoinColumn")) {
+                return override.annotations("joinColumns").stream().findFirst().orElse(null);
+            }
+        }
+        AttributeModel declared = declaredAttribute(model, attribute.name());
+        Annotated member = member(declared == null ? attribute : declared);
+        return member == null ? null : member.annotation(type).orElse(null);
+    }
+
+    private AnnotationInfo associationOverride(EntityModel model, AttributeModel attribute) {
+        if (!(attribute instanceof AssociationAttribute)) return null;
+        String owner = model.javaType().getName();
+        while (owner != null) {
+            var info = source.read(owner).orElse(null);
+            if (info == null) break;
+            AnnotationInfo found = override(info, attribute.name());
+            if (found != null) return found;
+            owner = info.superclassName();
+        }
+        String[] path = attribute.name().split("\\.");
+        List<AttributeModel> attributes = unit.model().entity(model.javaType()).orElseThrow().attributes();
+        for (int i = 0; i < path.length - 1; i++) {
+            String segment = path[i];
+            AttributeModel current = attributes.stream().filter(a -> a.name().equals(segment)).findFirst().orElse(null);
+            if (!(current instanceof EmbeddedAttribute embedded)) break;
+            String rest = String.join(".", Arrays.copyOfRange(path, i + 1, path.length));
+            AnnotationInfo found = override(member(current), rest);
+            if (found != null) return found;
+            var info = source.read(embedded.javaType().getName()).orElse(null);
+            found = override(info, rest);
+            if (found != null) return found;
+            attributes = embedded.embeddable().attributes();
+        }
+        return null;
+    }
+
+    private static AnnotationInfo override(Annotated element, String name) {
+        if (element == null) return null;
+        List<AnnotationInfo> overrides = new ArrayList<>();
+        element.annotation("jakarta.persistence.AssociationOverride").ifPresent(overrides::add);
+        element.annotation("jakarta.persistence.AssociationOverrides").ifPresent(a -> overrides.addAll(a.annotations("value")));
+        return overrides.stream().filter(a -> a.string("name").equals(name)).findFirst().orElse(null);
+    }
+
+    private AttributeModel declaredAttribute(EntityModel model, String name) {
+        List<AttributeModel> attributes = unit.model().entity(model.javaType()).orElseThrow().attributes();
+        AttributeModel result = null;
+        for (String segment : name.split("\\.")) {
+            result = attributes.stream().filter(a -> a.name().equals(segment)).findFirst().orElse(null);
+            if (result instanceof EmbeddedAttribute embedded) attributes = embedded.embeddable().attributes();
+        }
+        return result;
+    }
+
+    private Annotated member(AttributeModel attribute) {
+        var info = source.read(attribute.declaringClass().getName()).orElse(null);
+        if (info == null) return null;
+        if (attribute.access() == AccessKind.FIELD) return info.field(attribute.name()).orElse(null);
+        String capital = Character.toUpperCase(attribute.name().charAt(0)) + attribute.name().substring(1);
+        return info.methods().stream().filter(m -> m.name().equals("get" + capital)
+            || m.name().equals("is" + capital) || m.name().equals(attribute.name()))
+            .filter(m -> m.type().parameterCount() == 0).findFirst().orElse(null);
     }
 
     private void foreignKey(Table table, List<Identifier> columns, MappedEntity target, AnnotationInfo annotation) {
@@ -295,18 +414,16 @@ final class SchemaPlan {
         if (columns != null) foreignKey(table, columns, entity, annotation.annotation("foreignKey"));
     }
 
-    private static Table annotationTable(AnnotationInfo annotation) {
+    private Table annotationTable(AnnotationInfo annotation) {
         return new Table(identifier(annotation.string("name")), identifier(annotation.string("schema")),
             identifier(annotation.string("catalog")));
     }
 
-    private static Table table(TableModel table) {
+    private Table table(TableModel table) {
         return new Table(identifier(table.name()), identifier(table.schema()), identifier(table.catalog()));
     }
 
-    private static Identifier identifier(String value) {
-        if (value == null || value.isBlank()) return null;
-        return value.startsWith("\"") && value.endsWith("\"")
-            ? Identifier.quoted(value.substring(1, value.length() - 1)) : Identifier.of(value);
+    private Identifier identifier(String value) {
+        return unit.identifier(value);
     }
 }

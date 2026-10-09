@@ -35,7 +35,17 @@
   `mansart-jpa-module-it` (runtime path, `opens`) and `mansart-jpa-processor-module-it` (build-time path,
   `provides`), plus `mansart-jpa-cdi` and the actual-Vauban/H2 `mansart-jpa-cdi-module-it`.
   `mansart-jpa-tck` stays out of the reactor.
-- Milestones P0 to P9 are implemented; P9's Vidocq integration module passes 6/6 tests, including adapter undeploy cleanup. The official standalone TCK reports 2040 / 2135 passes; 91 errors belong to P10/P11 and 4 tests are official skips. The integration runs against a local Vauban snapshot carrying an upstream fix not yet released.
+- Milestones P0 to P9 are implemented; P10 is partial, not delivered. P9's Vidocq baseline passes 6/6 tests,
+  including adapter undeploy cleanup. P10 maps `orm.xml` through `model.xml.OrmOverlay` (a `ClassInfos` overlay
+  feeding the single `EntityModelBuilder`/`AccessPlanner`), preserves delimited identifier case and supports
+  inherited and entity-owned embedded annotation/XML association overrides. `mapping.EmbeddedPaths` lowers
+  embedded relationships/collections to dotted execution-state slots by composing the existing generated accesses;
+  the semantic model/metamodel stays hierarchical and existing relationship planners execute the slots.
+  Unsupported P5 shapes fail explicitly. The official baseline below predates this embedded execution fix.
+  The untouched official TCK reports 2096 / 2135 passes: 10 P11 cache errors, 25 delimited-fixture/unquoted-DDL
+  incompatibilities and 4 official skips. The earlier 2121-pass result ignored quotation and is superseded.
+  Do not ignore the default, fold quoted names or modify official DDL to recover that score.
+  The integration runs against a local Vauban snapshot carrying an upstream fix not yet released.
   The two real-container injection regressions are green after the upstream Vauban fix (pending release); the independent Arquillian gate and Vidocq extension
   are not delivered. Do not hide these failures or change another repository without authorization:
   read `ROADMAP.md` (status per item) and
@@ -109,7 +119,8 @@ Module names are a plan, not a contract: a module is only created when a milesto
   **and** `META-INF/services/jakarta.persistence.spi.PersistenceProvider` — the TCK runs on the
   classpath, production on the module path; both must work.
 - Dialects are found with `uses io.vidocq.mansart.jpa.dialect.DialectFactory` (`ServiceLoader`).
-- `persistence.xml` and `orm.xml` are parsed with StAX (`java.xml`, JDK) — no JAXB.
+- `persistence.xml` and `orm.xml` are parsed with StAX (`java.xml`, JDK) — no JAXB, no DTD, no external entity;
+  `orm.xml` is XSD-validated and becomes annotations of the `OrmOverlay`, never a second mapping engine.
 - Run the `java-modules-guardian` agent after every `module-info.java` or package change.
 
 ## Build & Test

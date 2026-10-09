@@ -130,6 +130,13 @@ public final class AnnotationInfo {
         return List.of(type.cast(value));
     }
 
+    /** This annotation with {@code member} written as {@code value} (a mapping file completing or overriding it). */
+    public AnnotationInfo with(String member, Object value) {
+        Map<String, Object> changed = new java.util.LinkedHashMap<>(written);
+        changed.put(member, value);
+        return new AnnotationInfo(typeName, changed, defaults);
+    }
+
     @Override
     public String toString() {
         return "@" + typeName + written;

@@ -283,21 +283,26 @@ public final class FlushEngine {
     }
 
     /**
-     * The foreign keys of rows about to be deleted that reference other rows deleted in the same flush: written
-     * {@code NULL} first, so that the deletes satisfy the constraints whatever their order (a cycle).
+     * The foreign keys of rows about to be deleted that reference rows deleted before them in the same flush (a cycle,
+     * or an order the ranks cannot give): written {@code NULL} first, so that the deletes satisfy the constraints. A
+     * row deleted before the row it references keeps its key: a {@code NOT NULL} foreign key stays valid (BUG-20261009-19).
      */
     private static List<ReferenceWrite> referencesBetween(List<Work> deletes) {
         if (deletes.size() < 2) {
             return List.of();
         }
-        Set<Object> deleted = identitySet();
-        deletes.forEach(work -> deleted.add(work.entry().instance()));
+        Map<Object, Integer> order = new IdentityHashMap<>();
+        for (int i = 0; i < deletes.size(); i++) {
+            order.put(deletes.get(i).entry().instance(), i);
+        }
         List<ReferenceWrite> writes = new ArrayList<>();
-        for (Work work : deletes) {
+        for (int i = 0; i < deletes.size(); i++) {
+            Work work = deletes.get(i);
             Object[] row = work.entry().snapshot(); // what the row holds
             for (EntityStatements.Reference reference : work.type().statements().references()) {
                 Object target = row[reference.attribute()];
-                if (target != null && target != work.entry().instance() && deleted.contains(target)) {
+                Integer targetOrder = target == null || target == work.entry().instance() ? null : order.get(target);
+                if (targetOrder != null && targetOrder < i) {
                     writes.add(new ReferenceWrite(work, reference));
                 }
             }

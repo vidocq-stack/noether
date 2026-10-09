@@ -6,7 +6,7 @@ package io.vidocq.mansart.jpa.core.session;
 
 import io.vidocq.mansart.jpa.core.model.build.Types;
 import io.vidocq.mansart.jpa.core.model.source.AnnotationInfo;
-import io.vidocq.mansart.jpa.core.model.source.ClassFileSource;
+import io.vidocq.mansart.jpa.core.model.source.ClassInfos;
 import jakarta.persistence.*;
 import jakarta.persistence.metamodel.*;
 import java.util.*;
@@ -16,9 +16,8 @@ import java.util.concurrent.ConcurrentHashMap;
 final class EntityGraphs {
     private final Metamodel model;
     private final Map<String,Root<?>> named = new ConcurrentHashMap<>();
-    EntityGraphs(Metamodel model,ClassLoader loader) {
+    EntityGraphs(Metamodel model,ClassInfos source,ClassLoader loader) {
         this.model=model;
-        var source=new ClassFileSource(loader);
         for (var entity:model.getEntities()) {
             var info=source.read(entity.getJavaType().getName()).orElseThrow();
             List<AnnotationInfo> declarations=new ArrayList<>();

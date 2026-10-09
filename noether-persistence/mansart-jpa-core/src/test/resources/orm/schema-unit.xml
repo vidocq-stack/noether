@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- OrmXmlTest: a persistence-unit default schema, overridden by the schema of another mapping file. -->
+<entity-mappings xmlns="https://jakarta.ee/xml/ns/persistence/orm" version="3.2">
+    <persistence-unit-metadata>
+        <persistence-unit-defaults>
+            <schema>UNIT_S</schema>
+        </persistence-unit-defaults>
+    </persistence-unit-metadata>
+    <entity class="io.vidocq.mansart.jpa.core.model.xml.fixtures.Excluded" metadata-complete="true">
+        <attributes>
+            <id name="id"/>
+        </attributes>
+    </entity>
+</entity-mappings>

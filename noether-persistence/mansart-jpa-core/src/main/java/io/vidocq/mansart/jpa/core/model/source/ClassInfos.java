@@ -19,6 +19,7 @@
  */
 package io.vidocq.mansart.jpa.core.model.source;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -29,4 +30,28 @@ public interface ClassInfos {
 
     /** The class named {@code binaryName} ({@code com.acme.Outer$Inner}), if this source can read it. */
     Optional<ClassInfo> read(String binaryName);
+
+    /** The managed classes the unit's mapping files declare, beyond the listed or discovered ones (§8.2.1.6.2). */
+    default List<String> mappedClassNames() {
+        return List.of();
+    }
+
+    /** The default entity listeners of the unit, in invocation order (§3.6.2, {@code persistence-unit-defaults}). */
+    default List<String> defaultListeners() {
+        return List.of();
+    }
+
+    /** Whether every table-, schema- and column-level identifier of the unit is delimited (§2.15, §12.2.1.3). */
+    default boolean delimitedIdentifiers() {
+        return false;
+    }
+
+    /**
+     * The unit-level metadata of the mapping files, as the annotations they stand for: the named queries, stored
+     * procedures, result set mappings and generators written under {@code entity-mappings} (§12.2.2). Each one replaces
+     * an annotated one of the same name.
+     */
+    default List<AnnotationInfo> unitAnnotations() {
+        return List.of();
+    }
 }

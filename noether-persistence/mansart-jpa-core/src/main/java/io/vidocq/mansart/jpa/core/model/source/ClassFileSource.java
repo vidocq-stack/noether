@@ -45,6 +45,8 @@ public final class ClassFileSource implements ClassInfos {
 
     /** The defaults of annotation types, per annotation type name; shared, the annotation types do not change. */
     private static final Map<String, Map<String, Object>> SHARED_DEFAULTS = new ConcurrentHashMap<>();
+    /** The member types of the Jakarta Persistence annotation types, shared like their defaults. */
+    private static final Map<String, Map<String, ClassDesc>> SHARED_MEMBERS = new ConcurrentHashMap<>();
 
     private final ClassLoader loader;
     private final Map<String, Optional<ClassInfo>> classes = new ConcurrentHashMap<>();
@@ -166,6 +168,37 @@ public final class ClassFileSource implements ClassInfos {
         Map<String, Object> result = Map.copyOf(defaults);
         // put, not computeIfAbsent: reading the defaults may read nested annotation types
         (annotationType.startsWith("jakarta.persistence.") ? SHARED_DEFAULTS : this.defaults).putIfAbsent(annotationType, result);
+        return result;
+    }
+
+    /**
+     * An annotation of {@code annotationType} written with the members {@code written} (encoded as this source encodes
+     * them), the other members by default: what a mapping file says in place of an annotation (chapter 12).
+     */
+    public AnnotationInfo annotation(String annotationType, Map<String, Object> written) {
+        return new AnnotationInfo(annotationType, written, defaults(annotationType));
+    }
+
+    /** The members of an annotation type and their declared types, in declaration order; empty if it cannot be found. */
+    public Map<String, ClassDesc> annotationMembers(String annotationType) {
+        Map<String, ClassDesc> known = SHARED_MEMBERS.get(annotationType);
+        if (known != null) {
+            return known;
+        }
+        byte[] bytes = bytes(annotationType);
+        if (bytes == null) {
+            return Map.of();
+        }
+        Map<String, ClassDesc> members = new LinkedHashMap<>();
+        for (MethodModel method : ClassFile.of().parse(bytes).methods()) {
+            if ((method.flags().flagsMask() & ClassFile.ACC_ABSTRACT) != 0) {
+                members.put(method.methodName().stringValue(), method.methodTypeSymbol().returnType());
+            }
+        }
+        Map<String, ClassDesc> result = java.util.Collections.unmodifiableMap(members);
+        if (annotationType.startsWith("jakarta.persistence.")) {
+            SHARED_MEMBERS.putIfAbsent(annotationType, result);
+        }
         return result;
     }
 

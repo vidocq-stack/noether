@@ -39,6 +39,7 @@ import io.vidocq.mansart.jpa.core.model.ValueConversion;
 import io.vidocq.mansart.jpa.core.model.build.EntityModelBuilder;
 import io.vidocq.mansart.jpa.core.model.build.Types;
 import io.vidocq.mansart.jpa.core.model.source.ClassFileSource;
+import io.vidocq.mansart.jpa.core.model.source.ClassInfos;
 import io.vidocq.mansart.jpa.core.spi.ManagedAccess;
 import io.vidocq.mansart.jpa.core.spi.ManagedAccessProvider;
 import jakarta.persistence.FetchType;
@@ -70,13 +71,15 @@ public final class MappedUnit {
     private final Map<BasicAttribute, ValueBinder> binders;
     private final Map<Class<?>, MappedEntity> mapped;
     private final ClassLoader loader;
+    private final ClassInfos source;
     private final Map<Class<?>, InheritanceMapping> inheritance;
 
     private MappedUnit(PersistenceUnitModel model, Map<Class<?>, ManagedAccess> entities,
             Map<EmbeddableModel, ManagedAccess> embeddables, Map<BasicAttribute, ValueBinder> binders,
-            Map<Class<?>, MappedEntity> mapped, ClassLoader loader, Map<Class<?>, InheritanceMapping> inheritance) {
+            Map<Class<?>, MappedEntity> mapped, ClassLoader loader, ClassInfos source, Map<Class<?>, InheritanceMapping> inheritance) {
         this.model = model;
         this.loader = loader;
+        this.source = source;
         this.entities = entities;
         this.embeddables = embeddables;
         this.binders = binders;
@@ -86,20 +89,20 @@ public final class MappedUnit {
 
     /** Maps the managed classes named {@code classNames}, loaded with {@code loader}. */
     public static MappedUnit of(Collection<String> classNames, ClassLoader loader) {
-        return of(classNames, loader, false, List.of());
+        return of(classNames, loader, new ClassFileSource(loader), List.of());
     }
 
     /**
      * Maps the managed classes named {@code classNames}, loaded with {@code loader}.
      *
-     * @param mappingFiles whether the unit has XML mapping files, which may map what the annotations leave unmapped
+     * @param source the managed classes as their class files and the unit's mapping files describe them; the classes
+     *        its mapping files map are managed besides {@code classNames}
      * @param providers the accesses generated at build time; a managed class without one, or whose generated access
      *        does not list the attributes of the model (a class changed since it was compiled), gets a hidden class
      */
-    public static MappedUnit of(Collection<String> classNames, ClassLoader loader, boolean mappingFiles,
+    public static MappedUnit of(Collection<String> classNames, ClassLoader loader, ClassInfos source,
             Iterable<ManagedAccessProvider> providers) {
-        PersistenceUnitModel model = EntityModelBuilder.build(classNames, loader, mappingFiles);
-        ClassFileSource source = new ClassFileSource(loader);
+        PersistenceUnitModel model = EntityModelBuilder.build(classNames, source, loader);
         Map<Class<?>, InheritanceMapping> inheritance = new IdentityHashMap<>();
         for (EntityModel entity : model.entities()) {
             inheritance.put(entity.javaType(), new InheritanceMapping(entity, model, source));
@@ -115,23 +118,59 @@ public final class MappedUnit {
                 .orElseGet(() -> Accesses.of(entity)));
             prepare(entity.attributes(), valueBinders, generated, embeddables, binders);
         }
-        Map<Class<?>, Integer> ranks = ranks(model);
+        Map<Class<?>, EmbeddedPaths.Plan> plans = new IdentityHashMap<>();
+        for (EntityModel entity : model.entities()) {
+            plans.put(entity.javaType(), EmbeddedPaths.of(entity, entities.get(entity.javaType()), embeddables::get));
+        }
+        Map<Class<?>, Integer> ranks = ranks(new PersistenceUnitModel(
+            model.entities().stream().map(e -> plans.get(e.javaType()).model()).toList(), model.converters()));
         Map<Class<?>, MappedEntity> mapped = new IdentityHashMap<>();
         for (EntityModel entity : model.entities()) {
+            EmbeddedPaths.Plan plan = plans.get(entity.javaType());
             ManagedAccess embeddedId = entity.id() instanceof IdModel.Embedded embedded
                 ? embeddables.get(embedded.attribute().embeddable()) : null;
             ManagedAccess idClass = entity.id() instanceof IdModel.ByIdClass byIdClass ? idClassAccess(byIdClass, loader) : null;
-            StatePolicy state = StatePolicy.of(entity.attributes(), embeddables::get, valueBinders);
-            mapped.put(entity.javaType(), new MappedEntity(entity, entities.get(entity.javaType()), root(model, entity), embeddedId,
+            StatePolicy state = StatePolicy.of(plan.model().attributes(), embeddables::get, valueBinders);
+            mapped.put(entity.javaType(), new MappedEntity(plan.model(), plan.access(), root(model, entity), embeddedId,
                 idClass, state, m -> EntityStatements.of(m, MappedEntity.idIndexes(m), binders::get, embeddables::get,
-                    target -> model.entity(target).orElse(null), mapped::get, inheritance.get(m.javaType()), inheritance::get),
+                    target -> plans.containsKey(target) ? plans.get(target).model() : null,
+                    mapped::get, inheritance.get(m.javaType()), inheritance::get,
+                    source.delimitedIdentifiers()),
                 ranks.get(entity.javaType()), mapped::get));
         }
-        return new MappedUnit(model, entities, embeddables, binders, mapped, loader, inheritance);
+        for (EntityModel entity : model.entities()) {
+            MappedEntity executable = mapped.get(entity.javaType());
+            if (plans.get(entity.javaType()).model() == entity) continue;
+            for (CollectionMapping collection : executable.statements().collections()) {
+                if (collection.attribute() >= entity.attributes().size() && collection instanceof CollectionMapping.Unsupported unsupported) {
+                    throw new PersistenceException("Embedded relationship " + unsupported.association().name()
+                        + " of " + entity.javaType().getName() + " is not executable: " + unsupported.feature());
+                }
+            }
+            for (int i = entity.attributes().size(); i < executable.model().attributes().size(); i++) {
+                AttributeModel attribute = executable.model().attributes().get(i);
+                if (attribute instanceof ElementCollectionAttribute && executable.statements().elementCollection(i).isEmpty()) {
+                    throw new PersistenceException("Embedded element collection " + attribute.name() + " of "
+                        + entity.javaType().getName() + " has no executable collection-table mapping");
+                }
+            }
+        }
+        return new MappedUnit(model, entities, embeddables, binders, mapped, loader, source, inheritance);
     }
 
     public InheritanceMapping inheritance(Class<?> type) {
         return inheritance.get(type);
+    }
+
+    /** The identifier policy shared by generated DDL and every provider-generated SQL statement. */
+    public io.vidocq.mansart.jpa.dialect.sql.Identifier identifier(String name) {
+        return name == null || name.isBlank() ? null
+            : io.vidocq.mansart.jpa.dialect.sql.Identifier.of(name, source.delimitedIdentifiers());
+    }
+
+    /** Qualified stored-procedure names use the same unit policy as other database objects (§2.15). */
+    public List<io.vidocq.mansart.jpa.dialect.sql.Identifier> routineName(String name) {
+        return io.vidocq.mansart.jpa.dialect.sql.Identifier.qualified(name, source.delimitedIdentifiers());
     }
 
     /**
@@ -252,9 +291,12 @@ public final class MappedUnit {
             Optional<ManagedAccess> fitting = candidates.stream()
                 .filter(a -> a.attributes().equals(descriptor) && a.callbacks().equals(callbacks)).findFirst();
             if (fitting.isEmpty()) {
-                LOGGER.log(System.Logger.Level.WARNING, "The access generated for {0} lists {1}, but the class maps {2}: it "
-                    + "was compiled from another version of the class; Mansart generates its access at bootstrap instead",
-                    type.getName(), candidates.getFirst().attributes(), descriptor);
+                LOGGER.log(System.Logger.Level.WARNING, "The access generated for {0} lists {1} and callbacks {2}, but the "
+                    + "unit maps {3} and callbacks {4}: a mapping file (orm.xml) changes its mapping, or it was compiled "
+                    + "from another version of the class; Mansart generates its access at bootstrap instead (members only "
+                    + "the mapping maps need the package opened to io.vidocq.mansart.jpa.core)",
+                    type.getName(), candidates.getFirst().attributes(), candidates.getFirst().callbacks(), descriptor,
+                    callbacks);
             }
             return fitting;
         }
@@ -277,9 +319,9 @@ public final class MappedUnit {
                     if (elements.element() != null) {
                         prepare(List.of(elements.element()), valueBinders, generated, embeddables, binders);
                     }
-                    prepareIndex(elements.index(), valueBinders, binders);
+                    prepareIndex(elements.index(), valueBinders, generated, embeddables, binders);
                 }
-                case AssociationAttribute association -> prepareIndex(association.index(), valueBinders, binders);
+                case AssociationAttribute association -> prepareIndex(association.index(), valueBinders, generated, embeddables, binders);
                 default -> {
                     // relationships are bound with their target; pending attributes with their mapping file
                 }
@@ -288,8 +330,10 @@ public final class MappedUnit {
     }
 
     /** The binder of the column of a map key or of a list position. */
-    private static void prepareIndex(CollectionIndex index, ValueBinders valueBinders, Map<BasicAttribute, ValueBinder> binders) {
+    private static void prepareIndex(CollectionIndex index, ValueBinders valueBinders, Generated generated,
+            Map<EmbeddableModel, ManagedAccess> embeddables, Map<BasicAttribute, ValueBinder> binders) {
         switch (index) {
+            case CollectionIndex.ByEmbedded(EmbeddedAttribute key) -> prepare(List.of(key), valueBinders, generated, embeddables, binders);
             case CollectionIndex.ByColumn(BasicAttribute key) -> binders.put(key, bind(valueBinders, key));
             case CollectionIndex.ByPosition(BasicAttribute position) -> binders.put(position, bind(valueBinders, position));
             case null, default -> {
@@ -309,6 +353,11 @@ public final class MappedUnit {
 
     public PersistenceUnitModel model() {
         return model;
+    }
+
+    /** The managed classes as the unit's class files and mapping files describe them, the source of its model. */
+    public ClassInfos source() {
+        return source;
     }
 
     /** The class loader of the managed classes: the classes a query names (constructor results, enums) come from it. */

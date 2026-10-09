@@ -38,6 +38,10 @@ public sealed interface CollectionIndex {
     record ByColumn(BasicAttribute key) implements CollectionIndex {
     }
 
+    /** An embeddable key (§2.7): its basic columns, including nested overrides named {@code key.<attribute>}. */
+    record ByEmbedded(EmbeddedAttribute key) implements CollectionIndex {
+    }
+
     /** An entity key (§11.1.35 {@code @MapKeyJoinColumn}): a foreign key to {@code entity}, as written. */
     record ByEntity(Class<?> entity, List<JoinColumnModel> joinColumns) implements CollectionIndex {
 
@@ -53,7 +57,7 @@ public sealed interface CollectionIndex {
     record ByPosition(BasicAttribute position) implements CollectionIndex {
     }
 
-    /** A map key P5 does not map yet (an embeddable key, a raw map): the collection is neither read nor written. */
+    /** A map key P5 does not map yet, such as a raw map without a declared key class. */
     record Unsupported(String feature) implements CollectionIndex {
     }
 }

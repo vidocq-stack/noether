@@ -94,11 +94,8 @@ public abstract class StandardDialect implements Dialect {
             case CREATE_SCHEMA -> "CREATE SCHEMA IF NOT EXISTS " + name(schema.table().name());
             case DROP_SCHEMA -> "DROP SCHEMA IF EXISTS " + name(schema.table().name());
             case CREATE_INDEX -> "CREATE " + (schema.unique() ? "UNIQUE " : "") + "INDEX " + name(schema.objectName())
-                + " ON " + table(schema.table()) + " (" + String.join(", ", schema.indexColumns().stream().map(c -> {
-                    String[] parts = c.strip().split("\\s+");
-                    String suffix = parts.length > 1 && parts[1].equalsIgnoreCase("DESC") ? " DESC" : "";
-                    return name(identifier(parts[0])) + suffix;
-                }).toList()) + ")";
+                + " ON " + table(schema.table()) + " (" + String.join(", ", schema.indexColumns().stream()
+                    .map(c -> name(c.name()) + (c.descending() ? " DESC" : "")).toList()) + ")";
             case TRUNCATE -> "TRUNCATE TABLE " + table(schema.table());
         };
     }
@@ -112,11 +109,6 @@ public abstract class StandardDialect implements Dialect {
             case TIMESTAMP_WITH_TIMEZONE -> "TIMESTAMP WITH TIME ZONE";
             default -> column.type().getName();
         };
-    }
-
-    private static Identifier identifier(String value) {
-        return value.startsWith("\"") && value.endsWith("\"")
-            ? Identifier.quoted(value.substring(1, value.length() - 1)) : Identifier.of(value);
     }
 
     protected String truncate(io.vidocq.mansart.jpa.dialect.sql.TruncateTables truncate) {
@@ -446,6 +438,6 @@ public abstract class StandardDialect implements Dialect {
 
     /** A name, delimited when quoted. */
     protected String name(Identifier identifier) {
-        return identifier.quoted() ? '"' + identifier.name().replace("\"", "\"\"") + '"' : identifier.name();
+        return renderIdentifier(identifier);
     }
 }

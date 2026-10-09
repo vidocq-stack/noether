@@ -32,7 +32,6 @@ import io.vidocq.mansart.jpa.core.model.EmbeddableModel;
 import io.vidocq.mansart.jpa.core.model.EmbeddedAttribute;
 import io.vidocq.mansart.jpa.core.model.ConverterModel;
 import io.vidocq.mansart.jpa.core.model.EntityModel;
-import io.vidocq.mansart.jpa.core.model.PendingAttribute;
 import io.vidocq.mansart.jpa.core.model.IdModel;
 import io.vidocq.mansart.jpa.core.model.JoinColumnModel;
 import io.vidocq.mansart.jpa.core.model.PersistenceUnitModel;
@@ -364,12 +363,9 @@ class EntityModelBuilderTest {
     }
 
     @Test
-    void withMappingFilesAnAttributeTheAnnotationsCannotMapIsLeftToThem() { // ch. 12 is read later (orm.xml milestone)
+    void anAttributeTheAnnotationsCannotMapIsAnErrorEvenWhenMappingFilesMayExist() { // ch. 12: the mapping files are read
         assertThatThrownBy(() -> build(Parent.class, XmlMapped.class)).isInstanceOf(PersistenceException.class)
             .hasMessageContaining("parents");
-        EntityModel mapped = EntityModelBuilder.build(List.of(Parent.class.getName(), XmlMapped.class.getName()),
-            getClass().getClassLoader(), true).entity(XmlMapped.class).orElseThrow();
-        assertThat(mapped.attribute("parents").orElseThrow()).isInstanceOf(PendingAttribute.class);
     }
 
     // ---- relationships (§2.10, §11.1) and invalid mappings ---------------------------------------------------

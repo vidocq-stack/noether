@@ -22,17 +22,34 @@ package io.vidocq.mansart.jpa.dialect.sql;
 import java.util.List;
 
 /** A stored-procedure invocation in registration order (§3.11.12). */
-public record ProcedureCall(String procedureName, List<Parameter> parameters) {
+public record ProcedureCall(List<Identifier> procedureName, List<Parameter> parameters) {
 
     public ProcedureCall {
-        if (procedureName == null || !procedureName.matches("[A-Za-z_][A-Za-z0-9_$]*(\\.[A-Za-z_][A-Za-z0-9_$]*)*")) {
-            throw new IllegalArgumentException("Invalid stored procedure name: " + procedureName);
-        }
+        procedureName = List.copyOf(procedureName);
+        if (procedureName.isEmpty()) throw new IllegalArgumentException("A procedure needs a name");
+        procedureName.forEach(ProcedureCall::validate);
         parameters = List.copyOf(parameters);
     }
 
+    public ProcedureCall(String procedureName, List<Parameter> parameters) {
+        this(Identifier.qualified(procedureName, false), parameters);
+    }
+
+    private static void validate(Identifier identifier) {
+        if (!identifier.quoted() && !identifier.name().matches("[A-Za-z_][A-Za-z0-9_$]*")) {
+            throw new IllegalArgumentException("Invalid routine identifier: " + identifier.name());
+        }
+    }
+
     /** Parameter direction and JDBC type; the driver binds values, the dialect shapes the invocation. */
-    public record Parameter(Mode mode, int jdbcType) {
+    public record Parameter(Mode mode, int jdbcType, Identifier name) {
+        public Parameter {
+            if (name != null) validate(name);
+        }
+
+        public Parameter(Mode mode, int jdbcType) {
+            this(mode, jdbcType, null);
+        }
     }
 
     public enum Mode {

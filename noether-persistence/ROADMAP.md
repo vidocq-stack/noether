@@ -74,12 +74,12 @@ Facts read from the official bundle `jakarta-persistence-tck-3.2.1.zip`
 | `core.entitytest` + `entitytest` | 172 | P4 / P5 |
 | `se.entityManager` | 101 | P1 / P4 |
 | `core.entityManager` + `core.entityManager2` | 76 | P4 |
-| `core.callback` | 66 | P4 (XML part: P10) |
+| `core.callback` | 66 | P4 (XML part: P10 ✅) |
 | `core.enums` + `core.types` | 105 | P2 |
 | `core.StoredProcedureQuery` | 40 | P7 |
 | `core.relationship` + `core.derivedid` + `core.nestedembedding` | 48 | P5 |
 | `se.schemaGeneration` | 26 | P9 |
-| `core.override` | 26 | P10 |
+| `core.override` | 26 | P10 ✅ |
 | `core.lock` + `core.versioning` | 19 | P4 |
 | `core.exceptions` | 17 | P4 |
 | `se.resource_local` + `core.entityTransaction` | 22 | P1 |
@@ -90,7 +90,7 @@ Facts read from the official bundle `jakarta-persistence-tck-3.2.1.zip`
 | `core.entityManagerFactory` + `se.entityManagerFactory` + close exceptions | 14 | P1 |
 | `core.persistenceUnitUtil` + `core.persistenceUtil` | 8 | P5 |
 | `jpa22.*` (repeatable annotations, stream, generators) | 20 | P2 / P7 |
-| `core.basic`, `se.descriptor` | 3 | P1 / P10 |
+| `core.basic`, `se.descriptor` | 3 | P1 / P10 ✅ |
 
 ## Module Architecture (target)
 
@@ -233,8 +233,8 @@ reaches entities, never what it sees.
 - [x] Identifiers: single, `@IdClass`, `@EmbeddedId`, derived identities (`@Id` on a many-to-one or one-to-one,
       §2.4.1); `@GeneratedValue` with its `@SequenceGenerator` / `@TableGenerator` (looked up on the attribute, the
       entity, then the whole unit).
-- [x] Units with mapping files: what the annotations leave unmapped is a `PendingAttribute` for the `orm.xml`
-      milestone, not an error. Every package of the TCK maps as a unit (161 / 161).
+- [x] Units with mapping files: the `orm.xml` overlay (P10) completes the annotations; an attribute nothing maps is an
+      error. Every package of the TCK maps as a unit (161 / 161).
 - [x] Generated access (`access.ManagedAccess`, decision D3): one hidden class per managed class, defined in this
       module; the method handles (private lookup, so the package must be `opens … to io.vidocq.mansart.jpa.core`)
       are class data loaded by `ldc` of `classDataAt` dynamic constants, which the JIT treats as constants. Field and
@@ -248,7 +248,8 @@ reaches entities, never what it sees.
       `createEntityManagerFactory`.
 - [x] Module-path integration test (`mansart-jpa-module-it`): entities in a named application module, with and
       without the `opens` clause (the unit tests run inside the provider module and cannot exercise the refusal).
-- [ ] Quoting rules (`<delimited-identifiers/>`, §2.13) — with the SQL generation of P3/P4.
+- [x] Table/schema/column quoting rules (`<delimited-identifiers/>`, §2.15, §12.2.1.3) — shared by
+      schema generation, SQL mapping/query execution and identifier generators (P10 hardening).
 - *Moved to P4 (done there):* executing the generation strategies (`IDENTITY`, `SEQUENCE`, `TABLE`, `UUID`,
   `AUTO`): they need the insert path and the dialect (D4). The model above carries their metadata.
 
@@ -431,10 +432,16 @@ refused or left as the instance holds it, naming P5, never mapped wrongly):
 
 - single-valued relationships through a join table; unidirectional one-to-many through a foreign key in the target;
 - relationships to an entity with a derived identity; a join column referencing a column that is not a key;
-- embeddable map keys; indexes on the inverse side of a many-to-many; relationships inside embeddables;
+- indexes on the inverse side of a many-to-many; relationships inside collection-table embeddable elements;
 - lazy loading proper — collection wrappers and to-one subclasses generated with the Class-File API — instead of
   loading everything with its owner: a performance concern, measured with P12 (`BENCH.md`), not a conformance one;
 - joins instead of secondary selects, with the SQL AST of P7.
+
+**Follow-up (2026-10-09, BUG-20261009-24)**: embeddable map keys now execute through the existing generated
+accesses, flattened columns, binders and hydration, for element collections and relationship maps.
+Nested key/value overrides and converters, owner-scoped defaults, record keys, key snapshots and independent
+merge copies are covered by schema/CRUD tests and a closed-module APT vehicle. The official
+`core.metamodelapi.embeddabletype` regression gate is restored to **51/51**; no fresh full-suite score is claimed.
 
 **TCK gate**: `core.relationship.*`, `core.derivedid.*`, `core.nestedembedding`,
 `core.annotations.{mapkey*,elementcollection,collectiontable,orderby,ordercolumn,onexmanyuni,mapsid,assocoverride}`,
@@ -632,16 +639,68 @@ coordination and later milestones are not P9 implementation gaps:
 
 See `TCK.md` for exact commands, retained red counters and ownership evidence; `BUG.md` records the defects.
 
-### P10 — XML mapping descriptors ⏳
+### P10 — XML mapping descriptors 🚧 (partial; delivery gate not met)
 
-Spec: ch. 12 (`orm.xml`), §8.2.1.8 (`mapping-file` in `persistence.xml`).
+Spec: ch. 12 (`orm.xml`), §8.2.1.6.2 (`mapping-file` in `persistence.xml`, default `META-INF/orm.xml`).
 
-- [ ] `orm.xml` 3.2 parser (StAX) feeding the same entity model; `metadata-complete`,
-      persistence-unit defaults, override rules (XML over annotations).
-- [ ] XML entity listeners and callbacks, default listeners.
+- [x] `orm.xml` parser (StAX, `model.xml.OrmXmlReader`): DTDs refused (no external entity is ever resolved),
+      root/namespace/version checked (orm 1.0–2.2 `xmlns.jcp.org`/`java.sun.com` and 3.0–3.2 `jakarta.ee`),
+      XSD-validated against the 3.2 schema; every error is a `PersistenceException` naming the resource and line.
+- [x] Mapping files of a unit (`bootstrap.MappingFiles`): `<mapping-file>` / `PersistenceUnitInfo` mapping files
+      (root, then the unit's class loader; a missing one is an error), default `META-INF/orm.xml` in the root and
+      the jar files.
+- [x] One engine: `model.xml.OrmOverlay` implements `ClassInfos` and rewrites the XML as annotations over the
+      class-file annotations, so `EntityModelBuilder`/`AccessPlanner` build the model and the accesses as before
+      (no reflection, the classes are never modified). Entities, mapped superclasses and embeddables without
+      annotations; `metadata-complete` (class and unit) ignores the annotations; XML overrides annotations
+      element by element; `<package>`, `<schema>`, `<catalog>`, `<access>` and the unit defaults (conflicting
+      unit defaults across files are an error); `cascade-persist`; attributes, relationships, join/collection
+      tables, maps, columns, attribute overrides, inheritance, generators, converters.
+      Annotation/XML association overrides of inherited mapped-superclass relationships share the existing builder:
+      foreign-key columns, join-table columns and schema-generation foreign-key metadata are overridden without
+      replacing target/access/cascade/fetch/optionality. Entity-owned embedded relationships now execute through
+      `mapping.EmbeddedPaths`: nested references/collections are lowered to dotted state slots through compositions
+      of the existing generated accesses, keeping the semantic model/metamodel hierarchical. Annotation/XML
+      member and class dotted overrides clone per-owner embeddable views, including schema foreign-key metadata;
+      JPQL/Criteria, ordered join tables, embedded element collections, dotted inverse `mappedBy`, cascades,
+      merge/refresh/detach, orphan removal and dirty checking share the existing planners (BUG-20261009-22 fixed).
+      Existing P5 unsupported shapes (to-one join tables, unidirectional one-to-many foreign-key collections and
+      associations inside collection-table embeddable elements) are explicitly refused, never silently omitted.
+- [x] Callbacks: XML entity listeners and callback methods, default listeners first (§3.6.4),
+      `exclude-default-listeners`, `exclude-superclass-listeners`; named JPQL/native queries, result-set mappings,
+      stored procedures and entity graphs of mapping files, replacing annotated ones of the same name.
+- [x] Unknown or unsupported metadata (an attribute the class lacks, an element Mansart cannot honour) is an error,
+      never a silent default. `<delimited-identifiers/>` now preserves exact case and quotes table/schema/column-level
+      identifiers, including generated defaults, indexes/unique constraints, discriminator expressions and generators.
+      Explicit double-quoted names use the same `Identifier`; native SQL supplied by callers is not rewritten.
+      Native/stored-procedure result mappings resolve delimited scalar, constructor, field and discriminator labels
+      exactly, without passing delimiter characters to JDBC; ambiguous folded labels are rejected.
+      Named and dynamic procedure calls parse qualified `Identifier` parts (including quoted dots/doubled quotes)
+      with the unit policy, reject malformed names before execution, and retain application parameter keys.
+      PostgreSQL renders named argument targets while JDBC continues binding/output retrieval by ordinal;
+      H2 calls retain declared argument order.
+      BUG-20261009-20 is fixed, not bypassed to accommodate the unquoted official DDL.
+- [x] A compiled access (APT) whose plan differs from the XML-mapped model is not used: the provider logs the
+      mismatch and generates the access at bootstrap (members only XML maps need the package opened to Mansart).
 
 **TCK gate**: `core.override.*`, `core.callback.xml`, `core.relationship.descriptors`,
-`se.descriptor`.
+`se.descriptor` — plus every XML-dependent native/stored-procedure/listener/`mappedsc.descriptors` test.
+
+**2026-10-09 status: PARTIAL.** The initial 2121-pass result ignored the XML quotation contract and did not
+justify completion. Correct quotation against the untouched official PostgreSQL DDL reports **2096 passes,
+0 failures, 35 errors, 4 skips / 2135**: the unchanged 10 P11 cache errors and 25 newly exposed case/DDL
+incompatibilities confined to the two delimited-default fixtures (`core.annotations.nativequery` and
+`core.entitytest.apitests`). No tests were added/removed or official sources/DDL edited. All other gates retain
+their baseline results. The final full official run at **20:43:24Z** includes the embedded execution,
+embeddable map-key and query identifier fixes: the same 2135 test identities, with no further regressions.
+The clean JPA reactor passes **549 tests** (core 459), including closed APT module-path embedded/key access;
+the final Vidocq Arquillian run passes **6/6** against those installed artifacts.
+
+**Remaining delivery blocker:** resolution of the official fixture/DDL case contract without weakening quotation
+or editing the official suite. A fresh full official gate has been run; the fixture conflict is not a green gate.
+The query identifier surface is covered by genuine red/green native/procedure regressions, including real
+PostgreSQL mixed-case schemas/routines and quoted named IN/INOUT targets (provider-owned tests, not official TCK
+results). See `TCK.md` for the final official result and exact test-identity comparison.
 
 ### P11 — Second-level cache and Bean Validation ⏳
 

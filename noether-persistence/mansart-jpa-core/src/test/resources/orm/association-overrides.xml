@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entity-mappings xmlns="https://jakarta.ee/xml/ns/persistence/orm" version="3.2">
+  <package>io.vidocq.mansart.jpa.core.model.xml.fixtures</package>
+  <entity class="LinkEntity">
+    <association-override name="target">
+      <join-column name="XML_FK" nullable="false"/>
+      <foreign-key constraint-mode="NO_CONSTRAINT"/>
+    </association-override>
+    <association-override name="targets">
+      <join-table name="XmlLinks">
+        <join-column name="OwnerId"/>
+        <foreign-key name="XmlOwnerConstraint"/>
+        <inverse-join-column name="TargetId"/>
+        <inverse-foreign-key constraint-mode="NO_CONSTRAINT"/>
+      </join-table>
+    </association-override>
+  </entity>
+</entity-mappings>

@@ -133,6 +133,71 @@ class StoredProcedureQueryTest {
     }
 
     @Test
+    void quotedQualifiedRoutineNamesKeepDotsCaseAndEscapedQuotes() { // §2.15: all database objects
+        sql("CREATE SCHEMA \"Mixed.Schema\"");
+        sql("CREATE ALIAS \"Mixed.Schema\".\"Add\"\"One\" FOR "
+            + "'io.vidocq.mansart.jpa.core.query.StoredProcedureQueryTest$ProcedureFixture.addOne'");
+        StoredProcedureQuery query = em.createStoredProcedureQuery("\"Mixed.Schema\".\"Add\"\"One\"", Integer.class);
+        query.registerStoredProcedureParameter("\"Input\"\"Value\"", Integer.class, ParameterMode.IN);
+        query.setParameter("\"Input\"\"Value\"", 41);
+        assertThat(query.getParameter("\"Input\"\"Value\"").getName()).isEqualTo("\"Input\"\"Value\"");
+        assertThat(query.getSingleResult()).isEqualTo(42);
+        assertThatThrownBy(() -> em.createStoredProcedureQuery("\"Mixed.Schema\".\"add\"\"one\"", Integer.class)
+            .getSingleResult()).isInstanceOf(PersistenceException.class);
+    }
+
+    @Test
+    void unitDefaultsQuoteNamedAndDynamicProcedureNames() {
+        sql("CREATE SCHEMA \"MixedSchema\"");
+        sql("CREATE ALIAS \"MixedSchema\".\"AddOne\" AS 'int addOne(int value) { return value + 1; }'");
+        try (EntityManagerFactory delimited = new PersistenceConfiguration("delimited-procedure")
+                .provider("io.vidocq.mansart.jpa.core.MansartPersistenceProvider")
+                .managedClass(ProcedureFixture.class).mappingFile("orm/delimited.xml")
+                .property(PersistenceConfiguration.JDBC_URL, emf.getProperties().get(PersistenceConfiguration.JDBC_URL))
+                .property(PersistenceConfiguration.JDBC_USER, "sa").createEntityManagerFactory();
+             EntityManager manager = delimited.createEntityManager()) {
+            StoredProcedureQuery dynamic = manager.createStoredProcedureQuery("MixedSchema.AddOne", Integer.class);
+            dynamic.registerStoredProcedureParameter("InputValue", Integer.class, ParameterMode.IN);
+            assertThat(dynamic.setParameter("InputValue", 41).getSingleResult()).isEqualTo(42);
+            StoredProcedureQuery named = manager.createNamedStoredProcedureQuery("ProcedureFixture.delimited");
+            assertThat(named.setParameter("InputValue", 9).getSingleResult()).isEqualTo(10);
+        }
+    }
+
+    @Test
+    void malformedOrInjectableRoutineNamesAreRejectedAtCreation() {
+        for (String name : java.util.List.of("", "proc.", ".proc", "a..b", "\"unclosed", "\"a\"b\"",
+                "\"a\".\"b", "\"\"", "proc(); DROP TABLE X", "proc --", "proc/*comment*/")) {
+            assertThatThrownBy(() -> em.createStoredProcedureQuery(name))
+                .as(name).isInstanceOf(IllegalArgumentException.class);
+        }
+        StoredProcedureQuery query = em.createStoredProcedureQuery("proc");
+        assertThatThrownBy(() -> query.registerStoredProcedureParameter("\"unclosed", Integer.class, ParameterMode.IN))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThat(query.getParameters()).isEmpty();
+        query.registerStoredProcedureParameter(1, Integer.class, ParameterMode.IN);
+        assertThat(query.getParameters()).hasSize(1);
+    }
+
+    @Test
+    void delimitedSqlPunctuationCannotEscapeTheRoutineIdentifier() {
+        sql("CREATE TABLE marker (id integer)");
+        sql("CREATE ALIAS \"Safe\"\"); DROP TABLE marker; --\" FOR "
+            + "'io.vidocq.mansart.jpa.core.query.StoredProcedureQueryTest$ProcedureFixture.addOne'");
+        var query = em.createStoredProcedureQuery("\"Safe\"\"); DROP TABLE marker; --\"", Integer.class);
+        query.registerStoredProcedureParameter(1, Integer.class, ParameterMode.IN);
+        assertThat(query.setParameter(1, 41).getSingleResult()).isEqualTo(42);
+        assertThat(em.createNativeQuery("SELECT COUNT(*) FROM marker").getSingleResult()).isEqualTo(0L);
+    }
+
+    @Test
+    void procedureResultMappingsUseTheSameExactDelimitedJdbcLabelsAsNativeQueries() {
+        sql("CREATE ALIAS QUOTED_RESULTS FOR "
+            + "'io.vidocq.mansart.jpa.core.query.StoredProcedureQueryTest$ProcedureFixture.labels'");
+        assertThat(em.createStoredProcedureQuery("QUOTED_RESULTS", "procedure-label").getSingleResult()).isEqualTo(42);
+    }
+
+    @Test
     void executesAgainWithNewInputsAndResetsThePreviousResults() { // §3.11.12: a query may be executed repeatedly
         createAddOne();
         StoredProcedureQuery query = em.createStoredProcedureQuery("ADD_ONE", Integer.class);
@@ -245,9 +310,22 @@ class StoredProcedureQueryTest {
     }
 
     @Entity(name = "ProcedureFixture")
+    @jakarta.persistence.SqlResultSetMapping(name = "procedure-label",
+        columns = @jakarta.persistence.ColumnResult(name = "\"Value\"\"Label\"", type = Integer.class))
     @NamedStoredProcedureQuery(name = "ProcedureFixture.increment", procedureName = "ADD_ONE",
         parameters = @StoredProcedureParameter(name = "", type = Integer.class, mode = ParameterMode.IN))
+    @NamedStoredProcedureQuery(name = "ProcedureFixture.delimited", procedureName = "MixedSchema.AddOne",
+        resultClasses = Integer.class,
+        parameters = @StoredProcedureParameter(name = "InputValue", type = Integer.class, mode = ParameterMode.IN))
     public static class ProcedureFixture {
+        public static int addOne(int value) {
+            return value + 1;
+        }
+
+        public static java.sql.ResultSet labels(java.sql.Connection connection) throws java.sql.SQLException {
+            return connection.createStatement().executeQuery("SELECT 42 AS \"Value\"\"Label\", 9 AS \"value\"\"label\"");
+        }
+
         @Id
         public Integer id;
     }

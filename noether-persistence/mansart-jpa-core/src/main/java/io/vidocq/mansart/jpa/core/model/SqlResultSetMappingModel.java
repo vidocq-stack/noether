@@ -31,9 +31,13 @@ public record SqlResultSetMappingModel(String name, List<Result> results) {
     public sealed interface Result permits EntityResult, ConstructorResult, ColumnResult {
     }
 
-    public record EntityResult(Class<?> entityClass, List<FieldResult> fields) implements Result {
+    public record EntityResult(Class<?> entityClass, List<FieldResult> fields, String discriminatorColumn) implements Result {
         public EntityResult {
             fields = List.copyOf(fields);
+        }
+
+        public EntityResult(Class<?> entityClass, List<FieldResult> fields) {
+            this(entityClass, fields, "");
         }
     }
 

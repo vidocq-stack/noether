@@ -24,12 +24,64 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.vidocq.mansart.jpa.processorit.closed.Ledger;
 import io.vidocq.mansart.jpa.processorit.closed.Account;
 import io.vidocq.mansart.jpa.processorit.closed.PremiumAccount;
+import io.vidocq.mansart.jpa.processorit.closed.Portfolio;
+import io.vidocq.mansart.jpa.processorit.closed.Profile;
+import io.vidocq.mansart.jpa.processorit.closed.Balance;
 import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.PersistenceConfiguration;
 import org.junit.jupiter.api.Test;
 
 /** Compiled with mansart-jpa-processor, an application needs no opens: the generated accesses are handed over. */
 class GeneratedAccessModulePathTest {
+
+    @Test
+    void embeddableMapKeysUseGeneratedAccessWithoutOpeningThePackage() { // §2.7, §11.1.8
+        var unit = new PersistenceConfiguration("processor-map-keys")
+            .provider("io.vidocq.mansart.jpa.core.MansartPersistenceProvider").managedClass(Ledger.class)
+            .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:processor-map-keys;DB_CLOSE_DELAY=-1")
+            .property(PersistenceConfiguration.SCHEMAGEN_DATABASE_ACTION, "drop-and-create");
+        try (var emf = unit.createEntityManagerFactory()) {
+            var key = new Balance(500, "EUR");
+            Ledger ledger = new Ledger(1);
+            ledger.balances().put(key, "deposit");
+            emf.runInTransaction(em -> em.persist(ledger));
+            emf.runInTransaction(em -> {
+                assertThat(em.find(Ledger.class, 1L).balances()).containsEntry(key, "deposit");
+                assertThat(em.createQuery("select key(b) from Ledger l join l.balances b", Balance.class).getResultList())
+                    .containsExactly(key);
+                em.remove(em.find(Ledger.class, 1L));
+            });
+        }
+    }
+
+    @Test
+    void embeddedAssociationOverridesComposeGeneratedAccessesWithoutOpeningThePackage() {
+        var unit = new PersistenceConfiguration("processor-embedded")
+            .provider("io.vidocq.mansart.jpa.core.MansartPersistenceProvider")
+            .managedClass(Portfolio.class).managedClass(Account.class).managedClass(PremiumAccount.class)
+            .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:processor-embedded;DB_CLOSE_DELAY=-1")
+            .property(PersistenceConfiguration.SCHEMAGEN_DATABASE_ACTION, "drop-and-create");
+        try (var emf = unit.createEntityManagerFactory()) {
+            assertThat(io.vidocq.mansart.jpa.processorit.closed.Profile_.owner)
+                .isSameAs(emf.getMetamodel().embeddable(Profile.class).getAttribute("owner"));
+            emf.runInTransaction(em -> em.persist(new Portfolio(10, new Profile(7, new PremiumAccount(11, "nested", 42)))));
+            emf.runInTransaction(em -> {
+                Portfolio found = em.find(Portfolio.class, 10L);
+                assertThat(found.profile().revision()).isEqualTo(7);
+                assertThat(found.profile().owner()).isInstanceOf(PremiumAccount.class);
+                assertThat(found.profile().owner().name()).isEqualTo("nested");
+                assertThat(em.createQuery("select p.profile.owner from Portfolio p", Account.class).getSingleResult())
+                    .isSameAs(found.profile().owner());
+                assertThat(em.createNativeQuery("select PortfolioOwner from Portfolio where id = 10").getSingleResult())
+                    .isEqualTo(11L);
+                em.remove(found);
+            });
+            emf.runInTransaction(em -> {
+                assertThat(em.find(Portfolio.class, 10L)).isNull();
+                assertThat(em.find(Account.class, 11L)).isNull();
+            });
+        }
+    }
 
     @Test
     void inheritanceUsesGeneratedAccessWithoutOpeningEntityPackages() throws Exception { // §2.14.1, §3.3

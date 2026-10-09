@@ -21,6 +21,24 @@ Needs **Docker** (a throw-away `postgres:17-alpine` container, removed at the en
 
 The script exits 0 when the TCK ran and was reported, whatever the score; non-zero when it could not run.
 
+## Provider-owned query identifier regression
+
+`DelimitedProcedureTest` is not an official TCK test and is not selected by either official failsafe execution.
+It reuses this runner's existing PostgreSQL driver and the core's `orm/delimited.xml` fixture; no dependencies
+or official sources/DDL are added or changed. Against an isolated PostgreSQL database, run from this directory:
+
+```bash
+../../mvnw -ntp compiler:testCompile org.apache.maven.plugins:maven-surefire-plugin:3.5.5:test \
+  -Dmaven.compiler.release=25 \
+  -Dmaven.test.additionalClasspath=../mansart-jpa-core/src/test/resources \
+  -Dtest=DelimitedProcedureTest -Dp10.jdbc.url=jdbc:postgresql://localhost:5432/p10 \
+  -Dp10.jdbc.user=p10 -Dp10.jdbc.password=p10
+```
+
+The test creates/removes its own `P10.MixedSchema` and `P10MixedSchema` schemas. Do not run concurrent copies
+against the same database. Without `p10.jdbc.url` it is skipped. Explicit compiler/surefire goals are needed
+because this standalone runner has `pom` packaging; this command never invokes the official failsafe/TCK goals.
+
 ## How it works
 
 1. **`install-tck.sh`** downloads the bundle from eclipse.org, checks its **SHA-256** against the one published

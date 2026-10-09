@@ -22,6 +22,7 @@ package io.vidocq.mansart.jpa.dialect.postgresql;
 import io.vidocq.mansart.jpa.dialect.StandardDialect;
 import io.vidocq.mansart.jpa.dialect.sql.Identifier;
 import io.vidocq.mansart.jpa.dialect.sql.NextValue;
+import io.vidocq.mansart.jpa.dialect.sql.ProcedureCall;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
@@ -49,6 +50,13 @@ public final class PostgreSQLDialect extends StandardDialect {
     }
 
     PostgreSQLDialect() {
+    }
+
+    @Override
+    public String renderProcedureCall(ProcedureCall call) {
+        return "CALL " + String.join(".", call.procedureName().stream().map(this::name).toList())
+            + "(" + String.join(", ", call.parameters().stream()
+                .map(parameter -> parameter.name() == null ? "?" : name(parameter.name()) + " => ?").toList()) + ")";
     }
 
     /** PostgreSQL folds unquoted names to lower case. */

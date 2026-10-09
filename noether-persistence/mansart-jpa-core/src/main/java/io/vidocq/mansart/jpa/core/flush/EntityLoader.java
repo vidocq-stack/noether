@@ -32,6 +32,7 @@ import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
 import io.vidocq.mansart.jpa.core.mapping.MappedUnit;
 import io.vidocq.mansart.jpa.core.model.AssociationAttribute;
 import io.vidocq.mansart.jpa.core.model.AttributeModel;
+import io.vidocq.mansart.jpa.core.model.CollectionIndex;
 import io.vidocq.mansart.jpa.core.model.ElementCollectionAttribute;
 import io.vidocq.mansart.jpa.core.model.EmbeddableModel;
 import io.vidocq.mansart.jpa.core.model.EmbeddedAttribute;
@@ -175,6 +176,7 @@ public final class EntityLoader {
         }
         Object[] state = state(type, instance, row);
         relationships(type, id, instance, state, row, connection, context);
+        type.access().read(instance, state);
         Object[] snapshot = type.state().snapshot(state);
         type.callback("PostLoad", instance); // §3.6.3: after a refresh too
         return snapshot;
@@ -325,6 +327,9 @@ public final class EntityLoader {
         if (index == null || !index.stored()) {
             return null;
         }
+        if (index.index() instanceof CollectionIndex.ByEmbedded) {
+            return index.embeddedKey(Arrays.copyOfRange(columns, from, from + index.columns().size()));
+        }
         if (index.keyEntity() != null) {
             MappedEntity key = entity(index.keyEntity());
             Object[] values = Arrays.copyOfRange(columns, from, columns.length);
@@ -381,6 +386,7 @@ public final class EntityLoader {
                     Object[] key = new Object[readers.size()];
                     for (int k = 0; k < key.length; k++) {
                         key[k] = readers.get(k).read(rows, k + 1);
+                        if (rows.wasNull()) key[k] = null;
                     }
                     keys.add(key);
                 }
@@ -411,6 +417,7 @@ public final class EntityLoader {
                     Object[] indexValues = new Object[width];
                     for (int c = 0; c < width; c++) {
                         indexValues[c] = index.binders().get(c).read(rows, c + 1);
+                        if (rows.wasNull()) indexValues[c] = null;
                     }
                     Object[] values = new Object[columns.size()];
                     boolean[] nulls = new boolean[values.length];

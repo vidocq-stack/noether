@@ -28,6 +28,175 @@ Official suite: **Jakarta Persistence 3.2.1** TCK (bundle from eclipse.org, SHA-
 | P7 — JPQL, native queries and stored procedures | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 1063 | 1068 | 4 |
 | P8 — runtime/canonical metamodel, Criteria and entity graphs; exposed converted-literal query fix | 2026-10-09 | Temurin 25.0.4+7-LTS | postgres:17-alpine | 2135 | 2013 | 118 | 4 |
 | P9 — schema, CDI/JTA, Vidocq extension and Arquillian integration | 2026-10-09 | Temurin 25.0.4+7-LTS | postgres:17-alpine | 2135 | 2040 | 91 | 4 |
+| P10 initial baseline — ORM XML; quotation ignored (superseded) | 2026-10-09 | Temurin 25.0.4+7-LTS | postgres:17-alpine | 2135 | 2121 | 10 | 4 |
+| P10 correctness hardening — partial, case-preserving quotation | 2026-10-09 | Temurin 25.0.4+7-LTS | postgres:17-alpine | 2135 | 2096 | 35 | 4 |
+| P10 final verification — embedded associations, embeddable map keys and query identifiers; gate blocked | 2026-10-09 | Temurin 25.0.4+7-LTS | postgres:17-alpine | 2135 | 2096 | 35 | 4 |
+
+## P10 hardening — partial; quotation must not be ignored to obtain a green score
+
+**Final full untouched official run (2026-10-09 20:43:24Z): 2135 tests, 2096 passed, 0 failures,
+35 errors, 4 skipped.** Comparison by execution + class + test name against the retained initial full run
+confirms zero added/missing tests and exactly the same 25 delimited-fixture errors described below.
+The 51 embeddable-type regressions introduced during hardening are repaired; no other newly failing tests remain.
+The final clean persistence reactor passes **549 tests** (459 core), and the final Vidocq Arquillian vehicle
+passes **6/6** against the installed final artifacts. These results include all embedded, map-key and query
+identifier fixes. The fixture/DDL case conflict still blocks the P10 delivery gate; the 10 cache errors are P11.
+
+Final commands, from the corresponding repository roots:
+
+```bash
+./mvnw -q -ntp -f mansart-persistence/pom.xml clean install
+mansart-persistence/mansart-jpa-tck/run-official-tck-persistence-3.2.sh
+# From vidocq:
+./mvnw -q -ntp -pl vidocq-runtime-integration-tests/vidocq-runtime-it-mansart-persistence -am test
+```
+
+Retained pre-embedded full untouched official run (2026-10-09 **19:59:13Z**): **2135 tests, 2096 passed, 0 failures, 35 errors, 4 skipped**.
+The clean persistence reactor passes: dialect SPI 23, H2 6, PostgreSQL 8, core **437**, processor 24,
+module-path IT 3, processor module-path IT 3, CDI/JTA 13 and Vauban module-path vehicle 4.
+`OrmXmlTest` covers real H2 quoted CRUD, JPQL/bulk queries, native entity/scalar results, embedded basics,
+collections, inherited association overrides/foreign-key metadata, mixed-case sequence/table/identity generators,
+indexes/unique constraints, escaped explicit quotes and joined inheritance/discriminators.
+
+Comparison against the retained 2121-pass baseline by **execution + class + test name**:
+**25 regressions, zero newly passing, zero added/missing tests**. They are not hidden or reclassified as P11:
+
+| Gate | Initial pass/error | Hardened pass/error | Total |
+|---|---:|---:|---:|
+| `core.annotations.nativequery` | 12 / 0 | 1 / 11 | 12 |
+| `core.entitytest.apitests` | 21 / 0 | 7 / 14 | 21 |
+| `core.override.*` | 26 / 0 | 26 / 0 | 26 |
+| `core.callback.*` | 66 / 0 | 66 / 0 | 66 |
+| `core.relationship.descriptors` | 8 / 0 | 8 / 0 | 8 |
+| `se.descriptor` | 1 / 0 | 1 / 0 | 1 |
+| `core.inheritance.mappedsc.descriptors` | 2 / 0 | 2 / 0 | 2 |
+| `core.StoredProcedureQuery` | 40 / 0 | 40 / 0 | 40 |
+| `core.annotations.elementcollection` | 3 / 0 | 3 / 0 | 3 |
+
+The only official resources declaring `<delimited-identifiers/>` are
+`core/annotations/nativequery/orm.xml` and `core/entitytest/apitests/orm.xml` in the spec-tests artifact.
+The former explicitly maps uppercase `PURCHASE_ORDER`, `ID`, `TOTAL`; the latter applies the unit-wide default to
+annotated names. The PostgreSQL DDL creates these names **unquoted**, folding them to lowercase. The old warning
+and ignored default therefore passed despite violating the mapping contract. Correct SQL uses the declared,
+case-preserving quoted identifiers and receives missing-relation errors against that DDL.
+See Jakarta Persistence 3.2 [§2.15 and §12.2.1.3](https://jakarta.ee/specifications/persistence/3.2/jakarta-persistence-spec-3.2.html):
+the unit-wide delimited default cannot be overridden. No official fixtures, SQL or exclusions were changed;
+native SQL from the application remains caller-owned, not rewritten.
+
+The original **10 P11 cache errors remain unchanged** in this baseline. P10 is **not delivered**: the fixture/DDL
+case conflict needs resolution without a provider case-folding exception or official-source edits.
+The final full gate above covers the embedded execution fix described below.
+The remaining query identifier contract is now covered by provider-owned red/green tests: qualified routine
+names and named argument targets use the unit policy and explicit delimiters; native/procedure result labels
+(including `EntityResult.discriminatorColumn`) use exact delimited text or unambiguous folded lookup.
+Real PostgreSQL tests execute mixed-case schemas/routines, quoted dots and doubled quotes, reversed named
+IN/INOUT registration with ordinal JDBC binding, and both named/dynamic calls under the unit-wide default.
+These tests do not run or alter the official suite and do not update the official counters above.
+The smallest core/dialect reactor passes **452 core tests + 41 dialect tests**, without failures/errors/skips;
+both provider-owned PostgreSQL tests pass, and the tested core/dialects are installed locally. Red/green and
+install logs are retained in `mansart-jpa-core/target/p10-query-identifiers/`.
+BUG-20261009-20 (ignored quotation) and the inherited scope of BUG-20261009-21 (association overrides) are fixed.
+
+### Embedded association execution follow-up — 2026-10-09 (no new official TCK run)
+
+BUG-20261009-22 is fixed for entity-owned embedded relationships: annotation/XML member and class dotted overrides
+feed per-owner immutable mapping views; composed generated accesses lower nested foreign keys and collections to
+the existing executable state slots. Real H2 schema/CRUD regressions prove overrides, `NO_CONSTRAINT`, ordered
+join tables, embedded basic element collections, dotted inverse `mappedBy`, JPQL/Criteria/collection predicates,
+persist/merge/refresh/detach/remove cascades, orphan removal, dirty updates/nulls and record reconstruction.
+A closed application Java module proves the APT-generated-provider path without new opens/exports.
+
+Validation: Temurin **25.0.4-tem**, Maven wrapper **3.9.16**,
+`cd mansart-persistence && ../mvnw -ntp clean install`: **526 tests, 0 failures, 0 errors, 0 skips** —
+core 441, dialects 37, processor 24, runtime module-path 3, APT module-path 4, CDI/JTA 13, actual Vauban module-path 4.
+The earlier full official counters remain historical, not a measured result of this follow-up.
+Existing P5 boundaries (to-one join tables, unidirectional one-to-many foreign-key collections, relationships
+inside collection-table embeddable elements) remain explicit refusals, not successful mappings that drop state.
+
+### Embeddable map-key regression repair — 2026-10-09
+
+The subsequent full-suite regression snapshot reported **2135 tests, 2045 passes, 86 errors and 4 skips**:
+51 previously green `core.metamodelapi.embeddabletype` tests rejected the valid embedded `address.mZipcode`
+map during bootstrap. BUG-20261009-24 fixes the missing executable embeddable-key mapping, not the validation.
+Key columns and generated accesses now share the existing flattening, JDBC binding and hydration paths;
+owner-scoped defaults, nested key/value overrides, conversions, record reconstruction, key snapshots and
+independent merge copies are exercised against real generated H2 schemas. A closed Java module also verifies
+APT-generated key access without adding opens/exports.
+
+Final targeted untouched official PostgreSQL 17 run (**20:40:50Z**):
+**51 tests, 51 passes, 0 failures, 0 errors, 0 skips**. Command:
+
+```bash
+mansart-persistence/mansart-jpa-tck/run-official-tck-persistence-3.2.sh --area core.metamodelapi.embeddabletype
+```
+
+Final `cd mansart-persistence && ../mvnw -ntp clean install`: **549 tests, 0 failures, 0 errors, 0 skips** —
+core 459, dialects 41, processor 24, runtime module-path 3, APT module-path 5, CDI/JTA 13, Vauban module-path 4.
+The TCK runner is excluded from that reactor. The subsequent full-suite result appears at the start of this
+section. Official sources/DDL and identifier policies remain unchanged.
+Evidence: `mansart-jpa-tck/target/failsafe-reports/execution-1/`,
+`target/tck-report-persistence.txt`, `target/embeddable-keys-tck-launch.log` and
+`target/embeddable-keys-clean-reactor.log` under the same runner directory.
+
+Commands (the TCK script exits zero even when tests error; inspect the XML):
+
+```bash
+./mvnw -q -ntp -f mansart-persistence/pom.xml clean install
+(cd mansart-persistence/mansart-jpa-tck && ./run-official-tck-persistence-3.2.sh --area core.annotations.nativequery)
+(cd mansart-persistence/mansart-jpa-tck && ./run-official-tck-persistence-3.2.sh)
+```
+
+Evidence in the runner's ignored `target/`: `p10-baseline/reports`, `p10-nativequery-report.txt`,
+`p10-hardening-full.log`, `failsafe-reports`, `p10-hardening-comparison.json`.
+The clean reactor log is retained as `p10-hardening-reactor.log` in the same directory.
+The targeted native-query run also reports **12 tests, 1 pass, 0 failures, 11 errors**.
+The earlier Vidocq Arquillian 6/6 result is a baseline, not a new runtime validation claim.
+
+## P10 initial baseline — ORM XML mapping descriptors: 2040 → 2121 (superseded)
+
+The 2026-10-09 full official run reports **2135 tests, 2121 passed, 0 failures, 10 errors, 4 skipped**
+(Temurin 25.0.4+7-LTS, Maven 3.9.16, PostgreSQL 17-alpine, unmodified official 3.2.1 tests, DDL and exclusions).
+Compared by **class + test name** with the preserved P9 XML: **81 newly passing, zero regressions, zero
+added/missing tests**; execution 2 keeps its single pass.
+
+| Gate (full-run XML) | Pass | Error | Total |
+|---|---:|---:|---:|
+| `core.override.*` | 26 | 0 | 26 |
+| `core.callback.*` (incl. `xml`, `listener*`, `method*`) | 66 | 0 | 66 |
+| `core.relationship.descriptors` | 8 | 0 | 8 |
+| `se.descriptor` | 1 | 0 | 1 |
+| `core.inheritance.mappedsc.descriptors` | 2 | 0 | 2 |
+| `core.StoredProcedureQuery` | 40 | 0 | 40 |
+| `core.annotations.nativequery` | 12 | 0 | 12 |
+| `core.annotations.elementcollection` | 3 | 0 | 3 |
+| `core.entitytest.apitests` | 21 | 0 | 21 |
+
+All 78 P10-attributed errors pass. Three tests attributed to P11 also pass
+(`se.cache.xml.all.Client#cacheRetrieveModeBYPASSTest`, `#cacheRetrieveModeUSETest`, `#cacheStoreModeBYPASSTest`):
+their unit is declared through `orm.xml`, and none of them asserts cache contents. The **10 remaining errors are all
+P11** (each reports `Cache returned: false` / `cache did not contain`): `core.cache.basicTests` `evictTest1`/`2`,
+`jpa22.se.repeatable.secondarytable#subClassInheritsCacheableTrue`, `se.cache.inherit` ×2,
+`se.cache.xml.all` `containsTest`/`cacheStoreModeUSETest`/`cacheStoreModeREFRESHTest`,
+`se.cache.xml.{disable,enable}selective#containsTest`.
+
+`core.override.joincolumn.Client#testOverrideJoinColumns` exposed a flush defect (BUG-20261009-19, fixed): removing
+related rows together nulled `NOT NULL` foreign keys. At this initial baseline, `<delimited-identifiers/>` was
+accepted with a warning and identifiers stayed unquoted (BUG-20261009-20); the hardening above fixes that deviation
+and supersedes the initial claim that only P11 remained.
+
+Clean JPA reactor (`./mvnw -ntp -f mansart-persistence/pom.xml clean install`): BUILD SUCCESS — dialect SPI 23,
+H2 6, PostgreSQL 8, core 427, processor 24, module-path IT 3, processor module-path IT 3, CDI/JTA 13, Vauban
+module-path vehicle 4. Vidocq Arquillian (command below, against the freshly installed Mansart): **6/6**.
+
+```bash
+export JAVA_HOME="$HOME/.sdkman/candidates/java/25.0.4-tem"; export PATH="$JAVA_HOME/bin:$PATH"
+./mvnw -ntp -f mansart-persistence/pom.xml clean install
+(cd mansart-persistence/mansart-jpa-tck && ./run-official-tck-persistence-3.2.sh)  # exits 0 even on errors: read the XML
+(cd mansart-persistence/mansart-jpa-tck && ./run-official-tck-persistence-3.2.sh --area core.override)
+```
+
+Evidence (full XML, logs, class/name comparison) is kept in session evidence (`files/p10-baseline`,
+`files/p10-full/comparison.json`).
 
 ## P9 — schema/JTA implementation and actual container contract complete
 

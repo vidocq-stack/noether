@@ -24,11 +24,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.vidocq.mansart.jpa.dialect.DialectFactory;
 import io.vidocq.mansart.jpa.dialect.sql.Delete;
 import io.vidocq.mansart.jpa.dialect.sql.Identifier;
+import io.vidocq.mansart.jpa.dialect.sql.ProcedureCall;
 import io.vidocq.mansart.jpa.dialect.sql.Table;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class PostgreSQLDialectFactoryTest {
+
+    @Test
+    void procedureArgumentTargetsAreDelimitedWithoutChangingJdbcOrdinalBindings() {
+        var call = new ProcedureCall("\"Mixed.Schema\".\"Add\"\"One\"", List.of(
+            new ProcedureCall.Parameter(ProcedureCall.Mode.INOUT, java.sql.Types.INTEGER, Identifier.of("\"Output.Value\"")),
+            new ProcedureCall.Parameter(ProcedureCall.Mode.IN, java.sql.Types.INTEGER, Identifier.of("\"Input\"\"Value\""))));
+        assertThat(new PostgreSQLDialectFactory().create(17, 0).renderProcedureCall(call))
+            .isEqualTo("CALL \"Mixed.Schema\".\"Add\"\"One\"(\"Output.Value\" => ?, \"Input\"\"Value\" => ?)");
+    }
 
     @Test
     void theModuleProvidesTheFactory() {

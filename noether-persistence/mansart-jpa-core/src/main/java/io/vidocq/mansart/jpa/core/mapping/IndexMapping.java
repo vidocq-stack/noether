@@ -36,11 +36,17 @@ import java.util.LinkedHashMap;
  * @param keyEntity for {@link CollectionIndex.ByEntity}, the entity of the keys
  */
 public record IndexMapping(CollectionIndex index, int keyAttribute, Class<?> keyEntity, List<Identifier> columns,
-        List<ValueBinder> binders, boolean insertable, boolean updatable) {
+        List<ValueBinder> binders, boolean insertable, boolean updatable, List<EntityStatements.Column> keyColumns) {
 
     public IndexMapping {
         columns = List.copyOf(columns);
         binders = List.copyOf(binders);
+        keyColumns = List.copyOf(keyColumns);
+    }
+
+    public IndexMapping(CollectionIndex index, int keyAttribute, Class<?> keyEntity, List<Identifier> columns,
+            List<ValueBinder> binders, boolean insertable, boolean updatable) {
+        this(index, keyAttribute, keyEntity, columns, binders, insertable, updatable, List.of());
     }
 
     /** Whether the index has columns of its own; a key that is an attribute of the elements has none. */
@@ -61,7 +67,28 @@ public record IndexMapping(CollectionIndex index, int keyAttribute, Class<?> key
         if (index instanceof CollectionIndex.ByEntity) {
             return key == null ? new Object[columns.size()] : statements.targetKey(key, keyEntity);
         }
+        if (index instanceof CollectionIndex.ByEmbedded) {
+            Object[] values = new Object[keyColumns.size()];
+            for (int c = 0; c < values.length; c++) {
+                EntityStatements.Column column = keyColumns.get(c);
+                Object value = key;
+                for (int step = 0; step < column.path().length && value != null; step++) {
+                    value = column.accesses()[step].get(value, column.path()[step]);
+                }
+                values[c] = value;
+            }
+            return values;
+        }
         return new Object[] {key};
+    }
+
+    /** Reconstructs an embeddable key through the same generated access/hydration path as collection values. */
+    public Object embeddedKey(Object[] values) {
+        Object[] state = new Object[1];
+        boolean[] nulls = new boolean[values.length];
+        for (int i = 0; i < values.length; i++) nulls[i] = values[i] == null;
+        EntityStatements.hydrate(keyColumns, values, nulls, state);
+        return state[0];
     }
 
     /** A new, empty map for an attribute declared {@code type}: insertion-ordered, sorted for a {@code SortedMap}. */

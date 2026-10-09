@@ -101,8 +101,8 @@ class MappedUnitTest {
     }
 
     private static MappedUnit unit(List<ManagedAccessProvider> providers, Class<?>... classes) {
-        return MappedUnit.of(List.of(classes).stream().map(Class::getName).toList(), MappedUnitTest.class.getClassLoader(), false,
-            providers);
+        return MappedUnit.of(List.of(classes).stream().map(Class::getName).toList(), MappedUnitTest.class.getClassLoader(),
+            new io.vidocq.mansart.jpa.core.model.source.ClassFileSource(MappedUnitTest.class.getClassLoader()), providers);
     }
 
     @Test

@@ -143,6 +143,53 @@ class NativeUpdateTest {
     }
 
     @Test
+    void explicitDelimitedResultNamesUseExactJdbcLabelsWithoutQuoteDelimiters() { // §2.15
+        assertThat(em.createNativeQuery("SELECT 42 AS \"Value\"\"Label\", 9 AS \"value\"\"label\"", "quoted-column")
+            .getSingleResult()).isEqualTo(42);
+        assertThat(em.createNativeQuery("SELECT 1 AS \"Key\", 'Brigade' AS \"Name\"", "quoted-constructor")
+            .getSingleResult()).isEqualTo(new CrewName(1, "Brigade"));
+        assertThat(em.createNativeQuery("SELECT id AS \"CrewKey\" FROM Crew WHERE id = 1", "quoted-entity")
+            .getSingleResult()).isSameAs(em.find(Crew.class, 1L));
+        assertThatThrownBy(() -> em.createNativeQuery("SELECT 1 AS \"crewkey\"", "quoted-entity").getSingleResult())
+            .isInstanceOf(PersistenceException.class).hasMessageContaining("CrewKey");
+        assertThatThrownBy(() -> em.createNativeQuery("SELECT 42 AS \"value\"\"label\"", "quoted-column").getSingleResult())
+            .isInstanceOf(PersistenceException.class).hasMessageContaining("Value");
+    }
+
+    @Test
+    void unquotedResultNamesRejectAmbiguousFoldedLabelsAndDoNotMatchHiddenColumnNames() {
+        assertThatThrownBy(() -> em.createNativeQuery("SELECT 1 AS \"name\", 2 AS \"NAME\"", "crew-names").getSingleResult())
+            .isInstanceOf(PersistenceException.class).hasMessageContaining("Ambiguous");
+        assertThatThrownBy(() -> em.createNativeQuery("SELECT name AS other FROM Crew", "crew-names").getResultList())
+            .isInstanceOf(PersistenceException.class).hasMessageContaining("no column");
+    }
+
+    @Test
+    void unitDefaultsApplyToScalarAndConstructorResultLabels() {
+        try (EntityManagerFactory delimited = new PersistenceConfiguration("delimited-native")
+                .provider("io.vidocq.mansart.jpa.core.MansartPersistenceProvider")
+                .managedClass(NativeResults.class).mappingFile("orm/delimited.xml")
+                .property(PersistenceConfiguration.JDBC_URL, emf.getProperties().get(PersistenceConfiguration.JDBC_URL))
+                .property(PersistenceConfiguration.JDBC_USER, "sa").createEntityManagerFactory();
+             EntityManager manager = delimited.createEntityManager()) {
+            assertThat(manager.createNativeQuery("SELECT 'exact' AS \"name\", 'folded' AS \"NAME\"", "crew-names")
+                .getSingleResult()).isEqualTo("exact");
+            assertThatThrownBy(() -> manager.createNativeQuery("SELECT 'wrong' AS \"NAME\"", "crew-names").getSingleResult())
+                .isInstanceOf(PersistenceException.class).hasMessageContaining("no column");
+            assertThat(manager.createNativeQuery("SELECT 1 AS \"id\", 'Brigade' AS \"name\"", "crew-records")
+                .getSingleResult()).isEqualTo(new CrewName(1, "Brigade"));
+        }
+    }
+
+    @Test
+    void nonKeyFieldAliasesAlsoRequireExactDelimitedLabels() {
+        assertThat(em.createNativeQuery("SELECT id AS \"CrewKey\", name AS \"CrewName\" FROM Crew WHERE id = 1",
+            "quoted-fields").getSingleResult()).isSameAs(em.find(Crew.class, 1L));
+        assertThatThrownBy(() -> em.createNativeQuery("SELECT id AS \"CrewKey\", name AS \"crewname\" FROM Crew WHERE id = 1",
+            "quoted-fields").getSingleResult()).isInstanceOf(PersistenceException.class).hasMessageContaining("CrewName");
+    }
+
+    @Test
     void aFailedStatementMarksTheTransactionForRollback() { // §3.12
         em.getTransaction().begin();
         assertThatThrownBy(() -> em.createNativeQuery("DELETE FROM NoSuchTable").executeUpdate())
@@ -156,6 +203,13 @@ class NativeUpdateTest {
         columns = {@ColumnResult(name = "id", type = long.class), @ColumnResult(name = "name", type = String.class)}))
     @SqlResultSetMapping(name = "crew-entities", entities = @EntityResult(entityClass = Crew.class,
         fields = @FieldResult(name = "id", column = "crew_id")))
+    @SqlResultSetMapping(name = "quoted-column", columns = @ColumnResult(name = "\"Value\"\"Label\"", type = Integer.class))
+    @SqlResultSetMapping(name = "quoted-constructor", classes = @ConstructorResult(targetClass = CrewName.class,
+        columns = {@ColumnResult(name = "\"Key\"", type = long.class), @ColumnResult(name = "\"Name\"", type = String.class)}))
+    @SqlResultSetMapping(name = "quoted-entity", entities = @EntityResult(entityClass = Crew.class,
+        fields = @FieldResult(name = "id", column = "\"CrewKey\"")))
+    @SqlResultSetMapping(name = "quoted-fields", entities = @EntityResult(entityClass = Crew.class,
+        fields = {@FieldResult(name = "id", column = "\"CrewKey\""), @FieldResult(name = "name", column = "\"CrewName\"")}))
     static class NativeResults {
     }
 

@@ -77,8 +77,9 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
         this.connections = connections;
         this.mapping = mapping;
         this.namedQueries = new NamedQueries(mapping);
-        this.metamodel = new io.vidocq.mansart.jpa.core.model.build.RuntimeMetamodel(mapping.model(), mapping.loader());
-        this.entityGraphs = new EntityGraphs(metamodel, mapping.loader());
+        this.metamodel = new io.vidocq.mansart.jpa.core.model.build.RuntimeMetamodel(mapping.model(), mapping.source(),
+            mapping.loader());
+        this.entityGraphs = new EntityGraphs(metamodel, mapping.source(), mapping.loader());
         this.batchSize = batchSize(settings);
         schemaGeneration = new io.vidocq.mansart.jpa.core.bootstrap.SchemaGeneration(settings, connections, mapping, this::checkOpen);
     }
@@ -127,7 +128,7 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     IdGenerators idGenerators(Connection connection) {
         IdGenerators generators = idGenerators.get();
         if (generators == null) {
-            IdGenerators created = new IdGenerators(flushEngine(connection).dialect(), connections);
+            IdGenerators created = new IdGenerators(flushEngine(connection).dialect(), connections, mapping::identifier);
             generators = idGenerators.compareAndExchange(null, created);
             if (generators == null) {
                 generators = created;

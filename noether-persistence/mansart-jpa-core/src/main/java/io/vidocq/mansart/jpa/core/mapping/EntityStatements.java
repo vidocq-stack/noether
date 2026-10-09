@@ -151,13 +151,13 @@ public final class EntityStatements {
     static EntityStatements of(EntityModel model, int[] idAttributes, Function<BasicAttribute, ValueBinder> binders,
             Function<EmbeddableModel, ManagedAccess> embeddables, Function<Class<?>, EntityModel> models,
             Function<Class<?>, MappedEntity> entities) {
-        return of(model, idAttributes, binders, embeddables, models, entities, null, _ -> null);
+        return of(model, idAttributes, binders, embeddables, models, entities, null, _ -> null, false);
     }
 
     static EntityStatements of(EntityModel model, int[] idAttributes, Function<BasicAttribute, ValueBinder> binders,
             Function<EmbeddableModel, ManagedAccess> embeddables, Function<Class<?>, EntityModel> models,
             Function<Class<?>, MappedEntity> entities, InheritanceMapping inheritance,
-            Function<Class<?>, InheritanceMapping> inheritances) {
+            Function<Class<?>, InheritanceMapping> inheritances, boolean delimited) {
         List<Integer> ids = Arrays.stream(idAttributes).boxed().toList();
         // §2.4.1 derived identities: the relationships of the identifier, and those an @MapsId names, hold key columns
         Map<String, Integer> mapsIds = new HashMap<>();
@@ -168,7 +168,7 @@ public final class EntityStatements {
         }
         Identifier generated = model.id() instanceof IdModel.Single single
             && single.generation().map(g -> g.strategy() == GenerationType.IDENTITY).orElse(false)
-            ? Identifier.of(single.attribute().column().name()) : null;
+            ? Identifier.of(single.attribute().column().name(), delimited) : null;
         List<SecondaryTableModel> tableModels = inheritance == null
             ? new ArrayList<>() : new ArrayList<>(inheritance.tables());
         if (inheritance == null) {
@@ -187,27 +187,27 @@ public final class EntityStatements {
                 case BasicAttribute basic when id && mapsIds.containsKey("") -> {
                     // its value is the parent's key, which the columns of the relationship hold
                 }
-                case BasicAttribute basic -> columns.add(new Column(Identifier.of(basic.column().name()), binders.apply(basic), i,
+                case BasicAttribute basic -> columns.add(new Column(Identifier.of(basic.column().name(), delimited), binders.apply(basic), i,
                     new int[0], new ManagedAccess[0], id, basic.version(), basic.column().insertable(), basic.column().updatable(),
                     tableIndex(basic.column().table(), tableNames), null));
                 case EmbeddedAttribute embedded when id && mapsIds.containsKey("") -> {
                     // the whole identifier is the parent's key
                 }
                 case EmbeddedAttribute embedded -> flatten(embedded, embedded.embeddable(), "", i, new int[0], new ManagedAccess[0], id,
-                    binders, embeddables, tableNames, columns, id ? mapsIds.keySet() : Set.of());
+                    binders, embeddables, tableNames, columns, id ? mapsIds.keySet() : Set.of(), delimited);
                 case AssociationAttribute association when association.singleValued() && association.owning() -> {
                     boolean identifier = id || association.mapsId() != null;
-                    String problem = foreignKey(association, i, identifier, models, binders, tableNames, columns, references, inheritances);
+                    String problem = foreignKey(association, i, identifier, models, binders, tableNames, columns, references, inheritances, delimited);
                     if (problem != null) {
                         return unsupported(model, "P5", problem);
                     }
                 }
                 case AssociationAttribute association when !association.singleValued() ->
                     collections.add(collection(inheritance == null ? model : inheritance.declaringEntity(association.declaringClass()),
-                        association, i, models, binders, inheritances));
+                        association, i, models, binders, embeddables, inheritances, delimited));
                 case ElementCollectionAttribute elements when elements.element() != null ->
                     elementCollection(inheritance == null ? model : inheritance.declaringEntity(elements.declaringClass()), elements, i,
-                        models, binders, embeddables, inheritances).ifPresent(elementCollections::add);
+                        models, binders, embeddables, inheritances, delimited).ifPresent(elementCollections::add);
                 default -> {
                     // inverse to-one sides have no column; element collections have their own tables
                 }
@@ -224,7 +224,7 @@ public final class EntityStatements {
             }
         }
         if (inheritance != null && inheritance.discriminator() != null) {
-            columns.add(new Column(Identifier.of(inheritance.discriminator()), inheritance.binder(false), -1,
+            columns.add(new Column(Identifier.of(inheritance.discriminator(), delimited), inheritance.binder(false), -1,
                 new int[0], new ManagedAccess[0], false, false, true, false, 0, null));
         }
         for (Column column : columns) {
@@ -249,14 +249,14 @@ public final class EntityStatements {
             List<Identifier> keyNames = new ArrayList<>();
             for (int k = 0; k < keys.size(); k++) {
                 keyNames.add(joinNames.size() == keys.size() && !joinNames.get(k).isBlank()
-                    ? Identifier.of(joinNames.get(k)) : columns.get(keys.get(k)).name());
+                    ? Identifier.of(joinNames.get(k), delimited) : columns.get(keys.get(k)).name());
             }
             if (inheritance != null && inheritance.joined() && t < inheritance.chain().size()) {
                 keyNames = inheritance.keyNames(t, keys.stream().map(k -> columns.get(k).name()).toList());
             } else if (inheritance != null && inheritance.joined() && joinNames.isEmpty()) {
                 keyNames = inheritance.secondaryKeys(tableModels.get(t), keys.stream().map(k -> columns.get(k).name()).toList());
             }
-            TableStatements statements = table(table(tableModel), t, columns, keys, keyNames, t == 0 ? version : null, generated);
+            TableStatements statements = table(table(tableModel, delimited), t, columns, keys, keyNames, t == 0 ? version : null, generated);
             if (statements != null) {
                 tables.add(statements);
             }
@@ -335,7 +335,14 @@ public final class EntityStatements {
     // ---- foreign keys (§2.10, §11.1.25) -------------------------------------------------------------------
 
     /** A key column of an entity: its name and binder, in the order of {@link #keyValues(Object)}. */
-    private record KeyColumn(String name, ValueBinder binder) {
+    private record KeyColumn(String name, ValueBinder binder, boolean quoted) {
+        KeyColumn(String mappedName, ValueBinder binder) {
+            this(Identifier.of(mappedName).name(), binder, Identifier.of(mappedName).quoted());
+        }
+
+        Identifier identifier(boolean delimited) {
+            return new Identifier(name, quoted || delimited);
+        }
     }
 
     /**
@@ -345,7 +352,7 @@ public final class EntityStatements {
      */
     private static String foreignKey(AssociationAttribute association, int attribute, boolean id, Function<Class<?>, EntityModel> models,
             Function<BasicAttribute, ValueBinder> binders, List<String> tableNames, List<Column> columns, List<Reference> references,
-            Function<Class<?>, InheritanceMapping> inheritances) {
+            Function<Class<?>, InheritanceMapping> inheritances, boolean delimited) {
         if (association.joinTable() != null) {
             return "a single-valued relationship through a join table";
         }
@@ -354,20 +361,20 @@ public final class EntityStatements {
             throw new PersistenceException("The relationship " + association.name() + " of " + association.declaringClass().getName()
                 + " references " + association.targetEntity().getName() + ", which is not an entity of the persistence unit");
         }
-        List<KeyColumn> keys = relationalKeys(target, binders, inheritances);
+        List<KeyColumn> keys = relationalKeys(target, binders, inheritances, delimited);
         if (keys == null) {
             return "a relationship to an entity with a derived identity or a nested embedded identifier";
         }
-        JoinColumnModel[] joins = byKeyPart(describe(association), association.joinColumns(), keys, target);
+        JoinColumnModel[] joins = byKeyPart(describe(association), association.joinColumns(), keys, target, delimited);
         if (joins == null) {
             return "a join column referencing a column that is not a key column of " + target.entityName();
         }
         int[] indexes = new int[keys.size()];
         for (int part = 0; part < keys.size(); part++) {
             JoinColumnModel join = joins[part];
-            String name = join.name() != null ? join.name() : association.name() + "_" + keys.get(part).name();
+            String name = join.name() != null ? join.name() : leaf(association.name()) + "_" + keys.get(part).name();
             indexes[part] = columns.size();
-            columns.add(new Column(Identifier.of(name), keys.get(part).binder(), attribute, new int[0], new ManagedAccess[0], id,
+            columns.add(new Column(Identifier.of(name, delimited), keys.get(part).binder(), attribute, new int[0], new ManagedAccess[0], id,
                 false, join.insertable(), join.updatable(), tableIndex(join.table(), tableNames),
                 new ForeignKey(association.targetEntity(), part)));
         }
@@ -381,7 +388,7 @@ public final class EntityStatements {
      * column); the defaults when none is written. {@code null} when one references a column that is not a key column.
      */
     private static JoinColumnModel[] byKeyPart(String relationship, List<JoinColumnModel> written, List<KeyColumn> keys,
-            EntityModel target) {
+            EntityModel target, boolean delimited) {
         if (!written.isEmpty() && written.size() != keys.size()) {
             throw new PersistenceException("The join columns of " + relationship + " are " + written.size() + ", the key of "
                 + target.entityName() + " has " + keys.size() + " columns");
@@ -393,7 +400,10 @@ public final class EntityStatements {
             if (join.referencedColumnName() != null) {
                 part = -1;
                 for (int candidate = 0; candidate < keys.size(); candidate++) {
-                    if (keys.get(candidate).name().equalsIgnoreCase(join.referencedColumnName())) {
+                    Identifier referenced = Identifier.of(join.referencedColumnName(), delimited);
+                    KeyColumn key = keys.get(candidate);
+                    if (key.quoted() || referenced.quoted() || delimited
+                            ? key.name().equals(referenced.name()) : key.name().equalsIgnoreCase(referenced.name())) {
                         part = candidate;
                     }
                 }
@@ -416,6 +426,10 @@ public final class EntityStatements {
         return "the relationship " + association.name() + " of " + association.declaringClass().getName();
     }
 
+    private static String leaf(String path) {
+        return path.substring(path.lastIndexOf('.') + 1);
+    }
+
     // ---- collections (§2.10, §11.1.27) --------------------------------------------------------------------
 
     /**
@@ -426,54 +440,56 @@ public final class EntityStatements {
      */
     private static CollectionMapping collection(EntityModel owner, AssociationAttribute association, int attribute,
             Function<Class<?>, EntityModel> models, Function<BasicAttribute, ValueBinder> binders,
-            Function<Class<?>, InheritanceMapping> inheritances) {
+            Function<EmbeddableModel, ManagedAccess> embeddables, Function<Class<?>, InheritanceMapping> inheritances, boolean delimited) {
         EntityModel target = models.apply(association.targetEntity());
         if (target == null) {
             throw new PersistenceException("The relationship " + association.name() + " of " + association.declaringClass().getName()
                 + " references " + association.targetEntity().getName() + ", which is not an entity of the persistence unit");
         }
-        Indexing indexing = index(association.name(), association.index(), target, models, binders, describe(association), inheritances);
+        Indexing indexing = index(leaf(association.name()), association.index(), target, models, binders, embeddables,
+            describe(association), inheritances, delimited);
         if (indexing.problem() != null) {
             return new CollectionMapping.Unsupported(attribute, association, indexing.problem());
         }
         IndexMapping index = indexing.index();
         if (!association.owning()) {
-            return inverse(association, attribute, target, index, binders, inheritances);
+            return inverse(association, attribute, target, index, binders, inheritances, delimited);
         }
         if (association.kind() == AssociationAttribute.Kind.ONE_TO_MANY && association.joinTable() == null
                 && !association.joinColumns().isEmpty()) {
             return new CollectionMapping.Unsupported(attribute, association, "a unidirectional one-to-many through a foreign key");
         }
-        List<KeyColumn> ownerKeys = relationalKeys(owner, binders, inheritances);
-        List<KeyColumn> targetKeys = relationalKeys(target, binders, inheritances);
+        List<KeyColumn> ownerKeys = relationalKeys(owner, binders, inheritances, delimited);
+        List<KeyColumn> targetKeys = relationalKeys(target, binders, inheritances, delimited);
         if (ownerKeys == null || targetKeys == null) {
             return new CollectionMapping.Unsupported(attribute, association, "a join table of an entity with a derived identity");
         }
         JoinTableModel written = association.joinTable() != null ? association.joinTable() : JoinTableModel.defaults();
-        JoinColumnModel[] ownerJoins = byKeyPart(describe(association), written.joinColumns(), ownerKeys, owner);
-        JoinColumnModel[] targetJoins = byKeyPart(describe(association), written.inverseJoinColumns(), targetKeys, target);
+        JoinColumnModel[] ownerJoins = byKeyPart(describe(association), written.joinColumns(), ownerKeys, owner, delimited);
+        JoinColumnModel[] targetJoins = byKeyPart(describe(association), written.inverseJoinColumns(), targetKeys, target, delimited);
         if (ownerJoins == null || targetJoins == null) {
             return new CollectionMapping.Unsupported(attribute, association, "a join column referencing a column that is not a key");
         }
-        String ownerPrefix = inverseOf(owner, association, target).orElse(owner.entityName());
+        String ownerPrefix = inverseOf(owner, association, target).map(EntityStatements::leaf).orElse(owner.entityName());
         List<Identifier> ownerColumns = new ArrayList<>();
         List<ValueBinder> ownerBinders = new ArrayList<>();
         for (int k = 0; k < ownerKeys.size(); k++) {
             String name = ownerJoins[k].name();
-            ownerColumns.add(Identifier.of(name != null ? name : ownerPrefix + "_" + ownerKeys.get(k).name()));
+            ownerColumns.add(Identifier.of(name != null ? name : ownerPrefix + "_" + ownerKeys.get(k).name(), delimited));
             ownerBinders.add(ownerKeys.get(k).binder());
         }
         List<Identifier> targetColumns = new ArrayList<>();
         List<ValueBinder> targetBinders = new ArrayList<>();
         for (int k = 0; k < targetKeys.size(); k++) {
             String name = targetJoins[k].name();
-            targetColumns.add(Identifier.of(name != null ? name : association.name() + "_" + targetKeys.get(k).name()));
+            targetColumns.add(Identifier.of(name != null ? name : leaf(association.name()) + "_" + targetKeys.get(k).name(), delimited));
             targetBinders.add(targetKeys.get(k).binder());
         }
         String tableName = written.name() != null ? written.name()
-            : primaryTable(owner, inheritances).name() + "_" + primaryTable(target, inheritances).name();
-        Table table = new Table(Identifier.of(tableName), written.schema() == null ? null : Identifier.of(written.schema()),
-            written.catalog() == null ? null : Identifier.of(written.catalog()));
+            : Identifier.of(primaryTable(owner, inheritances).name()).name() + "_"
+                + Identifier.of(primaryTable(target, inheritances).name()).name();
+        Table table = new Table(Identifier.of(tableName, delimited), written.schema() == null ? null : Identifier.of(written.schema(), delimited),
+            written.catalog() == null ? null : Identifier.of(written.catalog(), delimited));
         return new CollectionMapping.JoinTable(attribute, association, table, ownerColumns, ownerBinders, targetColumns,
             targetBinders, index);
     }
@@ -483,7 +499,7 @@ public final class EntityStatements {
      * in the table of the target, beside the foreign key of the owning side: this side writes it.
      */
     private static CollectionMapping inverse(AssociationAttribute association, int attribute, EntityModel target, IndexMapping index,
-            Function<BasicAttribute, ValueBinder> binders, Function<Class<?>, InheritanceMapping> inheritances) {
+            Function<BasicAttribute, ValueBinder> binders, Function<Class<?>, InheritanceMapping> inheritances, boolean delimited) {
         if (index == null || !index.stored()) {
             return new CollectionMapping.MappedBy(attribute, association, index, null, null);
         }
@@ -493,12 +509,12 @@ public final class EntityStatements {
         }
         InheritanceMapping inheritance = inheritances.apply(target.javaType());
         EntityModel declaring = inheritance == null ? target : inheritance.declaringEntity(side.declaringClass());
-        List<KeyColumn> targetKeys = relationalKeys(declaring, binders, inheritances);
+        List<KeyColumn> targetKeys = relationalKeys(declaring, binders, inheritances, delimited);
         if (targetKeys == null) {
             return new CollectionMapping.Unsupported(attribute, association, "an index of an inverse side without a mapped key");
         }
-        Update update = new Update(table(primaryTable(declaring, inheritances)), index.columns(),
-            targetKeys.stream().map(k -> Identifier.of(k.name())).toList());
+        Update update = new Update(table(primaryTable(declaring, inheritances), delimited), index.columns(),
+            targetKeys.stream().map(k -> k.identifier(delimited)).toList());
         return new CollectionMapping.MappedBy(attribute, association, index, update,
             targetKeys.stream().map(KeyColumn::binder).toList());
     }
@@ -513,7 +529,9 @@ public final class EntityStatements {
      * (§11.1.35). {@code target} is {@code null} for an element collection.
      */
     private static Indexing index(String name, CollectionIndex index, EntityModel target, Function<Class<?>, EntityModel> models,
-            Function<BasicAttribute, ValueBinder> binders, String relationship, Function<Class<?>, InheritanceMapping> inheritances) {
+            Function<BasicAttribute, ValueBinder> binders, Function<EmbeddableModel, ManagedAccess> embeddables,
+            String relationship, Function<Class<?>, InheritanceMapping> inheritances,
+            boolean delimited) {
         return switch (index) {
             case null -> new Indexing(null, null);
             case CollectionIndex.Unsupported unsupported -> new Indexing(null, unsupported.feature());
@@ -530,10 +548,22 @@ public final class EntityStatements {
                 yield new Indexing(new IndexMapping(index, key, null, List.of(), List.of(), false, false), null);
             }
             case CollectionIndex.ByColumn(BasicAttribute key) -> new Indexing(new IndexMapping(index, -1, null,
-                List.of(Identifier.of(key.column().name())), List.of(binders.apply(key)), key.column().insertable(),
+                List.of(Identifier.of(key.column().name(), delimited)), List.of(binders.apply(key)), key.column().insertable(),
                 key.column().updatable()), null);
+            case CollectionIndex.ByEmbedded(EmbeddedAttribute key) -> {
+                if (hasRelationships(key.embeddable())) {
+                    throw new PersistenceException("The map key of " + relationship
+                        + " contains a relationship whose collection-table mapping is not supported");
+                }
+                List<Column> columns = new ArrayList<>();
+                flatten(key, key.embeddable(), "", 0, new int[0], new ManagedAccess[0], false,
+                    binders, embeddables, List.of(""), columns, Set.of(), delimited);
+                yield new Indexing(new IndexMapping(index, -1, null, columns.stream().map(Column::name).toList(),
+                    columns.stream().map(Column::binder).toList(), columns.stream().allMatch(Column::insertable),
+                    columns.stream().allMatch(Column::updatable), columns), null);
+            }
             case CollectionIndex.ByPosition(BasicAttribute position) -> new Indexing(new IndexMapping(index, -1, null,
-                List.of(Identifier.of(position.column().name())), List.of(binders.apply(position)), position.column().insertable(),
+                List.of(Identifier.of(position.column().name(), delimited)), List.of(binders.apply(position)), position.column().insertable(),
                 position.column().updatable()), null);
             case CollectionIndex.ByEntity(Class<?> entity, List<JoinColumnModel> written) -> {
                 EntityModel keyModel = models.apply(entity);
@@ -541,8 +571,8 @@ public final class EntityStatements {
                     throw new PersistenceException("The map key of " + relationship + " is " + entity.getName()
                         + ", which is not an entity of the persistence unit");
                 }
-                List<KeyColumn> keys = relationalKeys(keyModel, binders, inheritances);
-                JoinColumnModel[] joins = keys == null ? null : byKeyPart("the map key of " + relationship, written, keys, keyModel);
+                List<KeyColumn> keys = relationalKeys(keyModel, binders, inheritances, delimited);
+                JoinColumnModel[] joins = keys == null ? null : byKeyPart("the map key of " + relationship, written, keys, keyModel, delimited);
                 if (joins == null) {
                     yield new Indexing(null, "a map key entity with a derived identity, or referenced by a column that is not its key");
                 }
@@ -550,7 +580,7 @@ public final class EntityStatements {
                 for (int k = 0; k < keys.size(); k++) {
                     String column = joins[k].name() != null ? joins[k].name()
                         : keys.size() == 1 ? name + "_KEY" : name + "_KEY_" + keys.get(k).name();
-                    columns.add(Identifier.of(column));
+                    columns.add(Identifier.of(column, delimited));
                 }
                 yield new Indexing(new IndexMapping(index, -1, entity, columns, keys.stream().map(KeyColumn::binder).toList(),
                     joins[0].insertable(), joins[0].updatable()), null);
@@ -565,14 +595,14 @@ public final class EntityStatements {
      */
     private static Optional<ElementCollectionMapping> elementCollection(EntityModel owner, ElementCollectionAttribute elements,
             int attribute, Function<Class<?>, EntityModel> models, Function<BasicAttribute, ValueBinder> binders,
-            Function<EmbeddableModel, ManagedAccess> embeddables, Function<Class<?>, InheritanceMapping> inheritances) {
-        List<KeyColumn> ownerKeys = relationalKeys(owner, binders, inheritances);
+            Function<EmbeddableModel, ManagedAccess> embeddables, Function<Class<?>, InheritanceMapping> inheritances, boolean delimited) {
+        List<KeyColumn> ownerKeys = relationalKeys(owner, binders, inheritances, delimited);
         if (ownerKeys == null) {
             return Optional.empty();
         }
         CollectionTableModel written = elements.table();
         JoinColumnModel[] joins = byKeyPart("the collection table of " + elements.name() + " of " + elements.declaringClass().getName(),
-            written.joinColumns(), ownerKeys, owner);
+            written.joinColumns(), ownerKeys, owner, delimited);
         if (joins == null) {
             return Optional.empty();
         }
@@ -580,26 +610,38 @@ public final class EntityStatements {
         List<ValueBinder> ownerBinders = new ArrayList<>();
         for (int k = 0; k < ownerKeys.size(); k++) {
             String name = joins[k].name();
-            ownerColumns.add(Identifier.of(name != null ? name : owner.entityName() + "_" + ownerKeys.get(k).name()));
+            ownerColumns.add(Identifier.of(name != null ? name : owner.entityName() + "_" + ownerKeys.get(k).name(), delimited));
             ownerBinders.add(ownerKeys.get(k).binder());
         }
-        String tableName = written.name() != null ? written.name() : owner.entityName() + "_" + elements.name();
-        Indexing indexing = index(elements.name(), elements.index(), null, models, binders,
-            "the element collection " + elements.name() + " of " + elements.declaringClass().getName(), inheritances);
+        String tableName = written.name() != null ? written.name() : owner.entityName() + "_" + leaf(elements.name());
+        Indexing indexing = index(leaf(elements.name()), elements.index(), null, models, binders, embeddables,
+            "the element collection " + elements.name() + " of " + elements.declaringClass().getName(), inheritances, delimited);
         if (indexing.problem() != null) {
             return Optional.empty();
         }
         List<Column> columns = new ArrayList<>();
         switch (elements.element()) {
-            case BasicAttribute basic -> columns.add(new Column(Identifier.of(basic.column().name()), binders.apply(basic), 0, new int[0],
+            case BasicAttribute basic -> columns.add(new Column(Identifier.of(basic.column().name(), delimited), binders.apply(basic), 0, new int[0],
                 new ManagedAccess[0], false, false, basic.column().insertable(), basic.column().updatable(), 0, null));
-            case EmbeddedAttribute embedded -> flatten(embedded, embedded.embeddable(), "", 0, new int[0], new ManagedAccess[0], false,
-                binders, embeddables, List.of(tableName), columns);
+            case EmbeddedAttribute embedded -> {
+                if (hasRelationships(embedded.embeddable())) {
+                    throw new PersistenceException("The element collection " + elements.name() + " of "
+                        + elements.declaringClass().getName() + " contains an embedded relationship whose collection-table "
+                        + "foreign-key mapping is not supported");
+                }
+                flatten(embedded, embedded.embeddable(), "", 0, new int[0], new ManagedAccess[0], false,
+                    binders, embeddables, List.of(tableName), columns, Set.of(), delimited);
+            }
             default -> throw new IllegalStateException("An element is basic or embeddable: " + elements.element());
         }
-        Table table = new Table(Identifier.of(tableName), written.schema() == null ? null : Identifier.of(written.schema()),
-            written.catalog() == null ? null : Identifier.of(written.catalog()));
+        Table table = new Table(Identifier.of(tableName, delimited), written.schema() == null ? null : Identifier.of(written.schema(), delimited),
+            written.catalog() == null ? null : Identifier.of(written.catalog(), delimited));
         return Optional.of(new ElementCollectionMapping(attribute, elements, table, ownerColumns, ownerBinders, indexing.index(), columns));
+    }
+
+    private static boolean hasRelationships(EmbeddableModel model) {
+        return model.attributes().stream().anyMatch(a -> a instanceof AssociationAttribute
+            || a instanceof ElementCollectionAttribute || a instanceof EmbeddedAttribute e && hasRelationships(e.embeddable()));
     }
 
     /** The attribute of {@code target} that is the inverse side of {@code association} of {@code owner}, if any. */
@@ -620,17 +662,17 @@ public final class EntityStatements {
     }
 
     private static List<KeyColumn> relationalKeys(EntityModel entity, Function<BasicAttribute, ValueBinder> binders,
-            Function<Class<?>, InheritanceMapping> inheritances) {
+            Function<Class<?>, InheritanceMapping> inheritances, boolean delimited) {
         List<KeyColumn> keys = keyColumns(entity, binders);
         InheritanceMapping mapping = inheritances.apply(entity.javaType());
         if (keys == null || mapping == null || !mapping.joined()) {
             return keys;
         }
         List<Identifier> names = mapping.keyNames(mapping.chain().size() - 1,
-            keys.stream().map(k -> Identifier.of(k.name())).toList());
+            keys.stream().map(k -> k.identifier(delimited)).toList());
         List<KeyColumn> relational = new ArrayList<>();
         for (int k = 0; k < keys.size(); k++) {
-            relational.add(new KeyColumn(names.get(k).name(), keys.get(k).binder()));
+            relational.add(new KeyColumn(names.get(k).name(), keys.get(k).binder(), names.get(k).quoted()));
         }
         return relational;
     }
@@ -728,14 +770,14 @@ public final class EntityStatements {
     static void flatten(EmbeddedAttribute owner, EmbeddableModel embeddable, String prefix, int attribute, int[] path,
             ManagedAccess[] accesses, boolean id, Function<BasicAttribute, ValueBinder> binders,
             Function<EmbeddableModel, ManagedAccess> embeddableAccess, List<String> tableNames, List<Column> columns) {
-        flatten(owner, embeddable, prefix, attribute, path, accesses, id, binders, embeddableAccess, tableNames, columns, Set.of());
+        flatten(owner, embeddable, prefix, attribute, path, accesses, id, binders, embeddableAccess, tableNames, columns, Set.of(), false);
     }
 
     /** @param skipped the components, of the top embeddable, that have no columns: an {@code @MapsId} maps them */
     private static void flatten(EmbeddedAttribute owner, EmbeddableModel embeddable, String prefix, int attribute, int[] path,
             ManagedAccess[] accesses, boolean id, Function<BasicAttribute, ValueBinder> binders,
             Function<EmbeddableModel, ManagedAccess> embeddableAccess, List<String> tableNames, List<Column> columns,
-            Set<String> skipped) {
+            Set<String> skipped, boolean delimited) {
         ManagedAccess access = embeddableAccess.apply(embeddable);
         List<AttributeModel> attributes = embeddable.attributes();
         for (int i = 0; i < attributes.size(); i++) {
@@ -749,21 +791,21 @@ public final class EntityStatements {
             switch (attributes.get(i)) {
                 case BasicAttribute basic -> {
                     ColumnModel column = owner.column(prefix + basic.name()).orElse(basic.column());
-                    columns.add(new Column(Identifier.of(column.name()), binders.apply(basic), attribute, nested, along, id, false,
+                    columns.add(new Column(Identifier.of(column.name(), delimited), binders.apply(basic), attribute, nested, along, id, false,
                         column.insertable(), column.updatable(), tableIndex(column.table(), tableNames), null));
                 }
                 case EmbeddedAttribute inner -> flatten(owner, inner.embeddable(), prefix + inner.name() + ".", attribute, nested,
-                    along, id, binders, embeddableAccess, tableNames, columns);
+                    along, id, binders, embeddableAccess, tableNames, columns, Set.of(), delimited);
                 default -> {
-                    // relationships of embeddables come with P5
+                    // Embedded relationships and collections have their own lowered executable state slots.
                 }
             }
         }
     }
 
-    private static Table table(TableModel table) {
-        return new Table(Identifier.of(table.name()), table.schema() == null ? null : Identifier.of(table.schema()),
-            table.catalog() == null ? null : Identifier.of(table.catalog()));
+    private static Table table(TableModel table, boolean delimited) {
+        return new Table(Identifier.of(table.name(), delimited), table.schema() == null ? null : Identifier.of(table.schema(), delimited),
+            table.catalog() == null ? null : Identifier.of(table.catalog(), delimited));
     }
 
     private static EntityStatements unsupported(EntityModel model, String milestone, String feature) {

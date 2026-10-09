@@ -576,7 +576,7 @@ final class Translator {
             .filter(e -> variable.type().model().javaType().isAssignableFrom(e.javaType()))
             .filter(e -> !inheritance.abstractEntity(e))
             .<Expression>map(e -> new Expression.Literal(inheritance.discriminatorValue(e))).toList();
-        return new Expression.In(new Expression.Column(variable.alias(), Identifier.of(inheritance.discriminator())), values, false);
+        return new Expression.In(new Expression.Column(variable.alias(), unit.identifier(inheritance.discriminator())), values, false);
     }
 
     private String tableAlias(Variable variable, int table) {
@@ -644,10 +644,9 @@ final class Translator {
         if (segments.size() < 2) {
             throw new IllegalArgumentException("A join names a relationship, not " + String.join(".", segments));
         }
-        for (int s = start; s < segments.size() - 1; s++) {
-            from = navigate(from, attribute(from, segments.get(s)), Query.Join.Kind.INNER);
-        }
-        int attribute = attribute(from, segments.getLast());
+        AttributePath resolved = relationshipPath(from, segments.subList(start, segments.size()));
+        from = resolved.owner();
+        int attribute = resolved.attribute();
         Query.Join.Kind sqlKind = kind == Ast.Join.Kind.LEFT ? Query.Join.Kind.LEFT : Query.Join.Kind.INNER;
         AttributeModel model = from.type().model().attributes().get(attribute);
         return switch (model) {
@@ -657,6 +656,33 @@ final class Translator {
             default -> throw new IllegalArgumentException("A join names a relationship or an element collection, not the attribute "
                 + segments.getLast() + " of " + from.type().model().entityName() + " (§4.4.5)");
         };
+    }
+
+    private record AttributePath(Variable owner, int attribute) {
+    }
+
+    private AttributePath relationshipPath(Variable owner, List<String> segments) {
+        int start = 0;
+        while (start < segments.size()) {
+            int attribute = attribute(owner, segments.get(start));
+            int end = start + 1;
+            if (owner.type().model().attributes().get(attribute) instanceof EmbeddedAttribute) {
+                boolean found = false;
+                for (end = start + 2; end <= segments.size(); end++) {
+                    String dotted = String.join(".", segments.subList(start, end));
+                    if (owner.type().model().attribute(dotted).isPresent()) {
+                        attribute = attribute(owner, dotted);
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) throw new IllegalArgumentException("The path does not name an executable embedded relationship: " + segments);
+            }
+            if (end == segments.size()) return new AttributePath(owner, attribute);
+            owner = navigate(owner, attribute, Query.Join.Kind.INNER);
+            start = end;
+        }
+        throw new IllegalArgumentException("An empty relationship path");
     }
 
     private Variable treatedJoin(List<String> segments, int treatAt, String typeName, Query.Join.Kind kind) {
@@ -818,11 +844,9 @@ final class Translator {
      */
     private Variable rows(Ast.Path path) {
         List<String> segments = path.segments();
-        Variable owner = variable(segments.getFirst());
-        for (int s = 1; s < segments.size() - 1; s++) {
-            owner = navigate(owner, attribute(owner, segments.get(s)), Query.Join.Kind.INNER);
-        }
-        int attribute = attribute(owner, segments.getLast());
+        AttributePath resolved = relationshipPath(variable(segments.getFirst()), segments.subList(1, segments.size()));
+        Variable owner = resolved.owner();
+        int attribute = resolved.attribute();
         AttributeModel model = owner.type().model().attributes().get(attribute);
         List<Expression> ownerKey = key(owner.alias(), owner.type());
         return switch (model) {
@@ -944,6 +968,10 @@ final class Translator {
             variable = navigate(variable, attribute, Query.Join.Kind.INNER);
         }
         int attribute = attribute(variable, segments.getLast());
+        return attributeValue(variable, attribute);
+    }
+
+    private Value attributeValue(Variable variable, int attribute) {
         AttributeModel model = variable.type().model().attributes().get(attribute);
         return switch (model) {
             case BasicAttribute basic -> basicValue(variable, attribute, basic);
@@ -958,7 +986,7 @@ final class Translator {
                 yield entityValue(target.alias(), target.type());
             }
             case EmbeddedAttribute embedded -> embeddedEntity(variable, attribute, embedded.embeddable(), new int[0]);
-            default -> throw new IllegalArgumentException("The path " + String.join(".", segments) + " ends at a collection; it is "
+            default -> throw new IllegalArgumentException("The path " + model.name() + " ends at a collection; it is "
                 + "joined, or used with IS EMPTY, MEMBER OF or SIZE (§4.4.4)");
         };
     }
@@ -1121,6 +1149,20 @@ final class Translator {
             }
             path[p] = index;
             model = components.get(index);
+            if (model instanceof AssociationAttribute association) {
+                String dotted = embedded.name() + "." + String.join(".", rest.subList(0, p + 1));
+                int relationship = attribute(variable, dotted);
+                if (p + 1 == rest.size()) return attributeValue(variable, relationship);
+                Variable target = navigate(variable, relationship, Query.Join.Kind.INNER);
+                for (int s = p + 1; s < rest.size() - 1; s++) {
+                    int next = attribute(target, rest.get(s));
+                    if (target.type().model().attributes().get(next) instanceof EmbeddedAttribute) {
+                        return embeddedPath(target, next, rest.subList(s + 1, rest.size()));
+                    }
+                    target = navigate(target, next, Query.Join.Kind.INNER);
+                }
+                return attributeValue(target, attribute(target, rest.getLast()));
+            }
             if (model instanceof EmbeddedAttribute nested) {
                 components = nested.embeddable().attributes();
             } else if (p < rest.size() - 1) {
@@ -1438,7 +1480,7 @@ final class Translator {
                 var inheritance = unit.inheritance(variable.type().model().javaType());
                 Expression sql;
                 if (inheritance.discriminator() != null) {
-                    sql = new Expression.Column(variable.alias(), Identifier.of(inheritance.discriminator()));
+                    sql = new Expression.Column(variable.alias(), unit.identifier(inheritance.discriminator()));
                 } else if (!inheritance.joined()) {
                     sql = new Expression.Literal(variable.type().model().entityName());
                 } else {
@@ -1567,6 +1609,17 @@ final class Translator {
             case CollectionIndex.ByColumn key ->
                 new Scalar(new Expression.Column(variable.indexAlias(), index.columns().getFirst()),
                     index.binders().isEmpty() ? null : index.binders().getFirst(), key.key().javaType());
+            case CollectionIndex.ByEmbedded key -> {
+                List<Scalar> fields = new ArrayList<>();
+                List<int[]> paths = new ArrayList<>();
+                flatten(key.key().embeddable(), new int[0], (basic, keyPath) -> {
+                    EntityStatements.Column column = index.keyColumns().stream()
+                        .filter(c -> Arrays.equals(c.path(), keyPath)).findFirst().orElseThrow();
+                    fields.add(new Scalar(new Expression.Column(variable.indexAlias(), column.name()), column.binder(), basic.javaType()));
+                    paths.add(keyPath);
+                });
+                yield new Embedded(key.key().embeddable(), unit.access(key.key().embeddable()), List.copyOf(fields), List.copyOf(paths));
+            }
             case CollectionIndex.ByEntity key -> new Entity(entity(key.entity()),
                 index.columns().stream().<Expression>map(column -> new Expression.Column(variable.indexAlias(), column)).toList(),
                 index.binders());
