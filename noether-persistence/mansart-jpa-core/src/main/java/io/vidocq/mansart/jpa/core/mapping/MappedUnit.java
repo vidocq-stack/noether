@@ -70,16 +70,18 @@ public final class MappedUnit {
     private final Map<BasicAttribute, ValueBinder> binders;
     private final Map<Class<?>, MappedEntity> mapped;
     private final ClassLoader loader;
+    private final Map<Class<?>, InheritanceMapping> inheritance;
 
     private MappedUnit(PersistenceUnitModel model, Map<Class<?>, ManagedAccess> entities,
             Map<EmbeddableModel, ManagedAccess> embeddables, Map<BasicAttribute, ValueBinder> binders,
-            Map<Class<?>, MappedEntity> mapped, ClassLoader loader) {
+            Map<Class<?>, MappedEntity> mapped, ClassLoader loader, Map<Class<?>, InheritanceMapping> inheritance) {
         this.model = model;
         this.loader = loader;
         this.entities = entities;
         this.embeddables = embeddables;
         this.binders = binders;
         this.mapped = mapped;
+        this.inheritance = inheritance;
     }
 
     /** Maps the managed classes named {@code classNames}, loaded with {@code loader}. */
@@ -97,6 +99,11 @@ public final class MappedUnit {
     public static MappedUnit of(Collection<String> classNames, ClassLoader loader, boolean mappingFiles,
             Iterable<ManagedAccessProvider> providers) {
         PersistenceUnitModel model = EntityModelBuilder.build(classNames, loader, mappingFiles);
+        ClassFileSource source = new ClassFileSource(loader);
+        Map<Class<?>, InheritanceMapping> inheritance = new IdentityHashMap<>();
+        for (EntityModel entity : model.entities()) {
+            inheritance.put(entity.javaType(), new InheritanceMapping(entity, model, source));
+        }
         Generated generated = new Generated(providers);
         ValueBinders valueBinders = new ValueBinders(loader);
         Map<Class<?>, ManagedAccess> entities = new IdentityHashMap<>();
@@ -117,10 +124,14 @@ public final class MappedUnit {
             StatePolicy state = StatePolicy.of(entity.attributes(), embeddables::get, valueBinders);
             mapped.put(entity.javaType(), new MappedEntity(entity, entities.get(entity.javaType()), root(model, entity), embeddedId,
                 idClass, state, m -> EntityStatements.of(m, MappedEntity.idIndexes(m), binders::get, embeddables::get,
-                    target -> model.entity(target).orElse(null), mapped::get),
+                    target -> model.entity(target).orElse(null), mapped::get, inheritance.get(m.javaType()), inheritance::get),
                 ranks.get(entity.javaType()), mapped::get));
         }
-        return new MappedUnit(model, entities, embeddables, binders, mapped, loader);
+        return new MappedUnit(model, entities, embeddables, binders, mapped, loader, inheritance);
+    }
+
+    public InheritanceMapping inheritance(Class<?> type) {
+        return inheritance.get(type);
     }
 
     /**

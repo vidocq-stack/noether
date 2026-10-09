@@ -33,7 +33,14 @@ import java.util.List;
  *        several
  * @param slots what the parameters of {@code sql} bind, in their order
  */
-record Compiled(Statement sql, List<Item> items, Class<?> resultType, List<Slot> slots) {
+record Compiled(Statement sql, List<Item> items, Class<?> resultType, List<Slot> slots, List<Mutation> mutations) {
+
+    Compiled(Statement sql, List<Item> items, Class<?> resultType, List<Slot> slots) {
+        this(sql, items, resultType, slots, List.of());
+    }
+
+    /** A table mutation whose parameters come from a captured key/value row (§4.10, joined inheritance). */
+    record Mutation(Statement sql, List<Integer> values, List<ValueBinder> binders) {}
 
     /**
      * What a SQL parameter binds: the query parameter, the element of a collection-valued one ({@code element} ≥ 0,

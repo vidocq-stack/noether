@@ -442,16 +442,26 @@ refused or left as the instance holds it, naming P5, never mapped wrongly):
 2026-10-09 (P4: 609); no failure of the gate areas is P5's — they read their results with queries (P7) or come from
 mapping files (P10) (see [`TCK.md`](TCK.md)).
 
-### P6 — Inheritance ⏳
+### P6 — Inheritance ✅
 
 Spec: ch. 2.13–2.14, ch. 11 (`@Inheritance`, `@DiscriminatorColumn`, `@DiscriminatorValue`).
 
-- [ ] `SINGLE_TABLE` and `JOINED` (required); `TABLE_PER_CLASS` (optional in the spec —
-      decision recorded below before implementing).
-- [ ] `@MappedSuperclass`, abstract entities, non-entity classes in a hierarchy; polymorphic
-      `find` and loading.
+- [x] Required `SINGLE_TABLE` (including the default strategy) and `JOINED`, discriminator metadata and defaults
+      (`STRING`, `CHAR`, `INTEGER`), explicit discriminator values, primary-key joins and inherited secondary tables.
+      `TABLE_PER_CLASS` remains explicitly refused; its optional implementation is not part of this delivery,
+      and decision D5 remains open.
+- [x] `@MappedSuperclass`, abstract entities, nonentity gaps; polymorphic `find` and loading, shared base/subclass
+      identity, relationship targets and inherited collection defaults, identifiers, versions, callbacks and flush integration.
+- [x] JPQL polymorphic selection and subclass attributes, `TYPE` selection and predicates with entity literals
+      and class-valued parameters; inheritance-aware bulk operations, including captured-value updates and
+      descendant-first deletes for joined hierarchies.
+- [x] 18 dedicated H2 tests citing the specification, a closed-package APT module-path inheritance test,
+      and the clean JPA reactor (433 tests, no failure/error/skip).
 
-**TCK gate**: `core.inheritance.*`, `core.annotations.discriminatorValue`, `core.callback.inheritance`.
+**TCK gate** (2026-10-09, PostgreSQL 17): `core.inheritance.*`, `core.annotations.discriminatorValue`,
+`core.callback.inheritance`: **19 / 21 passed**. Only the two `mappedsc.descriptors` XML tests remain (P10),
+without exclusion. Full suite: **1005 / 2135 passed**; rebuilt pre-P6 checkout: 909, **+96**, no test-by-test regression.
+The earlier documented score of 897 predates the current partial-native-results checkout; see `TCK.md`.
 
 ### P7 — Jakarta Persistence Query Language and native queries 🚧
 
@@ -513,7 +523,7 @@ with inheritance (P6) as much as with this milestone.
       carries set-query operands and keeps bind parameters in rendered order; `||`, `LEFT` / `RIGHT` / `REPLACE`,
       `ID()`, `VERSION()` and the implicit identification variable are supported by the earlier slices.
 - [ ] Left for later slices: `KEY` / `VALUE` / `ENTRY` of maps in queries, embeddables compared as a whole,
-      navigating an enclosing variable inside a subquery, `TYPE` (P6).
+      navigating an enclosing variable inside a subquery. `TYPE` is delivered by P6.
 - [x] Semantic analysis against the entity model and SQL lowering through the dialect SPI for the implemented JPQL
       features: joins, subqueries, grouping, constructors, cases, functions and the 3.2 set operations and casts.
 - [x] `Query` / `TypedQuery`: parameters, pagination, hints, lock modes, `getResultStream`,

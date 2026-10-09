@@ -196,6 +196,9 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         Compiled compiled = Translator.translate(statement, runtime.mapping(), p -> values.get(key(p)), null, null);
         return runtime.write(getFlushMode(), connection -> {
             Dialect dialect = runtime.dialect(connection);
+            if (!compiled.mutations().isEmpty()) {
+                return executeMutations(compiled, connection, dialect);
+            }
             Dialect.Rendered rendered = dialect.renderQuery(compiled.sql());
             try (PreparedStatement update = connection.prepareStatement(rendered.sql())) {
                 for (int i = 0; i < rendered.parameters().size(); i++) {
@@ -209,6 +212,27 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
                 throw new PersistenceException("The bulk statement failed: " + e.getMessage() + " — " + jpql, e);
             }
         });
+    }
+
+    private int executeMutations(Compiled compiled, Connection connection, Dialect dialect) {
+        List<Object> captured = execute(compiled, connection);
+        for (Compiled.Mutation mutation : compiled.mutations()) {
+            try (PreparedStatement statement = connection.prepareStatement(dialect.render(mutation.sql()))) {
+                if (getTimeout() != null) {
+                    statement.setQueryTimeout(Math.max(1, (getTimeout() + 999) / 1000));
+                }
+                for (Object item : captured) {
+                    Object[] row = compiled.items().size() == 1 ? new Object[] {item} : (Object[]) item;
+                    for (int i = 0; i < mutation.values().size(); i++) {
+                        mutation.binders().get(i).bind(dialect, statement, i + 1, row[mutation.values().get(i)]);
+                    }
+                    statement.executeUpdate();
+                }
+            } catch (SQLException e) {
+                throw new PersistenceException("The joined bulk statement failed: " + e.getMessage() + " — " + jpql, e);
+            }
+        }
+        return captured.size();
     }
 
     private void checkBound() {

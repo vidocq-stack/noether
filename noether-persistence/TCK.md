@@ -23,6 +23,77 @@ Official suite: **Jakarta Persistence 3.2.1** TCK (bundle from eclipse.org, SHA-
 | P7 (in progress) — slice 2: functions, cases, constructors, subqueries, collection expressions, literals | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 840 | 1291 | 4 |
 | P7 (in progress) — slice 3: bulk updates and deletes, named queries, lock modes, hints | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 893 | 1238 | 4 |
 | P7 (in progress) — slice 4: set operations and casts | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 897 | 1234 | 4 |
+| Pre-P6 — clean checkout `1e982af`, including partial native results | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 909 | 1222 | 4 |
+| P6 — required inheritance, polymorphic loading and JPQL `TYPE` | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 1005 | 1126 | 4 |
+
+## P6 — inheritance: 909 → 1005
+
+The pre-P6 checkout was rebuilt from an archive of `HEAD` (`1e982af`) outside the user-owned checkout and measured
+again: **2135 tests, 909 passed, 0 failures, 1222 errors, 4 skipped**. This is the baseline of the actual code,
+including the partial native-result work; the earlier documented **897 / 1234 / 4** remains a historical measurement.
+The P6 full run reports **2135 tests, 1005 passed, 0 failures, 1126 errors, 4 skipped**.
+The table's “Fail” column combines failures and errors, as the runner does.
+
+Compared test by test with the rebuilt baseline: **96 newly passing tests, no regression, no added or missing test**.
+Compared with the last previously documented full score, the net improvement is 108 passes; only the 96-pass
+test-by-test delta is attributed to P6.
+
+Implemented and unit-tested (§2.13–2.14, §11.1.12–13, §11.1.45–46, §4.4.8, §4.6.17.5):
+
+- explicit and default `SINGLE_TABLE`, root tables, default and explicit discriminator columns and values,
+  `STRING` / `CHAR` / `INTEGER`, including provider-defined defaults for the latter two;
+- `JOINED`, with or without an explicit discriminator, renamed and composite primary-key joins (matched by
+  referenced column), default keys inherited through several levels, empty leaf tables and secondary tables;
+- abstract entities, mapped-superclass attributes, nonentity gaps, concrete polymorphic `find` and loading,
+  one identity shared by compatible base/subclass requests, incompatible sibling requests returning `null`;
+- relationships to bases and joined subtypes, inherited join/element-collection defaults, cyclic references,
+  inherited identifiers and generated identities, versions, optimistic locking, callbacks, dirty checking,
+  merge, refresh and removal;
+- JPQL polymorphic entity selection, subclass predicates and attributes, `TYPE` results as `Class` objects,
+  entity literals and class parameters (including `IN`), and inheritance-aware bulk updates/deletes.
+  Joined updates capture their qualifying keys and assignment values before modifying any table;
+  deletes remove descendant tables first and count entities, not physical rows.
+
+The dedicated H2 inheritance suite reports **18 / 18 passed**, including ordered inverse subtype collections.
+The clean JPA reactor reports **433 tests, 0 failures, 0 errors, 0 skipped**, including both module-path vehicles
+and a new APT inheritance test whose entity package is neither exported nor opened to the provider.
+No access-generator or `AccessPlanner` logic was duplicated or changed.
+
+Focused official gate (PostgreSQL 17): **21 tests, 19 passed, 0 failures, 2 errors, 0 skipped**:
+
+| Area | Pass | Error | Remaining blocker |
+|---|---:|---:|---|
+| `core.inheritance` | 8 | 2 | `mappedsc.descriptors.Client#test1`, `#test2`: XML mappings, P10 |
+| `core.annotations.discriminatorValue` | 2 | 0 | — |
+| `core.callback.inheritance` | 9 | 0 | — |
+
+The two descriptor tests are **not excluded** and remain in the full-suite failures; no required P6 implementation
+defect remains in this gate. `TABLE_PER_CLASS` remains explicitly refused at bootstrap; it is optional, and
+decision **D5 remains open**. No optional-feature exclusion or architectural decision was added.
+The two previously known constructor-result failures in `core.annotations.nativequery` were not changed.
+Remaining blockers concern P7's unfinished query/native/stored-procedure cases, P8's Criteria/metamodel/entity graphs,
+P9 schema generation, P10 XML mappings and P11 caching/validation.
+
+Commands (from the repository root, Java 25.0.3 / Maven 3.9.16 selected with SDKMAN):
+
+```bash
+./mvnw -q -ntp -pl mansart-persistence/mansart-jpa-core -am test \
+  -Dtest=InheritanceTest,BulkQueryTest -Dsurefire.failIfNoSpecifiedTests=false
+
+./mvnw -q -ntp \
+  -pl mansart-persistence/mansart-jpa-core,mansart-persistence/mansart-jpa-dialects/mansart-jpa-dialect-postgresql,mansart-persistence/mansart-jpa-processor,mansart-persistence/mansart-jpa-module-it,mansart-persistence/mansart-jpa-processor-module-it \
+  -am clean verify
+
+cd mansart-persistence/mansart-jpa-tck
+./run-official-tck-persistence-3.2.sh -- \
+  '-Dtck.tests=**/ee/jakarta/tck/persistence/core/inheritance/**/*Client*,**/ee/jakarta/tck/persistence/core/annotations/discriminatorValue/**/*Client*,**/ee/jakarta/tck/persistence/core/callback/inheritance/**/*Client*' \
+  -Dtck.skip.execution2=true
+./run-official-tck-persistence-3.2.sh
+```
+
+The runner's exit status alone is not a conformance result: it exits zero even with failing tests.
+Counters were read from `target/tck-report-persistence.txt` and the failsafe XML reports.
+Baseline, focused-gate and full-run XML evidence was preserved separately before running another selector.
 
 ## P7, slice 4 — set operations and casts: 893 → 897
 

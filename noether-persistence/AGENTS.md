@@ -34,10 +34,14 @@
   `mansart-jpa-processor` (APT, entity accesses at build time) and two module-path test vehicles,
   `mansart-jpa-module-it` (runtime path, `opens`) and `mansart-jpa-processor-module-it` (build-time path,
   `provides`). `mansart-jpa-tck` stays out of the reactor.
-- Milestones P0 to P5 and P7 slices 1 to 4 are delivered: read `ROADMAP.md` (status per item) and
+- Milestones P0 to P6 and P7 slices 1 to 4 are delivered (1005 / 2135 TCK passes): read `ROADMAP.md` (status per item) and
   `TCK.md` (measured score, failures attributed per milestone) before starting.
 - The entity model is built at bootstrap from the class files; which members are persistent, and in which order, is
   decided by `AccessPlanner`, shared with the processor. Never duplicate that logic.
+- Inheritance is mapped by `mapping.InheritanceMapping`: default/explicit `SINGLE_TABLE` and required `JOINED`,
+  polymorphic loads and one identity per hierarchy, JPQL `TYPE` and joined bulk mutations. Keep relationships,
+  versions and callbacks on the existing generated-access paths. `TABLE_PER_CLASS` is explicitly refused;
+  decision D5 remains open.
 - Several abandoned JPA attempts live on remote branches (`feature/*mansart*persistence*`). They
   are history, not a base: nothing is cherry-picked from them without a test that justifies it.
 

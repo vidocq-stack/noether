@@ -87,6 +87,17 @@ public final class EntityLoader {
      */
     public Object load(MappedEntity type, Object id, Connection connection, PersistenceContext context, LockModeType mode,
             Integer timeout) {
+        Optional<ManagedEntity> known = context.find(new EntityKey(type.root(), id));
+        if (known.isPresent()) {
+            return type.model().javaType().isInstance(known.get().instance())
+                && known.get().status() == ManagedEntity.Status.MANAGED
+                ? known.get().instance() : null;
+        }
+        MappedEntity concrete = concrete(type, id, connection);
+        if (concrete == null) {
+            return null;
+        }
+        type = concrete;
         Row row = row(type, id, connection, mode, timeout);
         if (row == null) {
             return null;
@@ -113,7 +124,44 @@ public final class EntityLoader {
 
     /** Whether a row of {@code type} has the identity {@code id}, without managing anything. */
     public boolean exists(MappedEntity type, Object id, Connection connection) {
-        return row(type, id, connection, LockModeType.NONE, null) != null;
+        MappedEntity concrete = concrete(type, id, connection);
+        return concrete != null && row(concrete, id, connection, LockModeType.NONE, null) != null;
+    }
+
+    /** Resolves the row's concrete entity before instantiating an abstract or polymorphic requested type (§2.14). */
+    private MappedEntity concrete(MappedEntity requested, Object id, Connection connection) {
+        var inheritance = unit.inheritance(requested.model().javaType());
+        if (inheritance.discriminator() == null && inheritance.hierarchy().size() == 1) {
+            return inheritance.abstractEntity(requested.model()) ? null : requested;
+        }
+        MappedEntity root = entity(inheritance.root().javaType());
+        if (inheritance.discriminator() != null) {
+            Row row = row(root, id, connection, LockModeType.NONE, null);
+            if (row == null) {
+                return null;
+            }
+            Object discriminator = null;
+            List<EntityStatements.Column> columns = root.statements().columns();
+            for (int c = 0; c < columns.size(); c++) {
+                if (columns.get(c).attribute() < 0) {
+                    discriminator = row.values()[c];
+                }
+            }
+            Class<?> concrete = inheritance.concrete(discriminator);
+            return requested.model().javaType().isAssignableFrom(concrete) ? entity(concrete) : null;
+        }
+        List<io.vidocq.mansart.jpa.core.model.EntityModel> candidates = inheritance.hierarchy().stream()
+            .filter(e -> requested.model().javaType().isAssignableFrom(e.javaType()))
+            .filter(e -> !inheritance.abstractEntity(e))
+            .sorted(Comparator.comparingInt((io.vidocq.mansart.jpa.core.model.EntityModel e) ->
+                unit.inheritance(e.javaType()).chain().size()).reversed()).toList();
+        for (var candidate : candidates) {
+            MappedEntity type = entity(candidate.javaType());
+            if (row(type, id, connection, LockModeType.NONE, null) != null) {
+                return type;
+            }
+        }
+        return null;
     }
 
     /**
@@ -211,7 +259,8 @@ public final class EntityLoader {
     /** The managed instance of {@code type} with identity {@code key}: the context's, else loaded; {@code null} if none. */
     private Object find(MappedEntity type, Object key, Connection connection, PersistenceContext context) {
         Optional<ManagedEntity> known = context.find(new EntityKey(type.root(), key));
-        return known.isPresent() ? known.get().instance() : load(type, key, connection, context);
+        return known.isPresent() ? type.model().javaType().isInstance(known.get().instance()) ? known.get().instance() : null
+            : load(type, key, connection, context);
     }
 
     /**
@@ -264,7 +313,9 @@ public final class EntityLoader {
         List<Indexed> owners = new ArrayList<>();
         for (Object[] row : rows) {
             Object element = find(owner, ownerStatements.key(Arrays.copyOf(row, width)), connection, context);
-            owners.add(new Indexed(element, stored ? index(index, row, width, connection, context) : null));
+            if (element != null) {
+                owners.add(new Indexed(element, stored ? index(index, row, width, connection, context) : null));
+            }
         }
         return owners;
     }
@@ -478,7 +529,8 @@ public final class EntityLoader {
                     }
                     try (ResultSet row = select.executeQuery()) {
                         if (!row.next()) {
-                            if (t == 0) {
+                            if (t == 0 || unit.inheritance(type.model().javaType()).joined()
+                                    && t < unit.inheritance(type.model().javaType()).chain().size()) {
                                 return null;
                             }
                             continue;
@@ -487,6 +539,9 @@ public final class EntityLoader {
                         for (int i = 0; i < selected.length; i++) {
                             values[selected[i]] = columns.get(selected[i]).binder().read(row, i + 1);
                             nulls[selected[i]] = row.wasNull(); // the binder's last read is this column's
+                            if (nulls[selected[i]] && columns.get(selected[i]).foreignKey() != null) {
+                                values[selected[i]] = null;
+                            }
                         }
                     }
                 }

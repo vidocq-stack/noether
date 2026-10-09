@@ -26,7 +26,7 @@ import java.util.Optional;
  * An entity (§2.1) as mapped: name, table, access type, identifier and persistent attributes, those of its mapped
  * superclasses and entity superclasses first.
  *
- * @param superEntity the closest entity superclass, if any (its mapping strategy is milestone P6)
+ * @param superEntity the closest entity superclass, if any (its relational strategy is mapped at unit bootstrap)
  * @param secondaryTables the secondary tables of the entity (§11.1.46), in declaration order
  * @param callbacks its lifecycle callbacks, in the order §3.6.4 invokes those of a same event
  */

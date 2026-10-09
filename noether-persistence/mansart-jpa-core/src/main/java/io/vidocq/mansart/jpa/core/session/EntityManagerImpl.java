@@ -549,7 +549,7 @@ final class EntityManagerImpl implements EntityManager {
             Object id = type.key(primaryKey);
             Optional<ManagedEntity> known = context.find(new EntityKey(type.root(), id));
             if (known.isPresent()) {
-                // a removed instance is no longer found; another class of the hierarchy is not this one (P6)
+                // a removed instance or an incompatible concrete subtype is not found
                 Object instance = known.get().instance();
                 if (known.get().status() != ManagedEntity.Status.MANAGED || !entityClass.isInstance(instance)) {
                     return null;

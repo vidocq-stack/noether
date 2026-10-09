@@ -22,12 +22,39 @@ package io.vidocq.mansart.jpa.processorit;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.vidocq.mansart.jpa.processorit.closed.Ledger;
+import io.vidocq.mansart.jpa.processorit.closed.Account;
+import io.vidocq.mansart.jpa.processorit.closed.PremiumAccount;
 import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.PersistenceConfiguration;
 import org.junit.jupiter.api.Test;
 
 /** Compiled with mansart-jpa-processor, an application needs no opens: the generated accesses are handed over. */
 class GeneratedAccessModulePathTest {
+
+    @Test
+    void inheritanceUsesGeneratedAccessWithoutOpeningEntityPackages() throws Exception { // §2.14.1, §3.3
+        String url = "jdbc:h2:mem:processor-inheritance;DB_CLOSE_DELAY=-1";
+        try (var connection = java.sql.DriverManager.getConnection(url, "sa", "");
+                var ddl = connection.createStatement()) {
+            ddl.execute("create table Account (id bigint primary key, name varchar(50), version int, "
+                + "DTYPE varchar(31), points int)");
+        }
+        var unit = new PersistenceConfiguration("processor-inheritance")
+            .provider("io.vidocq.mansart.jpa.core.MansartPersistenceProvider")
+            .managedClass(Account.class).managedClass(PremiumAccount.class)
+            .property(PersistenceConfiguration.JDBC_URL, url).property(PersistenceConfiguration.JDBC_USER, "sa");
+        try (var emf = unit.createEntityManagerFactory(); var em = emf.createEntityManager()) {
+            em.getTransaction().begin();
+            em.persist(new PremiumAccount(1, "owner", 100));
+            em.getTransaction().commit();
+            em.clear();
+            Account loaded = em.find(Account.class, 1L);
+            assertThat(loaded).isInstanceOf(PremiumAccount.class).isSameAs(em.find(PremiumAccount.class, 1L));
+            assertThat(loaded.name()).isEqualTo("owner");
+            assertThat(((PremiumAccount) loaded).points()).isEqualTo(100);
+            assertThat(em.createQuery("select TYPE(a) from Account a").getResultList()).containsExactly(PremiumAccount.class);
+        }
+    }
 
     @Test
     void theEntityPackageIsNotOpenedToMansart() {
