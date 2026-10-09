@@ -385,10 +385,22 @@ Spec: ch. 2.10–2.12 (relationships, defaults), ch. 2.4.2 (derived identities),
       other (no deferred constraints needed). Loaded with their owner (LAZY treated as EAGER for now, one select per
       target — joins with the AST of P7), the inverse side of a one-to-one from the owner's key, one instance per
       identity, cycles closed on the instance being loaded; `refresh` re-reads them.
-- [ ] `@OneToMany`, `@ManyToMany`, unidirectional one-to-many; join tables (single-valued ones included).
+- [x] Collection-valued relationships (`ToManyTest`, `mapping.CollectionMapping`): `@OneToMany(mappedBy)` read from the
+      foreign keys of its elements; the owning side of `@ManyToMany` and the unidirectional `@OneToMany` through a join
+      table, by default `<owner table>_<target table>` with `<inverse attribute or owner entity>_<key>` and
+      `<attribute>_<target key>` columns (§11.1.25, §11.1.27), or as written; the inverse `@ManyToMany` through the join
+      table of its owner. Join rows inserted after every row of the flush, the gained and lost elements written at
+      update (an owned collection versions its owner, an inverse one does not, §3.4.2), deleted before their owner.
+      Loaded with their owner in their `@OrderBy` (attributes of the target, or its identifier). A relationship to a
+      class outside the unit fails the factory (§2.10).
+- [ ] Map collections (`@MapKey*` family), unidirectional one-to-many through a foreign key, single-valued
+      relationships through a join table, `@OrderBy` on paths into embeddables.
 - [x] `orphanRemoval` of single-valued relationships (§2.9): the remove cascades, a target let go is removed at flush;
       `merge` without cascade points to the managed instance of the same identity (§3.2.7.1).
-- [ ] `orphanRemoval` and merge of collections, bidirectional consistency on flush.
+- [x] `orphanRemoval` and merge of collections: the elements let go are removed; a merged collection holds the managed
+      (or merged) instances, in a collection of the managed instance's own.
+- *Not done, by design:* bidirectional consistency on flush — the application keeps both sides (§2.10), the owning
+      side is what is written.
 - [ ] Fetching: EAGER via joins or secondary selects; LAZY collections through Mansart collection
       wrappers; LAZY to-one through Class-File API subclasses (or treated as EAGER first — LAZY
       is only a hint to the provider). `PersistenceUnitUtil.isLoaded` / `PersistenceUtil` semantics.

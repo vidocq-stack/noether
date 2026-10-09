@@ -23,6 +23,7 @@ import io.vidocq.mansart.jpa.core.context.EntityKey;
 import io.vidocq.mansart.jpa.core.context.ManagedEntity;
 import io.vidocq.mansart.jpa.core.context.PersistenceContext;
 import io.vidocq.mansart.jpa.core.generation.IdGenerators;
+import io.vidocq.mansart.jpa.core.mapping.CollectionMapping;
 import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
 import io.vidocq.mansart.jpa.core.mapping.MappedUnit;
 import io.vidocq.mansart.jpa.core.model.AssociationAttribute;
@@ -48,7 +49,7 @@ import java.util.function.Function;
 /**
  * The entity operations of §3.2 on the persistence context of one entity manager — persist, remove, merge, refresh,
  * detach — with their cascades through the relationships of the object graph (§3.2.2 to §3.2.7), and the orphan
- * removal of single-valued relationships (§2.9). Collections, their orphans and their merge come with the rest of P5.
+ * removal (§2.9). Map collections come later in P5.
  */
 final class EntityOperations {
 
@@ -206,8 +207,15 @@ final class EntityOperations {
         for (int i = 0; i < attributes.size(); i++) {
             if (attributes.get(i) instanceof AssociationAttribute association && association.cascades(CascadeType.MERGE)) {
                 Object value = type.access().get(entity, i);
-                if (value instanceof Collection<?> || value instanceof Map<?, ?>) {
-                    targets(value, target -> merge(target, merged)); // collections of merged instances come with P5
+                if (value instanceof Collection<?> collection) {
+                    Collection<Object> elements = mapped(association, collection, target -> merge(target, merged));
+                    if (managed != entity) {
+                        type.access().set(managed, i, elements);
+                    } else if (!sameElements(collection, elements)) {
+                        replace(collection, elements); // a managed instance keeps its collection, with the managed elements
+                    }
+                } else if (value instanceof Map<?, ?>) {
+                    targets(value, target -> merge(target, merged)); // map collections come later in P5
                 } else if (value != null) {
                     type.access().set(managed, i, merge(value, merged));
                 }
@@ -230,12 +238,46 @@ final class EntityOperations {
             }
             if (attributes.get(i) instanceof EmbeddedAttribute embedded) {
                 state[i] = copy(embedded.embeddable(), state[i]);
-            } else if (attributes.get(i) instanceof AssociationAttribute association && association.singleValued()
-                    && !association.cascades(CascadeType.MERGE)) {
-                state[i] = managedReference(state[i]);
+            } else if (attributes.get(i) instanceof AssociationAttribute association) {
+                if (association.singleValued()) {
+                    if (!association.cascades(CascadeType.MERGE)) {
+                        state[i] = managedReference(state[i]);
+                    }
+                } else if (state[i] instanceof Collection<?> collection) {
+                    // a collection of its own: the managed instances of its elements, or the merged ones (cascadeMerge)
+                    state[i] = mapped(association, collection,
+                        association.cascades(CascadeType.MERGE) ? element -> element : this::managedReference);
+                }
             }
         }
         type.access().write(to, state);
+    }
+
+    /** A new collection of the declared type of {@code association}, of the elements of {@code collection} mapped. */
+    private static Collection<Object> mapped(AssociationAttribute association, Collection<?> collection,
+            Function<Object, Object> mapping) {
+        Collection<Object> mapped = CollectionMapping.newCollection(association.javaType());
+        for (Object element : List.copyOf(collection.stream().filter(Objects::nonNull).toList())) {
+            mapped.add(mapping.apply(element));
+        }
+        return mapped;
+    }
+
+    private static boolean sameElements(Collection<?> collection, Collection<Object> elements) {
+        List<?> before = List.copyOf(collection.stream().filter(Objects::nonNull).toList());
+        List<Object> after = List.copyOf(elements);
+        for (int i = 0; i < before.size(); i++) {
+            if (before.get(i) != after.get(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void replace(Collection<?> collection, Collection<Object> elements) {
+        collection.clear();
+        ((Collection<Object>) collection).addAll(elements);
     }
 
     /**
@@ -344,9 +386,9 @@ final class EntityOperations {
     }
 
     /**
-     * §2.9: the target a single-valued relationship with {@code orphanRemoval} held at the last flush, and no longer
-     * holds, is removed. Done before the persist cascade, so that an orphan given to another owner that cascades
-     * persist is managed again.
+     * §2.9: what a relationship with {@code orphanRemoval} held at the last flush, and no longer holds — its target, or
+     * elements of its collection — is removed. Done before the persist cascade, so that an orphan given to another
+     * owner that cascades persist is managed again.
      */
     private void removeOrphans() {
         Set<Object> visited = visited();
@@ -356,11 +398,22 @@ final class EntityOperations {
             }
             List<AttributeModel> attributes = entry.type().model().attributes();
             for (int i = 0; i < attributes.size(); i++) {
-                if (attributes.get(i) instanceof AssociationAttribute association && association.orphanRemoval()
-                        && association.singleValued()) {
+                if (!(attributes.get(i) instanceof AssociationAttribute association) || !association.orphanRemoval()) {
+                    continue;
+                }
+                Object current = entry.type().access().get(entry.instance(), i);
+                if (association.singleValued()) {
                     Object previous = entry.snapshot()[i];
-                    if (previous != null && previous != entry.type().access().get(entry.instance(), i) && context.contains(previous)) {
+                    if (previous != null && previous != current && context.contains(previous)) {
                         remove(previous, visited);
+                    }
+                } else {
+                    Set<Object> kept = visited();
+                    kept.addAll(CollectionMapping.elements(current));
+                    for (Object previous : CollectionMapping.elements(entry.snapshot()[i])) {
+                        if (previous != null && !kept.contains(previous) && context.contains(previous)) {
+                            remove(previous, visited);
+                        }
                     }
                 }
             }

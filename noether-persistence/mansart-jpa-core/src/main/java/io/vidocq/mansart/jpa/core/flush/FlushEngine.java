@@ -21,9 +21,11 @@ package io.vidocq.mansart.jpa.core.flush;
 
 import io.vidocq.mansart.jpa.core.context.ManagedEntity;
 import io.vidocq.mansart.jpa.core.context.PersistenceContext;
+import io.vidocq.mansart.jpa.core.mapping.CollectionMapping;
 import io.vidocq.mansart.jpa.core.mapping.EntityStatements;
 import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
 import io.vidocq.mansart.jpa.dialect.Dialect;
+import io.vidocq.mansart.jpa.dialect.sql.Statement;
 import jakarta.persistence.EntityExistsException;
 import jakarta.persistence.LockModeType;
 import jakarta.persistence.OptimisticLockException;
@@ -89,6 +91,7 @@ public final class FlushEngine {
     private final Dialect dialect;
     private final int batchSize;
     private final Map<MappedEntity, Sql> sql = new ConcurrentHashMap<>();
+    private final Map<Statement, String> rendered = new ConcurrentHashMap<>();
 
     public FlushEngine(Dialect dialect, int batchSize) {
         this.dialect = dialect;
@@ -141,10 +144,19 @@ public final class FlushEngine {
             insert(group, context, connection, pending, later);
         }
         writeReferences(later, false, connection);
+        for (Work work : inserts) { // the join rows reference rows of both sides: every row exists now
+            writeJoinRows(work, null, connection);
+        }
         for (List<Work> group : groups(updates)) {
+            for (Work work : group) {
+                writeJoinRows(work, work.entry().snapshot(), connection);
+            }
             update(group, context, connection);
         }
         writeReferences(referencesBetween(deletes), true, connection);
+        for (Work work : deletes) {
+            deleteJoinRows(work, connection);
+        }
         for (List<Work> group : groups(deletes)) {
             delete(group, context, connection);
         }
@@ -282,13 +294,109 @@ public final class FlushEngine {
                     values[c] = null;
                 }
             }
-            try (PreparedStatement statement = connection.prepareStatement(dialect.render(statements.referenceUpdate(write.reference())))) {
+            try (PreparedStatement statement = connection.prepareStatement(render(statements.referenceUpdate(write.reference())))) {
                 bind(statement, statements.referenceUpdateParameters(write.reference()), statements, values, null);
                 statement.executeUpdate();
             } catch (SQLException e) {
                 throw failure("update of a foreign key", type, e);
             }
         }
+    }
+
+    // ---- join tables (§2.10, §11.1.27) --------------------------------------------------------------------
+
+    /**
+     * Writes the join rows of the owned collections of {@code work}: the elements gained since {@code snapshot} are
+     * inserted, those lost deleted ({@code snapshot} {@code null}: a new owner, every element is inserted).
+     */
+    private void writeJoinRows(Work work, Object[] snapshot, Connection connection) {
+        MappedEntity type = work.type();
+        EntityStatements statements = type.statements();
+        for (CollectionMapping mapping : statements.collections()) {
+            if (!(mapping instanceof CollectionMapping.JoinTable table)) {
+                continue;
+            }
+            List<Object> before = CollectionMapping.elements(snapshot == null ? null : snapshot[table.attribute()]);
+            List<Object> now = CollectionMapping.elements(work.state()[table.attribute()]);
+            List<Object> lost = minus(before, now);
+            List<Object> gained = minus(now, before);
+            if (lost.isEmpty() && gained.isEmpty()) {
+                continue;
+            }
+            Object[] owner = statements.keyValues(type.id(work.entry().instance()));
+            try {
+                joinRows(render(table.deleteRow()), table, owner, lost, statements, connection);
+                joinRows(render(table.insert()), table, owner, gained, statements, connection);
+            } catch (SQLException e) {
+                throw failure("write of the join table of " + table.association().name() + " of", type, e);
+            }
+        }
+    }
+
+    /** One batch of {@code sql} — the owner key then the element key — per element. */
+    private void joinRows(String sql, CollectionMapping.JoinTable table, Object[] owner, List<Object> elements,
+            EntityStatements statements, Connection connection) throws SQLException {
+        if (elements.isEmpty()) {
+            return;
+        }
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            for (Object element : elements) {
+                Object[] target = statements.targetKey(element, table.association().targetEntity());
+                if (target == null) {
+                    throw new PersistenceException("An element of " + table.association().name() + " of "
+                        + table.association().declaringClass().getName() + " has no identifier");
+                }
+                int index = 1;
+                for (int k = 0; k < owner.length; k++) {
+                    table.ownerBinders().get(k).bind(dialect, statement, index++, owner[k]);
+                }
+                for (int k = 0; k < target.length; k++) {
+                    table.targetBinders().get(k).bind(dialect, statement, index++, target[k]);
+                }
+                statement.addBatch();
+            }
+            statement.executeBatch();
+        }
+    }
+
+    /** Deletes every join row of the owned collections of a row about to be deleted. */
+    private void deleteJoinRows(Work work, Connection connection) {
+        MappedEntity type = work.type();
+        EntityStatements statements = type.statements();
+        for (CollectionMapping mapping : statements.collections()) {
+            if (mapping instanceof CollectionMapping.JoinTable table) {
+                Object[] owner = statements.keyValues(work.entry().key().id());
+                try (PreparedStatement statement = connection.prepareStatement(render(table.deleteOwner()))) {
+                    for (int k = 0; k < owner.length; k++) {
+                        table.ownerBinders().get(k).bind(dialect, statement, k + 1, owner[k]);
+                    }
+                    statement.executeUpdate();
+                } catch (SQLException e) {
+                    throw failure("delete of the join rows of " + table.association().name() + " of", type, e);
+                }
+            }
+        }
+    }
+
+    /** The elements of {@code from} that {@code removed} does not hold, compared by identity, as many times as left. */
+    private static List<Object> minus(List<Object> from, List<Object> removed) {
+        Map<Object, Integer> counts = new IdentityHashMap<>();
+        removed.forEach(element -> counts.merge(element, 1, Integer::sum));
+        List<Object> rest = new ArrayList<>();
+        for (Object element : from) {
+            Integer count = counts.get(element);
+            if (count == null || count == 0) {
+                rest.add(element);
+            } else {
+                counts.put(element, count - 1);
+            }
+        }
+        return rest;
+    }
+
+    /** The SQL of a statement, rendered once by the dialect. */
+    String render(Statement statement) {
+        return rendered.computeIfAbsent(statement, dialect::render);
     }
 
     private static Set<Object> identitySet() {

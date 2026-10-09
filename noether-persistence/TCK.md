@@ -15,6 +15,25 @@ Official suite: **Jakarta Persistence 3.2.1** TCK (bundle from eclipse.org, SHA-
 | P3 — persistence context and flush engine (flush at every commit, PostgreSQL dialect on the class path) | 2026-10-08 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 220 | 1911 | 4 |
 | P4 — entity operations, identifier generation, callbacks, locking, secondary tables, native updates | 2026-10-08 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 609 | 1522 | 4 |
 | P5 (in progress) — single-valued relationships: foreign keys, loading, orphan removal | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 611 | 1520 | 4 |
+| P5 (in progress) — collection-valued relationships: join tables, inverse sides, orphans, merge | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 615 | 1516 | 4 |
+
+## P5, second slice — collection-valued relationships: 611 → 615
+
+`@OneToMany` and `@ManyToMany`, owning and inverse sides: join tables written and read, the elements loaded with their
+owner in their `@OrderBy`, orphans removed, collections merged. Run of 2026-10-09: **615 pass, 1516 fail, 4 skipped**.
+Compared test by test with the final P4 run: 7 tests pass that failed (the two of the first slice,
+`core.annotations.orderby.Client1#orderByTest1` to `4`, `core.entitytest.detach.manyXmany.Client#detachMXMTest1`), and
+one fails that passed:
+
+- `core.override.joincolumn.Client#testOverrideJoinTable` — its `orm.xml` replaces the join table the annotations name
+  (`CUST_ORDER` for `CUST_RETAIL`, which the DDL does not create). It passed vacuously while no join row was written;
+  it now waits for the mapping files (**P10**).
+
+The small delta is expected: most tests of `core.relationship.*` and `core.entitytest.*.{oneXmany,manyXmany}` already
+passed, checking instances the persistence context returned without reading the database; they now pass with their rows
+written and read back. What P5 still owes in these areas: derived identities (`core.derivedid`, `core.annotations.mapsid`),
+map collections (`core.annotations.mapkey*`), element collections, `@OrderColumn`, `@OrderBy` on embeddable paths and on
+element collections, nested embeddables. `core.relationship.descriptors` waits for P10.
 
 ## P5, first slice — single-valued relationships: 609 → 611
 

@@ -29,6 +29,7 @@ import io.vidocq.mansart.jpa.core.model.EmbeddedAttribute;
 import io.vidocq.mansart.jpa.core.model.EntityModel;
 import io.vidocq.mansart.jpa.core.model.IdModel;
 import io.vidocq.mansart.jpa.core.model.JoinColumnModel;
+import io.vidocq.mansart.jpa.core.model.JoinTableModel;
 import io.vidocq.mansart.jpa.core.model.TableModel;
 import io.vidocq.mansart.jpa.core.session.NotYet;
 import io.vidocq.mansart.jpa.core.spi.ManagedAccess;
@@ -43,6 +44,7 @@ import jakarta.persistence.PersistenceException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
 
@@ -111,17 +113,20 @@ public final class EntityStatements {
     private final String unsupported;
     private final Function<Class<?>, MappedEntity> entities;
     private final List<Reference> references;
+    private final List<CollectionMapping> collections;
     private final List<Column> columns;
     private final List<TableStatements> tables;
     private final Integer version;
     private final Select versionSelect;
 
     private EntityStatements(String entity, String unsupported, Function<Class<?>, MappedEntity> entities, List<Reference> references,
-            List<Column> columns, List<TableStatements> tables, Integer version, Select versionSelect) {
+            List<CollectionMapping> collections, List<Column> columns, List<TableStatements> tables, Integer version,
+            Select versionSelect) {
         this.entity = entity;
         this.unsupported = unsupported;
         this.entities = entities;
         this.references = references;
+        this.collections = collections;
         this.columns = columns;
         this.tables = tables;
         this.version = version;
@@ -153,6 +158,7 @@ public final class EntityStatements {
         model.secondaryTables().forEach(t -> tableNames.add(t.table().name()));
         List<Column> columns = new ArrayList<>();
         List<Reference> references = new ArrayList<>();
+        List<CollectionMapping> collections = new ArrayList<>();
         List<AttributeModel> attributes = model.attributes();
         for (int i = 0; i < attributes.size(); i++) {
             boolean id = ids.contains(i);
@@ -168,8 +174,10 @@ public final class EntityStatements {
                         return unsupported(model, "P5", problem);
                     }
                 }
+                case AssociationAttribute association when !association.singleValued() ->
+                    collections.add(collection(model, association, i, models, binders));
                 default -> {
-                    // inverse sides have no column; collections and element collections have their own tables
+                    // inverse to-one sides have no column; element collections have their own tables
                 }
             }
         }
@@ -208,8 +216,8 @@ public final class EntityStatements {
         TableStatements primary = tables.getFirst();
         Select versionSelect = new Select(primary.select().table(), List.of(columns.get(version != null ? version : keys.getFirst()).name()),
             primary.select().conditions());
-        return new EntityStatements(model.entityName(), null, entities, List.copyOf(references), List.copyOf(columns),
-            List.copyOf(tables), version, versionSelect);
+        return new EntityStatements(model.entityName(), null, entities, List.copyOf(references), List.copyOf(collections),
+            List.copyOf(columns), List.copyOf(tables), version, versionSelect);
     }
 
     // ---- foreign keys (§2.10, §11.1.25) -------------------------------------------------------------------
@@ -237,13 +245,36 @@ public final class EntityStatements {
         if (keys == null) {
             return "a relationship to an entity with a derived identity or a nested embedded identifier";
         }
-        List<JoinColumnModel> written = association.joinColumns();
-        if (!written.isEmpty() && written.size() != keys.size()) {
-            throw new PersistenceException("The relationship " + association.name() + " of " + association.declaringClass().getName()
-                + " has " + written.size() + " join columns, its target " + target.entityName() + " a key of " + keys.size());
+        JoinColumnModel[] joins = byKeyPart(association, association.joinColumns(), keys, target);
+        if (joins == null) {
+            return "a join column referencing a column that is not a key column of " + target.entityName();
         }
         int[] indexes = new int[keys.size()];
-        boolean[] mapped = new boolean[keys.size()];
+        for (int part = 0; part < keys.size(); part++) {
+            JoinColumnModel join = joins[part];
+            String name = join.name() != null ? join.name() : association.name() + "_" + keys.get(part).name();
+            indexes[part] = columns.size();
+            columns.add(new Column(Identifier.of(name), keys.get(part).binder(), attribute, new int[0], new ManagedAccess[0], false,
+                false, join.insertable(), join.updatable(), tableIndex(join.table(), tableNames),
+                new ForeignKey(association.targetEntity(), part)));
+        }
+        references.add(new Reference(attribute, association.targetEntity(), indexes));
+        return null;
+    }
+
+    /**
+     * The join columns {@code written} for a relationship to {@code target}, one per key column of the target in the
+     * order of its key parts (§11.1.25: matched by {@code referencedColumnName}, in order when there is one key
+     * column); the defaults when none is written. {@code null} when one references a column that is not a key column.
+     */
+    private static JoinColumnModel[] byKeyPart(AssociationAttribute association, List<JoinColumnModel> written, List<KeyColumn> keys,
+            EntityModel target) {
+        String relationship = association.name() + " of " + association.declaringClass().getName();
+        if (!written.isEmpty() && written.size() != keys.size()) {
+            throw new PersistenceException("The relationship " + relationship + " has " + written.size() + " join columns, "
+                + target.entityName() + " a key of " + keys.size());
+        }
+        JoinColumnModel[] joins = new JoinColumnModel[keys.size()];
         for (int k = 0; k < keys.size(); k++) {
             JoinColumnModel join = written.isEmpty() ? JoinColumnModel.defaults() : written.get(k);
             int part = k;
@@ -255,26 +286,84 @@ public final class EntityStatements {
                     }
                 }
                 if (part < 0) {
-                    return "a join column referencing " + join.referencedColumnName() + ", which is not a key column of "
-                        + target.entityName();
+                    return null;
                 }
             } else if (written.size() > 1) {
-                throw new PersistenceException("The join columns of " + association.name() + " of "
-                    + association.declaringClass().getName() + " must name their referencedColumnName (§11.1.25)");
+                throw new PersistenceException("The join columns of " + relationship + " must name their referencedColumnName "
+                    + "(§11.1.25)");
             }
-            if (mapped[part]) {
-                throw new PersistenceException("Two join columns of " + association.name() + " of "
-                    + association.declaringClass().getName() + " reference " + keys.get(part).name());
+            if (joins[part] != null) {
+                throw new PersistenceException("Two join columns of " + relationship + " reference " + keys.get(part).name());
             }
-            mapped[part] = true;
-            String name = join.name() != null ? join.name() : association.name() + "_" + keys.get(part).name();
-            indexes[part] = columns.size();
-            columns.add(new Column(Identifier.of(name), keys.get(part).binder(), attribute, new int[0], new ManagedAccess[0], false,
-                false, join.insertable(), join.updatable(), tableIndex(join.table(), tableNames),
-                new ForeignKey(association.targetEntity(), part)));
+            joins[part] = join;
         }
-        references.add(new Reference(attribute, association.targetEntity(), indexes));
-        return null;
+        return joins;
+    }
+
+    // ---- collections (§2.10, §11.1.27) --------------------------------------------------------------------
+
+    /**
+     * How the collection-valued relationship {@code association} of {@code owner} reaches the database: the inverse side
+     * through its target; the owning side of a many-to-many or of a unidirectional one-to-many through a join table, by
+     * default {@code <owner table>_<target table>} (§11.1.27), its columns {@code <inverse attribute or owner entity
+     * name>_<owner key column>} and {@code <attribute>_<target key column>} (§11.1.25).
+     */
+    private static CollectionMapping collection(EntityModel owner, AssociationAttribute association, int attribute,
+            Function<Class<?>, EntityModel> models, Function<BasicAttribute, ValueBinder> binders) {
+        if (Map.class.isAssignableFrom(association.javaType())) {
+            return new CollectionMapping.Unsupported(attribute, association, "map collections");
+        }
+        EntityModel target = models.apply(association.targetEntity());
+        if (target == null) {
+            throw new PersistenceException("The relationship " + association.name() + " of " + association.declaringClass().getName()
+                + " references " + association.targetEntity().getName() + ", which is not an entity of the persistence unit");
+        }
+        if (!association.owning()) {
+            return new CollectionMapping.MappedBy(attribute, association);
+        }
+        if (association.kind() == AssociationAttribute.Kind.ONE_TO_MANY && association.joinTable() == null
+                && !association.joinColumns().isEmpty()) {
+            return new CollectionMapping.Unsupported(attribute, association, "a unidirectional one-to-many through a foreign key");
+        }
+        List<KeyColumn> ownerKeys = keyColumns(owner, binders);
+        List<KeyColumn> targetKeys = keyColumns(target, binders);
+        if (ownerKeys == null || targetKeys == null) {
+            return new CollectionMapping.Unsupported(attribute, association, "a join table of an entity with a derived identity");
+        }
+        JoinTableModel written = association.joinTable() != null ? association.joinTable() : JoinTableModel.defaults();
+        JoinColumnModel[] ownerJoins = byKeyPart(association, written.joinColumns(), ownerKeys, owner);
+        JoinColumnModel[] targetJoins = byKeyPart(association, written.inverseJoinColumns(), targetKeys, target);
+        if (ownerJoins == null || targetJoins == null) {
+            return new CollectionMapping.Unsupported(attribute, association, "a join column referencing a column that is not a key");
+        }
+        String ownerPrefix = inverseOf(owner, association, target).orElse(owner.entityName());
+        List<Identifier> ownerColumns = new ArrayList<>();
+        List<ValueBinder> ownerBinders = new ArrayList<>();
+        for (int k = 0; k < ownerKeys.size(); k++) {
+            String name = ownerJoins[k].name();
+            ownerColumns.add(Identifier.of(name != null ? name : ownerPrefix + "_" + ownerKeys.get(k).name()));
+            ownerBinders.add(ownerKeys.get(k).binder());
+        }
+        List<Identifier> targetColumns = new ArrayList<>();
+        List<ValueBinder> targetBinders = new ArrayList<>();
+        for (int k = 0; k < targetKeys.size(); k++) {
+            String name = targetJoins[k].name();
+            targetColumns.add(Identifier.of(name != null ? name : association.name() + "_" + targetKeys.get(k).name()));
+            targetBinders.add(targetKeys.get(k).binder());
+        }
+        String tableName = written.name() != null ? written.name() : owner.table().name() + "_" + target.table().name();
+        Table table = new Table(Identifier.of(tableName), written.schema() == null ? null : Identifier.of(written.schema()),
+            written.catalog() == null ? null : Identifier.of(written.catalog()));
+        return new CollectionMapping.JoinTable(attribute, association, table, ownerColumns, ownerBinders, targetColumns,
+            targetBinders);
+    }
+
+    /** The attribute of {@code target} that is the inverse side of {@code association} of {@code owner}, if any. */
+    private static Optional<String> inverseOf(EntityModel owner, AssociationAttribute association, EntityModel target) {
+        return target.attributes().stream()
+            .filter(a -> a instanceof AssociationAttribute inverse && association.name().equals(inverse.mappedBy())
+                && inverse.targetEntity().isAssignableFrom(owner.javaType()))
+            .map(AttributeModel::name).findFirst();
     }
 
     /**
@@ -402,7 +491,8 @@ public final class EntityStatements {
     }
 
     private static EntityStatements unsupported(EntityModel model, String milestone, String feature) {
-        return new EntityStatements(model.entityName(), milestone + ":" + feature, null, List.of(), List.of(), List.of(), null, null);
+        return new EntityStatements(model.entityName(), milestone + ":" + feature, null, List.of(), List.of(), List.of(), List.of(), null,
+            null);
     }
 
     private void check() {
@@ -445,6 +535,32 @@ public final class EntityStatements {
         }
         Object id = type.id(target);
         return id == null ? null : type.statements().keyValues(id)[foreignKey.part()];
+    }
+
+    /** The collection-valued relationships. */
+    public List<CollectionMapping> collections() {
+        check();
+        return collections;
+    }
+
+    /** The mapping of the collection-valued relationship {@code attribute}, if it is one. */
+    public Optional<CollectionMapping> collection(int attribute) {
+        check();
+        return collections.stream().filter(c -> c.attribute() == attribute).findFirst();
+    }
+
+    /**
+     * The values of the key columns of {@code element}, an instance of entity {@code target} or of a subclass;
+     * {@code null} while its identifier is not assigned.
+     */
+    public Object[] targetKey(Object element, Class<?> target) {
+        check();
+        MappedEntity type = entities.apply(element.getClass());
+        if (type == null) {
+            type = entities.apply(target);
+        }
+        Object id = type.id(element);
+        return id == null ? null : type.statements().keyValues(id);
     }
 
     /** The owned single-valued relationships, with their foreign key columns. */

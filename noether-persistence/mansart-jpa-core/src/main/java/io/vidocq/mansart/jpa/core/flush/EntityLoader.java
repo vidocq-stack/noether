@@ -22,20 +22,27 @@ package io.vidocq.mansart.jpa.core.flush;
 import io.vidocq.mansart.jpa.core.context.EntityKey;
 import io.vidocq.mansart.jpa.core.context.ManagedEntity;
 import io.vidocq.mansart.jpa.core.context.PersistenceContext;
+import io.vidocq.mansart.jpa.core.jdbc.type.ValueBinder;
+import io.vidocq.mansart.jpa.core.mapping.CollectionMapping;
 import io.vidocq.mansart.jpa.core.mapping.CompositeId;
 import io.vidocq.mansart.jpa.core.mapping.EntityStatements;
 import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
 import io.vidocq.mansart.jpa.core.mapping.MappedUnit;
 import io.vidocq.mansart.jpa.core.model.AssociationAttribute;
 import io.vidocq.mansart.jpa.core.model.AttributeModel;
+import io.vidocq.mansart.jpa.dialect.sql.Select;
 import jakarta.persistence.LockModeType;
 import jakarta.persistence.PersistenceException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -43,9 +50,9 @@ import java.util.Optional;
  * their binders, the state rebuilt (embeddables included) and written through the access, then the instance made
  * managed with its snapshot. Shares the SQL the flush engine rendered.
  *
- * <p>Single-valued relationships are loaded with their owner (§2.10; {@code FetchType.LAZY} is a hint, §11.1.26): the
- * owning side from its foreign key, the inverse side of a one-to-one from the key of its owner. The instance is
- * managed before its relationships are resolved, so that a cycle closes on it.
+ * <p>Relationships are loaded with their owner (§2.10; {@code FetchType.LAZY} is a hint, §11.1.26): the owning side of a
+ * single-valued one from its foreign key, a collection from its join table, an inverse side from the owning side of its
+ * target. The instance is managed before its relationships are resolved, so that a cycle closes on it.
  */
 public final class EntityLoader {
 
@@ -114,32 +121,59 @@ public final class EntityLoader {
         return snapshot;
     }
 
-    // ---- single-valued relationships (§2.10) --------------------------------------------------------------
+    // ---- relationships (§2.10) ---------------------------------------------------------------------------
 
     /**
-     * Sets the single-valued relationships of {@code instance}, identity {@code id}, read from {@code row}: the instance
-     * an owned foreign key references, the owner of an inverse one-to-one.
+     * Sets the relationships of {@code instance}, identity {@code id}, read from {@code row}: the instance an owned
+     * foreign key references, the owner of an inverse one-to-one, the elements of a collection — through its join
+     * table, or through the owning side of its target — in the order of its {@code @OrderBy}.
      */
     private void relationships(MappedEntity type, Object id, Object instance, Object[] state, Row row, Connection connection,
             PersistenceContext context) {
         EntityStatements statements = type.statements();
         List<AttributeModel> attributes = type.model().attributes();
         for (int i = 0; i < attributes.size(); i++) {
-            if (!(attributes.get(i) instanceof AssociationAttribute association) || !association.singleValued()) {
+            if (!(attributes.get(i) instanceof AssociationAttribute association)) {
                 continue;
             }
-            Optional<EntityStatements.Reference> owned = statements.reference(i);
-            Object target;
-            if (owned.isPresent()) {
-                Object key = statements.referencedKey(owned.get(), row.values());
-                target = key == null ? null : find(entity(association.targetEntity()), key, connection, context);
-            } else if (!association.owning()) {
-                target = owner(association, id, statements, connection, context);
+            Object value;
+            if (association.singleValued()) {
+                Optional<EntityStatements.Reference> owned = statements.reference(i);
+                if (owned.isPresent()) {
+                    Object key = statements.referencedKey(owned.get(), row.values());
+                    value = key == null ? null : find(entity(association.targetEntity()), key, connection, context);
+                } else if (!association.owning()) {
+                    List<Object> owners = inverse(association, id, statements, connection, context);
+                    value = owners.isEmpty() ? null : owners.getFirst();
+                } else {
+                    continue; // through a join table: later in P5
+                }
             } else {
-                continue; // through a join table: P5 later
+                CollectionMapping mapping = statements.collection(i).orElseThrow();
+                List<Object> elements = switch (mapping) {
+                    case CollectionMapping.JoinTable table -> {
+                        MappedEntity target = entity(association.targetEntity());
+                        List<Object> found = new ArrayList<>();
+                        for (Object[] key : keys(table.targets(), table.ownerBinders(), statements.keyValues(id), table.targetBinders(),
+                                association, connection)) {
+                            found.add(find(target, target.statements().key(key), connection, context));
+                        }
+                        yield found;
+                    }
+                    case CollectionMapping.MappedBy _ -> inverse(association, id, statements, connection, context);
+                    case CollectionMapping.Unsupported _ -> null;
+                };
+                if (elements == null) {
+                    continue; // a shape not mapped yet: the collection keeps what the instance holds
+                }
+                elements.removeIf(Objects::isNull);
+                order(association, entity(association.targetEntity()), elements);
+                Collection<Object> collection = CollectionMapping.newCollection(association.javaType());
+                collection.addAll(elements);
+                value = collection;
             }
-            state[i] = target;
-            type.access().set(instance, i, target);
+            state[i] = value;
+            type.access().set(instance, i, value);
         }
     }
 
@@ -150,10 +184,11 @@ public final class EntityLoader {
     }
 
     /**
-     * The owner of the inverse side {@code inverse} of a one-to-one (§2.10.1): the instance whose foreign key, the
-     * relationship named by {@code mappedBy}, holds {@code id}.
+     * The instances on the other side of the inverse relationship {@code inverse} of the instance {@code id}: those whose
+     * owning side, the attribute named by {@code mappedBy}, holds it — through their foreign key, or the rows of their
+     * join table.
      */
-    private Object owner(AssociationAttribute inverse, Object id, EntityStatements statements, Connection connection,
+    private List<Object> inverse(AssociationAttribute inverse, Object id, EntityStatements statements, Connection connection,
             PersistenceContext context) {
         MappedEntity owner = entity(inverse.targetEntity());
         int attribute = -1;
@@ -167,33 +202,102 @@ public final class EntityLoader {
             throw new PersistenceException("The relationship " + inverse.name() + " of " + inverse.declaringClass().getName()
                 + " is mapped by " + inverse.mappedBy() + ", which " + owner.model().entityName() + " does not have");
         }
-        Optional<EntityStatements.Reference> reference = owner.statements().reference(attribute);
-        if (reference.isEmpty()) {
-            return null; // owned through a join table: P5 later
-        }
         EntityStatements ownerStatements = owner.statements();
-        List<EntityStatements.Column> columns = ownerStatements.columns();
-        List<EntityStatements.Column> keyColumns = ownerStatements.keyColumns();
         Object[] key = statements.keyValues(id);
-        Object[] ownerKey = new Object[keyColumns.size()];
-        try (PreparedStatement select = connection.prepareStatement(engine.dialect().render(ownerStatements.ownersSelect(reference.get())))) {
-            int[] foreignKey = reference.get().columns();
-            for (int k = 0; k < foreignKey.length; k++) {
-                columns.get(foreignKey[k]).binder().bind(engine.dialect(), select, k + 1, key[k]);
+        List<Object[]> ownerKeys;
+        Optional<EntityStatements.Reference> reference = ownerStatements.reference(attribute);
+        Optional<CollectionMapping> collection = ownerStatements.collection(attribute);
+        if (reference.isPresent()) {
+            List<ValueBinder> foreignKey = new ArrayList<>();
+            for (int c : reference.get().columns()) {
+                foreignKey.add(ownerStatements.columns().get(c).binder());
             }
-            try (ResultSet rows = select.executeQuery()) {
-                if (!rows.next()) {
-                    return null;
-                }
-                for (int k = 0; k < ownerKey.length; k++) {
-                    ownerKey[k] = keyColumns.get(k).binder().read(rows, k + 1);
+            List<ValueBinder> ownerKey = ownerStatements.keyColumns().stream().map(EntityStatements.Column::binder).toList();
+            ownerKeys = keys(ownerStatements.ownersSelect(reference.get()), foreignKey, key, ownerKey, inverse, connection);
+        } else if (collection.isPresent() && collection.get() instanceof CollectionMapping.JoinTable table) {
+            ownerKeys = keys(table.owners(), table.targetBinders(), key, table.ownerBinders(), inverse, connection);
+        } else {
+            return new ArrayList<>(); // owned through a shape not mapped yet
+        }
+        List<Object> owners = new ArrayList<>();
+        for (Object[] ownerKey : ownerKeys) {
+            owners.add(find(owner, ownerStatements.key(ownerKey), connection, context));
+        }
+        return owners;
+    }
+
+    /** The keys {@code select} reads, its conditions bound to {@code values}, its columns read by {@code readers}. */
+    private List<Object[]> keys(Select select, List<ValueBinder> binders, Object[] values, List<ValueBinder> readers,
+            AssociationAttribute relationship, Connection connection) {
+        List<Object[]> keys = new ArrayList<>();
+        try (PreparedStatement statement = connection.prepareStatement(engine.render(select))) {
+            for (int k = 0; k < values.length; k++) {
+                binders.get(k).bind(engine.dialect(), statement, k + 1, values[k]);
+            }
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    Object[] key = new Object[readers.size()];
+                    for (int k = 0; k < key.length; k++) {
+                        key[k] = readers.get(k).read(rows, k + 1);
+                    }
+                    keys.add(key);
                 }
             }
         } catch (SQLException e) {
-            throw new PersistenceException("The read of the " + inverse.name() + " of " + inverse.declaringClass().getName() + " "
-                + id + " failed: " + e.getMessage(), e);
+            throw new PersistenceException("The read of the " + relationship.name() + " of " + relationship.declaringClass().getName()
+                + " failed: " + e.getMessage(), e);
         }
-        return find(owner, ownerStatements.key(ownerKey), connection, context);
+        return keys;
+    }
+
+    /**
+     * Sorts the elements of a collection by its {@code @OrderBy} (§11.1.42): attributes of the target, each ascending
+     * unless {@code DESC}; the identifier for an empty one.
+     */
+    private static void order(AssociationAttribute association, MappedEntity target, List<Object> elements) {
+        String orderBy = association.orderBy();
+        if (orderBy == null || elements.size() < 2) {
+            return;
+        }
+        Comparator<Object> comparator = null;
+        if (orderBy.isEmpty()) {
+            comparator = (a, b) -> compare(target.id(a), target.id(b));
+        } else {
+            for (String item : orderBy.split(",")) {
+                String[] parts = item.trim().split("\\s+");
+                int index = attributeIndex(target, parts[0]);
+                if (index < 0) {
+                    throw new PersistenceException("The @OrderBy of " + association.name() + " of "
+                        + association.declaringClass().getName() + " names " + parts[0] + ", which "
+                        + target.model().entityName() + " does not have (paths into embeddables come later)");
+                }
+                Comparator<Object> by = (a, b) -> compare(target.access().get(a, index), target.access().get(b, index));
+                if (parts.length > 1 && parts[1].equalsIgnoreCase("DESC")) {
+                    by = by.reversed();
+                }
+                comparator = comparator == null ? by : comparator.thenComparing(by);
+            }
+        }
+        elements.sort(comparator);
+    }
+
+    private static int attributeIndex(MappedEntity type, String name) {
+        List<AttributeModel> attributes = type.model().attributes();
+        for (int i = 0; i < attributes.size(); i++) {
+            if (attributes.get(i).name().equals(name)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** Compares two values of an attribute, {@code null} first; values that are not comparable keep their order. */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static int compare(Object a, Object b) {
+        if (a == null || b == null) {
+            return a == null ? (b == null ? 0 : -1) : 1;
+        }
+        return a instanceof Comparable comparable ? comparable.compareTo(b) : 0;
     }
 
     private MappedEntity entity(Class<?> type) {

@@ -20,6 +20,7 @@
 package io.vidocq.mansart.jpa.core.mapping;
 
 import io.vidocq.mansart.jpa.core.jdbc.type.ValueBinders;
+import io.vidocq.mansart.jpa.core.model.AssociationAttribute;
 import io.vidocq.mansart.jpa.core.model.AttributeModel;
 import io.vidocq.mansart.jpa.core.model.BasicAttribute;
 import io.vidocq.mansart.jpa.core.model.EmbeddableModel;
@@ -39,7 +40,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Date;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -72,7 +75,7 @@ public final class StatePolicy {
         }
     };
 
-    /** Relationships, element collections and attributes left to a mapping file: their reference (P5 and later). */
+    /** Single-valued relationships, element collections and attributes left to a mapping file: their reference. */
     private static final Copier REFERENCE = new Copier() {
         @Override
         public Object copy(Object value) {
@@ -82,6 +85,52 @@ public final class StatePolicy {
         @Override
         public boolean same(Object snapshot, Object current) {
             return snapshot == current;
+        }
+    };
+
+    /**
+     * The owning side of a collection-valued relationship: its elements, compared by identity whatever their order; a
+     * change versions the owner (§3.4.2) and writes its join table.
+     */
+    private static final Copier OWNED_COLLECTION = new Copier() {
+        @Override
+        public Object copy(Object value) {
+            return CollectionMapping.elements(value);
+        }
+
+        @Override
+        public boolean same(Object snapshot, Object current) {
+            List<Object> before = CollectionMapping.elements(snapshot);
+            List<Object> now = CollectionMapping.elements(current);
+            if (before.size() != now.size()) {
+                return false;
+            }
+            Map<Object, Integer> counts = new IdentityHashMap<>();
+            before.forEach(element -> counts.merge(element, 1, Integer::sum));
+            for (Object element : now) {
+                Integer count = counts.get(element);
+                if (count == null) {
+                    return false;
+                }
+                counts.put(element, count - 1);
+            }
+            return counts.values().stream().allMatch(c -> c == 0);
+        }
+    };
+
+    /**
+     * The inverse side of a collection-valued relationship: its elements are kept (orphan removal compares them), but
+     * the owner is not changed by them — the owning side writes the relationship (§2.10, §3.4.2).
+     */
+    private static final Copier INVERSE_COLLECTION = new Copier() {
+        @Override
+        public Object copy(Object value) {
+            return CollectionMapping.elements(value);
+        }
+
+        @Override
+        public boolean same(Object snapshot, Object current) {
+            return true;
         }
     };
 
@@ -201,6 +250,8 @@ public final class StatePolicy {
                 ? converted(converters.converter(converter), byType(column))
                 : byType(basic.javaType());
             case EmbeddedAttribute embedded -> embedded(embedded.embeddable(), embeddables, converters);
+            case AssociationAttribute association when !association.singleValued() ->
+                association.owning() ? OWNED_COLLECTION : INVERSE_COLLECTION;
             default -> REFERENCE;
         };
     }

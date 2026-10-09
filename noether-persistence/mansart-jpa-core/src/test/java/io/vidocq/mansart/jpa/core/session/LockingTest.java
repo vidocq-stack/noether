@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.vidocq.mansart.jpa.core.model.build.fixtures.Crew;
+import io.vidocq.mansart.jpa.core.model.build.fixtures.Sailor;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.LockModeType;
@@ -58,10 +59,12 @@ class LockingTest {
         database = DriverManager.getConnection(url, "sa", "");
         try (Statement ddl = database.createStatement()) {
             ddl.execute("create table Crew (id bigint primary key, name varchar(50), version int)");
+            ddl.execute("create table Sailor (id bigint primary key, name varchar(50), crew_id bigint references Crew(id), "
+                + "formerCrew_id bigint references Crew(id))");
             ddl.execute("insert into Crew values (1, 'Brigade', 0)");
         }
         emf = new PersistenceConfiguration("locking").provider("io.vidocq.mansart.jpa.core.MansartPersistenceProvider")
-            .managedClass(Crew.class).property(PersistenceConfiguration.JDBC_URL, url).property(PersistenceConfiguration.JDBC_USER, "sa")
+            .managedClass(Crew.class).managedClass(Sailor.class).property(PersistenceConfiguration.JDBC_URL, url).property(PersistenceConfiguration.JDBC_USER, "sa")
             .createEntityManagerFactory();
         em = emf.createEntityManager();
     }
