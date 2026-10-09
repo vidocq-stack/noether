@@ -19,6 +19,19 @@ Official suite: **Jakarta Persistence 3.2.1** TCK (bundle from eclipse.org, SHA-
 | P5 (in progress) — element collections, `@OrderBy` paths | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 622 | 1509 | 4 |
 | P5 (in progress) — maps and order columns | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 627 | 1504 | 4 |
 | P5 — relationships and collections, derived identities, `PersistenceUnitUtil` | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 635 | 1496 | 4 |
+| P7 (in progress) — slice 1: the query path, selects, joins, predicates, aggregates, parameters | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 780 | 1351 | 4 |
+
+## P7, slice 1 — the query path: 635 → 780
+
+JPQL selects end to end: the parser, the translation to the SQL AST of the dialect SPI, `Query` / `TypedQuery`. Run of
+2026-10-09: **780 pass, 1351 fail, 4 skipped**. Compared test by test with the run at 635: 146 tests pass that failed —
+most of `core.query.apitests.Client1`, the `core.derivedid` examples and `core.annotations.mapsid`, the map key tests
+reading with queries, `core.callback.*#postLoadTest`, `core.annotations.{basic,entity,access.field}`, `nestedembedding`,
+`core.exceptions.Client#QueryTimeoutExceptionTest`… — and one fails that passed:
+
+- `core.inheritance.abstractentity.Client#abstractEntityTest3` catches every exception and checks nothing then: it passed
+  vacuously while `createQuery` refused. Its query now runs and finds none of the employees its test data could not
+  persist (`FullTimeEmployee`, entity inheritance): it waits for **P6**.
 
 ## P5 — closed at 635: relationships, collections, derived identities
 

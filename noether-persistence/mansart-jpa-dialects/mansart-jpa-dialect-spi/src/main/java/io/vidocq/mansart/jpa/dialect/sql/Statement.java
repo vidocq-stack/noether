@@ -26,7 +26,7 @@ import java.util.List;
  * is one JDBC parameter, bound in the order the statement documents. The hierarchy grows with the milestones (queries,
  * locks, DDL).
  */
-public sealed interface Statement permits Insert, Update, Delete, Select, NextValue, Increment {
+public sealed interface Statement permits Insert, Update, Delete, Select, NextValue, Increment, Query {
 
     /** The table the statement works on. */
     Table table();

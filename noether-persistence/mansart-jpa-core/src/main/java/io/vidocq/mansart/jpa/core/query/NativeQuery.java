@@ -25,7 +25,6 @@ import jakarta.persistence.CacheStoreMode;
 import jakarta.persistence.FlushModeType;
 import jakarta.persistence.LockModeType;
 import jakarta.persistence.Parameter;
-import jakarta.persistence.PersistenceException;
 import jakarta.persistence.Query;
 import jakarta.persistence.TemporalType;
 import java.util.ArrayList;
@@ -33,7 +32,6 @@ import java.util.Calendar;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -43,7 +41,7 @@ import java.util.Set;
  * A native query (§3.11): SQL passed to the database as written, its positional parameters ({@code ?1} or {@code ?})
  * bound in order. Its updates are executed now; reading results and result-set mappings come with P7.
  */
-public final class NativeQuery implements Query {
+public final class NativeQuery extends AbstractQuery implements Query {
 
     /** Runs a native update for the entity manager: transaction, flush, connection, exceptions (§3.11.6, §3.12). */
     public interface Executor {
@@ -71,21 +69,14 @@ public final class NativeQuery implements Query {
     private final String sql;
     private final List<Integer> order = new ArrayList<>();
     private final Map<Integer, Object> values = new HashMap<>();
-    private final Map<String, Object> hints = new LinkedHashMap<>();
     private final Executor executor;
-    private FlushModeType flushMode;
-    private int maxResults = Integer.MAX_VALUE;
-    private int firstResult;
-    private Integer timeout;
-    private CacheRetrieveMode cacheRetrieveMode = CacheRetrieveMode.USE;
-    private CacheStoreMode cacheStoreMode = CacheStoreMode.USE;
 
     public NativeQuery(String sqlString, FlushModeType flushMode, Executor executor) {
+        super(flushMode);
         if (sqlString == null || sqlString.isBlank()) {
             throw new IllegalArgumentException("A native query needs SQL");
         }
         this.sql = translate(sqlString);
-        this.flushMode = flushMode;
         this.executor = executor;
     }
 
@@ -126,7 +117,7 @@ public final class NativeQuery implements Query {
             }
             parameters.add(values.get(position));
         }
-        return executor.executeUpdate(sql, parameters, flushMode);
+        return executor.executeUpdate(sql, parameters, getFlushMode());
     }
 
     @Override
@@ -199,19 +190,6 @@ public final class NativeQuery implements Query {
         return setParameter(position, temporal(value, temporalType));
     }
 
-    /** A legacy temporal bound as the {@code java.sql} type its {@link TemporalType} names. */
-    private static Object temporal(Object value, TemporalType type) {
-        if (value == null) {
-            return null;
-        }
-        long millis = value instanceof Calendar calendar ? calendar.getTimeInMillis() : ((Date) value).getTime();
-        return switch (type) {
-            case DATE -> new java.sql.Date(millis);
-            case TIME -> new java.sql.Time(millis);
-            case TIMESTAMP -> new java.sql.Timestamp(millis);
-        };
-    }
-
     @Override
     public Set<Parameter<?>> getParameters() {
         Set<Parameter<?>> parameters = new LinkedHashSet<>();
@@ -271,52 +249,26 @@ public final class NativeQuery implements Query {
 
     @Override
     public Query setMaxResults(int maxResult) {
-        if (maxResult < 0) {
-            throw new IllegalArgumentException("The maximum number of results cannot be negative");
-        }
-        this.maxResults = maxResult;
+        maxResults(maxResult);
         return this;
-    }
-
-    @Override
-    public int getMaxResults() {
-        return maxResults;
     }
 
     @Override
     public Query setFirstResult(int startPosition) {
-        if (startPosition < 0) {
-            throw new IllegalArgumentException("The first result cannot be negative");
-        }
-        this.firstResult = startPosition;
+        firstResult(startPosition);
         return this;
-    }
-
-    @Override
-    public int getFirstResult() {
-        return firstResult;
     }
 
     @Override
     public Query setHint(String hintName, Object value) {
-        hints.put(hintName, value);
+        hint(hintName, value);
         return this;
-    }
-
-    @Override
-    public Map<String, Object> getHints() {
-        return Collections.unmodifiableMap(hints);
     }
 
     @Override
     public Query setFlushMode(FlushModeType flushMode) {
-        this.flushMode = flushMode;
+        flushMode(flushMode);
         return this;
-    }
-
-    @Override
-    public FlushModeType getFlushMode() {
-        return flushMode;
     }
 
     /** §3.11.9: lock modes are for JPQL and criteria queries, not native ones. */
@@ -332,42 +284,19 @@ public final class NativeQuery implements Query {
 
     @Override
     public Query setCacheRetrieveMode(CacheRetrieveMode cacheRetrieveMode) {
-        this.cacheRetrieveMode = cacheRetrieveMode;
+        cacheRetrieveMode(cacheRetrieveMode);
         return this;
     }
 
     @Override
     public Query setCacheStoreMode(CacheStoreMode cacheStoreMode) {
-        this.cacheStoreMode = cacheStoreMode;
+        cacheStoreMode(cacheStoreMode);
         return this;
-    }
-
-    @Override
-    public CacheRetrieveMode getCacheRetrieveMode() {
-        return cacheRetrieveMode;
-    }
-
-    @Override
-    public CacheStoreMode getCacheStoreMode() {
-        return cacheStoreMode;
     }
 
     @Override
     public Query setTimeout(Integer timeout) {
-        this.timeout = timeout;
+        timeout(timeout);
         return this;
-    }
-
-    @Override
-    public Integer getTimeout() {
-        return timeout;
-    }
-
-    @Override
-    public <T> T unwrap(Class<T> cls) {
-        if (cls.isInstance(this)) {
-            return cls.cast(this);
-        }
-        throw new PersistenceException("Unsupported unwrap type " + cls.getName());
     }
 }

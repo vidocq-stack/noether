@@ -26,8 +26,8 @@
 
 ## Testing Strategy
 
-- **Layer 1 — Unit tests (TDD)** on H2 in memory: drive each component of `mansart-jpa-core` and
-  `mansart-jpa-query` without any container.
+- **Layer 1 — Unit tests (TDD)** on H2 in memory: drive each component of `mansart-jpa-core` (its query engine
+  included, D8) without any container.
 - **Layer 2 — Integration tests** (`mansart-jpa-tests`): multi-module scenarios, PostgreSQL via
   Testcontainers, module-path smoke tests (`*-module-it`) proving the provider works under Java
   Modules and not only on the classpath.
@@ -113,9 +113,8 @@ mansart-jpa-dialect-h2 / -postgresql   io.vidocq.mansart.jpa.dialect.h2 / .postg
   provides io.vidocq.mansart.jpa.dialect.DialectFactory with …
   → what each database renders differently (identity, sequences, locks, paging, DDL)
 
-mansart-jpa-query         io.vidocq.mansart.jpa.query
-  requires io.vidocq.mansart.jpa.core (qualified exports only)
-  → JPQL lexer/parser (sealed AST), semantic model, Criteria API, SQL lowering
+  (the query engine — JPQL lexer/parser, sealed AST, translation, Criteria API — is part of mansart-jpa-core,
+   packages io.vidocq.mansart.jpa.core.query.*: decision D8; its SQL AST extends mansart-jpa-dialect-spi)
 
 mansart-jpa-processor     io.vidocq.mansart.jpa.processor   (APT, RELEASE_25)
   → _Entity static metamodel, entity accessors/instantiators for application sources
@@ -454,12 +453,40 @@ Spec: ch. 2.13–2.14, ch. 11 (`@Inheritance`, `@DiscriminatorColumn`, `@Discrim
 
 **TCK gate**: `core.inheritance.*`, `core.annotations.discriminatorValue`, `core.callback.inheritance`.
 
-### P7 — Jakarta Persistence Query Language and native queries ⏳
+### P7 — Jakarta Persistence Query Language and native queries 🚧
 
 Spec: ch. 4 (query language), §3.11 (query APIs), §3.11.11 (SQL queries), §3.11.12 (stored procedures).
 
-- [ ] Hand-written lexer and recursive-descent parser → sealed AST (`mansart-jpa-query`);
-      the JDQL parser of `mansart-data-core` is read for inspiration, not modified.
+Slices, each closed by its unit tests and a TCK run compared test by test:
+
+1. The query path end to end: the SQL AST of queries in `mansart-jpa-dialect-spi` (select items, joins, predicates,
+   ordering, paging), a hand-written JPQL lexer and recursive-descent parser to a sealed AST, its translation against
+   the entity model (identification variables, paths, implicit joins of single-valued paths, explicit joins), and
+   `Query` / `TypedQuery` for selects: entity, scalar and multiple results, parameters bound through the binders of
+   the attributes they meet, paging, `FlushModeType.AUTO`.
+2. Expressions: arithmetic, string, date and numeric functions, `CASE`, `COALESCE`, `NULLIF`, aggregates, `GROUP BY` /
+   `HAVING`, constructor expressions, subqueries (`EXISTS`, `ALL`, `ANY`, `IN`), collection expressions
+   (`IS EMPTY`, `MEMBER OF`, `SIZE`), `TYPE`, `KEY` / `VALUE` / `ENTRY`, fetch joins.
+3. Bulk `UPDATE` / `DELETE`, named queries (`@NamedQuery`, `TypedQueryReference`), hints, lock modes, timeouts.
+4. The 3.2 additions: `UNION` / `INTERSECT` / `EXCEPT`, `||`, `LEFT` / `RIGHT` / `REPLACE`, `CAST`, `ID()`,
+   `VERSION()`, the implicit identification variable.
+5. Native query results and `@SqlResultSetMapping`; then `StoredProcedureQuery`.
+
+Most of `core.query.language` and of the Criteria tests persist a `HardwareProduct` in their test data: they open
+with inheritance (P6) as much as with this milestone.
+
+- [x] Slice 1 (`ParserTest`, `QueryRenderingTest`, `JpqlQueryTest`): the SQL AST of queries in the dialect SPI
+      (`sql.Query`, `sql.Expression`, parameters listed in rendering order, SQL:2008 paging); a hand-written lexer and
+      recursive-descent parser to a sealed AST (`query.jpql`, in `mansart-jpa-core`, decision D8; the JDQL parser of
+      `mansart-data-core` read for inspiration only); the translation (`query.Translator`): identification variables,
+      paths through embeddables, single-valued navigation as inner joins (selected) or by the foreign key (compared,
+      tested for null), declared `[LEFT] JOIN [FETCH] … ON` over single-valued relationships, foreign keys and join
+      tables, entities compared key part by key part, parameters bound through the binders of what they are compared
+      with, `IN` a collection-valued parameter, aggregates typed as §4.8.5 says; `JpqlQuery` (`TypedQuery`): checked at
+      creation, result types, parameters and their errors, paging, `getSingleResult[OrNull]`, streams, flush `AUTO`
+      in a transaction, query timeouts; a shared `AbstractQuery` with the native queries. Entities are read by their
+      key then found in the persistence context or loaded (one select per entity — rows read directly with the joins of
+      a later slice).
 - [ ] Semantic analysis against the entity model; SQL lowering through the dialect SPI
       (joins, fetch joins, subqueries, `GROUP BY`/`HAVING`, constructor expressions, `CASE`,
       functions, 3.2 additions: `UNION`/`INTERSECT`/`EXCEPT`, `||`, `LEFT`/`RIGHT`/`REPLACE`,
@@ -582,6 +609,7 @@ Recorded before implementation; each entry: date, decision, reason.
 | D4 | 2026-10-08 | Mansart JPA renders its SQL from its **own sealed SQL AST** (statements of the flush, then queries, locks, DDL), through **its own dialect SPI** in separate modules — `mansart-jpa-dialect-spi`, `mansart-jpa-dialect-h2`, `mansart-jpa-dialect-postgresql`, found with `ServiceLoader` — rather than by extending `mansart-data-dialect-spi`: that SPI is model-centric (Jakarta Data `EntityModel`, single-attribute ids), `requires transitive jakarta.data`, and is delivered (Jakarta Data TCK 74/74). The SQL knowledge of the two SPIs is duplicated for now; converging them (Jakarta Data rendered through this AST) may be decided later. | Decided |
 | D5 | — | `TABLE_PER_CLASS` inheritance (optional in the spec). | Open |
 | D6 | 2026-10-07 | Bean Validation is not available, so a Vidocq implementation (Jakarta Validation 3.1) will be created as a new building block **inside Mansart** (Mansart is the data character of the ecosystem; no new repository, no new `mani.yaml` / `GestionProjet` entry). It is put on the persistence TCK classpath. `mansart-persistence` depends only on `jakarta.validation-api`. Its own TCK runs both **out of the Vidocq reactor** (standalone runner, authoritative for the building block) and **inside it** (`vidocq-runtime-integration-tests`, `tck` profile, certifying the assembled runtime). Named `mansart-validation`; it is a stopgap that only has to run for this TCK (not polished, not published, to be replaced by the implementation another team member is writing); roadmap in [`../mansart-validation/ROADMAP.md`](../mansart-validation/ROADMAP.md). | Decided |
+| D8 | 2026-10-09 | The query engine — JPQL lexer, parser, translation to the SQL AST, and the Criteria API of P8 — lives in `mansart-jpa-core` (internal packages `io.vidocq.mansart.jpa.core.query.*`), not in a `mansart-jpa-query` module: `EntityManager.createQuery` belongs to the core, and the engine needs the core's mapping, persistence context, loader and flush. A separate module would need a query SPI found with `ServiceLoader` and qualified exports of most core packages, for one artifact more and no layering gained. The SQL AST of queries extends `mansart-jpa-dialect-spi` (D4). | Decided |
 | D7 | 2026-10-08 | Connection pooling in Java SE (the spec defines none: §8.2.1.9 only lists the `jakarta.persistence.jdbc.*` properties, and leaves Java SE data sources "to the requirements of the provider"). A unit configured by `jakarta.persistence.jdbc.*`, without a `DataSource`, gets a **`mansart-pool` pool by default** (virtual-thread-native, zero-dep), closed with its factory; `io.vidocq.mansart.jpa.pool=false` turns it off (one `DriverManager` connection per transaction), `io.vidocq.mansart.jpa.pool.max-size` / `.min-idle` / `.acquire-timeout` size it. A `DataSource` given by the application is used as is; in the Vidocq runtime the container passes its own (`vidocq-runtime-mansart-pool-extension`, P9). A driver named by `jakarta.persistence.jdbc.driver` that `DriverManager` cannot see is used unpooled, with a warning. | Decided |
 
 ## Out of Scope

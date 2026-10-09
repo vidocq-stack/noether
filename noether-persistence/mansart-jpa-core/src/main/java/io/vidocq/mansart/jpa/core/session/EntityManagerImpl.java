@@ -25,7 +25,11 @@ import io.vidocq.mansart.jpa.core.context.ManagedEntity;
 import io.vidocq.mansart.jpa.core.context.PersistenceContext;
 import io.vidocq.mansart.jpa.core.flush.Locks;
 import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
+import io.vidocq.mansart.jpa.core.mapping.MappedUnit;
+import io.vidocq.mansart.jpa.core.query.JpqlQuery;
 import io.vidocq.mansart.jpa.core.query.NativeQuery;
+import io.vidocq.mansart.jpa.core.query.QueryRuntime;
+import io.vidocq.mansart.jpa.dialect.Dialect;
 import jakarta.persistence.CacheRetrieveMode;
 import jakarta.persistence.CacheStoreMode;
 import jakarta.persistence.ConnectionConsumer;
@@ -718,14 +722,57 @@ final class EntityManagerImpl implements EntityManager {
     @Override
     public Query createQuery(String qlString) {
         checkOpen();
-        throw failed(NotYet.milestone("P7", "Jakarta Persistence queries"));
+        try {
+            return new JpqlQuery<>(qlString, null, flushMode, queries);
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
     }
 
     @Override
     public <T> TypedQuery<T> createQuery(String qlString, Class<T> resultClass) {
         checkOpen();
-        throw failed(NotYet.milestone("P7", "Jakarta Persistence queries"));
+        try {
+            return new JpqlQuery<>(qlString, resultClass, flushMode, queries);
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
     }
+
+    /** What the queries of this entity manager run with: its connection, its persistence context, its flush. */
+    private final QueryRuntime queries = new QueryRuntime() {
+        @Override
+        public MappedUnit mapping() {
+            return factory.mapping();
+        }
+
+        @Override
+        public <T> T read(FlushModeType queryFlushMode, Function<Connection, T> work) {
+            checkOpen();
+            try {
+                return onConnection(connection -> {
+                    // §3.10.8: AUTO makes the changes of the transaction visible to the query; no flush outside one
+                    if (queryFlushMode == FlushModeType.AUTO && transaction.isActive()) {
+                        flush(connection);
+                    }
+                    return work.apply(connection);
+                });
+            } catch (RuntimeException e) {
+                throw failed(e);
+            }
+        }
+
+        @Override
+        public Dialect dialect(Connection connection) {
+            return factory.flushEngine(connection).dialect();
+        }
+
+        @Override
+        public Object find(MappedEntity type, Object id, Connection connection) {
+            Optional<ManagedEntity> known = context.find(new EntityKey(type.root(), id));
+            return known.isPresent() ? known.get().instance() : factory.loader(connection).load(type, id, connection, context);
+        }
+    };
 
     @Override
     public <T> TypedQuery<T> createQuery(TypedQueryReference<T> reference) {

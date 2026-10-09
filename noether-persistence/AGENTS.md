@@ -45,8 +45,7 @@
 
 | Module (artifactId) | Java module | Role |
 | --- | --- | --- |
-| `mansart-jpa-core` | `io.vidocq.mansart.jpa.core` | `PersistenceProvider`, EMF/EM, persistence context, entity model, flush, JDBC execution. No CDI, no JTA import. |
-| `mansart-jpa-query` | `io.vidocq.mansart.jpa.query` | JPQL parser (hand-written, sealed AST), semantic analysis, Criteria API, SQL lowering to the dialect SPI. |
+| `mansart-jpa-core` | `io.vidocq.mansart.jpa.core` | `PersistenceProvider`, EMF/EM, persistence context, entity model, flush, JDBC execution; the query engine (JPQL parser with a sealed AST, translation, Criteria API, SQL through the dialect SPI — decision D8). No CDI, no JTA import. |
 | `mansart-jpa-processor` | `io.vidocq.mansart.jpa.processor` | APT: static metamodel `_Entity` + generated entity accessors/instantiators for application sources. |
 | `mansart-jpa-maven-plugin` | — | Build-time generation for entities living in pre-compiled jars (mirror of `mansart-data-maven-plugin`). |
 | `mansart-jpa-cdi` | `io.vidocq.mansart.jpa.cdi` | CDI 4.1 Lite BCE on Vauban: `@PersistenceContext` / `@PersistenceUnit`, JTA-bound contexts via `mansart-transactions`. |
