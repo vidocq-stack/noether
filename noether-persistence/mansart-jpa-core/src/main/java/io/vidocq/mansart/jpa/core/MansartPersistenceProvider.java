@@ -92,7 +92,11 @@ public final class MansartPersistenceProvider implements PersistenceProvider {
         throw new PersistenceException("Schema generation comes with milestone P9 of mansart-persistence/ROADMAP.md");
     }
 
-    /** Without the entity model (P2), nothing can be told about the load state of an object. */
+    /**
+     * {@code Persistence.getPersistenceUtil()} asks every provider, without a unit: an object that is not known as an
+     * entity of an open unit has an unknown load state. An entity Mansart loads is loaded whole (relationships
+     * included), so UNKNOWN never hides an unloaded attribute: {@code PersistenceUtil} then answers true.
+     */
     @Override
     public ProviderUtil getProviderUtil() {
         return new ProviderUtil() {

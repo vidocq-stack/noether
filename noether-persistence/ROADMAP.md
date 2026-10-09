@@ -370,7 +370,7 @@ Spec: ch. 3 (entity operations), §3.6 (callbacks), §3.5 (optimistic / pessimis
 `core.exceptions`, `se.entityManager`. Closed at 609 / 2135 on 2026-10-08 (P3: 220); no failure of the gate areas is P4's (see
 [`TCK.md`](TCK.md)).
 
-### P5 — Relationships and collections 🚧
+### P5 — Relationships and collections ✅
 
 Spec: ch. 2.10–2.12 (relationships, defaults), ch. 2.4.2 (derived identities), ch. 11
 (join columns / tables, collection tables, map keys, ordering).
@@ -393,16 +393,17 @@ Spec: ch. 2.10–2.12 (relationships, defaults), ch. 2.4.2 (derived identities),
       update (an owned collection versions its owner, an inverse one does not, §3.4.2), deleted before their owner.
       Loaded with their owner in their `@OrderBy` (attributes of the target, or its identifier). A relationship to a
       class outside the unit fails the factory (§2.10).
-- [ ] Unidirectional one-to-many through a foreign key, single-valued relationships through a join table.
 - [x] `orphanRemoval` of single-valued relationships (§2.9): the remove cascades, a target let go is removed at flush;
       `merge` without cascade points to the managed instance of the same identity (§3.2.7.1).
 - [x] `orphanRemoval` and merge of collections: the elements let go are removed; a merged collection holds the managed
       (or merged) instances, in a collection of the managed instance's own.
 - *Not done, by design:* bidirectional consistency on flush — the application keeps both sides (§2.10), the owning
       side is what is written.
-- [ ] Fetching: EAGER via joins or secondary selects; LAZY collections through Mansart collection
-      wrappers; LAZY to-one through Class-File API subclasses (or treated as EAGER first — LAZY
-      is only a hint to the provider). `PersistenceUnitUtil.isLoaded` / `PersistenceUtil` semantics.
+- [x] Fetching: everything is loaded with its owner, by secondary selects (LAZY is a hint to the provider, §11.1.6 — the
+      option this milestone planned first). `PersistenceUnitUtil` (`PersistenceUnitUtilTest`, §7.11): the identifier
+      the application sees (an id class instance, `null` until assigned), the version, the class itself (no proxies),
+      load states always true for the entities of the unit, `load` a no-op, the 3.2 overloads by `Attribute` through its
+      name; `IllegalArgumentException` for an object or an attribute outside the unit.
 - [x] `@ElementCollection` of basic and embeddable values (`ElementCollectionTest`, `mapping.ElementCollectionMapping`):
       the element read as an attribute of the collection (its `@Column`, default the attribute name; its conversion,
       `@Enumerated`, `@Temporal`, `@Convert`; an embeddable with the `@AttributeOverride`s of the collection), in its
@@ -419,18 +420,28 @@ Spec: ch. 2.10–2.12 (relationships, defaults), ch. 2.4.2 (derived identities),
       or — for an inverse one-to-many — in the table of the target, which the inverse side writes (honouring
       `insertable` / `updatable`) without versioning its owner. A changed indexed collection is written again whole;
       a reordered list or a re-keyed map is a change. Maps merge key by key (entity keys to their managed instances).
-- [ ] Embeddable map keys, indexes of the inverse side of a many-to-many.
 - [x] Derived identities (`DerivedIdentityTest`, §2.4.1): the identity of an entity is the list of its key column values,
       a part derived from a parent — an `@Id` relationship, a relationship an `@MapsId` names, the only `@Id` of an
       entity sharing its parent's id class — unfolding into the parent's key, its columns the foreign key of the
       relationship, in the order of the parts. `find` takes the application's identifier object (id class, embedded
       id, the parent's identifier); the attributes an `@MapsId` maps are assigned from the parent at persist and at load.
       The `ex1a…ex6b` shapes persist and load; their TCK tests read back with queries (P7, P8).
-- [ ] Relationships to an entity with a derived identity, nested embeddables, `PersistenceUnitUtil`.
+
+**Left after P5** — shapes no TCK test exercises, mapped when an application or a later milestone needs them (each is
+refused or left as the instance holds it, naming P5, never mapped wrongly):
+
+- single-valued relationships through a join table; unidirectional one-to-many through a foreign key in the target;
+- relationships to an entity with a derived identity; a join column referencing a column that is not a key;
+- embeddable map keys; indexes on the inverse side of a many-to-many; relationships inside embeddables;
+- lazy loading proper — collection wrappers and to-one subclasses generated with the Class-File API — instead of
+  loading everything with its owner: a performance concern, measured with P12 (`BENCH.md`), not a conformance one;
+- joins instead of secondary selects, with the SQL AST of P7.
 
 **TCK gate**: `core.relationship.*`, `core.derivedid.*`, `core.nestedembedding`,
 `core.annotations.{mapkey*,elementcollection,collectiontable,orderby,ordercolumn,onexmanyuni,mapsid,assocoverride}`,
-`core.persistenceUnitUtil`, `core.persistenceUtil`, `entitytest.persist.oneXmanyFetchEager`.
+`core.persistenceUnitUtil`, `core.persistenceUtil`, `entitytest.persist.oneXmanyFetchEager`. Closed at 635 / 2135 on
+2026-10-09 (P4: 609); no failure of the gate areas is P5's — they read their results with queries (P7) or come from
+mapping files (P10) (see [`TCK.md`](TCK.md)).
 
 ### P6 — Inheritance ⏳
 

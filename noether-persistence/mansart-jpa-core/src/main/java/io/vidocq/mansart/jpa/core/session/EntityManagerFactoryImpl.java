@@ -249,7 +249,7 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     @Override
     public PersistenceUnitUtil getPersistenceUnitUtil() {
         checkOpen();
-        throw NotYet.milestone("P5", "PersistenceUnitUtil");
+        return new UnitUtil(mapping());
     }
 
     @Override

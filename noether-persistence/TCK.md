@@ -18,6 +18,26 @@ Official suite: **Jakarta Persistence 3.2.1** TCK (bundle from eclipse.org, SHA-
 | P5 (in progress) — collection-valued relationships: join tables, inverse sides, orphans, merge | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 615 | 1516 | 4 |
 | P5 (in progress) — element collections, `@OrderBy` paths | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 622 | 1509 | 4 |
 | P5 (in progress) — maps and order columns | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 627 | 1504 | 4 |
+| P5 — relationships and collections, derived identities, `PersistenceUnitUtil` | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 635 | 1496 | 4 |
+
+## P5 — closed at 635: relationships, collections, derived identities
+
+The last slice brings `PersistenceUnitUtil`: 8 tests pass that failed, none fails that passed (compared test by test
+with the run at 627) — `core.persistenceUnitUtil.Client` (7) and `core.entityManagerFactory.Client2#getPersistenceUnitUtil`.
+Final run, 2026-10-09: **635 pass, 1496 fail, 4 skipped** (P4: 609).
+
+No report names P5 any more. The gate areas, failing / total: `core.relationship` 8 / 33 (`descriptors`, mapping
+files: P10), `core.derivedid` 12 / 12 and `core.annotations.mapsid` 1 / 1 (queries: P7, `ex1a` the Criteria API: P8),
+`core.nestedembedding` 2 / 3 (P7), `core.annotations.ordercolumn` 3 / 3, `mapkey` 2 / 6, `mapkeycolumn` 2 / 6 (P7),
+`elementcollection` 1 / 3 (`elementCollectionBasicTypeXMLTest`: P10); `orderby`, `mapkey{class,joincolumn,enumerated,temporal}`,
+`collectiontable`, `onexmanyuni`, `assocoverride`, `embeddableMapValue`, `persistenceUnitUtil`, `persistenceUtil` all pass.
+The tests of `core.relationship` and `core.entitytest` that passed before P5 checked instances the persistence context
+returned; they now pass with their rows written and read back.
+
+One test changed hands on the way: `core.override.joincolumn.Client#testOverrideJoinTable` passed vacuously while no
+join row was written; its `orm.xml` replaces the join table, so it waits for P10.
+
+Bean Validation neutrality (2026-10-09, final P5 state): NEUTRAL, 2135 tests, 635 / 1496 / 4 both ways.
 
 ## P5, fifth slice — derived identities: 627 → 627
 
