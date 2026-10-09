@@ -26,6 +26,92 @@ Official suite: **Jakarta Persistence 3.2.1** TCK (bundle from eclipse.org, SHA-
 | Pre-P6 — clean checkout `1e982af`, including partial native results | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 909 | 1222 | 4 |
 | P6 — required inheritance, polymorphic loading and JPQL `TYPE` | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 1005 | 1126 | 4 |
 | P7 — JPQL, native queries and stored procedures | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 1063 | 1068 | 4 |
+| P8 — runtime/canonical metamodel, Criteria and entity graphs; exposed converted-literal query fix | 2026-10-09 | Temurin 25.0.4+7-LTS | postgres:17-alpine | 2135 | 2013 | 118 | 4 |
+
+## P8 — metamodel, Criteria and entity graphs: 1063 → 2013
+
+The 2026-10-09 full official run reports **2135 tests, 2013 passed, 0 failures, 118 errors, 4 skipped**.
+Actual toolchain: **Temurin 25.0.4+7-LTS** (`openjdk version "25.0.4" 2026-07-21 LTS`), Maven **3.9.16**,
+PostgreSQL **17-alpine**, the unmodified official **3.2.1** suite. `.sdkmanrc` still names 25.0.3; this measurement
+explicitly selects the installed 25.0.4 JVM.
+
+Compared by **class + test name** with the preserved 1063-pass baseline: **950 newly passing tests, no regression,
+no added or missing test**. Of the improvement, 949 tests are P8 API unblocks; one is the earlier query-engine
+converted-literal bug newly exposed during full-suite investigation (`BUG-20261009-10`), fixed in the shared
+JPQL/Criteria path. Wrapped test logs, not only top-level exceptions, determined the attribution.
+
+The P8 gate, also extracted from the final full XML reports:
+
+| Gate | Pass | Error | Skipped | Total |
+|---|---:|---:|---:|---:|
+| `core.metamodelapi.*` | 258 | 0 | 1 | 259 |
+| `core.criteriaapi.*` | 650 | 0 | 0 | 650 |
+| `core.EntityGraph` | 13 | 0 | 0 | 13 |
+| `jpa22.repeatable.namedentitygraph` | 3 | 0 | 0 | 3 |
+| **P8 total** | **924** | **0** | **1** | **925** |
+
+The one skip is the upstream-disabled `identifiabletype.Client#getDeclaredSingularAttributes`.
+An intermediate focused gate reached 913 passes / 11 errors / 1 skip; SOME/ANY normalization, selection-free EXISTS
+subqueries and shared numeric promotion cleared its remaining errors. No TCK tests, schemas or exclusions were edited.
+
+Remaining **118** errors are explained, not waived:
+
+| Owner | Errors | Evidence / blocker |
+|---|---:|---|
+| P9 — schema/container contracts | 28 | 25 `se.schemaGeneration` tests, two generator/secondary-table schema tests and `core.types.datetime.Client#dateTimeTest`, which fails at `Persistence.generateSchema` before Criteria execution |
+| P10 — ORM XML | 78 | XML entity/mapping overrides, listener/callback XML, descriptor relationships/inheritance, native-query entities and stored-procedure XML overrides |
+| P11 — second-level cache | 12 | `core.cache.basicTests` and `se.cache` inheritance/XML cache behavior |
+
+The earlier provisional attribution (P8 950 / P9 27 / P10 78 / P11 13) mixed one schema setup error into P8 and
+the converted-literal query defect into P11. Final source/log attribution corrects those owners; it does not claim
+that old implementation phases were bug-free. The four XML-dependent P7-gate errors remain in the full suite.
+Container/JTA/schema, XML and caching/validation implementation was not added to improve the score.
+This remains **partial conformance, not Jakarta Persistence certification**; optional `TABLE_PER_CLASS` is still
+refused and D5 remains open.
+
+The clean selected JPA reactor reports **471 tests, 0 failures, 0 errors, 0 skipped**:
+core 404, processor 24, dialect SPI 23, H2 6, PostgreSQL 8, and the two Java module vehicles 3 each.
+Red regressions preceded the metamodel/Criteria/graph implementations and the later edge corrections:
+canonical module/incremental lifecycle, raw collection targets, parameter identity/primitive bindings,
+named tuple/query snapshots, entity LEFT joins with ON navigation, temporal extraction, lazy case assembly,
+entity map-key navigation and joins attached to treated roots. No-opens integration asserts actual canonical
+field population, not merely successful compilation.
+
+Bounded code-generation, Java Modules and concurrency reviews were performed. Generation review findings were
+fixed and covered by the processor/module tests; no dependency blocks, module descriptors, exports or opens changed.
+Existing execution helpers still perform JDBC; no new executor or SQL execution path was introduced.
+
+**Coexistence boundary:** the actual installed frozen Data processor and JPA processor compile compatible basic
+canonical output in both orders. Claiming-producer regressions check both discovery orders and ensure incompatible
+plural fields produce diagnostics without overwriting the owning producer's class. Data's existing
+singular output for collection canonical fields remains incompatible; JPA diagnoses it and retains producer ownership.
+Changing delivered Data requires a maintainer decision (`BUG-20261009-09`), and is not claimed as delivered here.
+
+Commands from the repository root (scratch can be a session-owned directory; confine forked JVM scratch there):
+
+```bash
+export JAVA_HOME="$HOME/.sdkman/candidates/java/25.0.4-tem"
+export PATH="$JAVA_HOME/bin:$PATH"
+P8_SCRATCH="$PWD/mansart-persistence/mansart-jpa-tck/target/p8-jvm-scratch"
+mkdir -p "$P8_SCRATCH"
+export JAVA_TOOL_OPTIONS="-Djava.io.tmpdir=$P8_SCRATCH"
+
+# Install the current processor first: annotationProcessorPaths resolves its installed artifact.
+./mvnw -q -ntp -pl mansart-persistence/mansart-jpa-processor -am install -DskipTests
+./mvnw -q -ntp \
+  -pl mansart-persistence/mansart-jpa-processor,mansart-persistence/mansart-jpa-processor-module-it,mansart-persistence/mansart-jpa-module-it \
+  -am clean verify "-DargLine=-Djava.io.tmpdir=$P8_SCRATCH"
+
+cd mansart-persistence/mansart-jpa-tck
+./run-official-tck-persistence-3.2.sh -- \
+  '-Dtck.tests=**/core/metamodelapi/**/*Client*,**/core/criteriaapi/**/*Client*,**/core/EntityGraph/**/*Client*,**/jpa22/repeatable/namedentitygraph/**/*Client*' \
+  -Dtck.skip.execution2=true
+./run-official-tck-persistence-3.2.sh
+```
+
+The full baseline, intermediate focused/full reports and final full XML/logs were preserved separately in session
+evidence before another run could overwrite them. Counts and regressions were read from every XML execution;
+the script's zero exit status alone is not a result.
 
 ## P6 — inheritance: 909 → 1005
 

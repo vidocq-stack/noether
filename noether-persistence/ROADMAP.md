@@ -544,16 +544,35 @@ with inheritance (P6) as much as with this milestone.
 `jpa22.query.stream`, `jpa22.repeatable.{namednativequery,namedstoredprocedurequery}`,
 `core.lock.query`.
 
-### P8 — Metamodel API, Criteria API, entity graphs ⏳
+### P8 — Metamodel API, Criteria API, entity graphs ✅
 
 Spec: ch. 5 (metamodel), ch. 6 (criteria), §3.8 (entity graphs).
 
-- [ ] Runtime `Metamodel` (`EntityType`, `ManagedType`, attributes, `Bindable`, …) built from the
-      entity model; population of static `_Entity` fields (APT-generated: self-registration;
+- [x] Runtime `Metamodel` (`EntityType`, `ManagedType`, identifiable/mapped-superclass/embeddable types,
+      singular and collection/list/set/map attributes, `Bindable`) built from the existing entity model and
+      `AccessPlanner`; population of canonical `Entity_` fields (APT-generated: self-registration;
       opaque jars: `MethodHandles` on public static fields — no `Field.set`).
-- [ ] `CriteriaBuilder` / `CriteriaQuery` / `CriteriaUpdate` / `CriteriaDelete`, lowered to the
-      same AST as JPQL (one SQL path, two front-ends).
-- [ ] `EntityGraph`, `@NamedEntityGraph`, fetch/load graph hints, 3.2 typed graph API.
+- [x] APT canonical classes follow §6.2.1.1, inherit the managed superclass's canonical class, and use correctly
+      typed declared fields. Package-local initialization helpers are handed over by the existing access provider:
+      neither entity exports/opens nor an application read of `java.compiler` is needed. Owned output regenerates
+      on incremental compilation; retained managed types retain their initialization helpers.
+- [x] `CriteriaBuilder` / `CriteriaQuery` / `CriteriaUpdate` / `CriteriaDelete`, lowered to the same AST as JPQL:
+      subqueries/correlation, joins/fetches, entity joins, `TREAT` navigation, map keys/list indexes, predicates,
+      functions/aggregates, cases, constructor/array/tuple projections and aliases, parameter identities,
+      3.2 temporal extraction and set operations. Query creation snapshots the AST; named Criteria definitions
+      retain the AST and query settings, not a synthetic JPQL string. There is no second execution engine.
+- [x] `EntityGraph`, repeatable `@NamedEntityGraph`, validated fetch/load graph hints and the 3.2 typed graph API.
+      Registered named graphs are immutable recursive copies; entity-manager copies are mutable and independent.
+      The existing eager loader honors graph load-state requirements; a graph does not promise lazy exclusion of
+      unspecified attributes.
+- [x] Official P8 gate: **924 passed, 0 errors, 1 upstream skip / 925**; full-suite evidence and remaining
+      milestone attribution are recorded in `TCK.md`. No tests or exclusions were changed.
+
+**Frozen Data producer boundary:** both processors safely coexist in either discovery order without duplicate
+`Entity_` output. JPA does not overwrite canonical classes owned by another producer. The existing Data generator
+still emits singular fields for plural attributes; incompatible fields are diagnosed and cannot be populated.
+Reconciling those Data-owned field kinds requires a maintainer decision; Data is unchanged (see `BUG.md`).
+The standalone JPA processor and official P8 gate have no such dependency.
 
 **TCK gate**: `core.metamodelapi.*`, `core.criteriaapi.*`, `core.EntityGraph`,
 `jpa22.repeatable.namedentitygraph`.

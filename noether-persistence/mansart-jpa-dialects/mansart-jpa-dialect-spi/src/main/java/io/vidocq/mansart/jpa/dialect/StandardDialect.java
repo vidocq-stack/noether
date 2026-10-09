@@ -283,6 +283,8 @@ public abstract class StandardDialect implements Dialect {
             case REAL -> "REAL";
             case DOUBLE_PRECISION -> "DOUBLE PRECISION";
             case DECIMAL -> "DECIMAL";
+            case DATE -> "DATE";
+            case TIME -> "TIME";
         };
     }
 

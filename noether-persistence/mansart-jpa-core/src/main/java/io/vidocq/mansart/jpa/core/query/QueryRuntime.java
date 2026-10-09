@@ -36,6 +36,13 @@ public interface QueryRuntime {
     /** The mapped persistence unit. */
     MappedUnit mapping();
 
+    /** Checks the unit and root context of a fetch/load graph hint before execution. */
+    default void validateGraph(Object graph, Class<?> root) {
+        if (!(graph instanceof jakarta.persistence.EntityGraph<?>)) {
+            throw new IllegalArgumentException("Fetch/load hint must be an EntityGraph");
+        }
+    }
+
     /**
      * Runs {@code work} on the connection of the transaction, or on one of its own outside a transaction; first flushes
      * the persistence context when {@code flushMode} is {@code AUTO} and a transaction is active (§3.10.8). A failure

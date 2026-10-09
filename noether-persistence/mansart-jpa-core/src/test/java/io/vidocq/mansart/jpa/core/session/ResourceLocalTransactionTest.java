@@ -307,14 +307,11 @@ class ResourceLocalTransactionTest {
         assertThat(tx.getRollbackOnly()).isTrue();
         tx.rollback();
 
-        // an exception raised by the factory on behalf of the entity manager counts too
+        // Factory-backed metadata methods now succeed and must not mark rollback-only.
         tx.begin();
-        assertThatThrownBy(em::getCriteriaBuilder).isInstanceOf(RuntimeException.class);
-        assertThat(tx.getRollbackOnly()).isTrue();
-        tx.rollback();
-        tx.begin();
-        assertThatThrownBy(em::getMetamodel).isInstanceOf(RuntimeException.class);
-        assertThat(tx.getRollbackOnly()).isTrue();
+        assertThat(em.getCriteriaBuilder()).isNotNull();
+        assertThat(em.getMetamodel()).isNotNull();
+        assertThat(tx.getRollbackOnly()).isFalse();
         tx.rollback();
     }
 

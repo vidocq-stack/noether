@@ -543,6 +543,11 @@ final class EntityManagerImpl implements EntityManager {
     public <T> T find(Class<T> entityClass, Object primaryKey, LockModeType lockMode, Map<String, Object> properties) {
         checkOpen();
         try {
+            if (properties != null) {
+                for (String name : List.of("jakarta.persistence.fetchgraph", "jakarta.persistence.loadgraph")) {
+                    if (properties.containsKey(name)) EntityGraphs.validateHint(properties.get(name), entityClass, factory.getMetamodel());
+                }
+            }
             boolean locking = lockMode != null && lockMode != LockModeType.NONE;
             if (locking) {
                 requireTransaction("find with a lock mode");
@@ -596,7 +601,11 @@ final class EntityManagerImpl implements EntityManager {
     @Override
     public <T> T find(EntityGraph<T> entityGraph, Object primaryKey, FindOption... options) {
         checkOpen();
-        throw failed(NotYet.milestone("P8", "find with an entity graph"));
+        EntityGraphs.validateHint(entityGraph, null, factory.getMetamodel());
+        if (!(entityGraph instanceof EntityGraphs.Root<T> graph)) {
+            throw new IllegalArgumentException("Entity graph belongs to another provider");
+        }
+        return find(graph.type, primaryKey, options);
     }
 
     @Override
@@ -749,6 +758,11 @@ final class EntityManagerImpl implements EntityManager {
         }
 
         @Override
+        public void validateGraph(Object graph, Class<?> root) {
+            EntityGraphs.validateHint(graph, root, factory.getMetamodel());
+        }
+
+        @Override
         public <T> T read(FlushModeType queryFlushMode, Function<Connection, T> work) {
             checkOpen();
             try {
@@ -827,25 +841,41 @@ final class EntityManagerImpl implements EntityManager {
     @Override
     public <T> TypedQuery<T> createQuery(CriteriaQuery<T> criteriaQuery) {
         checkOpen();
-        throw failed(NotYet.milestone("P8", "the Criteria API"));
+        try {
+            return io.vidocq.mansart.jpa.core.query.CriteriaBuilderImpl.query(criteriaQuery, flushMode, queries);
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
     }
 
     @Override
     public <T> TypedQuery<T> createQuery(CriteriaSelect<T> selectQuery) {
         checkOpen();
-        throw failed(NotYet.milestone("P8", "the Criteria API"));
+        try {
+            return io.vidocq.mansart.jpa.core.query.CriteriaBuilderImpl.query(selectQuery, flushMode, queries);
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
     }
 
     @Override
     public Query createQuery(CriteriaUpdate<?> updateQuery) {
         checkOpen();
-        throw failed(NotYet.milestone("P8", "the Criteria API"));
+        try {
+            return io.vidocq.mansart.jpa.core.query.CriteriaBuilderImpl.query(updateQuery, flushMode, queries);
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
     }
 
     @Override
     public Query createQuery(CriteriaDelete<?> deleteQuery) {
         checkOpen();
-        throw failed(NotYet.milestone("P8", "the Criteria API"));
+        try {
+            return io.vidocq.mansart.jpa.core.query.CriteriaBuilderImpl.query(deleteQuery, flushMode, queries);
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
     }
 
     @Override
@@ -1000,24 +1030,24 @@ final class EntityManagerImpl implements EntityManager {
     @Override
     public <T> EntityGraph<T> createEntityGraph(Class<T> rootType) {
         checkOpen();
-        throw failed(NotYet.milestone("P8", "entity graphs"));
+        return factory.entityGraphs().create(rootType);
     }
 
     @Override
     public EntityGraph<?> createEntityGraph(String graphName) {
         checkOpen();
-        throw failed(NotYet.milestone("P8", "entity graphs"));
+        return factory.entityGraphs().copy(graphName);
     }
 
     @Override
     public EntityGraph<?> getEntityGraph(String graphName) {
         checkOpen();
-        throw failed(NotYet.milestone("P8", "entity graphs"));
+        return factory.entityGraphs().get(graphName);
     }
 
     @Override
     public <T> List<EntityGraph<? super T>> getEntityGraphs(Class<T> entityClass) {
         checkOpen();
-        throw failed(NotYet.milestone("P8", "entity graphs"));
+        return factory.entityGraphs().applicable(entityClass);
     }
 }

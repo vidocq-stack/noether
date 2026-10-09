@@ -26,6 +26,8 @@ import java.sql.SQLException;
 
 /** Writes the value of a basic attribute to a statement parameter, and reads it back from a result column. */
 public interface ValueBinder {
+    /** Whether domain literals must pass through an attribute converter before reaching SQL. */
+    default boolean converted() { return false; }
 
     /** Binds {@code value}, {@code null} included, to the parameter {@code index}, as {@code dialect} stores it. */
     void bind(Dialect dialect, PreparedStatement statement, int index, Object value) throws SQLException;

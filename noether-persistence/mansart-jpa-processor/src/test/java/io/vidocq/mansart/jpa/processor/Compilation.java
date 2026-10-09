@@ -47,6 +47,10 @@ record Compilation(boolean success, List<Diagnostic<? extends JavaFileObject>> d
         return compile(out, List.of("-classpath", dependencies()), roots);
     }
 
+    static Compilation withProcessors(Path out, List<javax.annotation.processing.Processor> processors, Path... roots) {
+        return compile(out, List.of("-classpath", dependencies()), processors, roots);
+    }
+
     /** Compiles {@code roots} against the classes of an earlier compilation, as an incremental build does. */
     static Compilation incrementally(Path out, Compilation earlier, Path... roots) {
         return compile(out, List.of("-classpath", earlier.classes() + File.pathSeparator + dependencies()), roots);
@@ -64,6 +68,10 @@ record Compilation(boolean success, List<Diagnostic<? extends JavaFileObject>> d
     }
 
     private static Compilation compile(Path out, List<String> options, Path... roots) {
+        return compile(out, options, List.of(new MansartJpaProcessor()), roots);
+    }
+
+    private static Compilation compile(Path out, List<String> options, List<javax.annotation.processing.Processor> processors, Path... roots) {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
         Path classes = out.resolve("classes");
@@ -83,7 +91,7 @@ record Compilation(boolean success, List<Diagnostic<? extends JavaFileObject>> d
             all.add("-Xlint:all,-processing");
             JavaCompiler.CompilationTask task = compiler.getTask(null, files, diagnostics, all, null,
                 files.getJavaFileObjectsFromFiles(sources));
-            task.setProcessors(List.of(new MansartJpaProcessor()));
+            task.setProcessors(processors);
             boolean success = task.call();
             return new Compilation(success, diagnostics.getDiagnostics(), classes, generated);
         } catch (IOException e) {

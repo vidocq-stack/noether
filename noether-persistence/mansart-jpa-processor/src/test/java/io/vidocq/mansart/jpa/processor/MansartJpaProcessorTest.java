@@ -47,6 +47,29 @@ import org.junit.jupiter.api.io.TempDir;
 
 /** The accesses generated at build time, checked against the model the bootstrap builds from the compiled classes. */
 class MansartJpaProcessorTest {
+    @Test
+    void canonicalMetamodelUsesPersistentMemberTypesAndInheritance() { // §6.2.1.1
+        assertThat(shop.generated().resolve("shop/Item_.java")).exists();
+        assertThat(shop.source("shop/Item_.java")).contains("@jakarta.persistence.metamodel.StaticMetamodel(shop.Item.class)")
+            .contains("SingularAttribute<shop.Item, java.lang.Long> id")
+            .contains("ListAttribute<shop.Item, java.lang.String> tags")
+            .contains("extends shop.base.Audited_");
+        assertThat(shop.source("shop/_MansartJpaAccess.java")).contains("populateMetamodel");
+    }
+
+    @Test
+    void generatedCanonicalFieldsArePopulatedThroughTheApplicationProvider() throws Throwable { // §6.2.1.1
+        new io.vidocq.mansart.jpa.core.model.build.RuntimeMetamodel(model, loader);
+        Class<?> attribute = Class.forName("jakarta.persistence.metamodel.SingularAttribute", false, loader);
+        Object id = MethodHandles.publicLookup().findStaticGetter(type("shop.Item_"), "id",
+            attribute).invoke();
+        assertThat(id).isNotNull();
+        Object created = MethodHandles.publicLookup().findStaticGetter(type("shop.base.Audited_"), "createdAt",
+            attribute).invoke();
+        assertThat(created).isNotNull();
+        assertThat(MethodHandles.publicLookup().findVirtual(attribute, "getName",
+            MethodType.methodType(String.class)).invoke(created)).isEqualTo("createdAt");
+    }
 
     @TempDir
     static Path out;

@@ -116,6 +116,11 @@ public final class Ast {
     public sealed interface Expr {
     }
 
+    /** A Criteria map-key path, retaining its declared join variable and navigated attributes. */
+    public record MapKeyPath(String variable, List<String> attributes) implements Expr {
+        public MapKeyPath { attributes = List.copyOf(attributes); }
+    }
+
     /** {@code var.attribute.…}, or a single name: a variable, a result variable, or the dotted name of an enum constant. */
     public record Path(List<String> segments, String treatEntity, int treatAt) implements Expr {
         public Path {
@@ -133,6 +138,10 @@ public final class Ast {
 
     /** A string, a number, a boolean, or {@code null}. */
     public record Literal(Object value) implements Expr {
+    }
+
+    /** A Criteria collection-valued selection expanded as its joined elements (§6.5.11). */
+    public record CollectionElements(Path path) implements Expr {
     }
 
     /** The binary operators of the language. */

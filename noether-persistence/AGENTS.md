@@ -34,7 +34,8 @@
   `mansart-jpa-processor` (APT, entity accesses at build time) and two module-path test vehicles,
   `mansart-jpa-module-it` (runtime path, `opens`) and `mansart-jpa-processor-module-it` (build-time path,
   `provides`). `mansart-jpa-tck` stays out of the reactor.
-- Milestones P0 to P7 are delivered (1063 / 2135 TCK passes; remaining P7 gate errors depend on P10 XML mappings): read `ROADMAP.md` (status per item) and
+- Milestones P0 to P8 are delivered (2013 / 2135 TCK passes; 118 P9/P10/P11 errors and 4 official skips):
+  read `ROADMAP.md` (status per item) and
   `TCK.md` (measured score, failures attributed per milestone) before starting.
 - The entity model is built at bootstrap from the class files; which members are persistent, and in which order, is
   decided by `AccessPlanner`, shared with the processor. Never duplicate that logic.
@@ -50,7 +51,7 @@
 | Module (artifactId) | Java module | Role |
 | --- | --- | --- |
 | `mansart-jpa-core` | `io.vidocq.mansart.jpa.core` | `PersistenceProvider`, EMF/EM, persistence context, entity model, flush, JDBC execution; the query engine (JPQL parser with a sealed AST, translation, Criteria API, SQL through the dialect SPI — decision D8). No CDI, no JTA import. |
-| `mansart-jpa-processor` | `io.vidocq.mansart.jpa.processor` | APT: static metamodel `_Entity` + generated entity accessors/instantiators for application sources. |
+| `mansart-jpa-processor` | `io.vidocq.mansart.jpa.processor` | APT: canonical JPA metamodel `Entity_`, application-module initialization helpers and generated entity accessors/instantiators. Retain other producers' canonical output; do not change delivered Data to reconcile incompatible fields without a maintainer decision. |
 | `mansart-jpa-maven-plugin` | — | Build-time generation for entities living in pre-compiled jars (mirror of `mansart-data-maven-plugin`). |
 | `mansart-jpa-cdi` | `io.vidocq.mansart.jpa.cdi` | CDI 4.1 Lite BCE on Vauban: `@PersistenceContext` / `@PersistenceUnit`, JTA-bound contexts via `mansart-transactions`. |
 | `mansart-jpa-tests` | — | Cross-module and PostgreSQL (Testcontainers) integration tests. |

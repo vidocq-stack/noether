@@ -43,6 +43,19 @@ import org.junit.jupiter.api.Test;
 
 /** §2.7, §11.1.29-§11.1.42: maps and ordered lists, their keys and positions in a join, collection or target table. */
 class IndexedCollectionTest {
+    @Test
+    void criteriaNavigatesEntityMapKeys() { // §6.5.5: MapJoin.key() is a navigable entity path.
+        Bureau bureau = bureau();
+        Affair affair = new Affair(1);
+        affair.contacts().put(bureau, bureau.roster().get(1));
+        inTransaction(() -> em.persist(affair));
+        var builder = emf.getCriteriaBuilder();
+        var criteria = builder.createQuery(String.class);
+        var root = criteria.from(Affair.class);
+        var contacts = root.<Affair, Bureau, Agent>joinMap("contacts");
+        criteria.select(contacts.key().get("name")).where(builder.equal(contacts.key().get("id"), 1L));
+        assertThat(em.createQuery(criteria).getSingleResult()).isEqualTo("Sûreté");
+    }
 
     private static final AtomicInteger DATABASES = new AtomicInteger();
 

@@ -42,6 +42,36 @@ import org.junit.jupiter.api.Test;
 
 /** §4.10: bulk updates and deletes, run in the database, around the persistence context. */
 class BulkQueryTest {
+    @Test
+    void jpqlAndCriteriaLiteralsUseAttributeConverters() throws SQLException { // §3.9: query values use the conversion.
+        ConvertedAmount entity = new ConvertedAmount(); entity.id = 1; entity.amount = "1#2.0";
+        em.getTransaction().begin(); em.persist(entity); em.getTransaction().commit();
+        assertThat(run("update ConvertedAmount e set e.amount='5#4.0' where e.amount='1#2.0'")).isEqualTo(1);
+        assertThat(scalar("select amount from ConvertedAmount where id=1")).isEqualTo("54.0");
+        var builder = emf.getCriteriaBuilder();
+        var update = builder.createCriteriaUpdate(ConvertedAmount.class);
+        var root = update.from(ConvertedAmount.class);
+        update.set("amount", "7#6.0").where(builder.equal(root.get("amount"), "5#4.0"));
+        em.getTransaction().begin();
+        assertThat(em.createQuery(update).executeUpdate()).isEqualTo(1);
+        em.getTransaction().commit();
+        assertThat(scalar("select amount from ConvertedAmount where id=1")).isEqualTo("76.0");
+    }
+
+    @jakarta.persistence.Entity(name="ConvertedAmount")
+    public static class ConvertedAmount {
+        @jakarta.persistence.Id public long id;
+        @jakarta.persistence.Convert(converter=NumberText.class) public String amount;
+        public ConvertedAmount() {}
+    }
+    @jakarta.persistence.Converter
+    public static class NumberText implements jakarta.persistence.AttributeConverter<String,Double> {
+        public NumberText() {}
+        @Override public Double convertToDatabaseColumn(String value) {
+            return value==null?null:Double.valueOf(value.replace("#",""));
+        }
+        @Override public String convertToEntityAttribute(Double value) { return value==null?null:value.toString(); }
+    }
 
     private static final AtomicInteger DATABASES = new AtomicInteger();
 
@@ -56,11 +86,13 @@ class BulkQueryTest {
         try (Statement ddl = database.createStatement()) {
             ddl.execute("create table Dept (id bigint primary key, name varchar(50))");
             ddl.execute("create table Desk (id bigint primary key, location varchar(50))");
+            ddl.execute("create table ConvertedAmount (id bigint primary key, amount double)");
             ddl.execute("create table Emp (id bigint primary key, name varchar(50), version int, dept_id bigint references Dept(id), "
                 + "MGR bigint references Emp(id), DESK_ID bigint references Desk(id))");
         }
         emf = new PersistenceConfiguration("bulk").provider("io.vidocq.mansart.jpa.core.MansartPersistenceProvider")
-            .managedClass(Dept.class).managedClass(Desk.class).managedClass(Emp.class).property(PersistenceConfiguration.JDBC_URL, url)
+            .managedClass(Dept.class).managedClass(Desk.class).managedClass(Emp.class).managedClass(ConvertedAmount.class)
+            .property(PersistenceConfiguration.JDBC_URL, url)
             .property(PersistenceConfiguration.JDBC_USER, "sa").createEntityManagerFactory();
         em = emf.createEntityManager();
         Dept sales = new Dept(1, "Sales");

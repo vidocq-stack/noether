@@ -39,7 +39,8 @@ public final class NamedQueries {
 
     /** What a named query is created from. Settings left {@code null} keep the defaults of the entity manager. */
     record Definition(String name, String query, boolean nativeQuery, Class<?> resultClass, String resultSetMapping, LockModeType lockMode,
-            Map<String, Object> hints, Integer maxResults, Integer firstResult, FlushModeType flushMode) {
+            Map<String, Object> hints, Integer maxResults, Integer firstResult, FlushModeType flushMode,
+            JpqlQuery.CriteriaDefinition criteria) {
     }
 
     /** A named query as {@code getNamedQueries} hands it over (3.2). */
@@ -67,7 +68,7 @@ public final class NamedQueries {
         this.unit = unit;
         for (NamedQueryModel query : unit.model().namedQueries()) {
             byName.put(query.name(), new Definition(query.name(), query.query(), query.nativeQuery(), query.resultClass(),
-                query.resultSetMapping(), LockModeType.valueOf(query.lockMode()), Map.copyOf(query.hints()), null, null, null));
+                query.resultSetMapping(), LockModeType.valueOf(query.lockMode()), Map.copyOf(query.hints()), null, null, null, null));
         }
     }
 
@@ -78,9 +79,9 @@ public final class NamedQueries {
         }
         Definition definition = switch (query) {
             case JpqlQuery<?> jpql -> new Definition(name, jpql.queryString(), false, jpql.resultClass(), null, jpql.getLockMode(),
-                Map.copyOf(jpql.getHints()), jpql.getMaxResults(), jpql.getFirstResult(), jpql.getFlushMode());
+                Map.copyOf(jpql.getHints()), jpql.getMaxResults(), jpql.getFirstResult(), jpql.getFlushMode(), jpql.criteriaDefinition());
             case NativeQuery sql -> new Definition(name, sql.sqlString(), true, null, null, LockModeType.NONE,
-                Map.copyOf(sql.getHints()), sql.getMaxResults(), sql.getFirstResult(), sql.getFlushMode());
+                Map.copyOf(sql.getHints()), sql.getMaxResults(), sql.getFirstResult(), sql.getFlushMode(), null);
             default -> throw new IllegalArgumentException("A query of " + query.getClass().getName() + " cannot be named");
         };
         byName.put(name, definition);
@@ -105,13 +106,21 @@ public final class NamedQueries {
             return new JpqlQueryOrNative<>(null, query);
         }
         Class<T> type = resultClass;
-        JpqlQuery<T> query = new JpqlQuery<>(definition.query(), type, flushMode, runtime);
+        if (type == null && definition.criteria() != null) type = originalResultType(definition.resultClass());
+        JpqlQuery<T> query = definition.criteria() == null ? new JpqlQuery<>(definition.query(), type, flushMode, runtime)
+            : new JpqlQuery<>(definition.criteria().statement(), type, flushMode, runtime,
+                definition.criteria().parameters(), definition.criteria().selections());
         definition.hints().forEach(query::setHint);
         if (definition.lockMode() != LockModeType.NONE) {
             query.setLockMode(definition.lockMode());
         }
         settings(definition, query);
         return new JpqlQueryOrNative<>(query, null);
+    }
+
+    @SuppressWarnings("unchecked") // An untyped named Criteria query retains the original query's reified result class.
+    private static <T> Class<T> originalResultType(Class<?> type) {
+        return (Class<T>) type;
     }
 
     private static void settings(Definition definition, Query query) {

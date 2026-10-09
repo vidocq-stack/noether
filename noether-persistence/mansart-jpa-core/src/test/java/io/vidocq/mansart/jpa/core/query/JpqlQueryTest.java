@@ -47,6 +47,77 @@ import org.junit.jupiter.api.Test;
 
 /** §4, §3.11: Jakarta Persistence queries translated to SQL and their results read as the specification says. */
 class JpqlQueryTest {
+    @Test
+    void primitiveCriteriaParametersAndUntypedNamedTuplesRetainTheirContract() { // §3.11.1, §6.5.3
+        var builder = emf.getCriteriaBuilder();
+        var criteria = builder.createTupleQuery();
+        var root = criteria.from(Emp.class);
+        var id = builder.parameter(long.class, "id");
+        criteria.multiselect(root.get("id").alias("id"), root.get("name").alias("name"));
+        criteria.where(builder.equal(root.get("id"), id));
+        var typed = em.createQuery(criteria).setParameter(id, 2L);
+        assertThat(typed.getSingleResult().get("name")).isEqualTo("Clerk");
+        emf.addNamedQuery("tuple-criteria", typed);
+        assertThat(em.createNamedQuery("tuple-criteria").setParameter("id", 2L).getSingleResult())
+            .isInstanceOfSatisfying(jakarta.persistence.Tuple.class, tuple -> assertThat(tuple.get("name")).isEqualTo("Clerk"));
+    }
+    @Test
+    void criteriaTuplesCasesAndTemporalExtractionUseTheSameSqlPipeline() { // §6.3, §6.5.7
+        var builder = emf.getCriteriaBuilder();
+        var criteria = builder.createTupleQuery();
+        var root = criteria.from(Emp.class);
+        var coalesce = builder.<String>coalesce().value(root.get("name"));
+        var choice = builder.<String>selectCase().when(builder.conjunction(), coalesce);
+        coalesce.value("fallback"); // CASE must observe the completed child, not its earlier AST.
+        var selected = choice.otherwise("other").alias("chosen");
+        var seconds = builder.extract(jakarta.persistence.criteria.LocalDateTimeField.SECOND, builder.localDateTime());
+        var date = builder.extract(jakarta.persistence.criteria.LocalDateTimeField.DATE, builder.localDateTime());
+        criteria.multiselect(selected, seconds.alias("seconds"), date.alias("date"));
+        criteria.where(builder.equal(root.get("id"), 2L));
+        var tuple = em.createQuery(criteria).getSingleResult();
+        assertThat(tuple.get(selected)).isEqualTo("Clerk");
+        assertThat(tuple.get("chosen", String.class)).isEqualTo("Clerk");
+        assertThat(tuple.get("seconds")).isInstanceOf(Double.class);
+        assertThat(tuple.get("date")).isInstanceOf(java.time.LocalDate.class);
+    }
+
+    @Test
+    void criteriaSetParametersAndNamedDefinitionsKeepTheirSnapshot() { // §6.3.1; §3.11.1
+        var builder = emf.getCriteriaBuilder();
+        var first = builder.createQuery(String.class);
+        var employee = first.from(Emp.class);
+        var name = builder.parameter(String.class, "employee");
+        first.select(employee.get("name")).where(builder.equal(employee.get("name"), name));
+        var second = builder.createQuery(String.class);
+        var department = second.from(Dept.class);
+        var anonymous = builder.parameter(String.class);
+        second.select(department.get("name")).where(builder.equal(department.get("name"), anonymous));
+        assertThat(em.createQuery(builder.union(first, second)).setParameter(name, "Clerk").setParameter(anonymous, "Audit")
+            .getResultList()).containsExactlyInAnyOrder("Clerk", "Audit");
+        emf.addNamedQuery("saved-criteria", em.createQuery(first).setMaxResults(1));
+        first.where(builder.disjunction());
+        assertThat(em.createNamedQuery("saved-criteria", String.class).setParameter("employee", "Clerk").getSingleResult())
+            .isEqualTo("Clerk");
+    }
+
+    @Test
+    void criteriaEntityLeftJoinsPreserveUnmatchedRoots() { // §6.3.3 (3.2)
+        var builder = emf.getCriteriaBuilder();
+        var criteria = builder.createQuery(Object[].class);
+        var root = criteria.from(Emp.class);
+        var department = root.join(Dept.class, jakarta.persistence.criteria.JoinType.LEFT);
+        department.on(builder.equal(root.get("dept").get("id"), department.get("id")));
+        criteria.multiselect(root.get("name"), department.get("name")).orderBy(builder.asc(root.get("id")));
+        assertThat(em.createQuery(criteria).getResultList()).satisfies(rows -> {
+            assertThat(rows).hasSize(4);
+            assertThat(rows.get(3)).containsExactly("Loner", null);
+        });
+        department.on(builder.equal(root.get("dept").get("name"), department.get("name")));
+        assertThat(em.createQuery(criteria).getResultList()).satisfies(rows -> {
+            assertThat(rows).hasSize(4);
+            assertThat(rows.get(3)).containsExactly("Loner", null);
+        });
+    }
 
     private static final AtomicInteger DATABASES = new AtomicInteger();
 

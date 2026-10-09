@@ -83,6 +83,7 @@ public final class MansartJpaProcessor extends AbstractProcessor {
 
             /** The accesses handed over, kept for the incremental builds that recompile part of the package. */
             public static final java.lang.String ACCESSES = "%4$s";
+            public static final java.lang.String METAMODELS = "%6$s";
 
             public %2$s() {
                 // found by ServiceLoader
@@ -101,6 +102,7 @@ public final class MansartJpaProcessor extends AbstractProcessor {
     private ElementInfos infos;
     private AccessPlanner planner;
     private AccessWriter writer;
+    private MetamodelWriter metamodelWriter;
 
     /** The accesses generated and not yet handed over, by package, with the elements they were generated from. */
     private final Map<String, List<String>> pending = new LinkedHashMap<>();
@@ -126,11 +128,12 @@ public final class MansartJpaProcessor extends AbstractProcessor {
         infos = new ElementInfos(elements, processingEnv.getTypeUtils());
         planner = new AccessPlanner(infos);
         writer = new AccessWriter(elements, infos);
+        metamodelWriter = new MetamodelWriter(processingEnv);
     }
 
     @Override
     public Set<String> getSupportedAnnotationTypes() {
-        return Set.of(ENTITY);
+        return Set.of("*");
     }
 
     @Override
@@ -145,6 +148,7 @@ public final class MansartJpaProcessor extends AbstractProcessor {
             finish();
             return false;
         }
+        metamodelWriter.emit();
         int before = generated.size();
         List<TypeElement> entities = new ArrayList<>();
         for (String name : List.copyOf(deferred)) {
@@ -187,10 +191,18 @@ public final class MansartJpaProcessor extends AbstractProcessor {
             return;
         }
         Set<Element> from = new LinkedHashSet<>();
-        for (ClassInfo declaring : planner.hierarchy(info)) {
+        List<ClassInfo> hierarchy = planner.hierarchy(info);
+        for (int i = 0; i < hierarchy.size(); i++) {
+            ClassInfo declaring = hierarchy.get(i);
             TypeElement element = infos.element(declaring.name());
             if (element != null) {
                 from.add(element);
+                if (fromSource(element)) {
+                    Set<String> owners = hierarchy.subList(0, i + 1).stream().map(ClassInfo::name)
+                        .collect(java.util.stream.Collectors.toSet());
+                    metamodelWriter.plan(element, members.stream().filter(m -> owners.contains(m.owner().name())).toList(),
+                        i == 0 ? null : infos.element(hierarchy.get(i - 1).name()).getQualifiedName().toString());
+                }
             }
         }
         if (access(type, "$$MansartAccess", members, false, from, planner.callbacks(info))) {
@@ -229,6 +241,7 @@ public final class MansartJpaProcessor extends AbstractProcessor {
             boolean record = AccessWriter.isRecord(type);
             String suffix = record ? "$$MansartAccess" : access == AccessKind.FIELD ? "$$MansartFieldAccess" : "$$MansartPropertyAccess";
             List<Member> members = planner.embeddableMembers(info, member.access());
+            metamodelWriter.plan(type, members, null);
             // the access type of an embeddable may come from its owner: the owner is an origin of its access too
             Set<Element> from = new LinkedHashSet<>(ownerOrigins);
             from.add(type);
@@ -289,8 +302,19 @@ public final class MansartJpaProcessor extends AbstractProcessor {
         for (String access : all) {
             instances.append(instances.isEmpty() ? "" : ", ").append("new ").append(access).append("()");
         }
+        Set<String> helpers = new LinkedHashSet<>(metamodelWriter.helpers());
+        TypeElement previous = elements.getTypeElement(qualified(pkg, PROVIDER));
+        if (previous != null) {
+            for (VariableElement field : ElementFilter.fieldsIn(previous.getEnclosedElements())) {
+                if (field.getSimpleName().contentEquals("METAMODELS") && field.getConstantValue() instanceof String list && !list.isEmpty()) {
+                    for (String helper : list.split(",")) if (elements.getTypeElement(helper) != null) helpers.add(helper);
+                }
+            }
+        }
         String source = PROVIDER_SOURCE.formatted(pkg.isEmpty() ? "" : "package " + pkg + ";\n\n", PROVIDER, SPI,
-            String.join(",", all), instances);
+            String.join(",", all), instances, String.join(",", helpers));
+        int closing = source.lastIndexOf('}');
+        source = source.substring(0, closing) + metamodelWriter.initializer(helpers) + source.substring(closing);
         if (write(qualified(pkg, PROVIDER), source, origins.getOrDefault(pkg, Set.of()))) {
             providers.add(pkg);
         }

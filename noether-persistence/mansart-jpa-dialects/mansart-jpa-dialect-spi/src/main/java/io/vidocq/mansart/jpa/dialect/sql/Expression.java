@@ -80,7 +80,7 @@ public sealed interface Expression {
     /** {@code CAST(expression AS type)}. */
     record Cast(Expression expression, Type type) implements Expression {
         public enum Type {
-            VARCHAR, INTEGER, BIGINT, REAL, DOUBLE_PRECISION, DECIMAL
+            VARCHAR, INTEGER, BIGINT, REAL, DOUBLE_PRECISION, DECIMAL, DATE, TIME
         }
     }
 

@@ -111,6 +111,27 @@ class InheritanceTest {
     }
 
     @Test
+    void criteriaTreatRootsRetainTheirNewJoins() throws Exception { // §6.5.7 TREAT navigation
+        try (var emf = factory("create table Person (id bigint primary key, name varchar(50), version int);"
+                + "create table Worker (worker_id bigint primary key references Person(id), salary int, department_id bigint);"
+                + "create table Manager (manager_id bigint primary key references Worker(worker_id), office varchar(50));"
+                + "create table Department (id bigint primary key, boss_id bigint)",
+                Person.class, Worker.class, Manager.class, Department.class); var em = emf.createEntityManager()) {
+            Department department = new Department(); department.id = 1;
+            Manager manager = new Manager(); manager.id = 1; manager.name = "chief"; manager.department = department;
+            em.getTransaction().begin(); em.persist(department); em.persist(manager); em.getTransaction().commit();
+            var builder = emf.getCriteriaBuilder();
+            var criteria = builder.createQuery(Long.class);
+            var root = criteria.from(Person.class);
+            var treated = builder.treat(root, Manager.class);
+            criteria.select(treated.join("department").get("id"));
+            assertThat(em.createQuery(criteria).getSingleResult()).isEqualTo(1L);
+            assertThat(root.getJavaType()).isEqualTo(Person.class);
+            assertThat(treated.getJavaType()).isEqualTo(Manager.class);
+        }
+    }
+
+    @Test
     void joinedTablesLoadConcreteLeavesAndUpdateInheritedState() throws Exception { // §2.14.2
         try (var emf = factory("create table Person (id bigint primary key, name varchar(50), version int);"
                 + "create table Worker (worker_id bigint primary key references Person(id), salary int, department_id bigint);"

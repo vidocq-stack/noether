@@ -68,12 +68,16 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     private final AtomicBoolean open = new AtomicBoolean(true);
     private final Set<ResourceLocalTransaction> activeTransactions = ConcurrentHashMap.newKeySet();
     private final NamedQueries namedQueries;
+    private final Metamodel metamodel;
+    private final EntityGraphs entityGraphs;
 
     public EntityManagerFactoryImpl(UnitSettings settings, ConnectionSource connections, MappedUnit mapping) {
         this.settings = settings;
         this.connections = connections;
         this.mapping = mapping;
         this.namedQueries = new NamedQueries(mapping);
+        this.metamodel = new io.vidocq.mansart.jpa.core.model.build.RuntimeMetamodel(mapping.model(), mapping.loader());
+        this.entityGraphs = new EntityGraphs(metamodel, mapping.loader());
         this.batchSize = batchSize(settings);
     }
 
@@ -199,13 +203,13 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     @Override
     public CriteriaBuilder getCriteriaBuilder() {
         checkOpen();
-        throw NotYet.milestone("P8", "the Criteria API");
+        return new io.vidocq.mansart.jpa.core.query.CriteriaBuilderImpl(metamodel);
     }
 
     @Override
     public Metamodel getMetamodel() {
         checkOpen();
-        throw NotYet.milestone("P8", "the metamodel API");
+        return metamodel;
     }
 
     @Override
@@ -289,7 +293,7 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     @Override
     public <T> void addNamedEntityGraph(String graphName, EntityGraph<T> entityGraph) {
         checkOpen();
-        throw NotYet.milestone("P8", "entity graphs");
+        entityGraphs.add(graphName, entityGraph);
     }
 
     @Override
@@ -301,7 +305,11 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     @Override
     public <E> Map<String, EntityGraph<? extends E>> getNamedEntityGraphs(Class<E> entityType) {
         checkOpen();
-        throw NotYet.milestone("P8", "entity graphs");
+        return entityGraphs.typed(entityType);
+    }
+
+    EntityGraphs entityGraphs() {
+        return entityGraphs;
     }
 
     @Override

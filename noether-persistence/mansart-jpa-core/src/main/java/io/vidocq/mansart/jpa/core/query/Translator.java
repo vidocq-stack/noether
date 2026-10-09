@@ -67,6 +67,7 @@ import java.util.function.Function;
  * and joins it made.
  */
 final class Translator {
+    private boolean inJoinCondition;
 
     /**
      * An identification variable: the alias of its table, the FROM item it joins to, the translator that declared it;
@@ -142,7 +143,8 @@ final class Translator {
         Translator translator = new Translator(unit, bindings, null);
         String bulkEntity = statement instanceof Ast.Update update ? update.entity()
             : statement instanceof Ast.Delete delete ? delete.entity() : null;
-        if (bulkEntity != null && unit.inheritance(translator.entityNamed(bulkEntity).model().javaType()).joined()) {
+        if (bulkEntity != null && (unit.inheritance(translator.entityNamed(bulkEntity).model().javaType()).joined()
+                || translator.entityNamed(bulkEntity).statements().tables().size() > 1)) {
             return translator.joinedBulk(statement);
         }
         return switch (statement) {
@@ -494,15 +496,31 @@ final class Translator {
         }
         define(range.variable(), variable);
         for (Ast.Join join : range.joins()) {
-            Variable joined = join(join.path(), join.kind());
+            boolean entityJoin = join.path().segments().size() == 1;
+            Variable joined;
+            if (entityJoin) {
+                MappedEntity target = entityNamed(join.path().segments().getFirst());
+                String alias = alias();
+                joined = new Variable(target, alias, variable.root(), this);
+                Expression restriction = inheritanceRestriction(joined);
+                joins.get(variable.root()).add(new Query.Join(
+                    join.kind() == Ast.Join.Kind.LEFT ? Query.Join.Kind.LEFT : Query.Join.Kind.INNER,
+                    table(target), alias, restriction == null ? new Expression.Literal(true) : restriction));
+            } else joined = join(join.path(), join.kind());
             if (join.variable() != null) {
                 define(join.variable(), joined);
             }
             if (join.on() != null) {
                 List<Query.Join> list = joins.get(joined.root());
-                Query.Join last = list.getLast();
-                list.set(list.size() - 1, new Query.Join(last.kind(), last.table(), last.alias(),
-                    new Binary(last.on(), Operator.AND, condition(join.on()))));
+                int index = 0;
+                while (!list.get(index).alias().equals(joined.alias())) index++;
+                Query.Join declared = list.get(index);
+                Expression condition;
+                inJoinCondition = true;
+                try { condition = condition(join.on()); }
+                finally { inJoinCondition = false; }
+                list.set(index, new Query.Join(declared.kind(), declared.table(), declared.alias(),
+                    new Binary(declared.on(), Operator.AND, condition)));
             }
         }
     }
@@ -603,18 +621,30 @@ final class Translator {
     /** A declared join to the end of {@code path}: an entity of a relationship, or the elements of an element collection. */
     private Variable join(Ast.Path path, Ast.Join.Kind kind) {
         List<String> segments = path.segments();
+        Variable from;
+        int start=1;
         if (path.treatEntity() != null) {
-            if (path.treatAt() != segments.size() || segments.size() < 2) {
-                throw new IllegalArgumentException("A treated join must end at its treated relationship (§4.4.5)");
+            int at=path.treatAt();
+            if (at<1 || at>segments.size()) throw new IllegalArgumentException("Invalid treated join (§4.4.5)");
+            if (at==segments.size() && segments.size()>=2) {
+                return treatedJoin(segments, at, path.treatEntity(),
+                    kind == Ast.Join.Kind.LEFT ? Query.Join.Kind.LEFT : Query.Join.Kind.INNER);
             }
-            return treatedJoin(segments, path.treatAt(), path.treatEntity(),
-                kind == Ast.Join.Kind.LEFT ? Query.Join.Kind.LEFT : Query.Join.Kind.INNER);
+            if (at==1) {
+                Variable original=variable(segments.getFirst());
+                MappedEntity target=treatedType(original.type().model().javaType(),path.treatEntity());
+                from=new Variable(target,original.alias(),original.root(),original.owner());
+                Expression restriction=inheritanceRestriction(from);
+                if (restriction!=null) correlations.add(restriction);
+            } else from=treatedJoin(segments.subList(0,at),at,path.treatEntity(),Query.Join.Kind.INNER);
+            start=at;
+        } else {
+            from=variable(segments.getFirst());
         }
         if (segments.size() < 2) {
             throw new IllegalArgumentException("A join names a relationship, not " + String.join(".", segments));
         }
-        Variable from = variable(segments.getFirst());
-        for (int s = 1; s < segments.size() - 1; s++) {
+        for (int s = start; s < segments.size() - 1; s++) {
             from = navigate(from, attribute(from, segments.get(s)), Query.Join.Kind.INNER);
         }
         int attribute = attribute(from, segments.getLast());
@@ -898,6 +928,18 @@ final class Translator {
             int attribute = attribute(variable, segments.get(s));
             if (variable.type().model().attributes().get(attribute) instanceof EmbeddedAttribute) {
                 return embeddedPath(variable, attribute, segments.subList(s + 1, segments.size()));
+            }
+            if (inJoinCondition && variable.type().model().attributes().get(attribute) instanceof AssociationAttribute association
+                    && association.singleValued() && variable.type().statements().reference(attribute).isPresent()) {
+                // An ON path must not introduce a later/global inner join that removes an unmatched LEFT root.
+                String name = "_mansart_on_" + alias();
+                while (lookup(name) != null) name += "_";
+                List<String> remaining = new ArrayList<>(); remaining.add(name); remaining.addAll(segments.subList(s + 1, segments.size()));
+                var correlated = new Ast.Binary(new Ast.Path(segments.subList(0, s + 1)), Ast.Op.EQ, new Ast.Path(List.of(name)));
+                var select = new Ast.Select(false, List.of(new Ast.Item(new Ast.Path(remaining), null)),
+                    List.of(new Ast.Range(entity(association.targetEntity()).model().entityName(), null, name, List.of())),
+                    correlated, List.of(), null, List.of());
+                return value(new Ast.Subquery(select));
             }
             variable = navigate(variable, attribute, Query.Join.Kind.INNER);
         }
@@ -1256,6 +1298,11 @@ final class Translator {
     private Value value(Ast.Expr expr) {
         return switch (expr) {
             case Ast.Path path -> path(path);
+            case Ast.CollectionElements elements -> {
+                Variable joined = join(elements.path(), Ast.Join.Kind.INNER);
+                yield joined.element() == null ? entityValue(joined.alias(), joined.type()) : elementValue(joined, List.of());
+            }
+            case Ast.MapKeyPath key -> mapKeyPath(key);
             case Ast.Literal literal -> literal.value() == null || literal.value() instanceof Boolean || literal.value() instanceof Number
                 || literal.value() instanceof String ? new Scalar(new Expression.Literal(literal.value()), null,
                     literal.value() == null ? null : literal.value().getClass()) : new Constant(literal.value());
@@ -1294,7 +1341,7 @@ final class Translator {
     }
 
     /** §4.8.6: the numeric type of an arithmetic result, the widest of its operands'. */
-    private static Class<?> promote(Ast.Op op, Class<?> left, Class<?> right) {
+    static Class<?> promote(Ast.Op op, Class<?> left, Class<?> right) {
         if (left == null || right == null) {
             return left == null ? right : left;
         }
@@ -1469,6 +1516,11 @@ final class Translator {
                 bound(arguments.get(1), null).sql(), bound(arguments.get(2), null).sql())), null, String.class);
             case "EXTRACT" -> {
                 String field = (String) ((Ast.Literal) arguments.get(0)).value();
+                if (field.equals("DATE") || field.equals("TIME")) {
+                    yield new Scalar(new Expression.Cast(bound(arguments.get(1), null).sql(),
+                        field.equals("DATE") ? Expression.Cast.Type.DATE : Expression.Cast.Type.TIME), null,
+                        field.equals("DATE") ? java.time.LocalDate.class : java.time.LocalTime.class);
+                }
                 yield new Scalar(new Expression.Function(name, List.of(new Expression.Literal(field), bound(arguments.get(1), null).sql())),
                     null, field.equals("SECOND") ? Double.class : Integer.class);
             }
@@ -1521,6 +1573,30 @@ final class Translator {
             case CollectionIndex.ByPosition _ -> throw new IllegalArgumentException("KEY() does not take a list index");
             case CollectionIndex.Unsupported unsupported -> throw NotYet.milestone("P5", unsupported.feature());
         };
+    }
+
+    private Value mapKeyPath(Ast.MapKeyPath path) {
+        Ast.Path expression = new Ast.Path(List.of(path.variable()));
+        Value key = mapKey(expression);
+        if (path.attributes().isEmpty()) return key;
+        Entity entity = entityOf(key, "Navigating a map key");
+        Variable collection = variable(path.variable());
+        if (collection.owner() != this) return collection.owner().mapKeyPath(path);
+        String name = "_mansart_key_" + collection.alias();
+        Variable target = navigations.get(name);
+        if (target == null) {
+            String alias = alias();
+            target = new Variable(entity.type(), alias, collection.root(), this);
+            Expression condition = equal(entity.key(), key(alias, entity.type()));
+            Expression restriction = inheritanceRestriction(target);
+            if (restriction != null) condition = new Binary(condition, Operator.AND, restriction);
+            joins.get(collection.root()).add(new Query.Join(Query.Join.Kind.INNER, table(entity.type()), alias, condition));
+            navigations.put(name, target);
+        }
+        while (lookup(name) != null && lookup(name) != target) name += "_";
+        if (lookup(name) == null) define(name, target);
+        List<String> segments = new ArrayList<>(); segments.add(name); segments.addAll(path.attributes());
+        return path(new Ast.Path(segments));
     }
 
     private Scalar sqlFunction(String name, List<Ast.Expr> arguments, Class<?> type) {
@@ -1626,8 +1702,11 @@ final class Translator {
     /** {@code left op right}: values compared, or entities compared key part by key part (§4.6.11). */
     private Expression comparison(Ast.Binary binary) {
         Operator op = operator(binary.op());
-        Value left = binary.left() instanceof Ast.Parameter ? null : value(binary.left());
-        Value right = binary.right() instanceof Ast.Parameter ? boundValue(binary.right(), left) : value(binary.right());
+        boolean deferLeftLiteral = binary.left() instanceof Ast.Literal
+            && !(binary.right() instanceof Ast.Parameter || binary.right() instanceof Ast.Literal);
+        Value left = binary.left() instanceof Ast.Parameter || deferLeftLiteral ? null : value(binary.left());
+        Value right = binary.right() instanceof Ast.Parameter || binary.right() instanceof Ast.Literal
+            ? boundValue(binary.right(), left) : value(binary.right());
         if (left == null) {
             left = boundValue(binary.left(), right);
         }
@@ -1711,6 +1790,20 @@ final class Translator {
             }
             return new Entity(entity.type(), key, entity.binders());
         }
+        if (expr instanceof Ast.Literal literal && like instanceof Entity entity) {
+            Object instance = literal.value();
+            if (instance != null && !entity.type().model().javaType().isInstance(instance)) {
+                throw new IllegalArgumentException("Entity literal has an incompatible type");
+            }
+            Object id = instance == null ? null : entity.type().id(instance);
+            Object[] parts = id == null ? new Object[entity.key().size()] : entity.type().statements().keyValues(id);
+            List<Expression> key = new ArrayList<>();
+            for (int part = 0; part < parts.length; part++) {
+                key.add(slot(Compiled.Slot.constant(parts[part], entity.binders().get(part),
+                    parts[part] == null ? Object.class : parts[part].getClass())));
+            }
+            return new Entity(entity.type(), key, entity.binders());
+        }
 
         return bound(expr, like instanceof Scalar scalar ? scalar : null);
     }
@@ -1744,7 +1837,12 @@ final class Translator {
     /** A value as a SQL scalar: a constant bound through the binder of {@code like}. */
     private Scalar bound(Value value, Scalar like) {
         return switch (value) {
-            case Scalar scalar -> scalar;
+            case Scalar scalar -> {
+                if (scalar.sql() instanceof Expression.Literal literal && like != null && like.binder() != null
+                        && like.binder().converted())
+                    yield new Scalar(slot(Compiled.Slot.constant(literal.value(), like.binder(), like.type())), like.binder(), like.type());
+                yield scalar;
+            }
             case Constant constant -> new Scalar(slot(Compiled.Slot.constant(constant.value(), like == null ? null : like.binder(),
                 like == null ? null : like.type())), like == null ? null : like.binder(),
                 constant.value() == null ? null : constant.value().getClass());

@@ -32,4 +32,9 @@ public interface ManagedAccessProvider {
 
     /** The accesses of the managed classes of one package, embeddables included. */
     List<ManagedAccess> accesses();
+
+    /** Populates canonical fields from inside their application module, without requiring entity-package exports or opens. */
+    default java.util.Set<Class<?>> populateMetamodel(jakarta.persistence.metamodel.Metamodel metamodel) {
+        return java.util.Set.of();
+    }
 }

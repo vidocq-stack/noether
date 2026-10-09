@@ -90,17 +90,37 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     private final Map<Object, QueryParameter<?>> parameters = new LinkedHashMap<>();
     private final Map<Object, Object> values = new HashMap<>();
     private LockModeType lockMode = LockModeType.NONE;
+    private Map<Parameter<?>, Object> criteriaParameters = Map.of();
+    private List<jakarta.persistence.criteria.Selection<?>> tupleElements = List.of();
 
     /**
      * @param resultClass the type the results must have, {@code null} for an untyped {@code Query}
      * @throws IllegalArgumentException if the query is not valid, or its results are not of {@code resultClass}
      */
     public JpqlQuery(String jpql, Class<X> resultClass, FlushModeType flushMode, QueryRuntime runtime) {
+        this(jpql, Parser.parse(jpql), resultClass, flushMode, runtime);
+    }
+
+    JpqlQuery(Ast.Statement statement, Class<X> resultClass, FlushModeType flushMode, QueryRuntime runtime,
+            Set<jakarta.persistence.criteria.ParameterExpression<?>> declared,
+            List<jakarta.persistence.criteria.Selection<?>> tupleElements) {
+        this("Criteria", statement, resultClass, flushMode, runtime);
+        Map<Parameter<?>, Object> identities = new java.util.IdentityHashMap<>();
+        for (var parameter : declared) {
+            Ast.Parameter syntax = (Ast.Parameter) CriteriaExpressions.ast(parameter);
+            identities.put(parameter, key(syntax));
+            parameters.put(key(syntax), declared(syntax, parameter.getParameterType()));
+        }
+        criteriaParameters = java.util.Collections.unmodifiableMap(identities);
+        this.tupleElements = List.copyOf(tupleElements);
+    }
+
+    private JpqlQuery(String jpql, Ast.Statement statement, Class<X> resultClass, FlushModeType flushMode, QueryRuntime runtime) {
         super(flushMode, runtime::isOpen);
         this.jpql = jpql;
         this.runtime = runtime;
         this.resultClass = resultClass;
-        this.statement = Parser.parse(jpql);
+        this.statement = statement;
         Compiled compiled = Translator.translate(statement, runtime.mapping(), null, null, null);
         if (!(statement instanceof Ast.Query) && resultClass != null && resultClass != Object.class) {
             throw new IllegalArgumentException("An UPDATE or a DELETE has no results of type " + resultClass.getName() + ": " + jpql);
@@ -115,8 +135,11 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
             Class<?> parameterType = type == null ? Object.class : boxed(type);
             parameters.putIfAbsent(key, declared(slot.parameter(), parameterType));
         }
-        if (resultClass != null && resultClass != Object.class && compiled.resultType() != null
-                && !resultClass.isAssignableFrom(compiled.resultType())) {
+        if (resultClass != null && resultClass != Object.class && resultClass != jakarta.persistence.Tuple.class
+                && compiled.resultType() != null
+                && !resultClass.isAssignableFrom(compiled.resultType())
+                && !(jpql.equals("Criteria") && Number.class.isAssignableFrom(boxed(resultClass))
+                    && Number.class.isAssignableFrom(boxed(compiled.resultType())))) {
             throw new IllegalArgumentException("The query " + jpql + " gives results of type " + compiled.resultType().getName()
                 + ", not " + resultClass.getName() + " (§3.11.1)");
         }
@@ -130,6 +153,17 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     /** The type the results were asked to have, or {@code null} for an untyped query. */
     public Class<X> resultClass() {
         return resultClass;
+    }
+
+    record CriteriaDefinition(Ast.Statement statement, Set<jakarta.persistence.criteria.ParameterExpression<?>> parameters,
+            List<jakarta.persistence.criteria.Selection<?>> selections) {}
+
+    CriteriaDefinition criteriaDefinition() {
+        if (!jpql.equals("Criteria")) return null;
+        Set<jakarta.persistence.criteria.ParameterExpression<?>> declared = new LinkedHashSet<>();
+        for (Parameter<?> parameter : criteriaParameters.keySet())
+            declared.add((jakarta.persistence.criteria.ParameterExpression<?>) parameter);
+        return new CriteriaDefinition(statement, Set.copyOf(declared), tupleElements);
     }
 
     /** The Java type of the results of {@code jpql}, or {@code null} if it cannot be told (it is not a valid select). */
@@ -303,7 +337,16 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         // entities found, and results constructed, once the rows are read: the loader runs statements of its own
         List<Object> resultList = new ArrayList<>(rows.size());
         for (Object row : rows) {
-            resultList.add(resolve(row, connection));
+            Object resolved = resolve(row, connection);
+            if (!tupleElements.isEmpty()) {
+                if (resolved instanceof Object[] array && array.length == tupleElements.size()) {
+                    for (int i = 0; i < array.length; i++) array[i] = convert(array[i], boxed(tupleElements.get(i).getJavaType()));
+                } else if (tupleElements.size() == 1) {
+                    resolved = convert(resolved, boxed(tupleElements.getFirst().getJavaType()));
+                }
+            }
+            resultList.add(resultClass == jakarta.persistence.Tuple.class
+                ? new CriteriaTuple(resolved instanceof Object[] array ? array : new Object[]{resolved}, tupleElements) : resolved);
         }
         if (lockMode != LockModeType.NONE) {
             resultList.forEach(this::lockEntities);
@@ -556,7 +599,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     /** Binds {@code value}, which must be of the type of the parameter, or a collection of it for {@code IN}. */
     private void set(Object key, Object value) {
         QueryParameter<?> parameter = parameter(key);
-        Class<?> type = parameter.type();
+        Class<?> type = boxed(parameter.type());
         if (value != null && type != Object.class && !(value instanceof Collection<?>) && !type.isInstance(value)
                 && !(value instanceof Number && Number.class.isAssignableFrom(type)) && !(temporal(value) && temporal(type))) {
             throw new IllegalArgumentException("The parameter " + describe(parameter) + " is a " + type.getName() + ", not a "
@@ -585,21 +628,21 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         if (param == null) {
             throw new IllegalArgumentException("The parameter cannot be null");
         }
-        set(param.getName() != null ? param.getName() : (Object) param.getPosition(), value);
+        set(parameterKey(param), value);
         return this;
     }
 
     @Override
     public TypedQuery<X> setParameter(Parameter<Calendar> param, Calendar value, TemporalType temporalType) {
         checkOpen();
-        set(param.getName() != null ? param.getName() : (Object) param.getPosition(), temporal(value, temporalType));
+        set(parameterKey(param), temporal(value, temporalType));
         return this;
     }
 
     @Override
     public TypedQuery<X> setParameter(Parameter<Date> param, Date value, TemporalType temporalType) {
         checkOpen();
-        set(param.getName() != null ? param.getName() : (Object) param.getPosition(), temporal(value, temporalType));
+        set(parameterKey(param), temporal(value, temporalType));
         return this;
     }
 
@@ -647,13 +690,15 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     @Override
     public Set<Parameter<?>> getParameters() {
         checkOpen();
+        if (!criteriaParameters.isEmpty()) return new LinkedHashSet<>(criteriaParameters.keySet());
         return Collections.unmodifiableSet(new LinkedHashSet<>(parameters.values()));
     }
 
     @Override
     public Parameter<?> getParameter(String name) {
         checkOpen();
-        return parameter(name);
+        QueryParameter<?> declared = parameter(name);
+        return criteriaParameters.keySet().stream().filter(p -> name.equals(p.getName())).findFirst().orElse(declared);
     }
 
     @Override
@@ -661,15 +706,16 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     public <T> Parameter<T> getParameter(String name, Class<T> type) {
         checkOpen();
         QueryParameter<?> parameter = parameter(name);
-        if (!type.isAssignableFrom(parameter.type())) {
+        if (!boxed(type).isAssignableFrom(boxed(parameter.type()))) {
             throw new IllegalArgumentException("The parameter :" + name + " is a " + parameter.type().getName());
         }
-        return (Parameter<T>) parameter;
+        return (Parameter<T>) getParameter(name);
     }
 
     @Override
     public Parameter<?> getParameter(int position) {
         checkOpen();
+        if (!criteriaParameters.isEmpty()) throw new IllegalArgumentException("Criteria parameters have no positional index");
         return parameter(position);
     }
 
@@ -677,8 +723,9 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     @SuppressWarnings("unchecked")
     public <T> Parameter<T> getParameter(int position, Class<T> type) {
         checkOpen();
+        if (!criteriaParameters.isEmpty()) throw new IllegalArgumentException("Criteria parameters have no positional index");
         QueryParameter<?> parameter = parameter(position);
-        if (!type.isAssignableFrom(parameter.type())) {
+        if (!boxed(type).isAssignableFrom(boxed(parameter.type()))) {
             throw new IllegalArgumentException("The parameter ?" + position + " is a " + parameter.type().getName());
         }
         return (Parameter<T>) parameter;
@@ -687,20 +734,29 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     @Override
     public boolean isBound(Parameter<?> param) {
         checkOpen();
-        return param != null && values.containsKey(param.getName() != null ? param.getName() : param.getPosition());
+        return param != null && values.containsKey(parameterKey(param));
     }
 
     @Override
     @SuppressWarnings("unchecked")
     public <T> T getParameterValue(Parameter<T> param) {
         checkOpen();
-        return (T) value(param.getName() != null ? param.getName() : (Object) param.getPosition());
+        return (T) value(parameterKey(param));
     }
 
     @Override
     public Object getParameterValue(String name) {
         checkOpen();
         return value(name);
+    }
+
+    private Object parameterKey(Parameter<?> parameter) {
+        if (!criteriaParameters.isEmpty()) {
+            Object identity = criteriaParameters.get(parameter);
+            if (identity == null) throw new IllegalArgumentException("Parameter does not belong to this criteria query");
+            return identity;
+        }
+        return parameter.getName() != null ? parameter.getName() : parameter.getPosition();
     }
 
     @Override
@@ -740,6 +796,8 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         switch (hintName) {
             case "jakarta.persistence.query.timeout" -> timeout(milliseconds(hintName, value));
             case "jakarta.persistence.lock.timeout" -> lockTimeout = milliseconds(hintName, value);
+            case "jakarta.persistence.fetchgraph", "jakarta.persistence.loadgraph" ->
+                runtime.validateGraph(value, resultClass != null && runtime.mapping().entity(resultClass).isPresent() ? resultClass : null);
             default -> {
             }
         }

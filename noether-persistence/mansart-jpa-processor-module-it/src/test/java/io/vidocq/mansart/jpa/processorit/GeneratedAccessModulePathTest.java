@@ -44,6 +44,10 @@ class GeneratedAccessModulePathTest {
             .managedClass(Account.class).managedClass(PremiumAccount.class)
             .property(PersistenceConfiguration.JDBC_URL, url).property(PersistenceConfiguration.JDBC_USER, "sa");
         try (var emf = unit.createEntityManagerFactory(); var em = emf.createEntityManager()) {
+            assertThat(io.vidocq.mansart.jpa.processorit.closed.Account_.id)
+                .isSameAs(emf.getMetamodel().entity(Account.class).getId(long.class));
+            assertThat(io.vidocq.mansart.jpa.processorit.closed.PremiumAccount_.points)
+                .isSameAs(emf.getMetamodel().entity(PremiumAccount.class).getAttribute("points"));
             em.getTransaction().begin();
             em.persist(new PremiumAccount(1, "owner", 100));
             em.getTransaction().commit();
@@ -71,6 +75,7 @@ class GeneratedAccessModulePathTest {
             .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:processor-it");
         try (EntityManagerFactory emf = unit.createEntityManagerFactory()) {
             assertThat(emf.isOpen()).isTrue();
+            assertThat(io.vidocq.mansart.jpa.processorit.closed.Ledger_.class_).isSameAs(emf.getMetamodel().entity(Ledger.class));
         }
     }
 }

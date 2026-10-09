@@ -100,6 +100,7 @@ public final class ValueBinders {
      */
     @SuppressWarnings({"rawtypes", "unchecked"})
     private record Converted(AttributeConverter converter, ValueBinder column) implements ValueBinder {
+        @Override public boolean converted() { return true; }
         @Override
         public void bind(Dialect dialect, PreparedStatement statement, int index, Object value) throws SQLException {
             Object converted;
