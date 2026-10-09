@@ -191,6 +191,17 @@ class JpqlQueryTest {
     }
 
     @Test
+    void aQueryOfAClosedEntityManagerRefusesEverything() { // §3.11, PERSISTENCE:SPEC:608
+        var query = em.createQuery("SELECT e FROM Emp e WHERE e.name = :n");
+        var nativeQuery = em.createNativeQuery("DELETE FROM Emp");
+        em.close();
+        assertThatThrownBy(query::getFirstResult).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> query.setParameter("n", "x")).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(query::getResultList).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(nativeQuery::getMaxResults).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
     void mistakesAreFoundWhenTheQueryIsCreated() { // §3.11: IllegalArgumentException from createQuery
         assertThatThrownBy(() -> em.createQuery("SELECT x FROM Nothing x")).isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("Nothing");

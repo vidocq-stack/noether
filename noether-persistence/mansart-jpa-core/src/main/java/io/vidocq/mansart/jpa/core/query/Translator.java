@@ -37,7 +37,9 @@ import io.vidocq.mansart.jpa.dialect.sql.Expression;
 import io.vidocq.mansart.jpa.dialect.sql.Expression.Binary;
 import io.vidocq.mansart.jpa.dialect.sql.Expression.Operator;
 import io.vidocq.mansart.jpa.dialect.sql.Identifier;
+import io.vidocq.mansart.jpa.dialect.sql.DeleteQuery;
 import io.vidocq.mansart.jpa.dialect.sql.Query;
+import io.vidocq.mansart.jpa.dialect.sql.UpdateQuery;
 import io.vidocq.mansart.jpa.dialect.sql.Table;
 import java.lang.invoke.MethodType;
 import java.math.BigDecimal;
@@ -116,17 +118,98 @@ final class Translator {
      * Translates {@code select}. Without {@code bindings} (at {@code createQuery}) a collection-valued parameter counts
      * one element: the translation checks the query; with them, it is the one executed.
      */
-    static Compiled translate(Ast.Select select, MappedUnit unit, Function<Ast.Parameter, Object> bindings, Integer offset,
+    static Compiled translate(Ast.Statement statement, MappedUnit unit, Function<Ast.Parameter, Object> bindings, Integer offset,
             Integer limit) {
         Translator translator = new Translator(unit, bindings, null);
-        List<Compiled.Item> items = new ArrayList<>();
-        Query sql = translator.query(select, offset, limit, items);
-        Class<?> resultType = items.size() > 1 ? Object[].class : type(items.getFirst());
-        List<Compiled.Slot> slots = new ArrayList<>();
-        for (Expression.Parameter parameter : sql.parameters()) {
-            slots.add((Compiled.Slot) parameter.slot());
+        return switch (statement) {
+            case Ast.Select select -> {
+                List<Compiled.Item> items = new ArrayList<>();
+                Query sql = translator.query(select, offset, limit, items);
+                Class<?> resultType = items.size() > 1 ? Object[].class : type(items.getFirst());
+                yield new Compiled(sql, List.copyOf(items), resultType == null ? null : boxed(resultType), slots(sql.parameters()));
+            }
+            case Ast.Update update -> {
+                UpdateQuery sql = translator.update(update);
+                yield new Compiled(sql, List.of(), null, slots(sql.parameters()));
+            }
+            case Ast.Delete delete -> {
+                DeleteQuery sql = translator.delete(delete);
+                yield new Compiled(sql, List.of(), null, slots(sql.parameters()));
+            }
+        };
+    }
+
+    private static List<Compiled.Slot> slots(List<Expression.Parameter> parameters) {
+        return parameters.stream().map(p -> (Compiled.Slot) p.slot()).toList();
+    }
+
+    // ---- bulk statements (§4.10) --------------------------------------------------------------------------
+
+    private UpdateQuery update(Ast.Update update) {
+        Variable variable = bulkVariable(update.entity(), update.variable());
+        List<UpdateQuery.Assignment> assignments = new ArrayList<>();
+        for (Ast.Assignment assignment : update.assignments()) {
+            List<String> segments = assignment.path().segments();
+            List<String> attribute = lookup(segments.getFirst()) == variable ? segments.subList(1, segments.size()) : segments;
+            if (attribute.isEmpty()) {
+                throw new IllegalArgumentException("SET assigns an attribute, not the variable " + segments.getFirst() + " (§4.10)");
+            }
+            int index = attribute(variable, attribute.getFirst());
+            AttributeModel model = variable.type().model().attributes().get(index);
+            if (model instanceof AssociationAttribute association && association.singleValued()) {
+                var reference = variable.type().statements().reference(index).orElseThrow(() -> new IllegalArgumentException(
+                    "SET assigns " + association.name() + ", which this side of the relationship does not own (§4.10)"));
+                EntityStatements statements = variable.type().statements();
+                Entity like = new Entity(entity(association.targetEntity()), columns(variable.alias(), statements,
+                    reference.columns()), binders(statements, reference.columns()));
+                List<Expression> values = assignment.value() instanceof Ast.Literal(Object v) && v == null ? null
+                    : sql(assignment.value() instanceof Ast.Parameter ? boundValue(assignment.value(), like) : value(assignment.value()));
+                for (int k = 0; k < reference.columns().length; k++) {
+                    assignments.add(new UpdateQuery.Assignment(statements.columns().get(reference.columns()[k]).name(),
+                        values == null ? new Expression.Literal(null) : values.get(k)));
+                }
+                continue;
+            }
+            Scalar target = scalar(attribute.size() > 1 ? embeddedPath(variable, index, attribute.subList(1, attribute.size()))
+                : model instanceof BasicAttribute basic ? basicValue(variable, index, basic) : null);
+            Identifier column = ((Expression.Column) target.sql()).name();
+            assignments.add(new UpdateQuery.Assignment(column, bound(assignment.value(), target).sql()));
         }
-        return new Compiled(sql, List.copyOf(items), resultType == null ? null : boxed(resultType), slots);
+        Expression where = update.where() == null ? null : condition(update.where());
+        requireSingleTable();
+        return new UpdateQuery(roots.getFirst(), variable.alias(), assignments, where);
+    }
+
+    private DeleteQuery delete(Ast.Delete delete) {
+        Variable variable = bulkVariable(delete.entity(), delete.variable());
+        Expression where = delete.where() == null ? null : condition(delete.where());
+        requireSingleTable();
+        return new DeleteQuery(roots.getFirst(), variable.alias(), where);
+    }
+
+    private Variable bulkVariable(String entity, String name) {
+        MappedEntity type = entityNamed(entity);
+        if (type.statements().tables().size() > 1) {
+            throw NotYet.milestone("P7", "bulk statements on an entity with secondary tables");
+        }
+        Variable variable = root(table(type), type, null);
+        define(name, variable);
+        return variable;
+    }
+
+    /** A bulk statement works on one table: a path that would need a join is not translated (§4.10). */
+    private void requireSingleTable() {
+        if (!joins.getFirst().isEmpty()) {
+            throw NotYet.milestone("P7", "bulk statements whose paths navigate relationships");
+        }
+    }
+
+    /** {@code segments} after the name of the implicit identification variable. */
+    private static List<String> implicit(List<String> segments) {
+        List<String> path = new ArrayList<>();
+        path.add(Ast.IMPLICIT_VARIABLE);
+        path.addAll(segments);
+        return path;
     }
 
     private static Class<?> type(Compiled.Item item) {
@@ -475,6 +558,15 @@ final class Translator {
         List<String> segments = path.segments();
         String head = segments.getFirst().toLowerCase(Locale.ROOT);
         Variable variable = lookup(segments.getFirst());
+        if (variable == null && !resultVariables.containsKey(head) && lookup(Ast.IMPLICIT_VARIABLE) != null
+                && (segments.size() > 1 || enumConstant(segments) == null)) {
+            // 3.2: the attributes of the implicit identification variable, named without it
+            Variable implicit = lookup(Ast.IMPLICIT_VARIABLE);
+            if (implicit.type() != null && indexOf(implicit.type().model().attributes(), segments.getFirst()) >= 0) {
+                variable = implicit;
+                segments = implicit(segments);
+            }
+        }
         if (variable == null) {
             if (segments.size() == 1 && resultVariables.containsKey(head)) {
                 return resultVariables.get(head);
@@ -501,10 +593,7 @@ final class Translator {
         int attribute = attribute(variable, segments.getLast());
         AttributeModel model = variable.type().model().attributes().get(attribute);
         return switch (model) {
-            case BasicAttribute basic -> {
-                Scalar derived = derivedIdColumn(variable, attribute, List.of());
-                yield derived != null ? derived : column(variable, attribute, new int[0], basic.javaType());
-            }
+            case BasicAttribute basic -> basicValue(variable, attribute, basic);
             case AssociationAttribute association when association.singleValued() -> {
                 var owned = variable.type().statements().reference(attribute);
                 if (owned.isPresent() && !selecting) { // compared and tested by its foreign key, without a join
@@ -519,6 +608,12 @@ final class Translator {
             default -> throw new IllegalArgumentException("The path " + String.join(".", segments) + " ends at a collection; it is "
                 + "joined, or used with IS EMPTY, MEMBER OF or SIZE (§4.4.4)");
         };
+    }
+
+    /** The column of a basic attribute, or of the foreign key that holds it when an {@code @MapsId} maps it. */
+    private Scalar basicValue(Variable variable, int attribute, BasicAttribute basic) {
+        Scalar derived = derivedIdColumn(variable, attribute, List.of());
+        return derived != null ? derived : column(variable, attribute, new int[0], basic.javaType());
     }
 
     /** The dotted name of an enum constant (§4.6.1), or {@code null}. */

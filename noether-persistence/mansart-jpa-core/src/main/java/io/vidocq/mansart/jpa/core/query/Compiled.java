@@ -22,17 +22,18 @@ package io.vidocq.mansart.jpa.core.query;
 import io.vidocq.mansart.jpa.core.jdbc.type.ValueBinder;
 import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
 import io.vidocq.mansart.jpa.core.query.jpql.Ast;
-import io.vidocq.mansart.jpa.dialect.sql.Query;
+import io.vidocq.mansart.jpa.dialect.sql.Statement;
 import java.util.List;
 
 /**
- * A query translated to SQL: the statement, what each of its parameters binds, and how each select item is read back.
+ * A statement translated to SQL — a select, a bulk update or delete — what each of its parameters binds, and how each
+ * select item is read back (none for a bulk statement).
  *
  * @param resultType the Java type of a single select item, {@code null} when it cannot be told; {@code Object[]} for
  *        several
  * @param slots what the parameters of {@code sql} bind, in their order
  */
-record Compiled(Query sql, List<Item> items, Class<?> resultType, List<Slot> slots) {
+record Compiled(Statement sql, List<Item> items, Class<?> resultType, List<Slot> slots) {
 
     /**
      * What a SQL parameter binds: the query parameter, the element of a collection-valued one ({@code element} ≥ 0,

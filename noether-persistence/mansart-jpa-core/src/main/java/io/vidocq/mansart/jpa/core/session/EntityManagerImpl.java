@@ -763,6 +763,39 @@ final class EntityManagerImpl implements EntityManager {
         }
 
         @Override
+        public <T> T write(FlushModeType queryFlushMode, Function<Connection, T> work) {
+            checkOpen();
+            if (!transaction.isActive()) {
+                throw failed(new TransactionRequiredException("executeUpdate() needs an active transaction (§3.11.6)"));
+            }
+            try {
+                return transaction.onConnection(connection -> {
+                    if (queryFlushMode != FlushModeType.COMMIT) {
+                        flush(connection);
+                    }
+                    return work.apply(connection);
+                });
+            } catch (RuntimeException e) {
+                throw failed(e);
+            }
+        }
+
+        @Override
+        public boolean isOpen() {
+            return !closed;
+        }
+
+        @Override
+        public boolean inTransaction() {
+            return transaction.isActive();
+        }
+
+        @Override
+        public void locked(Object entity, LockModeType mode) {
+            context.entry(entity).ifPresent(entry -> context.lock(entry, mode));
+        }
+
+        @Override
         public Dialect dialect(Connection connection) {
             return factory.flushEngine(connection).dialect();
         }
@@ -777,7 +810,16 @@ final class EntityManagerImpl implements EntityManager {
     @Override
     public <T> TypedQuery<T> createQuery(TypedQueryReference<T> reference) {
         checkOpen();
-        throw failed(NotYet.milestone("P7", "named queries"));
+        TypedQuery<T> query = createNamedQuery(reference.getName(), resultType(reference));
+        if (reference.getHints() != null) {
+            reference.getHints().forEach(query::setHint);
+        }
+        return query;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> Class<T> resultType(TypedQueryReference<T> reference) {
+        return (Class<T>) reference.getResultType();
     }
 
     @Override
@@ -807,20 +849,28 @@ final class EntityManagerImpl implements EntityManager {
     @Override
     public Query createNamedQuery(String name) {
         checkOpen();
-        throw failed(NotYet.milestone("P7", "named queries"));
+        try {
+            return factory.namedQueries().create(name, null, flushMode, queries, this::executeNativeUpdate).query();
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
     }
 
     @Override
     public <T> TypedQuery<T> createNamedQuery(String name, Class<T> resultClass) {
         checkOpen();
-        throw failed(NotYet.milestone("P7", "named queries"));
+        try {
+            return factory.namedQueries().create(name, resultClass, flushMode, queries, this::executeNativeUpdate).jpql();
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
     }
 
     @Override
     public Query createNativeQuery(String sqlString) {
         checkOpen();
         try {
-            return new NativeQuery(sqlString, flushMode, this::executeNativeUpdate);
+            return new NativeQuery(sqlString, flushMode, this::executeNativeUpdate, () -> !closed);
         } catch (RuntimeException e) {
             throw failed(e);
         }
@@ -830,7 +880,7 @@ final class EntityManagerImpl implements EntityManager {
     public <T> Query createNativeQuery(String sqlString, Class<T> resultClass) {
         checkOpen();
         try {
-            return new NativeQuery(sqlString, flushMode, this::executeNativeUpdate);
+            return new NativeQuery(sqlString, flushMode, this::executeNativeUpdate, () -> !closed);
         } catch (RuntimeException e) {
             throw failed(e);
         }
@@ -840,7 +890,7 @@ final class EntityManagerImpl implements EntityManager {
     public Query createNativeQuery(String sqlString, String resultSetMapping) {
         checkOpen();
         try {
-            return new NativeQuery(sqlString, flushMode, this::executeNativeUpdate);
+            return new NativeQuery(sqlString, flushMode, this::executeNativeUpdate, () -> !closed);
         } catch (RuntimeException e) {
             throw failed(e);
         }

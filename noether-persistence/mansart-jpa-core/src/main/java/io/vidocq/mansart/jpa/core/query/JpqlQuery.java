@@ -83,8 +83,10 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     }
 
     private final String jpql;
-    private final Ast.Select select;
+    private final Ast.Statement statement;
+    private final Class<X> resultClass;
     private final QueryRuntime runtime;
+    private Integer lockTimeout;
     private final Map<Object, QueryParameter<?>> parameters = new LinkedHashMap<>();
     private final Map<Object, Object> values = new HashMap<>();
     private LockModeType lockMode = LockModeType.NONE;
@@ -94,14 +96,15 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
      * @throws IllegalArgumentException if the query is not valid, or its results are not of {@code resultClass}
      */
     public JpqlQuery(String jpql, Class<X> resultClass, FlushModeType flushMode, QueryRuntime runtime) {
-        super(flushMode);
+        super(flushMode, runtime::isOpen);
         this.jpql = jpql;
         this.runtime = runtime;
-        if (!(Parser.parse(jpql) instanceof Ast.Select statement)) {
-            throw NotYet.milestone("P7", "bulk updates and deletes");
+        this.resultClass = resultClass;
+        this.statement = Parser.parse(jpql);
+        Compiled compiled = Translator.translate(statement, runtime.mapping(), null, null, null);
+        if (!(statement instanceof Ast.Select) && resultClass != null && resultClass != Object.class) {
+            throw new IllegalArgumentException("An UPDATE or a DELETE has no results of type " + resultClass.getName() + ": " + jpql);
         }
-        this.select = statement;
-        Compiled compiled = Translator.translate(select, runtime.mapping(), null, null, null);
         for (Compiled.Slot slot : compiled.slots()) {
             if (slot.literal()) {
                 continue;
@@ -118,6 +121,25 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         }
     }
 
+    /** The query as the application wrote it. */
+    public String queryString() {
+        return jpql;
+    }
+
+    /** The type the results were asked to have, or {@code null} for an untyped query. */
+    public Class<X> resultClass() {
+        return resultClass;
+    }
+
+    /** The Java type of the results of {@code jpql}, or {@code null} if it cannot be told (it is not a valid select). */
+    static Class<?> resultType(String jpql, io.vidocq.mansart.jpa.core.mapping.MappedUnit unit) {
+        try {
+            return Parser.parse(jpql) instanceof Ast.Select select ? Translator.translate(select, unit, null, null, null).resultType() : null;
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
     private static <T> QueryParameter<T> declared(Ast.Parameter parameter, Class<T> type) {
         return new QueryParameter<>(parameter.name(), parameter.name() == null ? parameter.position() : null, type);
     }
@@ -130,16 +152,19 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
 
     @Override
     public List<X> getResultList() {
+        checkOpen();
         return run(getMaxResults());
     }
 
     @Override
     public Stream<X> getResultStream() {
+        checkOpen();
         return getResultList().stream();
     }
 
     @Override
     public X getSingleResult() {
+        checkOpen();
         List<X> results = run(Math.min(getMaxResults(), 2));
         if (results.isEmpty()) {
             throw new NoResultException("The query found no result: " + jpql);
@@ -152,6 +177,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
 
     @Override
     public X getSingleResultOrNull() {
+        checkOpen();
         List<X> results = run(Math.min(getMaxResults(), 2));
         if (results.size() > 1) {
             throw new NonUniqueResultException("The query found several results: " + jpql);
@@ -159,35 +185,72 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         return results.isEmpty() ? null : results.getFirst();
     }
 
+    /** §4.10: runs a bulk update or delete in the transaction, and returns the rows it changed. */
     @Override
     public int executeUpdate() {
-        throw new IllegalStateException("executeUpdate() runs an UPDATE or a DELETE, not a SELECT (§3.11): " + jpql);
+        checkOpen();
+        if (statement instanceof Ast.Select) {
+            throw new IllegalStateException("executeUpdate() runs an UPDATE or a DELETE, not a SELECT (§3.11): " + jpql);
+        }
+        checkBound();
+        Compiled compiled = Translator.translate(statement, runtime.mapping(), p -> values.get(key(p)), null, null);
+        return runtime.write(getFlushMode(), connection -> {
+            Dialect dialect = runtime.dialect(connection);
+            Dialect.Rendered rendered = dialect.renderQuery(compiled.sql());
+            try (PreparedStatement update = connection.prepareStatement(rendered.sql())) {
+                for (int i = 0; i < rendered.parameters().size(); i++) {
+                    bind(dialect, update, i + 1, (Compiled.Slot) rendered.parameters().get(i).slot());
+                }
+                if (getTimeout() != null) {
+                    update.setQueryTimeout(Math.max(1, (getTimeout() + 999) / 1000));
+                }
+                return update.executeUpdate();
+            } catch (SQLException e) {
+                throw new PersistenceException("The bulk statement failed: " + e.getMessage() + " — " + jpql, e);
+            }
+        });
     }
 
-    /** Runs the query for at most {@code maxResults} results. */
-    @SuppressWarnings("unchecked")
-    private List<X> run(int maxResults) {
+    private void checkBound() {
         for (Map.Entry<Object, QueryParameter<?>> parameter : parameters.entrySet()) {
             if (!values.containsKey(parameter.getKey())) {
                 throw new IllegalStateException("The parameter " + describe(parameter.getValue()) + " of the query is not bound: " + jpql);
             }
         }
-        if (lockMode != LockModeType.NONE) {
-            throw NotYet.milestone("P7", "lock modes on queries");
+    }
+
+    /** Runs the query for at most {@code maxResults} results. */
+    @SuppressWarnings("unchecked")
+    private List<X> run(int maxResults) {
+        if (!(statement instanceof Ast.Select)) {
+            throw new IllegalStateException("An UPDATE or a DELETE has no results: run it with executeUpdate() (§3.11): " + jpql);
+        }
+        checkBound();
+        if (lockMode != LockModeType.NONE && !runtime.inTransaction()) {
+            throw new jakarta.persistence.TransactionRequiredException("A query with the lock mode " + lockMode
+                + " runs in a transaction (§3.11)");
         }
         if (maxResults == 0) {
             return new ArrayList<>();
         }
-        Compiled compiled = Translator.translate(select, runtime.mapping(), p -> values.get(key(p)),
+        Compiled compiled = Translator.translate(statement, runtime.mapping(), p -> values.get(key(p)),
             getFirstResult() > 0 ? getFirstResult() : null, maxResults < Integer.MAX_VALUE ? maxResults : null);
         return (List<X>) runtime.read(getFlushMode(), connection -> execute(compiled, connection));
     }
 
     private List<Object> execute(Compiled compiled, Connection connection) {
         Dialect dialect = runtime.dialect(connection);
-        Dialect.Rendered rendered = dialect.renderQuery(compiled.sql());
+        boolean pessimistic = io.vidocq.mansart.jpa.core.flush.Locks.pessimistic(lockMode);
+        io.vidocq.mansart.jpa.dialect.sql.Statement sql = compiled.sql();
+        if (pessimistic && sql instanceof io.vidocq.mansart.jpa.dialect.sql.Query query) { // §3.5.6: the rows it reads
+            sql = query.locked(io.vidocq.mansart.jpa.core.flush.Locks.rowLock(lockMode), lockTimeout != null && lockTimeout == 0);
+        }
+        Dialect.Rendered rendered = dialect.renderQuery(sql);
         List<Object> rows = new ArrayList<>();
         try (PreparedStatement statement = connection.prepareStatement(rendered.sql())) {
+            if (pessimistic) {
+                io.vidocq.mansart.jpa.core.flush.Locks.timeout(dialect, lockTimeout, connection);
+            }
             List<io.vidocq.mansart.jpa.dialect.sql.Expression.Parameter> parameters = rendered.parameters();
             for (int i = 0; i < parameters.size(); i++) {
                 bind(dialect, statement, i + 1, (Compiled.Slot) parameters.get(i).slot());
@@ -207,6 +270,9 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
                 }
             }
         } catch (SQLException e) {
+            if (pessimistic) {
+                throw io.vidocq.mansart.jpa.core.flush.Locks.failure(dialect, e, null);
+            }
             throw new PersistenceException("The query failed: " + e.getMessage() + " — " + jpql, e);
         }
         // entities found, and results constructed, once the rows are read: the loader runs statements of its own
@@ -214,7 +280,21 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         for (Object row : rows) {
             resultList.add(resolve(row, connection));
         }
+        if (lockMode != LockModeType.NONE) {
+            resultList.forEach(this::lockEntities);
+        }
         return resultList;
+    }
+
+    /** §3.5: the entities of a result hold the lock mode of the query. */
+    private void lockEntities(Object result) {
+        if (result instanceof Object[] row) {
+            for (Object value : row) {
+                lockEntities(value);
+            }
+        } else if (result != null && runtime.mapping().entity(result.getClass()).isPresent()) {
+            runtime.locked(result, lockMode);
+        }
     }
 
     /** The identity of an entity read in a row, found once the rows are read. */
@@ -415,18 +495,21 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
 
     @Override
     public TypedQuery<X> setParameter(String name, Object value) {
+        checkOpen();
         set(name, value);
         return this;
     }
 
     @Override
     public TypedQuery<X> setParameter(int position, Object value) {
+        checkOpen();
         set(position, value);
         return this;
     }
 
     @Override
     public <T> TypedQuery<X> setParameter(Parameter<T> param, T value) {
+        checkOpen();
         if (param == null) {
             throw new IllegalArgumentException("The parameter cannot be null");
         }
@@ -436,36 +519,42 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
 
     @Override
     public TypedQuery<X> setParameter(Parameter<Calendar> param, Calendar value, TemporalType temporalType) {
+        checkOpen();
         set(param.getName() != null ? param.getName() : (Object) param.getPosition(), temporal(value, temporalType));
         return this;
     }
 
     @Override
     public TypedQuery<X> setParameter(Parameter<Date> param, Date value, TemporalType temporalType) {
+        checkOpen();
         set(param.getName() != null ? param.getName() : (Object) param.getPosition(), temporal(value, temporalType));
         return this;
     }
 
     @Override
     public TypedQuery<X> setParameter(String name, Calendar value, TemporalType temporalType) {
+        checkOpen();
         set(name, temporal(value, temporalType));
         return this;
     }
 
     @Override
     public TypedQuery<X> setParameter(String name, Date value, TemporalType temporalType) {
+        checkOpen();
         set(name, temporal(value, temporalType));
         return this;
     }
 
     @Override
     public TypedQuery<X> setParameter(int position, Calendar value, TemporalType temporalType) {
+        checkOpen();
         set(position, temporal(value, temporalType));
         return this;
     }
 
     @Override
     public TypedQuery<X> setParameter(int position, Date value, TemporalType temporalType) {
+        checkOpen();
         set(position, temporal(value, temporalType));
         return this;
     }
@@ -485,17 +574,20 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
 
     @Override
     public Set<Parameter<?>> getParameters() {
+        checkOpen();
         return Collections.unmodifiableSet(new LinkedHashSet<>(parameters.values()));
     }
 
     @Override
     public Parameter<?> getParameter(String name) {
+        checkOpen();
         return parameter(name);
     }
 
     @Override
     @SuppressWarnings("unchecked")
     public <T> Parameter<T> getParameter(String name, Class<T> type) {
+        checkOpen();
         QueryParameter<?> parameter = parameter(name);
         if (!type.isAssignableFrom(parameter.type())) {
             throw new IllegalArgumentException("The parameter :" + name + " is a " + parameter.type().getName());
@@ -505,12 +597,14 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
 
     @Override
     public Parameter<?> getParameter(int position) {
+        checkOpen();
         return parameter(position);
     }
 
     @Override
     @SuppressWarnings("unchecked")
     public <T> Parameter<T> getParameter(int position, Class<T> type) {
+        checkOpen();
         QueryParameter<?> parameter = parameter(position);
         if (!type.isAssignableFrom(parameter.type())) {
             throw new IllegalArgumentException("The parameter ?" + position + " is a " + parameter.type().getName());
@@ -520,22 +614,26 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
 
     @Override
     public boolean isBound(Parameter<?> param) {
+        checkOpen();
         return param != null && values.containsKey(param.getName() != null ? param.getName() : param.getPosition());
     }
 
     @Override
     @SuppressWarnings("unchecked")
     public <T> T getParameterValue(Parameter<T> param) {
+        checkOpen();
         return (T) value(param.getName() != null ? param.getName() : (Object) param.getPosition());
     }
 
     @Override
     public Object getParameterValue(String name) {
+        checkOpen();
         return value(name);
     }
 
     @Override
     public Object getParameterValue(int position) {
+        checkOpen();
         return value(position);
     }
 
@@ -551,53 +649,84 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
 
     @Override
     public TypedQuery<X> setMaxResults(int maxResult) {
+        checkOpen();
         maxResults(maxResult);
         return this;
     }
 
     @Override
     public TypedQuery<X> setFirstResult(int startPosition) {
+        checkOpen();
         firstResult(startPosition);
         return this;
     }
 
+    /** The standard hints (§3.11.? 3.2: §3.12): query and lock timeouts, in milliseconds; others are kept as given. */
     @Override
     public TypedQuery<X> setHint(String hintName, Object value) {
+        checkOpen();
+        switch (hintName) {
+            case "jakarta.persistence.query.timeout" -> timeout(milliseconds(hintName, value));
+            case "jakarta.persistence.lock.timeout" -> lockTimeout = milliseconds(hintName, value);
+            default -> {
+            }
+        }
         hint(hintName, value);
         return this;
     }
 
+    private static Integer milliseconds(String hint, Object value) {
+        try {
+            return value == null ? null : value instanceof Number number ? number.intValue() : Integer.valueOf(value.toString().trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("The hint " + hint + " is a number of milliseconds, not " + value, e);
+        }
+    }
+
     @Override
     public TypedQuery<X> setFlushMode(FlushModeType flushMode) {
+        checkOpen();
         flushMode(flushMode);
         return this;
     }
 
+    /** §3.11: for a select only — an UPDATE or a DELETE takes no lock mode (IllegalStateException). */
     @Override
     public TypedQuery<X> setLockMode(LockModeType lockMode) {
-        this.lockMode = lockMode;
+        checkOpen();
+        if (!(statement instanceof Ast.Select)) {
+            throw new IllegalStateException("A lock mode is for a SELECT, not an UPDATE or a DELETE: " + jpql);
+        }
+        this.lockMode = lockMode == null ? LockModeType.NONE : lockMode;
         return this;
     }
 
     @Override
     public LockModeType getLockMode() {
+        checkOpen();
+        if (!(statement instanceof Ast.Select)) {
+            throw new IllegalStateException("A lock mode is for a SELECT, not an UPDATE or a DELETE: " + jpql);
+        }
         return lockMode;
     }
 
     @Override
     public TypedQuery<X> setCacheRetrieveMode(CacheRetrieveMode cacheRetrieveMode) {
+        checkOpen();
         cacheRetrieveMode(cacheRetrieveMode);
         return this;
     }
 
     @Override
     public TypedQuery<X> setCacheStoreMode(CacheStoreMode cacheStoreMode) {
+        checkOpen();
         cacheStoreMode(cacheStoreMode);
         return this;
     }
 
     @Override
     public TypedQuery<X> setTimeout(Integer timeout) {
+        checkOpen();
         timeout(timeout);
         return this;
     }

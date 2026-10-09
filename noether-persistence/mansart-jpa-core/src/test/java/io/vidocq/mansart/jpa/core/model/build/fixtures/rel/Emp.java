@@ -24,6 +24,9 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
+import jakarta.persistence.LockModeType;
+import jakarta.persistence.NamedNativeQuery;
+import jakarta.persistence.NamedQuery;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.Version;
@@ -33,6 +36,9 @@ import jakarta.persistence.Version;
  * (MGR), a lazy one (loaded at once all the same), and a one-to-one that removes its orphans.
  */
 @Entity
+@NamedQuery(name = "Emp.count", query = "SELECT COUNT(e) FROM Emp e")
+@NamedQuery(name = "Emp.forUpdate", query = "SELECT e FROM Emp e WHERE e.id = :id", lockMode = LockModeType.PESSIMISTIC_WRITE)
+@NamedNativeQuery(name = "Emp.rename", query = "UPDATE Emp SET name = ? WHERE id = ?")
 public class Emp {
     @Id
     private long id;

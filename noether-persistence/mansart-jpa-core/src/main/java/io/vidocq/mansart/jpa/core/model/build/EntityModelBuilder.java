@@ -34,6 +34,7 @@ import io.vidocq.mansart.jpa.core.model.EmbeddedAttribute;
 import io.vidocq.mansart.jpa.core.model.EntityModel;
 import io.vidocq.mansart.jpa.core.model.GenerationModel;
 import io.vidocq.mansart.jpa.core.model.IdModel;
+import io.vidocq.mansart.jpa.core.model.NamedQueryModel;
 import io.vidocq.mansart.jpa.core.model.JoinColumnModel;
 import io.vidocq.mansart.jpa.core.model.JoinTableModel;
 import io.vidocq.mansart.jpa.core.model.PendingAttribute;
@@ -128,12 +129,47 @@ public final class EntityModelBuilder {
             }
         }
         List<EntityModel> entities = new ArrayList<>();
+        List<NamedQueryModel> namedQueries = new ArrayList<>();
         for (ClassInfo info : listed) {
             if (info.isAnnotated(ENTITY)) {
                 entities.add(entity(info));
             }
+            namedQueries.addAll(namedQueries(info));
         }
-        return new PersistenceUnitModel(entities, converters);
+        return new PersistenceUnitModel(entities, converters, namedQueries);
+    }
+
+    // ---- named queries (§10.4.1) -------------------------------------------------------------------------
+
+    /** The {@code @NamedQuery}s and {@code @NamedNativeQuery}s of a managed class, repeated or in their containers. */
+    private List<NamedQueryModel> namedQueries(ClassInfo info) {
+        List<NamedQueryModel> queries = new ArrayList<>();
+        List<AnnotationInfo> jpql = new ArrayList<>();
+        info.annotation(JPA + "NamedQuery").ifPresent(jpql::add);
+        info.annotation(JPA + "NamedQueries").ifPresent(container -> jpql.addAll(container.annotations("value")));
+        for (AnnotationInfo query : jpql) {
+            queries.add(new NamedQueryModel(query.string("name"), query.string("query"), false, resultClass(query),
+                query.enumConstant("lockMode"), hints(query), null));
+        }
+        List<AnnotationInfo> sql = new ArrayList<>();
+        info.annotation(JPA + "NamedNativeQuery").ifPresent(sql::add);
+        info.annotation(JPA + "NamedNativeQueries").ifPresent(container -> sql.addAll(container.annotations("value")));
+        for (AnnotationInfo query : sql) {
+            queries.add(new NamedQueryModel(query.string("name"), query.string("query"), true, resultClass(query), "NONE", hints(query),
+                nonEmpty(query.string("resultSetMapping"))));
+        }
+        return queries;
+    }
+
+    private Class<?> resultClass(AnnotationInfo query) {
+        ClassDesc type = query.type("resultClass");
+        return type == null || type.descriptorString().equals("V") ? null : Types.load(type, loader);
+    }
+
+    private static Map<String, String> hints(AnnotationInfo query) {
+        Map<String, String> hints = new LinkedHashMap<>();
+        query.annotations("hints").forEach(hint -> hints.put(hint.string("name"), hint.string("value")));
+        return hints;
     }
 
     // ---- converters (§3.9) ------------------------------------------------------------------------------

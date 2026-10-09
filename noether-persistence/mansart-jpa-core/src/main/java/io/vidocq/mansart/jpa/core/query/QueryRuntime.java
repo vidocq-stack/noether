@@ -23,11 +23,15 @@ import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
 import io.vidocq.mansart.jpa.core.mapping.MappedUnit;
 import io.vidocq.mansart.jpa.dialect.Dialect;
 import jakarta.persistence.FlushModeType;
+import jakarta.persistence.LockModeType;
 import java.sql.Connection;
 import java.util.function.Function;
 
 /** What a query needs from the entity manager that created it. */
 public interface QueryRuntime {
+
+    /** Whether the entity manager is open: the methods of its queries need it (§3.11). */
+    boolean isOpen();
 
     /** The mapped persistence unit. */
     MappedUnit mapping();
@@ -38,6 +42,19 @@ public interface QueryRuntime {
      * marks the transaction for rollback (§3.12).
      */
     <T> T read(FlushModeType flushMode, Function<Connection, T> work);
+
+    /**
+     * Runs a bulk statement's {@code work} on the connection of the active transaction —
+     * {@link jakarta.persistence.TransactionRequiredException} without one — after a flush unless {@code flushMode} is
+     * {@code COMMIT} (§3.11.6, §4.10). A failure marks the transaction for rollback (§3.12).
+     */
+    <T> T write(FlushModeType flushMode, Function<Connection, T> work);
+
+    /** Whether a transaction is active: a query with a lock mode needs one (§3.11). */
+    boolean inTransaction();
+
+    /** Records that the managed {@code entity}, which a query returned, holds the lock {@code mode} (§3.5). */
+    void locked(Object entity, LockModeType mode);
 
     /** The dialect of the database behind {@code connection}. */
     Dialect dialect(Connection connection);

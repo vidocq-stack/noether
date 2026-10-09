@@ -179,6 +179,27 @@ class QueryRenderingTest {
     }
 
     @Test
+    void aLockingQueryLocksAfterItsPaging() { // §3.5.6: the rows a pessimistic query reads
+        Query query = from("EMP", "e").select(column("e", "ID")).limit(1).build()
+            .locked(io.vidocq.mansart.jpa.dialect.sql.Select.Lock.EXCLUSIVE, true);
+        assertThat(ansi.render(query)).isEqualTo("SELECT e.ID FROM EMP e FETCH FIRST 1 ROWS ONLY FOR UPDATE NOWAIT");
+    }
+
+    @Test
+    void bulkUpdatesAndDeletes() { // §4.10: the assigned columns unqualified, the alias for the rest
+        Parameter name = new Parameter("name");
+        var update = new io.vidocq.mansart.jpa.dialect.sql.UpdateQuery(Table.of("EMP"), "e", List.of(
+            new io.vidocq.mansart.jpa.dialect.sql.UpdateQuery.Assignment(Identifier.of("NAME"), name),
+            new io.vidocq.mansart.jpa.dialect.sql.UpdateQuery.Assignment(Identifier.of("VERSION"),
+                new Binary(column("e", "VERSION"), Operator.PLUS, new Literal(1)))), new Expression.IsNull(column("e", "DEPT_ID"), false));
+        Dialect.Rendered rendered = ansi.renderQuery(update);
+        assertThat(rendered.sql()).isEqualTo("UPDATE EMP AS e SET NAME = ?, VERSION = e.VERSION + 1 WHERE e.DEPT_ID IS NULL");
+        assertThat(rendered.parameters()).containsExactly(name);
+        assertThat(ansi.render(new io.vidocq.mansart.jpa.dialect.sql.DeleteQuery(Table.of("EMP"), "e", null)))
+            .isEqualTo("DELETE FROM EMP AS e");
+    }
+
+    @Test
     void arithmeticKeepsTheGroupingOfItsOperands() { // a - (b - c), (a + b) * c
         Expression minus = new Binary(column("e", "A"), Operator.MINUS, new Binary(column("e", "B"), Operator.MINUS, column("e", "C")));
         Expression times = new Binary(new Binary(column("e", "A"), Operator.PLUS, column("e", "B")), Operator.TIMES, column("e", "C"));

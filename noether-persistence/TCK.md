@@ -21,6 +21,15 @@ Official suite: **Jakarta Persistence 3.2.1** TCK (bundle from eclipse.org, SHA-
 | P5 — relationships and collections, derived identities, `PersistenceUnitUtil` | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 635 | 1496 | 4 |
 | P7 (in progress) — slice 1: the query path, selects, joins, predicates, aggregates, parameters | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 780 | 1351 | 4 |
 | P7 (in progress) — slice 2: functions, cases, constructors, subqueries, collection expressions, literals | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 840 | 1291 | 4 |
+| P7 (in progress) — slice 3: bulk updates and deletes, named queries, lock modes, hints | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 893 | 1238 | 4 |
+
+## P7, slice 3 — bulk statements, named queries, locks: 840 → 893
+
+Run of 2026-10-09: **893 pass, 1238 fail, 4 skipped**. Compared test by test with the run at 840: 53 tests pass that
+failed, none fails that passed — `se.entityManager.Client#*MethodsAfterClose*` (31: every method of a query of a closed
+entity manager is an `IllegalStateException`), `core.query.apitests.Client1` (10), `core.lock.query` (7),
+`core.entitytest.apitests` (3)… What fails around them now: the Criteria API (P8), named queries of mapping files and
+`core.types.datetime` schema generation (P10, P9), stored procedures (slice 5).
 
 ## P7, slice 2 — expressions: 780 → 840
 

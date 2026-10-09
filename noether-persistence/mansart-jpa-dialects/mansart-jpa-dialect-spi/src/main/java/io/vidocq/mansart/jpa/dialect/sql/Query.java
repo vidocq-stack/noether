@@ -31,9 +31,11 @@ import java.util.Objects;
  *
  * @param offset the rows skipped, or {@code null}
  * @param limit the most rows read, or {@code null}
+ * @param lock the row lock the query takes (§3.5.6), {@link Select.Lock#NONE} for a plain read
+ * @param noWait whether the lock must not wait
  */
 public record Query(boolean distinct, List<Expression> select, List<From> from, Expression where, List<Expression> groupBy,
-        Expression having, List<Order> orderBy, Integer offset, Integer limit) implements Statement {
+        Expression having, List<Order> orderBy, Integer offset, Integer limit, Select.Lock lock, boolean noWait) implements Statement {
 
     /** A table of the {@code FROM} clause, its alias, and the tables joined to it. */
     public record From(Table table, String alias, List<Join> joins) {
@@ -63,6 +65,18 @@ public record Query(boolean distinct, List<Expression> select, List<From> from, 
         if (select.isEmpty() || from.isEmpty()) {
             throw new IllegalArgumentException("A query selects something from something");
         }
+        lock = lock == null ? Select.Lock.NONE : lock;
+    }
+
+    /** A query that takes no lock. */
+    public Query(boolean distinct, List<Expression> select, List<From> from, Expression where, List<Expression> groupBy,
+            Expression having, List<Order> orderBy, Integer offset, Integer limit) {
+        this(distinct, select, from, where, groupBy, having, orderBy, offset, limit, Select.Lock.NONE, false);
+    }
+
+    /** The same query, taking {@code lock} on the rows it reads. */
+    public Query locked(Select.Lock lock, boolean noWait) {
+        return new Query(distinct, select, from, where, groupBy, having, orderBy, offset, limit, lock, noWait);
     }
 
     /** The first table of the {@code FROM} clause. */
@@ -82,6 +96,13 @@ public record Query(boolean distinct, List<Expression> select, List<From> from, 
         groupBy.forEach(e -> collect(e, parameters));
         collect(having, parameters);
         orderBy.forEach(o -> collect(o.expression(), parameters));
+        return parameters;
+    }
+
+    /** The parameters of {@code expressions} ({@code null} ones skipped), in their order. */
+    static List<Expression.Parameter> parametersOf(List<Expression> expressions) {
+        List<Expression.Parameter> parameters = new ArrayList<>();
+        expressions.forEach(e -> collect(e, parameters));
         return parameters;
     }
 

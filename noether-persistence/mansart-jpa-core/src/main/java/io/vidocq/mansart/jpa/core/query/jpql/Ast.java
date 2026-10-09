@@ -32,7 +32,25 @@ public final class Ast {
     }
 
     /** A statement of the language. */
-    public sealed interface Statement permits Select {
+    public sealed interface Statement permits Select, Update, Delete {
+    }
+
+    /** The identification variable of a statement that declares none (3.2, §4.4.2). */
+    public static final String IMPLICIT_VARIABLE = "this";
+
+    /** {@code UPDATE entity [[AS] variable] SET path = value, … [WHERE …]} (§4.10). */
+    public record Update(String entity, String variable, List<Assignment> assignments, Expr where) implements Statement {
+        public Update {
+            assignments = List.copyOf(assignments);
+        }
+    }
+
+    /** {@code path = value} in a {@code SET} clause; {@code value} a {@code NULL} literal to clear it. */
+    public record Assignment(Path path, Expr value) {
+    }
+
+    /** {@code DELETE FROM entity [[AS] variable] [WHERE …]} (§4.10). */
+    public record Delete(String entity, String variable, Expr where) implements Statement {
     }
 
     /** {@code SELECT … FROM … [WHERE …] [GROUP BY … [HAVING …]] [ORDER BY …]} (§4.2), also a subquery. */

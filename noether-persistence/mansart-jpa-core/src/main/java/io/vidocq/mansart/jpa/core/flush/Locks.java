@@ -141,7 +141,7 @@ public final class Locks {
     }
 
     /** Limits the wait for locks for the rest of the transaction, where the dialect can scope it so. */
-    static void timeout(Dialect dialect, Integer timeout, Connection connection) throws SQLException {
+    public static void timeout(Dialect dialect, Integer timeout, Connection connection) throws SQLException {
         if (timeout != null && timeout > 0) {
             String sql = dialect.lockTimeout(timeout);
             if (sql != null) {
@@ -153,7 +153,7 @@ public final class Locks {
     }
 
     /** §3.12: a lock not obtained in time is a LockTimeoutException, a deadlock a PessimisticLockException. */
-    static PersistenceException failure(Dialect dialect, SQLException e, Object instance) {
+    public static PersistenceException failure(Dialect dialect, SQLException e, Object instance) {
         return switch (dialect.lockFailure(e)) {
             case TIMEOUT -> new LockTimeoutException("The lock was not obtained in time: " + e.getMessage(), e, instance);
             case PESSIMISTIC -> new PessimisticLockException("The lock failed: " + e.getMessage(), e, instance);

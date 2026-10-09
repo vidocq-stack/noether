@@ -499,6 +499,15 @@ with inheritance (P6) as much as with this milestone.
       paths into derived identifiers; temporal parameters by their `TemporalType`. The dialect renders a query and
       tells the order of its parameters (`Dialect.renderQuery`): a function may move or repeat its arguments
       (`LOCATE` from a position on PostgreSQL).
+- [x] Slice 3 (`BulkQueryTest`, `NamedQueryTest`, `QueryLockTest`): bulk `UPDATE` / `DELETE` (§4.10) — the SQL AST gains
+      `UpdateQuery` / `DeleteQuery`, assignments of attributes, embeddable paths and owned relationships (their foreign
+      key, `NULL` to clear), subqueries in the condition, a transaction required, the context flushed first unless the
+      flush mode is `COMMIT`; the implicit identification variable `this` (3.2). Named queries (§10.4.1): `@NamedQuery`
+      / `@NamedNativeQuery` read from every managed class, `addNamedQuery` keeping the settings of its query, 3.2
+      `getNamedQueries` / `TypedQueryReference`, their result types checked. Lock modes on queries: a transaction
+      required, pessimistic modes as `FOR UPDATE` / `FOR SHARE` after the paging with the lock timeout hint, the
+      entities returned holding the lock (forced increments written at flush); the query and lock timeout hints. Every
+      method of a query of a closed entity manager is an `IllegalStateException` (PERSISTENCE:SPEC:608).
 - [ ] Left for later slices: `KEY` / `VALUE` / `ENTRY` of maps in queries, embeddables compared as a whole,
       navigating an enclosing variable inside a subquery, `TYPE` (P6), `CAST` and set operations (slice 4).
 - [ ] Semantic analysis against the entity model; SQL lowering through the dialect SPI

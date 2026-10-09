@@ -28,6 +28,7 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.function.BooleanSupplier;
 
 /**
  * What every query of an entity manager keeps (§3.11): paging, hints, flush mode, cache modes and timeout. The public
@@ -43,9 +44,19 @@ abstract class AbstractQuery {
     private Integer timeout;
     private CacheRetrieveMode cacheRetrieveMode = CacheRetrieveMode.USE;
     private CacheStoreMode cacheStoreMode = CacheStoreMode.USE;
+    private final BooleanSupplier open;
 
-    AbstractQuery(FlushModeType flushMode) {
+    /** @param open whether the entity manager that created the query is still open */
+    AbstractQuery(FlushModeType flushMode, BooleanSupplier open) {
         this.flushMode = flushMode;
+        this.open = open;
+    }
+
+    /** §3.11 (PERSISTENCE:SPEC:608): every method of a query of a closed entity manager is an IllegalStateException. */
+    void checkOpen() {
+        if (!open.getAsBoolean()) {
+            throw new IllegalStateException("The EntityManager that created the query is closed");
+        }
     }
 
     void maxResults(int maxResult) {
@@ -56,6 +67,7 @@ abstract class AbstractQuery {
     }
 
     public int getMaxResults() {
+        checkOpen();
         return maxResults;
     }
 
@@ -67,6 +79,7 @@ abstract class AbstractQuery {
     }
 
     public int getFirstResult() {
+        checkOpen();
         return firstResult;
     }
 
@@ -75,6 +88,7 @@ abstract class AbstractQuery {
     }
 
     public Map<String, Object> getHints() {
+        checkOpen();
         return Collections.unmodifiableMap(hints);
     }
 
@@ -83,6 +97,7 @@ abstract class AbstractQuery {
     }
 
     public FlushModeType getFlushMode() {
+        checkOpen();
         return flushMode;
     }
 
@@ -95,10 +110,12 @@ abstract class AbstractQuery {
     }
 
     public CacheRetrieveMode getCacheRetrieveMode() {
+        checkOpen();
         return cacheRetrieveMode;
     }
 
     public CacheStoreMode getCacheStoreMode() {
+        checkOpen();
         return cacheStoreMode;
     }
 
@@ -107,10 +124,12 @@ abstract class AbstractQuery {
     }
 
     public Integer getTimeout() {
+        checkOpen();
         return timeout;
     }
 
     public <T> T unwrap(Class<T> cls) {
+        checkOpen();
         if (cls.isInstance(this)) {
             return cls.cast(this);
         }

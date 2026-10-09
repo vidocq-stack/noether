@@ -21,9 +21,13 @@ package io.vidocq.mansart.jpa.core.model.build.fixtures.rel;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
+import jakarta.persistence.NamedQuery;
+import jakarta.persistence.QueryHint;
 
-/** The target of many-to-one relationships. */
+/** The target of many-to-one relationships; it declares a named query (§10.4) with a hint. */
 @Entity
+@NamedQuery(name = "Dept.byName", query = "SELECT d FROM Dept d WHERE d.name = :name",
+    hints = @QueryHint(name = "jakarta.persistence.query.timeout", value = "5000"))
 public class Dept {
     @Id
     private long id;

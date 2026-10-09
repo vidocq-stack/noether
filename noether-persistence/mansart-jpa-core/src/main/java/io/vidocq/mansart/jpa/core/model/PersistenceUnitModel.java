@@ -29,12 +29,18 @@ public final class PersistenceUnitModel {
 
     private final List<EntityModel> entities;
     private final List<ConverterModel> converters;
+    private final List<NamedQueryModel> namedQueries;
     private final Map<Class<?>, EntityModel> byClass = new LinkedHashMap<>();
     private final Map<String, EntityModel> byName = new LinkedHashMap<>();
 
     public PersistenceUnitModel(List<EntityModel> entities, List<ConverterModel> converters) {
+        this(entities, converters, List.of());
+    }
+
+    public PersistenceUnitModel(List<EntityModel> entities, List<ConverterModel> converters, List<NamedQueryModel> namedQueries) {
         this.entities = List.copyOf(entities);
         this.converters = List.copyOf(converters);
+        this.namedQueries = List.copyOf(namedQueries);
         for (EntityModel entity : this.entities) {
             byClass.put(entity.javaType(), entity);
             byName.put(entity.entityName(), entity);
@@ -47,6 +53,11 @@ public final class PersistenceUnitModel {
 
     public List<ConverterModel> converters() {
         return converters;
+    }
+
+    /** The named queries the managed classes declare, in the order of the classes. */
+    public List<NamedQueryModel> namedQueries() {
+        return namedQueries;
     }
 
     public Optional<EntityModel> entity(Class<?> type) {

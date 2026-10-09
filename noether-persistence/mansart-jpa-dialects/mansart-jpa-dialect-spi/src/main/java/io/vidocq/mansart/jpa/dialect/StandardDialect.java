@@ -20,6 +20,7 @@
 package io.vidocq.mansart.jpa.dialect;
 
 import io.vidocq.mansart.jpa.dialect.sql.Delete;
+import io.vidocq.mansart.jpa.dialect.sql.DeleteQuery;
 import io.vidocq.mansart.jpa.dialect.sql.Expression;
 import io.vidocq.mansart.jpa.dialect.sql.Identifier;
 import io.vidocq.mansart.jpa.dialect.sql.Increment;
@@ -30,6 +31,7 @@ import io.vidocq.mansart.jpa.dialect.sql.Select;
 import io.vidocq.mansart.jpa.dialect.sql.Statement;
 import io.vidocq.mansart.jpa.dialect.sql.Table;
 import io.vidocq.mansart.jpa.dialect.sql.Update;
+import io.vidocq.mansart.jpa.dialect.sql.UpdateQuery;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -55,6 +57,8 @@ public abstract class StandardDialect implements Dialect {
             case Increment increment -> "UPDATE " + table(increment.table()) + " SET " + name(increment.value()) + " = "
                 + name(increment.value()) + " + ? WHERE " + name(increment.key()) + " = ?";
             case Query query -> renderQuery(query).sql();
+            case UpdateQuery update -> renderQuery(update).sql();
+            case DeleteQuery delete -> renderQuery(delete).sql();
         };
     }
 
@@ -68,9 +72,15 @@ public abstract class StandardDialect implements Dialect {
     private static final char END_MARK = '\u0002';
 
     @Override
-    public Rendered renderQuery(Query query) {
+    public Rendered renderQuery(Statement statement) {
         List<Expression.Parameter> marked = new ArrayList<>();
-        String text = query(query, marked);
+        String text = switch (statement) {
+            case Query query -> query(query, marked);
+            case UpdateQuery update -> bulkUpdate(update, marked);
+            case DeleteQuery delete -> "DELETE FROM " + table(delete.table()) + " AS " + delete.alias()
+                + (delete.where() == null ? "" : " WHERE " + expression(delete.where(), 0, marked));
+            default -> render(statement);
+        };
         StringBuilder sql = new StringBuilder(text.length());
         List<Expression.Parameter> parameters = new ArrayList<>();
         for (int i = 0; i < text.length(); i++) {
@@ -85,6 +95,19 @@ public abstract class StandardDialect implements Dialect {
             }
         }
         return new Rendered(sql.toString(), parameters);
+    }
+
+    /** {@code UPDATE table AS alias SET column = value, … [WHERE …]}: the assigned columns unqualified, as SQL wants them. */
+    private String bulkUpdate(UpdateQuery update, List<Expression.Parameter> parameters) {
+        StringBuilder sql = new StringBuilder("UPDATE ").append(table(update.table())).append(" AS ").append(update.alias()).append(" SET ");
+        for (int i = 0; i < update.assignments().size(); i++) {
+            UpdateQuery.Assignment assignment = update.assignments().get(i);
+            sql.append(i == 0 ? "" : ", ").append(name(assignment.column())).append(" = ").append(expression(assignment.value(), 0, parameters));
+        }
+        if (update.where() != null) {
+            sql.append(" WHERE ").append(expression(update.where(), 0, parameters));
+        }
+        return sql.toString();
     }
 
     /** A query, its parameters written as markers registered in {@code parameters}. */
@@ -123,7 +146,7 @@ public abstract class StandardDialect implements Dialect {
                 }
             }
         }
-        return sql.append(paging(query)).toString();
+        return sql.append(paging(query)).append(lock(query.lock(), query.noWait())).toString();
     }
 
     /** SQL:2008 paging, which H2 and PostgreSQL understand: {@code OFFSET n ROWS FETCH FIRST m ROWS ONLY}. */
@@ -247,12 +270,17 @@ public abstract class StandardDialect implements Dialect {
 
     /** The row lock of a select: {@code FOR UPDATE}, {@code FOR SHARE}, and {@code NOWAIT} when it must not wait. */
     protected String lock(Select select) {
-        String lock = switch (select.lock()) {
+        return lock(select.lock(), select.noWait());
+    }
+
+    /** {@code FOR UPDATE}, {@code FOR SHARE}, and {@code NOWAIT} when the lock must not wait; nothing without a lock. */
+    protected String lock(Select.Lock lock, boolean noWait) {
+        String clause = switch (lock) {
             case NONE -> "";
             case SHARED -> " FOR SHARE";
             case EXCLUSIVE -> " FOR UPDATE";
         };
-        return lock.isEmpty() || !select.noWait() ? lock : lock + " NOWAIT";
+        return clause.isEmpty() || !noWait ? clause : clause + " NOWAIT";
     }
 
     /** SQL:2003 {@code NEXT VALUE FOR}, as a one-row query. */

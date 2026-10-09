@@ -27,6 +27,7 @@ import io.vidocq.mansart.jpa.core.flush.FlushEngine;
 import io.vidocq.mansart.jpa.core.flush.Locks;
 import io.vidocq.mansart.jpa.core.generation.IdGenerators;
 import io.vidocq.mansart.jpa.core.mapping.MappedUnit;
+import io.vidocq.mansart.jpa.core.query.NamedQueries;
 import io.vidocq.mansart.jpa.dialect.Dialect;
 import jakarta.persistence.Cache;
 import jakarta.persistence.EntityGraph;
@@ -66,11 +67,13 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     private final Cache cache = new NoSecondLevelCache();
     private final AtomicBoolean open = new AtomicBoolean(true);
     private final Set<ResourceLocalTransaction> activeTransactions = ConcurrentHashMap.newKeySet();
+    private final NamedQueries namedQueries;
 
     public EntityManagerFactoryImpl(UnitSettings settings, ConnectionSource connections, MappedUnit mapping) {
         this.settings = settings;
         this.connections = connections;
         this.mapping = mapping;
+        this.namedQueries = new NamedQueries(mapping);
         this.batchSize = batchSize(settings);
     }
 
@@ -266,7 +269,12 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     @Override
     public void addNamedQuery(String name, Query query) {
         checkOpen();
-        throw NotYet.milestone("P7", "named queries");
+        namedQueries.add(name, query);
+    }
+
+    /** The named queries of the unit, declared and added. */
+    NamedQueries namedQueries() {
+        return namedQueries;
     }
 
     @Override
@@ -287,7 +295,7 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     @Override
     public <R> Map<String, TypedQueryReference<R>> getNamedQueries(Class<R> resultType) {
         checkOpen();
-        throw NotYet.milestone("P7", "named queries");
+        return namedQueries.references(resultType);
     }
 
     @Override

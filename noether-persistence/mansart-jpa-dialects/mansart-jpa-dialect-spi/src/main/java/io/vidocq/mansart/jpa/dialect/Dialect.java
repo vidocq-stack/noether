@@ -21,7 +21,9 @@ package io.vidocq.mansart.jpa.dialect;
 
 import io.vidocq.mansart.jpa.dialect.sql.Expression;
 import io.vidocq.mansart.jpa.dialect.sql.Identifier;
+import io.vidocq.mansart.jpa.dialect.sql.DeleteQuery;
 import io.vidocq.mansart.jpa.dialect.sql.Query;
+import io.vidocq.mansart.jpa.dialect.sql.UpdateQuery;
 import io.vidocq.mansart.jpa.dialect.sql.Statement;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
@@ -50,9 +52,17 @@ public interface Dialect {
         }
     }
 
-    /** Renders {@code query} and tells the order of its parameters, which only the rendering knows (§4.6.17). */
-    default Rendered renderQuery(Query query) {
-        return new Rendered(render(query), query.parameters());
+    /**
+     * Renders a statement of the query language — a {@link Query}, an {@link UpdateQuery}, a {@link DeleteQuery} — and
+     * tells the order of its parameters, which only the rendering knows (§4.6.17).
+     */
+    default Rendered renderQuery(Statement statement) {
+        return new Rendered(render(statement), switch (statement) {
+            case Query query -> query.parameters();
+            case UpdateQuery update -> update.parameters();
+            case DeleteQuery delete -> delete.parameters();
+            default -> List.of();
+        });
     }
 
     /**

@@ -57,9 +57,50 @@ public final class Parser {
             throw new IllegalArgumentException("A query needs a statement");
         }
         Parser parser = new Parser(query);
-        Ast.Select select = parser.select();
+        Ast.Statement statement;
+        if (parser.peek().is("UPDATE")) {
+            statement = parser.update();
+        } else if (parser.peek().is("DELETE")) {
+            statement = parser.delete();
+        } else {
+            statement = parser.select();
+        }
         parser.expectEnd();
-        return select;
+        return statement;
+    }
+
+    /** {@code UPDATE entity [[AS] variable] SET path = value, … [WHERE condition]} (§4.10). */
+    private Ast.Update update() {
+        expect("UPDATE");
+        String entity = entityName();
+        String variable = peek().is("SET") ? null : alias();
+        expect("SET");
+        List<Ast.Assignment> assignments = new ArrayList<>();
+        do {
+            Ast.Path path = path();
+            expect("=");
+            assignments.add(new Ast.Assignment(path, expression()));
+        } while (accept(","));
+        Expr where = accept("WHERE") ? condition() : null;
+        return new Ast.Update(entity, variable == null ? Ast.IMPLICIT_VARIABLE : variable, assignments, where);
+    }
+
+    /** {@code DELETE FROM entity [[AS] variable] [WHERE condition]} (§4.10). */
+    private Ast.Delete delete() {
+        expect("DELETE");
+        expect("FROM");
+        String entity = entityName();
+        String variable = alias();
+        Expr where = accept("WHERE") ? condition() : null;
+        return new Ast.Delete(entity, variable == null ? Ast.IMPLICIT_VARIABLE : variable, where);
+    }
+
+    /** An entity name; a keyword may name an entity ({@code FROM Order o}). */
+    private String entityName() {
+        if (peek().kind() != Kind.NAME) {
+            throw error("an entity name");
+        }
+        return advance().text();
     }
 
     // ---- statements ---------------------------------------------------------------------------------------
@@ -148,16 +189,9 @@ public final class Parser {
             }
             return new Ast.Range(null, collection, variable, joins());
         }
-        Token token = peek();
-        if (token.kind() != Kind.NAME) {
-            throw error("an entity name");
-        }
-        String entity = advance().text(); // an entity may be named by a keyword: FROM Order o
-        String variable = alias();
-        if (variable == null) {
-            throw error("an identification variable after " + entity);
-        }
-        return new Ast.Range(entity, null, variable, joins());
+        String entity = entityName();
+        String variable = alias(); // 3.2: without one, the implicit variable this
+        return new Ast.Range(entity, null, variable == null ? Ast.IMPLICIT_VARIABLE : variable, joins());
     }
 
     private List<Ast.Join> joins() {
