@@ -85,7 +85,7 @@ class QueryRenderingTest {
         Query query = Query.from(new From(Table.of("EMP"), "e", List.of(
                 new Join(Join.Kind.INNER, Table.of("DEPT"), "d", new Binary(column("e", "DEPT_ID"), Operator.EQ, column("d", "ID"))),
                 new Join(Join.Kind.LEFT, Table.of("EMP"), "m", new Binary(column("e", "MGR"), Operator.EQ, column("m", "ID"))))))
-            .distinct().select(column("d", "NAME")).orderBy(new Order(column("d", "NAME"), true)).offset(10).limit(5).build();
+            .distinct().select(column("d", "NAME")).orderBy(new Order(column("d", "NAME"), true, null)).offset(10).limit(5).build();
         assertThat(ansi.render(query)).isEqualTo("SELECT DISTINCT d.NAME FROM EMP e INNER JOIN DEPT d ON e.DEPT_ID = d.ID "
             + "LEFT JOIN EMP m ON e.MGR = m.ID ORDER BY d.NAME DESC OFFSET 10 ROWS FETCH FIRST 5 ROWS ONLY");
     }
@@ -112,6 +112,70 @@ class QueryRenderingTest {
                 Operator.GT, new Literal(1))).build();
         assertThat(ansi.render(query)).isEqualTo("SELECT e.DEPT_ID, SUM(DISTINCT e.SALARY) FROM EMP e GROUP BY e.DEPT_ID "
             + "HAVING COUNT(e.ID) > 1");
+    }
+
+    @Test
+    void functionsInTheirStandardSyntax() { // §4.6.17.2
+        Parameter start = new Parameter("start");
+        Query query = from("EMP", "e").select(
+            new Expression.Function("SUBSTRING", List.of(column("e", "NAME"), start, new Literal(2))),
+            new Expression.Function("TRIM", List.of(new Literal("LEADING"), new Literal("x"), column("e", "NAME"))),
+            new Expression.Function("TRIM", List.of(new Literal("BOTH"), new Literal(null), column("e", "NAME"))),
+            new Expression.Function("LENGTH", List.of(column("e", "NAME"))),
+            new Expression.Function("LOCATE", List.of(new Literal("a"), column("e", "NAME"))),
+            new Expression.Function("CONCAT", List.of(column("e", "A"), column("e", "B"), column("e", "C"))),
+            new Expression.Function("EXTRACT", List.of(new Literal("YEAR"), column("e", "HIRED"))),
+            new Expression.Function("CURRENT_DATE", List.of()),
+            new Expression.Function("LOCAL_DATETIME", List.of()),
+            new Expression.Function("UPPER", List.of(column("e", "NAME")))).build();
+        assertThat(ansi.render(query)).isEqualTo("SELECT SUBSTRING(e.NAME FROM ? FOR 2), TRIM(LEADING 'x' FROM e.NAME), "
+            + "TRIM(BOTH FROM e.NAME), CHAR_LENGTH(e.NAME), POSITION('a' IN e.NAME), e.A || e.B || e.C, EXTRACT(YEAR FROM e.HIRED), "
+            + "CURRENT_DATE, LOCALTIMESTAMP, UPPER(e.NAME) FROM EMP e");
+    }
+
+    @Test
+    void casesAndOrderingOfNulls() { // §4.6.17.4, §4.9
+        Expression kase = new Expression.Case(null, List.of(new Expression.When(new Binary(column("e", "AGE"), Operator.GT,
+            new Literal(30)), new Literal("senior"))), new Literal("junior"));
+        Expression simple = new Expression.Case(column("e", "S"), List.of(new Expression.When(new Literal(1), new Literal("on"))), null);
+        Query query = from("EMP", "e").select(kase, simple).orderBy(new Order(column("e", "NAME"), true, false)).build();
+        assertThat(ansi.render(query)).isEqualTo("SELECT CASE WHEN e.AGE > 30 THEN 'senior' ELSE 'junior' END, "
+            + "CASE e.S WHEN 1 THEN 'on' END FROM EMP e ORDER BY e.NAME DESC NULLS LAST");
+    }
+
+    @Test
+    void subqueriesKeepTheirParametersInTheOrderOfTheSql() { // §4.5.10
+        Parameter outer = new Parameter("outer");
+        Parameter inner = new Parameter("inner");
+        Query subquery = from("PROJECT", "p").select(new Literal(1)).where(new Binary(new Binary(column("p", "EMP_ID"), Operator.EQ,
+            column("e", "ID")), Operator.AND, new Binary(column("p", "BUDGET"), Operator.GT, inner))).build();
+        Query budgets = from("PROJECT", "q").select(column("q", "BUDGET")).build();
+        Query query = from("EMP", "e").select(column("e", "ID")).where(new Binary(new Binary(column("e", "NAME"), Operator.EQ, outer),
+            Operator.AND, new Binary(new Expression.Exists(subquery, false), Operator.AND,
+                new Binary(column("e", "SALARY"), Operator.GT, new Expression.Quantified("ALL", budgets))))).build();
+        Dialect.Rendered rendered = ansi.renderQuery(query);
+        assertThat(rendered.sql()).isEqualTo("SELECT e.ID FROM EMP e WHERE e.NAME = ? AND EXISTS (SELECT 1 FROM PROJECT p "
+            + "WHERE p.EMP_ID = e.ID AND p.BUDGET > ?) AND e.SALARY > ALL (SELECT q.BUDGET FROM PROJECT q)");
+        assertThat(rendered.parameters()).containsExactly(outer, inner);
+        assertThat(query.parameters()).containsExactly(outer, inner);
+    }
+
+    @Test
+    void aParameterRepeatedByTheRenderingIsBoundEachTime() { // what a dialect writes decides the order of the parameters
+        Parameter search = new Parameter("search");
+        Dialect repeating = new StandardDialect() {
+            @Override
+            public String name() {
+                return "repeating";
+            }
+
+            @Override
+            protected String function(String name, List<String> arguments) {
+                return name.equals("LOCATE") ? "F(" + arguments.get(0) + ", " + arguments.get(0) + ")" : super.function(name, arguments);
+            }
+        };
+        Query query = from("EMP", "e").select(new Expression.Function("LOCATE", List.of(search, column("e", "NAME")))).build();
+        assertThat(repeating.renderQuery(query).parameters()).containsExactly(search, search);
     }
 
     @Test

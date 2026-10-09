@@ -201,6 +201,19 @@ class IndexedCollectionTest {
     }
 
     @Test
+    void queriesReadThePositionsOfOrderedLists() { // §4.6.17.2.2 INDEX
+        Bureau bureau = bureau();
+        Affair affair = new Affair(1);
+        affair.team().add(bureau.roster().get(1));
+        affair.team().add(bureau.roster().get(0));
+        inTransaction(() -> em.persist(affair));
+        assertThat(em.createQuery("SELECT a.name FROM Bureau b JOIN b.roster a WHERE INDEX(a) = 1", String.class).getSingleResult())
+            .isEqualTo("Coco");
+        assertThat(em.createQuery("SELECT INDEX(m) FROM Affair f JOIN f.team m WHERE m.name = 'Vidocq'", Integer.class)
+            .getSingleResult()).isEqualTo(1);
+    }
+
+    @Test
     void aChangedKeyOfAnElementCollectionIsWritten() throws SQLException {
         Affair affair = new Affair(1);
         affair.notes().put(Trait.CUNNING, "very");

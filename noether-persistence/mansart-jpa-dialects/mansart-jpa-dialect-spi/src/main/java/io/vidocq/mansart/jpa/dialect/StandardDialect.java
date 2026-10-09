@@ -30,6 +30,7 @@ import io.vidocq.mansart.jpa.dialect.sql.Select;
 import io.vidocq.mansart.jpa.dialect.sql.Statement;
 import io.vidocq.mansart.jpa.dialect.sql.Table;
 import io.vidocq.mansart.jpa.dialect.sql.Update;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
@@ -53,42 +54,73 @@ public abstract class StandardDialect implements Dialect {
             case NextValue next -> nextValue(next);
             case Increment increment -> "UPDATE " + table(increment.table()) + " SET " + name(increment.value()) + " = "
                 + name(increment.value()) + " + ? WHERE " + name(increment.key()) + " = ?";
-            case Query query -> query(query);
+            case Query query -> renderQuery(query).sql();
         };
     }
 
     // ---- queries ------------------------------------------------------------------------------------------
 
-    /** A query, its parameters in the order of {@link Query#parameters()}. */
-    protected String query(Query query) {
+    /**
+     * Each parameter is first written as a marker, unique to it; once the SQL is whole, the markers are read in the
+     * order of the text and replaced by {@code ?}: a dialect may move or repeat the arguments of a function freely.
+     */
+    private static final char MARK = '\u0001';
+    private static final char END_MARK = '\u0002';
+
+    @Override
+    public Rendered renderQuery(Query query) {
+        List<Expression.Parameter> marked = new ArrayList<>();
+        String text = query(query, marked);
+        StringBuilder sql = new StringBuilder(text.length());
+        List<Expression.Parameter> parameters = new ArrayList<>();
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == MARK) {
+                int end = text.indexOf(END_MARK, i);
+                parameters.add(marked.get(Integer.parseInt(text.substring(i + 1, end))));
+                sql.append('?');
+                i = end;
+            } else {
+                sql.append(c);
+            }
+        }
+        return new Rendered(sql.toString(), parameters);
+    }
+
+    /** A query, its parameters written as markers registered in {@code parameters}. */
+    private String query(Query query, List<Expression.Parameter> parameters) {
         StringBuilder sql = new StringBuilder("SELECT ");
         if (query.distinct()) {
             sql.append("DISTINCT ");
         }
-        sql.append(expressions(query.select()));
+        sql.append(expressions(query.select(), parameters));
         sql.append(" FROM ");
         for (int f = 0; f < query.from().size(); f++) {
             Query.From from = query.from().get(f);
             sql.append(f == 0 ? "" : ", ").append(table(from.table())).append(' ').append(from.alias());
             for (Query.Join join : from.joins()) {
                 sql.append(join.kind() == Query.Join.Kind.LEFT ? " LEFT JOIN " : " INNER JOIN ").append(table(join.table())).append(' ')
-                    .append(join.alias()).append(" ON ").append(expression(join.on()));
+                    .append(join.alias()).append(" ON ").append(expression(join.on(), 0, parameters));
             }
         }
         if (query.where() != null) {
-            sql.append(" WHERE ").append(expression(query.where()));
+            sql.append(" WHERE ").append(expression(query.where(), 0, parameters));
         }
         if (!query.groupBy().isEmpty()) {
-            sql.append(" GROUP BY ").append(expressions(query.groupBy()));
+            sql.append(" GROUP BY ").append(expressions(query.groupBy(), parameters));
         }
         if (query.having() != null) {
-            sql.append(" HAVING ").append(expression(query.having()));
+            sql.append(" HAVING ").append(expression(query.having(), 0, parameters));
         }
         if (!query.orderBy().isEmpty()) {
             sql.append(" ORDER BY ");
             for (int o = 0; o < query.orderBy().size(); o++) {
                 Query.Order order = query.orderBy().get(o);
-                sql.append(o == 0 ? "" : ", ").append(expression(order.expression())).append(order.descending() ? " DESC" : "");
+                sql.append(o == 0 ? "" : ", ").append(expression(order.expression(), 0, parameters))
+                    .append(order.descending() ? " DESC" : "");
+                if (order.nullsFirst() != null) {
+                    sql.append(order.nullsFirst() ? " NULLS FIRST" : " NULLS LAST");
+                }
             }
         }
         return sql.append(paging(query)).toString();
@@ -100,17 +132,12 @@ public abstract class StandardDialect implements Dialect {
         return query.limit() == null ? paging : paging + " FETCH FIRST " + query.limit() + " ROWS ONLY";
     }
 
-    private String expressions(List<Expression> expressions) {
+    private String expressions(List<Expression> expressions, List<Expression.Parameter> parameters) {
         StringBuilder sql = new StringBuilder();
         for (int i = 0; i < expressions.size(); i++) {
-            sql.append(i == 0 ? "" : ", ").append(expression(expressions.get(i)));
+            sql.append(i == 0 ? "" : ", ").append(expression(expressions.get(i), 0, parameters));
         }
         return sql.toString();
-    }
-
-    /** An expression standing alone. */
-    protected String expression(Expression expression) {
-        return expression(expression, 0);
     }
 
     /** The precedence of an expression: how tightly it binds (see {@link Expression.Operator#precedence()}). */
@@ -118,35 +145,93 @@ public abstract class StandardDialect implements Dialect {
         return switch (expression) {
             case Expression.Binary binary -> binary.operator().precedence();
             case Expression.Not _ -> 3;
-            case Expression.IsNull _, Expression.Between _, Expression.Like _, Expression.In _ -> 4;
+            case Expression.IsNull _, Expression.Between _, Expression.Like _, Expression.In _, Expression.InQuery _,
+                 Expression.Exists _ -> 4;
+            case Expression.Function function when function.name().equals("CONCAT") -> 5;
             default -> 9;
         };
     }
 
     /** {@code expression}, parenthesised when it binds more loosely than {@code context}. */
-    private String expression(Expression expression, int context) {
+    private String expression(Expression expression, int context, List<Expression.Parameter> parameters) {
         String sql = switch (expression) {
             case Expression.Column column -> column.alias() + '.' + name(column.name());
-            case Expression.Parameter _ -> "?";
+            case Expression.Parameter parameter -> {
+                parameters.add(parameter);
+                yield MARK + Integer.toString(parameters.size() - 1) + END_MARK;
+            }
             case Expression.Literal literal -> literal(literal.value());
             case Expression.Binary binary -> {
                 int precedence = binary.operator().precedence();
-                // a right operand of the same precedence is grouped as written: a - (b - c)
-                yield expression(binary.left(), precedence) + ' ' + binary.operator().symbol() + ' '
-                    + expression(binary.right(), precedence + 1);
+                // a right operand of the same precedence is grouped as written, a - (b - c), but AND and OR associate
+                boolean associative = binary.right() instanceof Expression.Binary right && right.operator() == binary.operator()
+                    && (binary.operator() == Expression.Operator.AND || binary.operator() == Expression.Operator.OR);
+                yield expression(binary.left(), precedence, parameters) + ' ' + binary.operator().symbol() + ' '
+                    + expression(binary.right(), associative ? precedence : precedence + 1, parameters);
             }
-            case Expression.Not not -> "NOT " + expression(not.operand(), 4);
-            case Expression.IsNull isNull -> expression(isNull.operand(), 5) + (isNull.negated() ? " IS NOT NULL" : " IS NULL");
-            case Expression.Between between -> expression(between.operand(), 5) + (between.negated() ? " NOT" : "") + " BETWEEN "
-                + expression(between.low(), 5) + " AND " + expression(between.high(), 5);
-            case Expression.Like like -> expression(like.operand(), 5) + (like.negated() ? " NOT" : "") + " LIKE "
-                + expression(like.pattern(), 5) + (like.escape() == null ? "" : " ESCAPE " + expression(like.escape(), 5));
-            case Expression.In in -> expression(in.operand(), 5) + (in.negated() ? " NOT" : "") + " IN (" + expressions(in.values())
-                + ")";
+            case Expression.Not not -> "NOT " + expression(not.operand(), 4, parameters);
+            case Expression.IsNull isNull -> expression(isNull.operand(), 5, parameters) + (isNull.negated() ? " IS NOT NULL" : " IS NULL");
+            case Expression.Between between -> expression(between.operand(), 5, parameters) + (between.negated() ? " NOT" : "")
+                + " BETWEEN " + expression(between.low(), 5, parameters) + " AND " + expression(between.high(), 5, parameters);
+            case Expression.Like like -> expression(like.operand(), 5, parameters) + (like.negated() ? " NOT" : "") + " LIKE "
+                + expression(like.pattern(), 5, parameters)
+                + (like.escape() == null ? "" : " ESCAPE " + expression(like.escape(), 5, parameters));
+            case Expression.In in -> expression(in.operand(), 5, parameters) + (in.negated() ? " NOT" : "") + " IN ("
+                + expressions(in.values(), parameters) + ")";
             case Expression.Aggregate aggregate -> aggregate.function() + '(' + (aggregate.distinct() ? "DISTINCT " : "")
-                + (aggregate.argument() == null ? "*" : expression(aggregate.argument())) + ')';
+                + (aggregate.argument() == null ? "*" : expression(aggregate.argument(), 0, parameters)) + ')';
+            case Expression.Function function -> {
+                List<String> arguments = new ArrayList<>();
+                for (Expression argument : function.arguments()) {
+                    arguments.add(argument instanceof Expression.Literal literal && function.keywords().contains(arguments.size())
+                        ? String.valueOf(literal.value()) : expression(argument, function.name().equals("CONCAT") ? 6 : 0, parameters));
+                }
+                yield function(function.name(), arguments);
+            }
+            case Expression.Case kase -> {
+                StringBuilder text = new StringBuilder("CASE");
+                if (kase.operand() != null) {
+                    text.append(' ').append(expression(kase.operand(), 0, parameters));
+                }
+                for (Expression.When when : kase.whens()) {
+                    text.append(" WHEN ").append(expression(when.when(), 0, parameters)).append(" THEN ")
+                        .append(expression(when.then(), 0, parameters));
+                }
+                if (kase.otherwise() != null) {
+                    text.append(" ELSE ").append(expression(kase.otherwise(), 0, parameters));
+                }
+                yield text.append(" END").toString();
+            }
+            case Expression.Subquery subquery -> '(' + query(subquery.query(), parameters) + ')';
+            case Expression.Exists exists -> (exists.negated() ? "NOT EXISTS (" : "EXISTS (") + query(exists.query(), parameters) + ')';
+            case Expression.InQuery in -> expression(in.operand(), 5, parameters) + (in.negated() ? " NOT" : "") + " IN ("
+                + query(in.query(), parameters) + ')';
+            case Expression.Quantified quantified -> quantified.quantifier() + " (" + query(quantified.query(), parameters) + ')';
         };
         return precedence(expression) < context ? '(' + sql + ')' : sql;
+    }
+
+    /**
+     * A function of the query language (§4.6.17.2), its arguments already rendered (a keyword argument as the word):
+     * the SQL:2016 syntax H2 and PostgreSQL share, which a dialect overrides where its database differs.
+     */
+    protected String function(String name, List<String> arguments) {
+        return switch (name) {
+            case "CONCAT" -> String.join(" || ", arguments);
+            case "SUBSTRING" -> "SUBSTRING(" + arguments.get(0) + " FROM " + arguments.get(1)
+                + (arguments.size() > 2 ? " FOR " + arguments.get(2) : "") + ')';
+            case "TRIM" -> "TRIM(" + arguments.get(0) + (arguments.get(1).equals("NULL") ? "" : ' ' + arguments.get(1)) + " FROM "
+                + arguments.get(2) + ')';
+            case "LENGTH" -> "CHAR_LENGTH(" + arguments.getFirst() + ')';
+            case "LOCATE" -> arguments.size() == 2 ? "POSITION(" + arguments.get(0) + " IN " + arguments.get(1) + ')'
+                : "LOCATE(" + String.join(", ", arguments) + ')';
+            case "EXTRACT" -> "EXTRACT(" + arguments.get(0) + " FROM " + arguments.get(1) + ')';
+            case "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP" -> name;
+            case "LOCAL_DATE" -> "CURRENT_DATE";
+            case "LOCAL_TIME" -> "LOCALTIME";
+            case "LOCAL_DATETIME" -> "LOCALTIMESTAMP";
+            default -> name + '(' + String.join(", ", arguments) + ')';
+        };
     }
 
     /** A literal: {@code NULL}, {@code TRUE} / {@code FALSE}, a number as written, a string quoted. */

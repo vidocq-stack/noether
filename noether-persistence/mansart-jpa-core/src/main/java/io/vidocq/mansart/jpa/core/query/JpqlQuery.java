@@ -103,6 +103,9 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         this.select = statement;
         Compiled compiled = Translator.translate(select, runtime.mapping(), null, null, null);
         for (Compiled.Slot slot : compiled.slots()) {
+            if (slot.literal()) {
+                continue;
+            }
             Object key = key(slot.parameter());
             Class<?> type = slot.entity() != null ? slot.entity().model().javaType() : slot.type();
             Class<?> parameterType = type == null ? Object.class : boxed(type);
@@ -182,32 +185,34 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
 
     private List<Object> execute(Compiled compiled, Connection connection) {
         Dialect dialect = runtime.dialect(connection);
-        List<Object[]> rows = new ArrayList<>();
-        try (PreparedStatement statement = connection.prepareStatement(dialect.render(compiled.sql()))) {
-            List<Compiled.Slot> slots = compiled.slots();
-            for (int i = 0; i < slots.size(); i++) {
-                bind(dialect, statement, i + 1, slots.get(i));
+        Dialect.Rendered rendered = dialect.renderQuery(compiled.sql());
+        List<Object> rows = new ArrayList<>();
+        try (PreparedStatement statement = connection.prepareStatement(rendered.sql())) {
+            List<io.vidocq.mansart.jpa.dialect.sql.Expression.Parameter> parameters = rendered.parameters();
+            for (int i = 0; i < parameters.size(); i++) {
+                bind(dialect, statement, i + 1, (Compiled.Slot) parameters.get(i).slot());
             }
             if (getTimeout() != null) {
                 statement.setQueryTimeout(Math.max(1, (getTimeout() + 999) / 1000));
             }
             try (ResultSet results = statement.executeQuery()) {
+                List<Compiled.Item> items = compiled.items();
                 while (results.next()) {
-                    rows.add(row(compiled, results));
+                    int[] column = {1};
+                    Object[] row = new Object[items.size()];
+                    for (int i = 0; i < row.length; i++) {
+                        row[i] = read(items.get(i), results, column);
+                    }
+                    rows.add(row.length == 1 ? row[0] : row);
                 }
             }
         } catch (SQLException e) {
             throw new PersistenceException("The query failed: " + e.getMessage() + " — " + jpql, e);
         }
-        // entities resolved once the rows are read: the loader runs statements of its own
+        // entities found, and results constructed, once the rows are read: the loader runs statements of its own
         List<Object> resultList = new ArrayList<>(rows.size());
-        for (Object[] row : rows) {
-            for (int i = 0; i < row.length; i++) {
-                if (row[i] instanceof EntityKey(MappedEntity type, Object id)) {
-                    row[i] = runtime.find(type, id, connection);
-                }
-            }
-            resultList.add(row.length == 1 ? row[0] : row);
+        for (Object row : rows) {
+            resultList.add(resolve(row, connection));
         }
         return resultList;
     }
@@ -216,34 +221,126 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     private record EntityKey(MappedEntity type, Object id) {
     }
 
-    private static Object[] row(Compiled compiled, ResultSet results) throws SQLException {
-        List<Compiled.Item> items = compiled.items();
-        Object[] row = new Object[items.size()];
-        int column = 1;
-        for (int i = 0; i < row.length; i++) {
-            switch (items.get(i)) {
-                case Compiled.EntityItem entity -> {
-                    Object[] key = new Object[entity.width()];
-                    boolean empty = true;
-                    for (int k = 0; k < key.length; k++) {
-                        key[k] = entity.keyBinders().get(k).read(results, column++);
-                        empty &= results.wasNull();
-                    }
-                    row[i] = empty ? null : new EntityKey(entity.type(), entity.type().statements().key(key));
+    /** A constructor result whose arguments are read, built once the entities among them are found. */
+    private record Built(Class<?> type, Object[] arguments) {
+    }
+
+    private Object resolve(Object read, Connection connection) {
+        return switch (read) {
+            case EntityKey(MappedEntity type, Object id) -> runtime.find(type, id, connection);
+            case Built built -> {
+                Object[] arguments = new Object[built.arguments().length];
+                for (int i = 0; i < arguments.length; i++) {
+                    arguments[i] = resolve(built.arguments()[i], connection);
                 }
-                case Compiled.ValueItem value -> {
-                    Object read = value.binder() != null ? value.binder().read(results, column) : results.getObject(column);
-                    row[i] = results.wasNull() ? null : value.binder() != null ? read : convert(read, value.type());
-                    column++;
+                yield construct(built.type(), arguments);
+            }
+            case Object[] row -> {
+                Object[] resolved = new Object[row.length];
+                for (int i = 0; i < row.length; i++) {
+                    resolved[i] = resolve(row[i], connection);
+                }
+                yield resolved;
+            }
+            case null, default -> read;
+        };
+    }
+
+    private static Object read(Compiled.Item item, ResultSet results, int[] column) throws SQLException {
+        return switch (item) {
+            case Compiled.EntityItem entity -> {
+                Object[] key = new Object[entity.width()];
+                boolean empty = true;
+                for (int k = 0; k < key.length; k++) {
+                    key[k] = entity.keyBinders().get(k).read(results, column[0]++);
+                    empty &= results.wasNull();
+                }
+                yield empty ? null : new EntityKey(entity.type(), entity.type().statements().key(key));
+            }
+            case Compiled.ValueItem value -> {
+                Object read = value.binder() != null ? value.binder().read(results, column[0]) : results.getObject(column[0]);
+                column[0]++;
+                yield results.wasNull() ? null : value.binder() != null ? read : convert(read, value.type());
+            }
+            case Compiled.ConstructorItem constructor -> {
+                Object[] arguments = new Object[constructor.arguments().size()];
+                for (int i = 0; i < arguments.length; i++) {
+                    arguments[i] = read(constructor.arguments().get(i), results, column);
+                }
+                yield new Built(constructor.type(), arguments);
+            }
+        };
+    }
+
+    /**
+     * {@code NEW type(arguments)} (§4.8.2): a public constructor of the application's class whose parameters take the
+     * arguments. The class is not an entity — no access is generated for it — so the constructor is called reflectively:
+     * on the module path, its package must be exported (or opened) to this module, as for any provider.
+     */
+    private Object construct(Class<?> type, Object[] arguments) {
+        for (java.lang.reflect.Constructor<?> constructor : type.getConstructors()) {
+            Class<?>[] parameters = constructor.getParameterTypes();
+            if (parameters.length != arguments.length) {
+                continue;
+            }
+            Object[] converted = new Object[arguments.length];
+            boolean fits = true;
+            for (int i = 0; i < arguments.length && fits; i++) {
+                Class<?> parameter = boxed(parameters[i]);
+                converted[i] = convert(arguments[i], parameter);
+                fits = converted[i] == null ? !parameters[i].isPrimitive() : parameter.isInstance(converted[i]);
+            }
+            if (fits) {
+                try {
+                    return constructor.newInstance(converted);
+                } catch (java.lang.reflect.InvocationTargetException e) {
+                    throw new PersistenceException("The constructor of " + type.getName() + " failed: " + e.getCause(), e.getCause());
+                } catch (ReflectiveOperationException e) {
+                    throw new PersistenceException("The constructor of " + type.getName() + " cannot be called: " + e.getMessage(), e);
                 }
             }
         }
-        return row;
+        throw new PersistenceException("No public constructor of " + type.getName() + " takes the arguments of the query: " + jpql);
+    }
+
+    /** A date or time as the {@code java.sql} or {@code java.time} type expected, or {@code null} if neither is one. */
+    private static Object temporal(Object value, Class<?> type) {
+        if (value instanceof Calendar calendar) {
+            return type == Calendar.class ? value : temporal(new java.sql.Timestamp(calendar.getTimeInMillis()), type);
+        }
+        if (value.getClass() == Date.class) { // a java.util.Date: its time, as a timestamp
+            return type == Date.class ? value : temporal(new java.sql.Timestamp(((Date) value).getTime()), type);
+        }
+        return switch (value) {
+            case java.sql.Date date when type == java.time.LocalDate.class -> date.toLocalDate();
+            case java.sql.Time time when type == java.time.LocalTime.class -> time.toLocalTime();
+            case java.sql.Timestamp timestamp when type == java.time.LocalDateTime.class -> timestamp.toLocalDateTime();
+            case java.sql.Timestamp timestamp when type == java.time.LocalDate.class -> timestamp.toLocalDateTime().toLocalDate();
+            case java.sql.Timestamp timestamp when type == java.time.LocalTime.class -> timestamp.toLocalDateTime().toLocalTime();
+            case java.sql.Timestamp timestamp when type == java.sql.Date.class -> new java.sql.Date(timestamp.getTime());
+            case java.sql.Timestamp timestamp when type == java.sql.Time.class -> new java.sql.Time(timestamp.getTime());
+            case java.sql.Date date when type == java.sql.Timestamp.class -> new java.sql.Timestamp(date.getTime());
+            case java.sql.Date date when type == java.time.LocalDateTime.class -> date.toLocalDate().atStartOfDay();
+            case Date date when type == Date.class -> date;
+            case Date date when type == Calendar.class -> calendar(date);
+            case java.time.LocalDate date when type == java.sql.Date.class -> java.sql.Date.valueOf(date);
+            case java.time.LocalTime time when type == java.sql.Time.class -> java.sql.Time.valueOf(time);
+            case java.time.LocalDateTime dateTime when type == java.sql.Timestamp.class -> java.sql.Timestamp.valueOf(dateTime);
+            case java.time.OffsetDateTime dateTime when type == java.sql.Timestamp.class -> java.sql.Timestamp.from(dateTime.toInstant());
+            default -> null;
+        };
     }
 
     /** A value the driver read, as the type the specification gives it (§4.8.5). */
     private static Object convert(Object value, Class<?> type) {
-        if (type == null || value == null || type.isInstance(value) || !(value instanceof Number number)) {
+        if (type == null || value == null || type.isInstance(value)) {
+            return value;
+        }
+        Object temporal = temporal(value, type);
+        if (temporal != null) {
+            return temporal;
+        }
+        if (!(value instanceof Number number)) {
             return value;
         }
         if (type == Long.class) {
@@ -271,7 +368,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     }
 
     private void bind(Dialect dialect, PreparedStatement statement, int index, Compiled.Slot slot) throws SQLException {
-        Object value = values.get(key(slot.parameter()));
+        Object value = slot.literal() ? slot.constant() : values.get(key(slot.parameter()));
         if (slot.element() >= 0) {
             value = new ArrayList<>((Collection<?>) value).get(slot.element());
         }
@@ -309,7 +406,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         QueryParameter<?> parameter = parameter(key);
         Class<?> type = parameter.type();
         if (value != null && type != Object.class && !(value instanceof Collection<?>) && !type.isInstance(value)
-                && !(value instanceof Number && Number.class.isAssignableFrom(type))) {
+                && !(value instanceof Number && Number.class.isAssignableFrom(type)) && !(temporal(value) && temporal(type))) {
             throw new IllegalArgumentException("The parameter " + describe(parameter) + " is a " + type.getName() + ", not a "
                 + value.getClass().getName() + " (§3.11.4)");
         }
@@ -339,32 +436,51 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
 
     @Override
     public TypedQuery<X> setParameter(Parameter<Calendar> param, Calendar value, TemporalType temporalType) {
-        return setParameter(param, value);
+        set(param.getName() != null ? param.getName() : (Object) param.getPosition(), temporal(value, temporalType));
+        return this;
     }
 
     @Override
     public TypedQuery<X> setParameter(Parameter<Date> param, Date value, TemporalType temporalType) {
-        return setParameter(param, value);
+        set(param.getName() != null ? param.getName() : (Object) param.getPosition(), temporal(value, temporalType));
+        return this;
     }
 
     @Override
     public TypedQuery<X> setParameter(String name, Calendar value, TemporalType temporalType) {
-        return setParameter(name, value);
+        set(name, temporal(value, temporalType));
+        return this;
     }
 
     @Override
     public TypedQuery<X> setParameter(String name, Date value, TemporalType temporalType) {
-        return setParameter(name, value);
+        set(name, temporal(value, temporalType));
+        return this;
     }
 
     @Override
     public TypedQuery<X> setParameter(int position, Calendar value, TemporalType temporalType) {
-        return setParameter(position, value);
+        set(position, temporal(value, temporalType));
+        return this;
     }
 
     @Override
     public TypedQuery<X> setParameter(int position, Date value, TemporalType temporalType) {
-        return setParameter(position, value);
+        set(position, temporal(value, temporalType));
+        return this;
+    }
+
+    /** Whether a value or a type is a date or a time: legacy ({@code java.util}, {@code java.sql}) or {@code java.time}. */
+    private static boolean temporal(Object valueOrType) {
+        Class<?> type = valueOrType instanceof Class<?> c ? c : valueOrType.getClass();
+        return Date.class.isAssignableFrom(type) || Calendar.class.isAssignableFrom(type)
+            || java.time.temporal.Temporal.class.isAssignableFrom(type) && type.getPackageName().equals("java.time");
+    }
+
+    private static Calendar calendar(Date date) {
+        Calendar calendar = Calendar.getInstance();
+        calendar.setTime(date);
+        return calendar;
     }
 
     @Override

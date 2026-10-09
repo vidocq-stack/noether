@@ -39,11 +39,22 @@ record Compiled(Query sql, List<Item> items, Class<?> resultType, List<Slot> slo
      * §4.6.9), the key part of an entity one ({@code entity} not null), through {@code binder} — {@code null} to let
      * the driver choose; {@code type} the Java type the parameter is compared with, if known.
      */
-    record Slot(Ast.Parameter parameter, int element, MappedEntity entity, int part, ValueBinder binder, Class<?> type) {
+    record Slot(Ast.Parameter parameter, int element, MappedEntity entity, int part, ValueBinder binder, Class<?> type,
+            Object constant) {
+
+        /** A literal the SQL cannot write (an enum constant, a date), bound through the binder of what it is compared with. */
+        static Slot constant(Object value, ValueBinder binder, Class<?> type) {
+            return new Slot(null, -1, null, -1, binder, type, value);
+        }
+
+        /** Whether it binds a literal of the query rather than a parameter. */
+        boolean literal() {
+            return parameter == null;
+        }
     }
 
     /** How a select item is read from the row. */
-    sealed interface Item permits EntityItem, ValueItem {
+    sealed interface Item permits EntityItem, ValueItem, ConstructorItem {
         /** The columns it takes in the row. */
         int width();
     }
@@ -64,6 +75,14 @@ record Compiled(Query sql, List<Item> items, Class<?> resultType, List<Slot> slo
         @Override
         public int width() {
             return 1;
+        }
+    }
+
+    /** {@code NEW type(arguments)} (§4.8.2): an instance of {@code type} built from the values of its arguments. */
+    record ConstructorItem(Class<?> type, List<Item> arguments) implements Item {
+        @Override
+        public int width() {
+            return arguments.stream().mapToInt(Item::width).sum();
         }
     }
 }

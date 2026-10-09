@@ -94,7 +94,14 @@ public final class Parser {
                 if (!descending) {
                     accept("ASC");
                 }
-                orderBy.add(new Ast.OrderItem(key, descending));
+                Boolean nullsFirst = null;
+                if (accept("NULLS")) {
+                    nullsFirst = accept("FIRST");
+                    if (!nullsFirst) {
+                        expect("LAST");
+                    }
+                }
+                orderBy.add(new Ast.OrderItem(key, descending, nullsFirst));
             } while (accept(","));
         }
         return new Ast.Select(distinct, items, from, where, groupBy, having, orderBy);
@@ -133,7 +140,19 @@ public final class Parser {
             }
             return new Ast.Range(null, collection, variable, joins());
         }
-        String entity = name("an entity name");
+        if (peek().kind() == Kind.NAME && peek(1).is(".")) { // a subquery: FROM e.projects p (§4.5.10)
+            Ast.Path collection = path();
+            String variable = alias();
+            if (variable == null) {
+                throw error("a variable for " + String.join(".", collection.segments()));
+            }
+            return new Ast.Range(null, collection, variable, joins());
+        }
+        Token token = peek();
+        if (token.kind() != Kind.NAME) {
+            throw error("an entity name");
+        }
+        String entity = advance().text(); // an entity may be named by a keyword: FROM Order o
         String variable = alias();
         if (variable == null) {
             throw error("an identification variable after " + entity);
@@ -365,6 +384,9 @@ public final class Parser {
             expect(")");
             return inner;
         }
+        if (accept("{")) {
+            return escape();
+        }
         if (token.kind() != Kind.NAME) {
             throw error("an expression");
         }
@@ -378,12 +400,44 @@ public final class Parser {
                 advance();
                 return new Ast.Literal(null);
             }
+            case "CASE" -> {
+                advance();
+                return caseExpression();
+            }
+            case "NEW" -> {
+                advance();
+                return constructor();
+            }
+            case "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP" -> {
+                if (!peek(1).is("(")) {
+                    advance();
+                    return new Ast.Function(word, List.of());
+                }
+            }
+            case "LOCAL" -> { // 3.1: LOCAL DATE, LOCAL TIME, LOCAL DATETIME
+                Token kind = peek(1);
+                if (kind.is("DATE") || kind.is("TIME") || kind.is("DATETIME")) {
+                    advance();
+                    advance();
+                    return new Ast.Function("LOCAL_" + kind.text().toUpperCase(Locale.ROOT), List.of());
+                }
+            }
             default -> {
             }
         }
         if (peek(1).is("(")) {
             advance();
             advance();
+            if (word.equals("TRIM")) {
+                return trim();
+            }
+            if (word.equals("EXTRACT")) {
+                String field = name("a date or time field").toUpperCase(Locale.ROOT);
+                expect("FROM");
+                Expr from = expression();
+                expect(")");
+                return new Ast.Function("EXTRACT", List.of(new Ast.Literal(field), from));
+            }
             if (AGGREGATES.contains(word)) {
                 boolean distinct = accept("DISTINCT");
                 Expr argument = word.equals("COUNT") && accept("*") ? null : expression();
@@ -400,6 +454,81 @@ public final class Parser {
             return new Ast.Function(word, arguments);
         }
         return path();
+    }
+
+    /** {@code TRIM([[LEADING|TRAILING|BOTH] [character] FROM] string)}: TRIM(specification, character or null, string). */
+    private Expr trim() {
+        String specification = "BOTH";
+        Expr character = new Ast.Literal(null);
+        boolean declared = false;
+        for (String word : List.of("LEADING", "TRAILING", "BOTH")) {
+            if (accept(word)) {
+                specification = word;
+                declared = true;
+            }
+        }
+        Expr first = peek().is("FROM") ? null : expression();
+        if (accept("FROM")) {
+            if (first != null) {
+                character = first;
+            }
+            first = expression();
+        } else if (declared) {
+            throw error("FROM");
+        }
+        expect(")");
+        return new Ast.Function("TRIM", List.of(new Ast.Literal(specification), character, first));
+    }
+
+    private Expr caseExpression() {
+        Expr operand = peek().is("WHEN") ? null : expression();
+        List<Ast.When> whens = new ArrayList<>();
+        while (accept("WHEN")) {
+            Expr when = operand == null ? condition() : expression();
+            expect("THEN");
+            whens.add(new Ast.When(when, expression()));
+        }
+        if (whens.isEmpty()) {
+            throw error("WHEN");
+        }
+        Expr otherwise = accept("ELSE") ? expression() : null;
+        expect("END");
+        return new Ast.Case(operand, whens, otherwise);
+    }
+
+    private Expr constructor() {
+        StringBuilder className = new StringBuilder(name("a class name"));
+        while (accept(".")) {
+            className.append('.').append(advance().text());
+        }
+        expect("(");
+        List<Expr> arguments = new ArrayList<>();
+        do {
+            arguments.add(expression());
+        } while (accept(","));
+        expect(")");
+        return new Ast.Constructor(className.toString(), arguments);
+    }
+
+    /** A JDBC escape (§4.6.1): {@code {d 'yyyy-mm-dd'}}, {@code {t 'hh:mm:ss'}}, {@code {ts 'yyyy-mm-dd hh:mm:ss[.f…]'}}. */
+    private Expr escape() {
+        String kind = name("d, t or ts").toLowerCase(Locale.ROOT);
+        Token value = advance();
+        if (value.kind() != Kind.STRING) {
+            throw error("a quoted date or time");
+        }
+        expect("}");
+        String text = (String) value.value();
+        try {
+            return new Ast.Literal(switch (kind) {
+                case "d" -> java.sql.Date.valueOf(text);
+                case "t" -> java.sql.Time.valueOf(text);
+                case "ts" -> java.sql.Timestamp.valueOf(text);
+                default -> throw error("d, t or ts");
+            });
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("The literal {" + kind + " '" + text + "'} is not a valid date or time: " + query, e);
+        }
     }
 
     private Ast.Path path() {

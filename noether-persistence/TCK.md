@@ -20,6 +20,19 @@ Official suite: **Jakarta Persistence 3.2.1** TCK (bundle from eclipse.org, SHA-
 | P5 (in progress) — maps and order columns | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 627 | 1504 | 4 |
 | P5 — relationships and collections, derived identities, `PersistenceUnitUtil` | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 635 | 1496 | 4 |
 | P7 (in progress) — slice 1: the query path, selects, joins, predicates, aggregates, parameters | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 780 | 1351 | 4 |
+| P7 (in progress) — slice 2: functions, cases, constructors, subqueries, collection expressions, literals | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 840 | 1291 | 4 |
+
+## P7, slice 2 — expressions: 780 → 840
+
+Functions, `CASE`, constructor expressions, subqueries, collection expressions, enum and date literals, temporal
+parameters, paths into derived identifiers, `INDEX`. Run of 2026-10-09: **840 pass, 1291 fail, 4 skipped**. Compared test by
+test with the run at 780: 60 tests pass that failed, none fails that passed — `core.query.language.Client2`/`Client3` (24),
+`core.annotations.access.field.Client4` (14), `core.annotations.ordercolumn` (3), `core.derivedid.ex{2b,3b,6b}`, the
+temporal `setParameter` tests of `core.query.apitests.Client1`, `core.enums`, `core.annotations.basic.Client2`…
+
+What the query language still owes: bulk updates and deletes, named queries, lock modes (slice 3); set operations and
+`CAST` (slice 4); native query results and stored procedures (slice 5). Most of `core.query.language` and of the Criteria
+tests stop earlier, at their test data (inheritance, P6).
 
 ## P7, slice 1 — the query path: 635 → 780
 

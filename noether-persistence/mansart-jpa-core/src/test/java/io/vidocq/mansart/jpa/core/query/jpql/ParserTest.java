@@ -130,6 +130,64 @@ class ParserTest {
     }
 
     @Test
+    void functionsWithTheirOwnSyntax() { // §4.6.17.2: TRIM, EXTRACT, SUBSTRING, LOCATE, current dates
+        Select select = select("SELECT TRIM(LEADING 'x' FROM e.name), TRIM(e.name), EXTRACT(YEAR FROM e.hired), CURRENT_DATE, "
+            + "LOCAL DATETIME, SUBSTRING(e.name, 1, 2), LOCATE('a', e.name, 3) FROM Emp e");
+        List<Ast.Expr> items = select.items().stream().map(Ast.Item::expression).toList();
+        assertThat(items.get(0)).isEqualTo(new Ast.Function("TRIM", List.of(new Literal("LEADING"), new Literal("x"),
+            new Path(List.of("e", "name")))));
+        assertThat(items.get(1)).isEqualTo(new Ast.Function("TRIM", List.of(new Literal("BOTH"), new Literal(null),
+            new Path(List.of("e", "name")))));
+        assertThat(items.get(2)).isEqualTo(new Ast.Function("EXTRACT", List.of(new Literal("YEAR"), new Path(List.of("e", "hired")))));
+        assertThat(items.get(3)).isEqualTo(new Ast.Function("CURRENT_DATE", List.of()));
+        assertThat(items.get(4)).isEqualTo(new Ast.Function("LOCAL_DATETIME", List.of()));
+        assertThat(items.get(5)).isInstanceOfSatisfying(Ast.Function.class, f -> assertThat(f.arguments()).hasSize(3));
+        assertThat(items.get(6)).isInstanceOfSatisfying(Ast.Function.class, f -> assertThat(f.name()).isEqualTo("LOCATE"));
+    }
+
+    @Test
+    void caseCoalesceNullifAndConstructors() { // §4.6.17.4, §4.8.2
+        Select select = select("SELECT NEW com.example.Summary(e.name, CASE WHEN e.age > 30 THEN 'senior' ELSE 'junior' END), "
+            + "CASE e.status WHEN 1 THEN 'on' WHEN 2 THEN 'off' END, COALESCE(e.nick, e.name), NULLIF(e.a, 0) FROM Emp e");
+        assertThat(select.items().getFirst().expression()).isInstanceOfSatisfying(Ast.Constructor.class, c -> {
+            assertThat(c.className()).isEqualTo("com.example.Summary");
+            assertThat(c.arguments().get(1)).isInstanceOfSatisfying(Ast.Case.class, k -> {
+                assertThat(k.operand()).isNull();
+                assertThat(k.otherwise()).isEqualTo(new Literal("junior"));
+            });
+        });
+        assertThat(select.items().get(1).expression()).isInstanceOfSatisfying(Ast.Case.class, k -> {
+            assertThat(k.operand()).isEqualTo(new Path(List.of("e", "status")));
+            assertThat(k.whens()).hasSize(2);
+            assertThat(k.otherwise()).isNull();
+        });
+        assertThat(select.items().get(2).expression()).isEqualTo(new Ast.Function("COALESCE", List.of(new Path(List.of("e", "nick")),
+            new Path(List.of("e", "name")))));
+    }
+
+    @Test
+    void subqueriesAndCollections() { // §4.5.10, §4.6.12, §4.6.13, §4.6.16
+        Select select = select("SELECT e FROM Emp e WHERE EXISTS (SELECT p FROM e.projects p WHERE p.budget > ALL (SELECT q.budget "
+            + "FROM Project q)) AND e.projects IS NOT EMPTY AND :p MEMBER OF e.projects AND SIZE(e.projects) > 1");
+        assertThat(select.where().toString()).contains("Exists", "IsEmpty", "MemberOf", "SIZE");
+        Ast.Range correlated = ((Ast.Exists) ((Binary) ((Binary) ((Binary) select.where()).left()).left()).left()).select().from()
+            .getFirst();
+        assertThat(correlated.entity()).isNull();
+        assertThat(correlated.collection()).isEqualTo(new Path(List.of("e", "projects")));
+    }
+
+    @Test
+    void literalsOfDatesAndEnumsAndOrderingOfNulls() { // §4.6.1: JDBC escapes; 3.1: NULLS FIRST / LAST
+        Select select = select("SELECT o FROM Order o WHERE o.placed > {d '2024-01-31'} AND o.state = com.example.State.OPEN "
+            + "ORDER BY o.placed DESC NULLS LAST, o.id NULLS FIRST");
+        assertThat(select.from().getFirst().entity()).isEqualTo("Order"); // a keyword names an entity after FROM
+        Binary where = (Binary) select.where();
+        assertThat(((Binary) where.left()).right()).isEqualTo(new Literal(java.sql.Date.valueOf("2024-01-31")));
+        assertThat(((Binary) where.right()).right()).isEqualTo(new Path(List.of("com", "example", "State", "OPEN")));
+        assertThat(select.orderBy()).extracting(Ast.OrderItem::nullsFirst).containsExactly(false, true);
+    }
+
+    @Test
     void aSyntaxErrorNamesWhereItIs() { // §3.11.? IllegalArgumentException at createQuery
         assertThatThrownBy(() -> Parser.parse("SELECT e FROM Emp e WHERE")).isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("end of the query");

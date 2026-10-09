@@ -19,10 +19,13 @@
  */
 package io.vidocq.mansart.jpa.dialect;
 
+import io.vidocq.mansart.jpa.dialect.sql.Expression;
 import io.vidocq.mansart.jpa.dialect.sql.Identifier;
+import io.vidocq.mansart.jpa.dialect.sql.Query;
 import io.vidocq.mansart.jpa.dialect.sql.Statement;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -39,6 +42,18 @@ public interface Dialect {
      * computation, no I/O and no call back into Mansart: the provider renders inside a concurrent cache.
      */
     String render(Statement statement);
+
+    /** A query as SQL, and its parameters in the order the SQL holds them — repeated if the SQL repeats them. */
+    record Rendered(String sql, List<Expression.Parameter> parameters) {
+        public Rendered {
+            parameters = List.copyOf(parameters);
+        }
+    }
+
+    /** Renders {@code query} and tells the order of its parameters, which only the rendering knows (§4.6.17). */
+    default Rendered renderQuery(Query query) {
+        return new Rendered(render(query), query.parameters());
+    }
 
     /**
      * Whether the driver returns the keys the database generated for every row of a batch of inserts

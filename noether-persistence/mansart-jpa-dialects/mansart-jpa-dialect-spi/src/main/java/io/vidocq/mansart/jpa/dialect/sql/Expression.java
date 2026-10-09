@@ -106,4 +106,49 @@ public sealed interface Expression {
     /** An aggregate function — {@code COUNT}, {@code SUM}, {@code AVG}, {@code MIN}, {@code MAX} — of {@code argument}, {@code *} if null. */
     record Aggregate(String function, boolean distinct, Expression argument) implements Expression {
     }
+
+    /**
+     * A function of the query language by its name there (§4.6.17.2: {@code SUBSTRING}, {@code TRIM}, {@code LOCATE},
+     * {@code EXTRACT}, {@code CURRENT_DATE}, {@code COALESCE}…), which the dialect writes in the SQL of its database.
+     * The first argument of {@code TRIM} (the trim specification) and of {@code EXTRACT} (the field) is a keyword
+     * literal, written as the word; the second of {@code TRIM}, the character, is a {@code NULL} literal when absent.
+     */
+    record Function(String name, List<Expression> arguments) implements Expression {
+        public Function {
+            Objects.requireNonNull(name, "name");
+            arguments = List.copyOf(arguments);
+        }
+
+        /** The indexes of the arguments that are keywords, written as words rather than literals. */
+        public java.util.Set<Integer> keywords() {
+            return name.equals("TRIM") || name.equals("EXTRACT") ? java.util.Set.of(0) : java.util.Set.of();
+        }
+    }
+
+    /** {@code CASE [operand] WHEN … THEN … [ELSE otherwise] END}; {@code operand} null for a searched case. */
+    record Case(Expression operand, List<When> whens, Expression otherwise) implements Expression {
+        public Case {
+            whens = List.copyOf(whens);
+        }
+    }
+
+    /** {@code WHEN when THEN then}. */
+    record When(Expression when, Expression then) {
+    }
+
+    /** A scalar subquery. */
+    record Subquery(Query query) implements Expression {
+    }
+
+    /** {@code [NOT] EXISTS (query)}. */
+    record Exists(Query query, boolean negated) implements Expression {
+    }
+
+    /** {@code operand [NOT] IN (query)}. */
+    record InQuery(Expression operand, Query query, boolean negated) implements Expression {
+    }
+
+    /** {@code ALL (query)} or {@code ANY (query)}, the right operand of a comparison. */
+    record Quantified(String quantifier, Query query) implements Expression {
+    }
 }

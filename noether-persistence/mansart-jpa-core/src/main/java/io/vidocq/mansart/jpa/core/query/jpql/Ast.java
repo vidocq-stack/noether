@@ -67,8 +67,8 @@ public final class Ast {
         }
     }
 
-    /** A sort key (§4.9). */
-    public record OrderItem(Expr expression, boolean descending) {
+    /** A sort key (§4.9); {@code nullsFirst} {@code null} when the query does not say where nulls go. */
+    public record OrderItem(Expr expression, boolean descending, Boolean nullsFirst) {
     }
 
     /** An expression, a condition included. */
@@ -137,6 +137,24 @@ public final class Ast {
     /** A function call, its name upper-cased: {@code UPPER(e.name)}, {@code SIZE(e.projects)}… */
     public record Function(String name, List<Expr> arguments) implements Expr {
         public Function {
+            arguments = List.copyOf(arguments);
+        }
+    }
+
+    /** {@code CASE [operand] WHEN … THEN … [ELSE otherwise] END} (§4.6.17.4); {@code operand} {@code null} for a general case. */
+    public record Case(Expr operand, List<When> whens, Expr otherwise) implements Expr {
+        public Case {
+            whens = List.copyOf(whens);
+        }
+    }
+
+    /** {@code WHEN when THEN then}: a condition, or a value compared with the operand of a simple case. */
+    public record When(Expr when, Expr then) {
+    }
+
+    /** {@code NEW className(arguments)} (§4.8.2). */
+    public record Constructor(String className, List<Expr> arguments) implements Expr {
+        public Constructor {
             arguments = List.copyOf(arguments);
         }
     }

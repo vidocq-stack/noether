@@ -25,6 +25,7 @@ import io.vidocq.mansart.jpa.dialect.sql.NextValue;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
+import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 
@@ -44,6 +45,19 @@ public final class PostgreSQLDialect extends StandardDialect {
     @Override
     protected String nextValue(NextValue next) {
         return "SELECT nextval('" + table(next.table()).replace("'", "''") + "')";
+    }
+
+    /**
+     * PostgreSQL has no {@code LOCATE} with a start position: the position of the search in the string from that
+     * start, shifted back to the whole string, 0 when not found.
+     */
+    @Override
+    protected String function(String name, List<String> arguments) {
+        if (name.equals("LOCATE") && arguments.size() == 3) {
+            String found = "POSITION(" + arguments.get(0) + " IN SUBSTRING(" + arguments.get(1) + " FROM " + arguments.get(2) + "))";
+            return "CASE WHEN " + found + " = 0 THEN 0 ELSE " + found + " + " + arguments.get(2) + " - 1 END";
+        }
+        return super.function(name, arguments);
     }
 
     /** {@code SET LOCAL}: the timeout ends with the transaction, never left on a pooled connection. */

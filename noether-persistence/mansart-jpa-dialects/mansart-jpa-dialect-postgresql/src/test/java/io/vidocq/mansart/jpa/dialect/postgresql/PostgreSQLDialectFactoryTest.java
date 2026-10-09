@@ -40,6 +40,19 @@ class PostgreSQLDialectFactoryTest {
     }
 
     @Test
+    void locateFromAPositionIsWrittenWithPositionAndItsParametersRepeated() { // §4.6.17.2
+        var search = new io.vidocq.mansart.jpa.dialect.sql.Expression.Parameter("s");
+        var start = new io.vidocq.mansart.jpa.dialect.sql.Expression.Parameter("start");
+        var query = io.vidocq.mansart.jpa.dialect.sql.Query.from(new io.vidocq.mansart.jpa.dialect.sql.Query.From(Table.of("EMP"), "e",
+            List.of())).select(new io.vidocq.mansart.jpa.dialect.sql.Expression.Function("LOCATE", List.of(search,
+                new io.vidocq.mansart.jpa.dialect.sql.Expression.Column("e", Identifier.of("NAME")), start))).build();
+        var rendered = new PostgreSQLDialectFactory().create(17, 0).renderQuery(query);
+        assertThat(rendered.sql()).isEqualTo("SELECT CASE WHEN POSITION(? IN SUBSTRING(e.NAME FROM ?)) = 0 THEN 0 "
+            + "ELSE POSITION(? IN SUBSTRING(e.NAME FROM ?)) + ? - 1 END FROM EMP e");
+        assertThat(rendered.parameters()).containsExactly(search, start, search, start, start);
+    }
+
+    @Test
     void itRecognisesPostgreSqlFromItsJdbcMetadata() { // DatabaseMetaData.getDatabaseProductName()
         DialectFactory factory = new PostgreSQLDialectFactory();
         assertThat(factory.supports("PostgreSQL")).isTrue();

@@ -69,11 +69,13 @@ public final class MappedUnit {
     private final Map<EmbeddableModel, ManagedAccess> embeddables;
     private final Map<BasicAttribute, ValueBinder> binders;
     private final Map<Class<?>, MappedEntity> mapped;
+    private final ClassLoader loader;
 
     private MappedUnit(PersistenceUnitModel model, Map<Class<?>, ManagedAccess> entities,
             Map<EmbeddableModel, ManagedAccess> embeddables, Map<BasicAttribute, ValueBinder> binders,
-            Map<Class<?>, MappedEntity> mapped) {
+            Map<Class<?>, MappedEntity> mapped, ClassLoader loader) {
         this.model = model;
+        this.loader = loader;
         this.entities = entities;
         this.embeddables = embeddables;
         this.binders = binders;
@@ -118,7 +120,7 @@ public final class MappedUnit {
                     target -> model.entity(target).orElse(null), mapped::get),
                 ranks.get(entity.javaType()), mapped::get));
         }
-        return new MappedUnit(model, entities, embeddables, binders, mapped);
+        return new MappedUnit(model, entities, embeddables, binders, mapped, loader);
     }
 
     /**
@@ -296,6 +298,11 @@ public final class MappedUnit {
 
     public PersistenceUnitModel model() {
         return model;
+    }
+
+    /** The class loader of the managed classes: the classes a query names (constructor results, enums) come from it. */
+    public ClassLoader loader() {
+        return loader;
     }
 
     /** The entity {@code type} as the persistence context and the flush engine use it. */

@@ -487,6 +487,20 @@ with inheritance (P6) as much as with this milestone.
       in a transaction, query timeouts; a shared `AbstractQuery` with the native queries. Entities are read by their
       key then found in the persistence context or loaded (one select per entity — rows read directly with the joins of
       a later slice).
+- [x] Slice 2 (`JpqlExpressionTest`, more of `ParserTest` and `QueryRenderingTest`): the functions of §4.6.17.2 —
+      string (`CONCAT`, `SUBSTRING`, `TRIM`, `LOWER`, `UPPER`, `LENGTH`, `LOCATE`, `LEFT`, `RIGHT`, `REPLACE`),
+      arithmetic (`ABS`, `SQRT`, `MOD`, `SIZE`, `INDEX`, `CEILING`, `FLOOR`, `EXP`, `LN`, `POWER`, `ROUND`, `SIGN`),
+      date and time (`CURRENT_*`, `LOCAL DATE|TIME|DATETIME`, `EXTRACT`), `ID()`, `VERSION()` — typed as §4.8 says,
+      with numeric promotion; `CASE`, `COALESCE`, `NULLIF`; constructor expressions (a public constructor of the
+      application's class, called reflectively: not an entity); subqueries (`EXISTS`, `IN`, `ALL` / `ANY`, scalar,
+      correlated over a collection of an enclosing variable); `IS [NOT] EMPTY`, `[NOT] MEMBER OF`, `SIZE` over
+      relationships and element collections; joins over element collections; enum constants and JDBC date literals,
+      bound through the binders of what they meet; `ORDER BY … NULLS FIRST|LAST`; an entity named by a keyword;
+      paths into derived identifiers; temporal parameters by their `TemporalType`. The dialect renders a query and
+      tells the order of its parameters (`Dialect.renderQuery`): a function may move or repeat its arguments
+      (`LOCATE` from a position on PostgreSQL).
+- [ ] Left for later slices: `KEY` / `VALUE` / `ENTRY` of maps in queries, embeddables compared as a whole,
+      navigating an enclosing variable inside a subquery, `TYPE` (P6), `CAST` and set operations (slice 4).
 - [ ] Semantic analysis against the entity model; SQL lowering through the dialect SPI
       (joins, fetch joins, subqueries, `GROUP BY`/`HAVING`, constructor expressions, `CASE`,
       functions, 3.2 additions: `UNION`/`INTERSECT`/`EXCEPT`, `||`, `LEFT`/`RIGHT`/`REPLACE`,

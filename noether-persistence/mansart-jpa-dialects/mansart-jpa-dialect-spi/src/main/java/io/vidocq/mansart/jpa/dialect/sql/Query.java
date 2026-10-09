@@ -25,8 +25,9 @@ import java.util.Objects;
 
 /**
  * A query: {@code SELECT [DISTINCT] select FROM from [WHERE where] [GROUP BY groupBy [HAVING having]] [ORDER BY orderBy]}
- * then its paging. Its {@link #parameters()} are listed in the order the rendered SQL holds them: select items, join
- * conditions, {@code WHERE}, {@code GROUP BY}, {@code HAVING}, {@code ORDER BY} — a dialect renders them in that order.
+ * then its paging. Its {@link #parameters()} are listed in their logical order — select items, join conditions,
+ * {@code WHERE}, {@code GROUP BY}, {@code HAVING}, {@code ORDER BY}; the order to bind them is the one the dialect
+ * renders ({@code Dialect.renderQuery}), which may move or repeat them.
  *
  * @param offset the rows skipped, or {@code null}
  * @param limit the most rows read, or {@code null}
@@ -50,8 +51,8 @@ public record Query(boolean distinct, List<Expression> select, List<From> from, 
         }
     }
 
-    /** A sort key. */
-    public record Order(Expression expression, boolean descending) {
+    /** A sort key; {@code nullsFirst} null to leave nulls where the database puts them. */
+    public record Order(Expression expression, boolean descending, Boolean nullsFirst) {
     }
 
     public Query {
@@ -112,6 +113,22 @@ public record Query(boolean distinct, List<Expression> select, List<From> from, 
                 in.values().forEach(v -> collect(v, parameters));
             }
             case Expression.Aggregate aggregate -> collect(aggregate.argument(), parameters);
+            case Expression.Function function -> function.arguments().forEach(a -> collect(a, parameters));
+            case Expression.Case kase -> {
+                collect(kase.operand(), parameters);
+                for (Expression.When when : kase.whens()) {
+                    collect(when.when(), parameters);
+                    collect(when.then(), parameters);
+                }
+                collect(kase.otherwise(), parameters);
+            }
+            case Expression.Subquery subquery -> parameters.addAll(subquery.query().parameters());
+            case Expression.Exists exists -> parameters.addAll(exists.query().parameters());
+            case Expression.InQuery in -> {
+                collect(in.operand(), parameters);
+                parameters.addAll(in.query().parameters());
+            }
+            case Expression.Quantified quantified -> parameters.addAll(quantified.query().parameters());
         }
     }
 

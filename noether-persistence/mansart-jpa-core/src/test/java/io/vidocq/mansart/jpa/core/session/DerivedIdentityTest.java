@@ -164,6 +164,18 @@ class DerivedIdentityTest {
     }
 
     @Test
+    void queriesReachTheDerivedPartsOfAnIdentifierThroughTheForeignKey() { // §2.4.1, §4.4.4
+        Officer officer = officer();
+        inTransaction(() -> {
+            em.persist(new Witness("Flambard", officer));
+            em.persist(new Badge(officer));
+        });
+        assertThat(em.createQuery("SELECT w.key.name FROM Witness w WHERE w.key.officerId = 7", String.class).getSingleResult())
+            .isEqualTo("Flambard");
+        assertThat(em.createQuery("SELECT b.id FROM Badge b", Long.class).getSingleResult()).isEqualTo(7L);
+    }
+
+    @Test
     void aDependentIsUpdatedAndRemovedByItsDerivedKey() throws SQLException {
         Officer officer = officer();
         Informant informant = new Informant("Coco", officer, "the inn");
