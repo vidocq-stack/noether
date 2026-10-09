@@ -420,7 +420,13 @@ Spec: ch. 2.10–2.12 (relationships, defaults), ch. 2.4.2 (derived identities),
       `insertable` / `updatable`) without versioning its owner. A changed indexed collection is written again whole;
       a reordered list or a re-keyed map is a change. Maps merge key by key (entity keys to their managed instances).
 - [ ] Embeddable map keys, indexes of the inverse side of a many-to-many.
-- [ ] Derived identities (`@MapsId`, all `ex1a…ex6b` shapes), nested embeddables.
+- [x] Derived identities (`DerivedIdentityTest`, §2.4.1): the identity of an entity is the list of its key column values,
+      a part derived from a parent — an `@Id` relationship, a relationship an `@MapsId` names, the only `@Id` of an
+      entity sharing its parent's id class — unfolding into the parent's key, its columns the foreign key of the
+      relationship, in the order of the parts. `find` takes the application's identifier object (id class, embedded
+      id, the parent's identifier); the attributes an `@MapsId` maps are assigned from the parent at persist and at load.
+      The `ex1a…ex6b` shapes persist and load; their TCK tests read back with queries (P7, P8).
+- [ ] Relationships to an entity with a derived identity, nested embeddables, `PersistenceUnitUtil`.
 
 **TCK gate**: `core.relationship.*`, `core.derivedid.*`, `core.nestedembedding`,
 `core.annotations.{mapkey*,elementcollection,collectiontable,orderby,ordercolumn,onexmanyuni,mapsid,assocoverride}`,

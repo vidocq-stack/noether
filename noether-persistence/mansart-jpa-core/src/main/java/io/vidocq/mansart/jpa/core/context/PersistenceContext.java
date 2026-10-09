@@ -64,7 +64,15 @@ public final class PersistenceContext {
      * identity, the managed instance stays and is returned (§3.2.8: one managed instance per identity).
      */
     public ManagedEntity loaded(Object instance, MappedEntity type, Object[] snapshot) {
-        EntityKey key = key(type, type.id(instance));
+        return loaded(instance, type, type.id(instance), snapshot);
+    }
+
+    /**
+     * Like {@link #loaded(Object, MappedEntity, Object[])}, with the identity {@code id} the row was read by: a derived
+     * identity (§2.4.1) is known before the parent it derives from is loaded.
+     */
+    public ManagedEntity loaded(Object instance, MappedEntity type, Object id, Object[] snapshot) {
+        EntityKey key = key(type, id);
         if (key == null) {
             throw new IllegalArgumentException("A loaded instance of " + type.model().entityName() + " has no identifier");
         }

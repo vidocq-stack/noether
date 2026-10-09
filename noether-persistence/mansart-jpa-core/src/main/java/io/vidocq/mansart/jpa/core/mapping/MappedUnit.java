@@ -37,6 +37,7 @@ import io.vidocq.mansart.jpa.core.model.IdModel;
 import io.vidocq.mansart.jpa.core.model.PersistenceUnitModel;
 import io.vidocq.mansart.jpa.core.model.ValueConversion;
 import io.vidocq.mansart.jpa.core.model.build.EntityModelBuilder;
+import io.vidocq.mansart.jpa.core.model.build.Types;
 import io.vidocq.mansart.jpa.core.model.source.ClassFileSource;
 import io.vidocq.mansart.jpa.core.spi.ManagedAccess;
 import io.vidocq.mansart.jpa.core.spi.ManagedAccessProvider;
@@ -115,7 +116,7 @@ public final class MappedUnit {
             mapped.put(entity.javaType(), new MappedEntity(entity, entities.get(entity.javaType()), root(model, entity), embeddedId,
                 idClass, state, m -> EntityStatements.of(m, MappedEntity.idIndexes(m), binders::get, embeddables::get,
                     target -> model.entity(target).orElse(null), mapped::get),
-                ranks.get(entity.javaType())));
+                ranks.get(entity.javaType()), mapped::get));
         }
         return new MappedUnit(model, entities, embeddables, binders, mapped);
     }
@@ -163,18 +164,27 @@ public final class MappedUnit {
 
     /**
      * The access of an {@code @IdClass} (§2.4.1): one attribute per identifier attribute of the entity, in the same
-     * order, read by field when the id class declares a field of that name, else by property. Relationship
-     * identifiers (derived identities) come with P5.
+     * order, read by field when the id class declares a field of that name, else by property. The part for a
+     * relationship of a derived identity has the type the id class declares (the parent's key, §2.4.1.1).
+     * {@code null} when a relationship part has no field of its name: the id class is then the parent's, the
+     * relationship the whole identifier (§2.4.1.3 example 5a).
      */
     private static ManagedAccess idClassAccess(IdModel.ByIdClass id, ClassLoader loader) {
-        if (id.attributes().stream().anyMatch(a -> !(a instanceof BasicAttribute))) {
-            return null;
-        }
         ClassFileSource source = new ClassFileSource(loader);
         List<AttributeModel> attributes = new ArrayList<>();
         for (AttributeModel part : id.attributes()) {
             Class<?> owner = fieldOwner(id.idClass(), part.name(), source);
-            attributes.add(new BasicAttribute(part.name(), part.javaType(), owner != null ? AccessKind.FIELD : AccessKind.PROPERTY,
+            Class<?> type = part.javaType();
+            if (part instanceof AssociationAttribute) {
+                if (owner == null) {
+                    return null;
+                }
+                type = source.read(owner.getName()).flatMap(info -> info.field(part.name()))
+                    .map(field -> Types.load(field.type(), loader)).orElseThrow();
+            } else if (!(part instanceof BasicAttribute)) {
+                return null;
+            }
+            attributes.add(new BasicAttribute(part.name(), type, owner != null ? AccessKind.FIELD : AccessKind.PROPERTY,
                 owner != null ? owner : id.idClass(), ColumnModel.defaultFor(part.name()), true, FetchType.EAGER, false,
                 new ValueConversion.None(), false));
         }

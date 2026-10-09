@@ -19,6 +19,14 @@ Official suite: **Jakarta Persistence 3.2.1** TCK (bundle from eclipse.org, SHA-
 | P5 (in progress) — element collections, `@OrderBy` paths | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 622 | 1509 | 4 |
 | P5 (in progress) — maps and order columns | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 627 | 1504 | 4 |
 
+## P5, fifth slice — derived identities: 627 → 627
+
+The six derived identity shapes of §2.4.1.3 (`@IdClass` with a relationship part, `@EmbeddedId` with `@MapsId`, an
+`@Id` relationship, `@MapsId` on the whole identifier, a dependent sharing its parent's id class) persist, load and are
+found by their identifier objects. Run of 2026-10-09: **627 pass, 1504 fail, 4 skipped**, the same tests as before. The 12
+tests of `core.derivedid` and `core.annotations.mapsid.Client#persistMX1Test1` no longer stop at the flush: they now
+read their results back with Jakarta Persistence queries (P7) — `ex1a` with the Criteria API (P8).
+
 ## P5, fourth slice — maps and order columns: 622 → 627
 
 Map keys (`@MapKey`, `@MapKeyColumn`, `@MapKeyJoinColumn`, `@MapKeyClass`, `@MapKeyEnumerated`, `@MapKeyTemporal`) and

@@ -46,9 +46,11 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.PersistenceException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
 
 /**
@@ -150,10 +152,12 @@ public final class EntityStatements {
             return unsupported(model, "P6", "entity inheritance");
         }
         List<Integer> ids = Arrays.stream(idAttributes).boxed().toList();
-        // a derived identity, single or through an @IdClass: part of the identifier is a relationship column (P5)
-        if (ids.stream().anyMatch(i -> !(model.attributes().get(i) instanceof BasicAttribute
-                || model.attributes().get(i) instanceof EmbeddedAttribute))) {
-            return unsupported(model, "P5", "derived identities");
+        // §2.4.1 derived identities: the relationships of the identifier, and those an @MapsId names, hold key columns
+        Map<String, Integer> mapsIds = new HashMap<>();
+        for (int i = 0; i < model.attributes().size(); i++) {
+            if (model.attributes().get(i) instanceof AssociationAttribute association && association.mapsId() != null) {
+                mapsIds.put(association.mapsId(), i);
+            }
         }
         Identifier generated = model.id() instanceof IdModel.Single single
             && single.generation().map(g -> g.strategy() == GenerationType.IDENTITY).orElse(false)
@@ -169,13 +173,20 @@ public final class EntityStatements {
         for (int i = 0; i < attributes.size(); i++) {
             boolean id = ids.contains(i);
             switch (attributes.get(i)) {
+                case BasicAttribute basic when id && mapsIds.containsKey("") -> {
+                    // its value is the parent's key, which the columns of the relationship hold
+                }
                 case BasicAttribute basic -> columns.add(new Column(Identifier.of(basic.column().name()), binders.apply(basic), i,
                     new int[0], new ManagedAccess[0], id, basic.version(), basic.column().insertable(), basic.column().updatable(),
                     tableIndex(basic.column().table(), tableNames), null));
+                case EmbeddedAttribute embedded when id && mapsIds.containsKey("") -> {
+                    // the whole identifier is the parent's key
+                }
                 case EmbeddedAttribute embedded -> flatten(embedded, embedded.embeddable(), "", i, new int[0], new ManagedAccess[0], id,
-                    binders, embeddables, tableNames, columns);
+                    binders, embeddables, tableNames, columns, id ? mapsIds.keySet() : Set.of());
                 case AssociationAttribute association when association.singleValued() && association.owning() -> {
-                    String problem = foreignKey(association, i, models, binders, tableNames, columns, references);
+                    boolean identifier = id || association.mapsId() != null;
+                    String problem = foreignKey(association, i, identifier, models, binders, tableNames, columns, references);
                     if (problem != null) {
                         return unsupported(model, "P5", problem);
                     }
@@ -194,18 +205,15 @@ public final class EntityStatements {
                 return unsupported(model, "P10", "a column of a table that no @SecondaryTable declares (a mapping file may)");
             }
         }
-        List<Integer> keys = new ArrayList<>();
         Integer version = null;
         for (int c = 0; c < columns.size(); c++) {
-            if (columns.get(c).id()) {
-                keys.add(c);
-            }
             if (columns.get(c).version()) {
                 version = c;
             }
         }
-        if (keys.isEmpty()) {
-            return unsupported(model, "P5", "identifiers without a column of their own");
+        List<Integer> keys = keys(model, columns, references, mapsIds);
+        if (keys == null || keys.isEmpty()) {
+            return unsupported(model, "P5", "an identifier whose columns are not mapped yet");
         }
         List<TableStatements> tables = new ArrayList<>();
         for (int t = 0; t < tableNames.size(); t++) {
@@ -228,6 +236,68 @@ public final class EntityStatements {
             List.copyOf(elementCollections), List.copyOf(columns), List.copyOf(tables), version, versionSelect);
     }
 
+    /**
+     * The key columns, as indexes in {@code columns}, in the order of the identity (§2.4): the column of each identifier
+     * attribute, of each component of the embedded identifier, and for a part derived from a parent — an {@code @Id}
+     * relationship, or a relationship an {@code @MapsId} names — the foreign key columns of the relationship, in the
+     * order of the parent's key. {@code null} when one has no columns.
+     */
+    private static List<Integer> keys(EntityModel model, List<Column> columns, List<Reference> references, Map<String, Integer> mapsIds) {
+        List<Integer> keys = new ArrayList<>();
+        Integer whole = mapsIds.get("");
+        if (whole != null) {
+            return referenceColumns(whole, references);
+        }
+        switch (model.id()) {
+            case IdModel.Single single -> keys.add(columnOf(model.attributes().indexOf(single.attribute()), -1, columns));
+            case IdModel.Derived derived -> {
+                return referenceColumns(model.attributes().indexOf(derived.relationship()), references);
+            }
+            case IdModel.Embedded embedded -> {
+                int attribute = model.attributes().indexOf(embedded.attribute());
+                List<AttributeModel> components = embedded.attribute().embeddable().attributes();
+                for (int c = 0; c < components.size(); c++) {
+                    Integer mapped = mapsIds.get(components.get(c).name());
+                    List<Integer> part = mapped != null ? referenceColumns(mapped, references) : List.of(columnOf(attribute, c, columns));
+                    if (part == null) {
+                        return null;
+                    }
+                    keys.addAll(part);
+                }
+            }
+            case IdModel.ByIdClass byIdClass -> {
+                for (AttributeModel attribute : byIdClass.attributes()) {
+                    int index = model.attributes().indexOf(attribute);
+                    List<Integer> part = attribute instanceof AssociationAttribute ? referenceColumns(index, references)
+                        : List.of(columnOf(index, -1, columns));
+                    if (part == null) {
+                        return null;
+                    }
+                    keys.addAll(part);
+                }
+            }
+        }
+        return keys.contains(-1) ? null : keys;
+    }
+
+    /** The column of attribute {@code attribute} — of its component {@code component} when ≥ 0 — or -1. */
+    private static int columnOf(int attribute, int component, List<Column> columns) {
+        for (int c = 0; c < columns.size(); c++) {
+            Column column = columns.get(c);
+            if (column.attribute() == attribute && column.foreignKey() == null
+                    && (component < 0 ? column.path().length == 0 : column.path().length == 1 && column.path()[0] == component)) {
+                return c;
+            }
+        }
+        return -1;
+    }
+
+    /** The foreign key columns of the relationship {@code attribute}, in the order of its target's key; {@code null} if none. */
+    private static List<Integer> referenceColumns(int attribute, List<Reference> references) {
+        return references.stream().filter(r -> r.attribute() == attribute).findFirst()
+            .map(r -> Arrays.stream(r.columns()).boxed().toList()).orElse(null);
+    }
+
     // ---- foreign keys (§2.10, §11.1.25) -------------------------------------------------------------------
 
     /** A key column of an entity: its name and binder, in the order of {@link #keyValues(Object)}. */
@@ -239,7 +309,7 @@ public final class EntityStatements {
      * its target, named by its {@code @JoinColumn}s or by default {@code <attribute>_<referenced column>} (§2.10.3.1,
      * §11.1.25). Returns what P5 does not map yet, or {@code null}.
      */
-    private static String foreignKey(AssociationAttribute association, int attribute, Function<Class<?>, EntityModel> models,
+    private static String foreignKey(AssociationAttribute association, int attribute, boolean id, Function<Class<?>, EntityModel> models,
             Function<BasicAttribute, ValueBinder> binders, List<String> tableNames, List<Column> columns, List<Reference> references) {
         if (association.joinTable() != null) {
             return "a single-valued relationship through a join table";
@@ -262,7 +332,7 @@ public final class EntityStatements {
             JoinColumnModel join = joins[part];
             String name = join.name() != null ? join.name() : association.name() + "_" + keys.get(part).name();
             indexes[part] = columns.size();
-            columns.add(new Column(Identifier.of(name), keys.get(part).binder(), attribute, new int[0], new ManagedAccess[0], false,
+            columns.add(new Column(Identifier.of(name), keys.get(part).binder(), attribute, new int[0], new ManagedAccess[0], id,
                 false, join.insertable(), join.updatable(), tableIndex(join.table(), tableNames),
                 new ForeignKey(association.targetEntity(), part)));
         }
@@ -595,9 +665,20 @@ public final class EntityStatements {
     static void flatten(EmbeddedAttribute owner, EmbeddableModel embeddable, String prefix, int attribute, int[] path,
             ManagedAccess[] accesses, boolean id, Function<BasicAttribute, ValueBinder> binders,
             Function<EmbeddableModel, ManagedAccess> embeddableAccess, List<String> tableNames, List<Column> columns) {
+        flatten(owner, embeddable, prefix, attribute, path, accesses, id, binders, embeddableAccess, tableNames, columns, Set.of());
+    }
+
+    /** @param skipped the components, of the top embeddable, that have no columns: an {@code @MapsId} maps them */
+    private static void flatten(EmbeddedAttribute owner, EmbeddableModel embeddable, String prefix, int attribute, int[] path,
+            ManagedAccess[] accesses, boolean id, Function<BasicAttribute, ValueBinder> binders,
+            Function<EmbeddableModel, ManagedAccess> embeddableAccess, List<String> tableNames, List<Column> columns,
+            Set<String> skipped) {
         ManagedAccess access = embeddableAccess.apply(embeddable);
         List<AttributeModel> attributes = embeddable.attributes();
         for (int i = 0; i < attributes.size(); i++) {
+            if (skipped.contains(attributes.get(i).name())) {
+                continue;
+            }
             int[] nested = Arrays.copyOf(path, path.length + 1);
             nested[path.length] = i;
             ManagedAccess[] along = Arrays.copyOf(accesses, accesses.length + 1);
@@ -837,10 +918,12 @@ public final class EntityStatements {
         }
         ManagedAccess access = columns.get(from).accesses()[depth];
         Object[] components = new Object[access.attributes().size()];
+        boolean[] read = new boolean[components.length];
         int c = from;
         while (c < to) {
             Column column = columns.get(c);
             int component = column.path()[depth];
+            read[component] = true;
             if (column.path().length == depth + 1) {
                 components[component] = values[c++];
                 continue;
@@ -856,7 +939,11 @@ public final class EntityStatements {
             return access.construct(components);
         }
         Object instance = access.instantiate();
-        access.write(instance, components);
+        for (int component = 0; component < components.length; component++) {
+            if (read[component]) { // a component without columns (an @MapsId part) is derived later
+                access.set(instance, component, components[component]);
+            }
+        }
         return instance;
     }
 

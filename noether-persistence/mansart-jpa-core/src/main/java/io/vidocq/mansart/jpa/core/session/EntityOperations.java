@@ -93,6 +93,7 @@ final class EntityOperations {
         if (known.isEmpty()) {
             type.callback("PrePersist", entity); // §3.6.3: before the persist operation, so before the identifier
             generateId(type, entity);
+            type.deriveId(entity); // §2.4.1: what an @MapsId maps is the parent's key
             context.persist(entity, type); // a detached instance fails at flush: its identity exists (§3.2.2)
         } else if (known.get().status() == ManagedEntity.Status.REMOVED) {
             type.callback("PrePersist", entity);
@@ -180,6 +181,7 @@ final class EntityOperations {
             copy(type, entity, managed);
             type.callback("PrePersist", managed); // §3.6.3: the managed copy is the instance persisted
             generateId(type, managed);
+            type.deriveId(managed);
             context.persist(managed, type);
         } else {
             checkVersion(type, entity, managed);

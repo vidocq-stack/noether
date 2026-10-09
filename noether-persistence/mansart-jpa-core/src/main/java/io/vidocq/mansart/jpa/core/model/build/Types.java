@@ -37,7 +37,7 @@ import java.util.Set;
 import java.util.UUID;
 
 /** Loading the classes descriptors name, and the basic types of §2.8 (3.2 adds {@code Instant} and {@code Year}). */
-final class Types {
+public final class Types {
 
     private static final Map<String, Class<?>> PRIMITIVES = Map.of("Z", boolean.class, "B", byte.class, "S", short.class,
         "C", char.class, "I", int.class, "J", long.class, "F", float.class, "D", double.class, "V", void.class);
@@ -55,7 +55,7 @@ final class Types {
     private Types() {
     }
 
-    static Class<?> load(ClassDesc desc, ClassLoader loader) {
+    public static Class<?> load(ClassDesc desc, ClassLoader loader) {
         if (desc.isPrimitive()) {
             return PRIMITIVES.get(desc.descriptorString());
         }

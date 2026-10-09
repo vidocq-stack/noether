@@ -93,17 +93,19 @@ public final class EntityLoader {
         }
         Object instance = type.access().instantiate();
         Object[] state = state(type, instance, row);
-        if (!(id instanceof CompositeId)) {
+        if (type.keepsFoundIdentifier()) {
             // the identifier object the application found it with, as other providers keep it (equal to the one read)
             int index = type.idAttributes()[0];
             state[index] = id;
             type.access().set(instance, index, id);
         }
-        ManagedEntity entry = context.loaded(instance, type, type.state().snapshot(state));
+        ManagedEntity entry = context.loaded(instance, type, id, type.state().snapshot(state));
         if (entry.instance() != instance) {
             return entry.instance();
         }
         relationships(type, id, instance, state, row, connection, context);
+        type.deriveId(instance); // §2.4.1: the identifier attributes an @MapsId maps, from the parent now loaded
+        type.access().read(instance, state);
         context.updated(entry, type.state().snapshot(state));
         type.callback("PostLoad", instance); // §3.6.3: once the state is loaded
         return instance;
@@ -296,7 +298,7 @@ public final class EntityLoader {
                 Object key = element.index();
                 if (index != null && !index.stored()) { // @MapKey: an attribute of the element, its identifier by default
                     key = index.keyAttribute() >= 0 ? target.access().get(element.element(), index.keyAttribute())
-                        : target.access().get(element.element(), target.idAttributes()[0]);
+                        : target.idObject(element.element());
                 }
                 map.put(key, element.element());
             }
