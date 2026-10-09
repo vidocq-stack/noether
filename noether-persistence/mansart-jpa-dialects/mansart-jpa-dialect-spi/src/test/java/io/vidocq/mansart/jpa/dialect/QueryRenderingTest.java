@@ -32,6 +32,7 @@ import io.vidocq.mansart.jpa.dialect.sql.Query;
 import io.vidocq.mansart.jpa.dialect.sql.Query.From;
 import io.vidocq.mansart.jpa.dialect.sql.Query.Join;
 import io.vidocq.mansart.jpa.dialect.sql.Query.Order;
+import io.vidocq.mansart.jpa.dialect.sql.SetQuery;
 import io.vidocq.mansart.jpa.dialect.sql.Table;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -131,6 +132,23 @@ class QueryRenderingTest {
         assertThat(ansi.render(query)).isEqualTo("SELECT SUBSTRING(e.NAME FROM ? FOR 2), TRIM(LEADING 'x' FROM e.NAME), "
             + "TRIM(BOTH FROM e.NAME), CHAR_LENGTH(e.NAME), POSITION('a' IN e.NAME), e.A || e.B || e.C, EXTRACT(YEAR FROM e.HIRED), "
             + "CURRENT_DATE, LOCALTIMESTAMP, UPPER(e.NAME) FROM EMP e");
+    }
+
+    @Test
+    void castsAndSetOperationsRenderTheirParametersInSqlOrder() {
+        Parameter first = new Parameter("first");
+        Parameter second = new Parameter("second");
+        Query players = from("PLAYER", "p").select(new Expression.Cast(column("p", "ID"), Expression.Cast.Type.VARCHAR))
+            .where(new Binary(column("p", "NAME"), Operator.EQ, first)).build();
+        Query teams = from("TEAM", "t").select(column("t", "NAME")).where(new Binary(column("t", "NAME"), Operator.EQ, second)).build();
+        SetQuery query = new SetQuery(List.of(players, teams),
+            List.of(new SetQuery.Operation(SetQuery.Operator.UNION, true)), List.of(new SetQuery.Order(1, true, null)), 2, 4);
+
+        Dialect.Rendered rendered = ansi.renderQuery(query);
+
+        assertThat(rendered.sql()).isEqualTo("(SELECT CAST(p.ID AS VARCHAR) FROM PLAYER p WHERE p.NAME = ?) UNION ALL "
+            + "(SELECT t.NAME FROM TEAM t WHERE t.NAME = ?) ORDER BY 1 DESC OFFSET 2 ROWS FETCH FIRST 4 ROWS ONLY");
+        assertThat(rendered.parameters()).containsExactly(first, second);
     }
 
     @Test

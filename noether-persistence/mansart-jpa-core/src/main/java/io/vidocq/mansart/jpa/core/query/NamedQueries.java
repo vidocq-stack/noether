@@ -21,7 +21,6 @@ package io.vidocq.mansart.jpa.core.query;
 
 import io.vidocq.mansart.jpa.core.mapping.MappedUnit;
 import io.vidocq.mansart.jpa.core.model.NamedQueryModel;
-import io.vidocq.mansart.jpa.core.session.NotYet;
 import jakarta.persistence.FlushModeType;
 import jakarta.persistence.LockModeType;
 import jakarta.persistence.Query;
@@ -39,7 +38,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class NamedQueries {
 
     /** What a named query is created from. Settings left {@code null} keep the defaults of the entity manager. */
-    record Definition(String name, String query, boolean nativeQuery, Class<?> resultClass, LockModeType lockMode,
+    record Definition(String name, String query, boolean nativeQuery, Class<?> resultClass, String resultSetMapping, LockModeType lockMode,
             Map<String, Object> hints, Integer maxResults, Integer firstResult, FlushModeType flushMode) {
     }
 
@@ -68,7 +67,7 @@ public final class NamedQueries {
         this.unit = unit;
         for (NamedQueryModel query : unit.model().namedQueries()) {
             byName.put(query.name(), new Definition(query.name(), query.query(), query.nativeQuery(), query.resultClass(),
-                LockModeType.valueOf(query.lockMode()), Map.copyOf(query.hints()), null, null, null));
+                query.resultSetMapping(), LockModeType.valueOf(query.lockMode()), Map.copyOf(query.hints()), null, null, null));
         }
     }
 
@@ -78,10 +77,10 @@ public final class NamedQueries {
             throw new IllegalArgumentException("A named query needs a name");
         }
         Definition definition = switch (query) {
-            case JpqlQuery<?> jpql -> new Definition(name, jpql.queryString(), false, jpql.resultClass(), jpql.getLockMode(),
+            case JpqlQuery<?> jpql -> new Definition(name, jpql.queryString(), false, jpql.resultClass(), null, jpql.getLockMode(),
                 Map.copyOf(jpql.getHints()), jpql.getMaxResults(), jpql.getFirstResult(), jpql.getFlushMode());
-            case NativeQuery sql -> new Definition(name, sql.sqlString(), true, null, LockModeType.NONE, Map.copyOf(sql.getHints()),
-                sql.getMaxResults(), sql.getFirstResult(), sql.getFlushMode());
+            case NativeQuery sql -> new Definition(name, sql.sqlString(), true, null, null, LockModeType.NONE,
+                Map.copyOf(sql.getHints()), sql.getMaxResults(), sql.getFirstResult(), sql.getFlushMode());
             default -> throw new IllegalArgumentException("A query of " + query.getClass().getName() + " cannot be named");
         };
         byName.put(name, definition);
@@ -95,10 +94,12 @@ public final class NamedQueries {
             throw new IllegalArgumentException("The persistence unit has no named query " + name + " (§3.11)");
         }
         if (definition.nativeQuery()) {
-            if (resultClass != null && resultClass != Object.class) {
-                throw NotYet.milestone("P7", "the typed results of native queries");
+            if (resultClass != null && definition.resultClass() != null && !resultClass.isAssignableFrom(definition.resultClass())) {
+                throw new IllegalArgumentException("The result type " + resultClass.getName() + " does not match named query " + name);
             }
-            NativeQuery query = new NativeQuery(definition.query(), flushMode, executor, runtime::isOpen);
+            Class<?> type = resultClass != null ? resultClass : definition.resultClass();
+            NativeQuery query = new NativeQuery(definition.query(), flushMode, executor, runtime, type, definition.resultSetMapping(),
+                runtime::isOpen);
             definition.hints().forEach(query::setHint);
             settings(definition, query);
             return new JpqlQueryOrNative<>(null, query);

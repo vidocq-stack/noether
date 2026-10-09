@@ -39,6 +39,8 @@ import io.vidocq.mansart.jpa.dialect.sql.Expression.Operator;
 import io.vidocq.mansart.jpa.dialect.sql.Identifier;
 import io.vidocq.mansart.jpa.dialect.sql.DeleteQuery;
 import io.vidocq.mansart.jpa.dialect.sql.Query;
+import io.vidocq.mansart.jpa.dialect.sql.SelectStatement;
+import io.vidocq.mansart.jpa.dialect.sql.SetQuery;
 import io.vidocq.mansart.jpa.dialect.sql.UpdateQuery;
 import io.vidocq.mansart.jpa.dialect.sql.Table;
 import java.lang.invoke.MethodType;
@@ -54,11 +56,11 @@ import java.util.Map;
 import java.util.function.Function;
 
 /**
- * Translates a select statement (§4) to a SQL {@link Query} against the entity model: identification variables become
- * table aliases, paths columns, single-valued path navigation inner joins (§4.4.4), declared joins joins (§4.4.5), and
- * entities their key columns — compared key part by key part, read back as managed instances. A subquery is translated
- * by a translator of its own that sees the variables of the enclosing one (§4.5.10). One translator per translation:
- * it holds the aliases and joins it made.
+ * Translates a select query (§4) to the SQL AST against the entity model: identification variables become table aliases,
+ * paths columns, single-valued path navigation inner joins (§4.4.4), declared joins joins (§4.4.5), and entities their
+ * key columns — compared key part by key part, read back as managed instances. A subquery is translated by a translator
+ * of its own that sees the variables of the enclosing one (§4.5.10). One translator per translation: it holds the aliases
+ * and joins it made.
  */
 final class Translator {
 
@@ -122,9 +124,9 @@ final class Translator {
             Integer limit) {
         Translator translator = new Translator(unit, bindings, null);
         return switch (statement) {
-            case Ast.Select select -> {
+            case Ast.Query query -> {
                 List<Compiled.Item> items = new ArrayList<>();
-                Query sql = translator.query(select, offset, limit, items);
+                SelectStatement sql = translator.selectStatement(query, offset, limit, items);
                 Class<?> resultType = items.size() > 1 ? Object[].class : type(items.getFirst());
                 yield new Compiled(sql, List.copyOf(items), resultType == null ? null : boxed(resultType), slots(sql.parameters()));
             }
@@ -137,6 +139,56 @@ final class Translator {
                 yield new Compiled(sql, List.of(), null, slots(sql.parameters()));
             }
         };
+    }
+
+    private SelectStatement selectStatement(Ast.Query query, Integer offset, Integer limit, List<Compiled.Item> items) {
+        return switch (query) {
+            case Ast.Select select -> query(select, offset, limit, items);
+            case Ast.SetQuery setQuery -> setQuery(setQuery, offset, limit, items);
+        };
+    }
+
+    private SetQuery setQuery(Ast.SetQuery setQuery, Integer offset, Integer limit, List<Compiled.Item> items) {
+        List<Query> operands = new ArrayList<>();
+        List<Compiled.Item> firstItems = null;
+        for (Ast.Select operand : setQuery.operands()) {
+            List<Compiled.Item> operandItems = new ArrayList<>();
+            Query sql = new Translator(unit, bindings, this).query(operand, null, null, operandItems);
+            if (firstItems == null) {
+                firstItems = operandItems;
+                items.addAll(operandItems);
+            } else {
+                List<Compiled.Item> expectedItems = firstItems;
+                if (operandItems.size() != expectedItems.size()
+                        || java.util.stream.IntStream.range(0, expectedItems.size())
+                            .anyMatch(i -> operandItems.get(i).width() != expectedItems.get(i).width())) {
+                    throw new IllegalArgumentException("Every query in a set operation must select the same number of values");
+                }
+            }
+            operands.add(sql);
+        }
+        Ast.Select first = setQuery.operands().getFirst();
+        List<SetQuery.Order> orderBy = new ArrayList<>();
+        for (Ast.OrderItem order : setQuery.orderBy()) {
+            int position = orderPosition(first, order.expression());
+            orderBy.add(new SetQuery.Order(position, order.descending(), order.nullsFirst()));
+        }
+        List<SetQuery.Operation> operations = setQuery.operations().stream()
+            .map(operation -> new SetQuery.Operation(SetQuery.Operator.valueOf(operation.operator().name()), operation.all()))
+            .toList();
+        return new SetQuery(operands, operations, orderBy, offset, limit);
+    }
+
+    private static int orderPosition(Ast.Select select, Ast.Expr expression) {
+        for (int i = 0; i < select.items().size(); i++) {
+            Ast.Item item = select.items().get(i);
+            if (item.expression().equals(expression)
+                    || expression instanceof Ast.Path path && path.segments().size() == 1
+                        && item.alias() != null && item.alias().equalsIgnoreCase(path.segments().getFirst())) {
+                return i + 1;
+            }
+        }
+        throw new IllegalArgumentException("The ORDER BY expression of a set operation must be selected");
     }
 
     private static List<Compiled.Slot> slots(List<Expression.Parameter> parameters) {
@@ -301,8 +353,8 @@ final class Translator {
         return new Translator(unit, bindings, this);
     }
 
-    private Query subquery(Ast.Select select, List<Compiled.Item> items) {
-        return child().query(select, null, null, items);
+    private SelectStatement subquery(Ast.Query query, List<Compiled.Item> items) {
+        return child().selectStatement(query, null, null, items);
     }
 
     /** The SQL expressions of a value: itself, or the key columns of an entity. */
@@ -805,10 +857,11 @@ final class Translator {
             }
             case Ast.Aggregate aggregate -> aggregate(aggregate);
             case Ast.Function function -> function(function);
+            case Ast.Cast cast -> cast(cast);
             case Ast.Case kase -> caseValue(kase);
             case Ast.Subquery subquery -> {
                 List<Compiled.Item> items = new ArrayList<>();
-                Query query = subquery(subquery.select(), items);
+                SelectStatement query = subquery(subquery.select(), items);
                 yield new Scalar(new Expression.Subquery(query), binder(items), type(items.getFirst()));
             }
             case Ast.Constructor _ -> throw new IllegalArgumentException("A constructor expression is a select item only (§4.8.2)");
@@ -844,6 +897,29 @@ final class Translator {
             return scalar;
         }
         throw new IllegalArgumentException("An entity is used where a value is expected");
+    }
+
+    private Scalar cast(Ast.Cast cast) {
+        Class<?> javaType = switch (cast.type()) {
+            case STRING -> String.class;
+            case INTEGER -> Integer.class;
+            case LONG -> Long.class;
+            case FLOAT -> Float.class;
+            case DOUBLE -> Double.class;
+            case FIXED, BIGDECIMAL -> BigDecimal.class;
+            case BIGINTEGER -> BigInteger.class;
+        };
+        Scalar operand = bound(cast.expression(), new Scalar(null, null, javaType));
+        Expression.Cast.Type sqlType = switch (cast.type()) {
+            case STRING -> Expression.Cast.Type.VARCHAR;
+            case INTEGER -> Expression.Cast.Type.INTEGER;
+            case LONG -> Expression.Cast.Type.BIGINT;
+            case FLOAT -> Expression.Cast.Type.REAL;
+            case DOUBLE -> Expression.Cast.Type.DOUBLE_PRECISION;
+            case FIXED, BIGDECIMAL -> Expression.Cast.Type.DECIMAL;
+            case BIGINTEGER -> Expression.Cast.Type.DECIMAL;
+        };
+        return new Scalar(new Expression.Cast(operand.sql(), sqlType), null, javaType);
     }
 
     /** §4.8.5: COUNT is a Long, AVG a Double, SUM a Long, a Double or the big number of its argument, MIN and MAX theirs. */
@@ -892,7 +968,7 @@ final class Translator {
         return switch (name) {
             case "ALL", "ANY" -> {
                 List<Compiled.Item> items = new ArrayList<>();
-                Query query = subquery(((Ast.Subquery) arguments.getFirst()).select(), items);
+                SelectStatement query = subquery(((Ast.Subquery) arguments.getFirst()).select(), items);
                 yield new Scalar(new Expression.Quantified(name, query), binder(items), type(items.getFirst()));
             }
             case "SIZE" -> {
@@ -1025,7 +1101,8 @@ final class Translator {
                 yield new Expression.Exists(child.collectionQuery(new Expression.Literal(1), member, null), !isEmpty.negated());
             }
             case Ast.MemberOf memberOf -> memberOf(memberOf);
-            case Ast.Path _, Ast.Literal _, Ast.Parameter _, Ast.Function _, Ast.Subquery _, Ast.Case _ -> scalar(value(expr)).sql();
+            case Ast.Path _, Ast.Literal _, Ast.Parameter _, Ast.Function _, Ast.Cast _, Ast.Subquery _, Ast.Case _ ->
+                scalar(value(expr)).sql();
             default -> throw NotYet.milestone("P7", expr.getClass().getSimpleName());
         };
     }

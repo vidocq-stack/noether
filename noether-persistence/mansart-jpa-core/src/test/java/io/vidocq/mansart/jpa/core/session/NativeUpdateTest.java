@@ -28,6 +28,11 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.PersistenceConfiguration;
 import jakarta.persistence.PersistenceException;
+import jakarta.persistence.SqlResultSetMapping;
+import jakarta.persistence.ColumnResult;
+import jakarta.persistence.ConstructorResult;
+import jakarta.persistence.EntityResult;
+import jakarta.persistence.FieldResult;
 import jakarta.persistence.TransactionRequiredException;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -60,6 +65,7 @@ class NativeUpdateTest {
         }
         emf = new PersistenceConfiguration("native").provider("io.vidocq.mansart.jpa.core.MansartPersistenceProvider")
             .managedClass(Crew.class).managedClass(Sailor.class).property(PersistenceConfiguration.JDBC_URL, url).property(PersistenceConfiguration.JDBC_USER, "sa")
+            .managedClass(NativeResults.class)
             .createEntityManagerFactory();
         em = emf.createEntityManager();
     }
@@ -109,9 +115,31 @@ class NativeUpdateTest {
     }
 
     @Test
-    void readingANativeQueryComesWithP7() {
-        assertThatThrownBy(() -> em.createNativeQuery("SELECT name FROM Crew").getResultList())
-            .isInstanceOf(UnsupportedOperationException.class).hasMessageContaining("P7");
+    void nativeQueriesReadScalarAndTupleResults() {
+        assertThat(em.createNativeQuery("SELECT name FROM Crew ORDER BY id").getResultList())
+            .containsExactly("Brigade", "Sûreté");
+        assertThat(em.createNativeQuery("SELECT id, name FROM Crew ORDER BY id").getResultList())
+            .containsExactly(new Object[] {1L, "Brigade"}, new Object[] {2L, "Sûreté"});
+        assertThat(em.createNativeQuery("SELECT name FROM Crew WHERE id = ?1").setParameter(1, 2L).getSingleResult())
+            .isEqualTo("Sûreté");
+    }
+
+    @Test
+    void nativeQueryUsesColumnResultMapping() {
+        assertThat(em.createNativeQuery("SELECT name FROM Crew ORDER BY id", "crew-names").getResultList())
+            .containsExactly("Brigade", "Sûreté");
+    }
+
+    @Test
+    void nativeQueryUsesConstructorResultMapping() {
+        assertThat(em.createNativeQuery("SELECT id, name FROM Crew ORDER BY id", "crew-records").getResultList())
+            .containsExactly(new CrewName(1, "Brigade"), new CrewName(2, "Sûreté"));
+    }
+
+    @Test
+    void nativeQueryUsesEntityResultFieldAliases() {
+        assertThat(em.createNativeQuery("SELECT id AS crew_id FROM Crew WHERE id = 1", "crew-entities").getSingleResult())
+            .isSameAs(em.find(Crew.class, 1L));
     }
 
     @Test
@@ -121,5 +149,16 @@ class NativeUpdateTest {
             .isInstanceOf(PersistenceException.class);
         assertThat(em.getTransaction().getRollbackOnly()).isTrue();
         em.getTransaction().rollback();
+    }
+
+    @SqlResultSetMapping(name = "crew-names", columns = @ColumnResult(name = "name", type = String.class))
+    @SqlResultSetMapping(name = "crew-records", classes = @ConstructorResult(targetClass = CrewName.class,
+        columns = {@ColumnResult(name = "id", type = long.class), @ColumnResult(name = "name", type = String.class)}))
+    @SqlResultSetMapping(name = "crew-entities", entities = @EntityResult(entityClass = Crew.class,
+        fields = @FieldResult(name = "id", column = "crew_id")))
+    static class NativeResults {
+    }
+
+    public record CrewName(long id, String name) {
     }
 }

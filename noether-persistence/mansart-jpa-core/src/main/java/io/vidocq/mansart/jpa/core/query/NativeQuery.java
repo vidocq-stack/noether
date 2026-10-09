@@ -19,14 +19,28 @@
  */
 package io.vidocq.mansart.jpa.core.query;
 
-import io.vidocq.mansart.jpa.core.session.NotYet;
+import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
+import io.vidocq.mansart.jpa.core.mapping.MappedUnit;
+import io.vidocq.mansart.jpa.core.model.SqlResultSetMappingModel;
 import jakarta.persistence.CacheRetrieveMode;
 import jakarta.persistence.CacheStoreMode;
 import jakarta.persistence.FlushModeType;
 import jakarta.persistence.LockModeType;
 import jakarta.persistence.Parameter;
 import jakarta.persistence.Query;
+import jakarta.persistence.NoResultException;
+import jakarta.persistence.NonUniqueResultException;
+import jakarta.persistence.PersistenceException;
 import jakarta.persistence.TemporalType;
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.sql.Types;
+import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Collections;
@@ -39,7 +53,7 @@ import java.util.Set;
 
 /**
  * A native query (§3.11): SQL passed to the database as written, its positional parameters ({@code ?1} or {@code ?})
- * bound in order. Its updates are executed now; reading results and result-set mappings come with P7.
+ * bound in order. Result rows may be scalars, tuples, entities, or results declared by {@code @SqlResultSetMapping}.
  */
 public final class NativeQuery extends AbstractQuery implements Query {
 
@@ -71,8 +85,12 @@ public final class NativeQuery extends AbstractQuery implements Query {
     private final List<Integer> order = new ArrayList<>();
     private final Map<Integer, Object> values = new HashMap<>();
     private final Executor executor;
+    private final QueryRuntime runtime;
+    private final Class<?> resultClass;
+    private final String resultSetMapping;
 
-    public NativeQuery(String sqlString, FlushModeType flushMode, Executor executor, java.util.function.BooleanSupplier open) {
+    public NativeQuery(String sqlString, FlushModeType flushMode, Executor executor, QueryRuntime runtime, Class<?> resultClass,
+            String resultSetMapping, java.util.function.BooleanSupplier open) {
         super(flushMode, open);
         if (sqlString == null || sqlString.isBlank()) {
             throw new IllegalArgumentException("A native query needs SQL");
@@ -80,6 +98,9 @@ public final class NativeQuery extends AbstractQuery implements Query {
         this.sqlString = sqlString;
         this.sql = translate(sqlString);
         this.executor = executor;
+        this.runtime = runtime;
+        this.resultClass = resultClass;
+        this.resultSetMapping = resultSetMapping;
     }
 
     /** JDBC SQL: {@code ?n} becomes {@code ?}, outside string literals and quoted names; the positions are kept. */
@@ -132,19 +153,244 @@ public final class NativeQuery extends AbstractQuery implements Query {
     @SuppressWarnings("rawtypes")
     public List getResultList() {
         checkOpen();
-        throw NotYet.milestone("P7", "the results of native queries");
+        List<Object> parameters = parameters();
+        return runtime.read(getFlushMode(), connection -> read(connection, parameters));
     }
 
     @Override
     public Object getSingleResult() {
         checkOpen();
-        throw NotYet.milestone("P7", "the results of native queries");
+        List<?> results = limited(2);
+        if (results.isEmpty()) {
+            throw new NoResultException("The native query found no result: " + sqlString);
+        }
+        if (results.size() > 1) {
+            throw new NonUniqueResultException("The native query found several results: " + sqlString);
+        }
+        return results.getFirst();
     }
 
     @Override
     public Object getSingleResultOrNull() {
         checkOpen();
-        throw NotYet.milestone("P7", "the results of native queries");
+        List<?> results = limited(2);
+        if (results.size() > 1) {
+            throw new NonUniqueResultException("The native query found several results: " + sqlString);
+        }
+        return results.isEmpty() ? null : results.getFirst();
+    }
+
+    private List<?> limited(int limit) {
+        setMaxResults(Math.min(getMaxResults(), limit));
+        return getResultList();
+    }
+
+    private List<Object> parameters() {
+        List<Object> parameters = new ArrayList<>(order.size());
+        for (int position : order) {
+            if (!values.containsKey(position)) {
+                throw new IllegalStateException("The parameter ?" + position + " of the native query is not bound");
+            }
+            parameters.add(values.get(position));
+        }
+        return parameters;
+    }
+
+    private List<Object> read(Connection connection, List<Object> parameters) {
+        List<Object> rows = new ArrayList<>();
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            for (int i = 0; i < parameters.size(); i++) {
+                Object value = parameters.get(i);
+                if (value == null) {
+                    statement.setNull(i + 1, Types.NULL);
+                } else {
+                    statement.setObject(i + 1, value instanceof Enum<?> constant ? constant.name() : value);
+                }
+            }
+            if (getTimeout() != null) {
+                statement.setQueryTimeout(Math.max(1, (getTimeout() + 999) / 1000));
+            }
+            try (ResultSet results = statement.executeQuery()) {
+                ResultSetMetaData metadata = results.getMetaData();
+                int columns = metadata.getColumnCount();
+                int first = getFirstResult();
+                int max = getMaxResults();
+                int skipped = 0;
+                SqlResultSetMappingModel mapping = resultSetMapping == null ? null
+                    : runtime.mapping().model().sqlResultSetMapping(resultSetMapping).orElseThrow(() ->
+                        new PersistenceException("The persistence unit has no SQL result-set mapping " + resultSetMapping));
+                while (results.next() && rows.size() < max) {
+                    if (skipped++ < first) {
+                        continue;
+                    }
+                    if (mapping != null) {
+                        rows.add(mappedResult(results, metadata, mapping));
+                    } else if (resultClass != null && runtime.mapping().entity(resultClass).isPresent()) {
+                        rows.add(entityResult(results, metadata, resultClass, List.of()));
+                    } else if (columns == 1) {
+                        rows.add(convert(results.getObject(1), resultClass));
+                    } else {
+                        Object[] tuple = new Object[columns];
+                        for (int i = 0; i < columns; i++) {
+                            tuple[i] = results.getObject(i + 1);
+                        }
+                        rows.add(tuple);
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            throw new PersistenceException("The native query failed: " + e.getMessage() + " — " + sqlString, e);
+        }
+        return rows;
+    }
+
+    private Object mappedResult(ResultSet row, ResultSetMetaData metadata, SqlResultSetMappingModel mapping) throws SQLException {
+        if (mapping.results().isEmpty()) {
+            throw new PersistenceException("The SQL result-set mapping " + mapping.name() + " has no result items");
+        }
+        Object[] values = new Object[mapping.results().size()];
+        for (int i = 0; i < values.length; i++) {
+            SqlResultSetMappingModel.Result result = mapping.results().get(i);
+            values[i] = switch (result) {
+                case SqlResultSetMappingModel.EntityResult entity ->
+                    entityResult(row, metadata, entity.entityClass(), entity.fields());
+                case SqlResultSetMappingModel.ConstructorResult constructor -> constructorResult(row, metadata, constructor);
+                case SqlResultSetMappingModel.ColumnResult column ->
+                    convert(row.getObject(columnIndex(metadata, column.column())), column.type());
+            };
+        }
+        return values.length == 1 ? values[0] : values;
+    }
+
+    private Object constructorResult(ResultSet row, ResultSetMetaData metadata,
+            SqlResultSetMappingModel.ConstructorResult result) throws SQLException {
+        Object[] arguments = new Object[result.columns().size()];
+        Class<?>[] types = new Class<?>[arguments.length];
+        for (int i = 0; i < arguments.length; i++) {
+            SqlResultSetMappingModel.ColumnResult column = result.columns().get(i);
+            Object value = row.getObject(columnIndex(metadata, column.column()));
+            Class<?> type = column.type() == null ? value == null ? Object.class : value.getClass() : column.type();
+            arguments[i] = convert(value, type);
+            types[i] = primitiveBox(type);
+        }
+        try {
+            for (var constructor : result.targetClass().getConstructors()) {
+                Class<?>[] parameters = constructor.getParameterTypes();
+                if (parameters.length != types.length) {
+                    continue;
+                }
+                boolean matches = true;
+                for (int i = 0; i < parameters.length; i++) {
+                    if (!primitiveBox(parameters[i]).isAssignableFrom(types[i])) {
+                        matches = false;
+                        break;
+                    }
+                    arguments[i] = convert(arguments[i], parameters[i]);
+                }
+                if (matches) {
+                    return constructor.newInstance(arguments);
+                }
+            }
+            throw new PersistenceException("The SQL result-set mapping " + result.targetClass().getName()
+                + " has no public constructor matching its column results");
+        } catch (InstantiationException | IllegalAccessException | InvocationTargetException e) {
+            throw new PersistenceException("The SQL result-set constructor for " + result.targetClass().getName() + " failed", e);
+        }
+    }
+
+    private static Class<?> primitiveBox(Class<?> type) {
+        if (type == int.class) return Integer.class;
+        if (type == long.class) return Long.class;
+        if (type == short.class) return Short.class;
+        if (type == byte.class) return Byte.class;
+        if (type == float.class) return Float.class;
+        if (type == double.class) return Double.class;
+        if (type == boolean.class) return Boolean.class;
+        if (type == char.class) return Character.class;
+        return type;
+    }
+
+    private static int columnIndex(ResultSetMetaData metadata, String label) throws SQLException {
+        int column = findColumn(metadata, label);
+        if (column < 0) {
+            throw new PersistenceException("The native result has no column " + label);
+        }
+        return column;
+    }
+
+    private Object entityResult(ResultSet row, ResultSetMetaData metadata, Class<?> type,
+            List<SqlResultSetMappingModel.FieldResult> fields) throws SQLException {
+        MappedEntity entity = runtime.mapping().entity(type).orElseThrow();
+        List<io.vidocq.mansart.jpa.core.mapping.EntityStatements.Column> keyColumns = entity.statements().keyColumns();
+        Object[] key = new Object[keyColumns.size()];
+        for (int k = 0; k < keyColumns.size(); k++) {
+            String columnName = keyColumns.get(k).name().name();
+            if (!fields.isEmpty()) {
+                String keyColumnName = columnName;
+                String attribute = entity.model().attributes().stream()
+                    .filter(a -> a instanceof io.vidocq.mansart.jpa.core.model.BasicAttribute basic
+                        && basic.column().name().equalsIgnoreCase(keyColumnName))
+                    .map(io.vidocq.mansart.jpa.core.model.AttributeModel::name).findFirst().orElse(null);
+                if (attribute != null) {
+                    columnName = fields.stream().filter(field -> field.name().equals(attribute))
+                        .map(SqlResultSetMappingModel.FieldResult::column).findFirst().orElse(columnName);
+                }
+            }
+            int column = findColumn(metadata, columnName);
+            if (column < 0) {
+                throw new PersistenceException("The native result for " + type.getName() + " has no identifier column " + columnName);
+            }
+            key[k] = keyColumns.get(k).binder().read(row, column);
+        }
+        return runtime.find(entity, entity.statements().key(key), row.getStatement().getConnection());
+    }
+
+    private static int findColumn(ResultSetMetaData metadata, String name) throws SQLException {
+        for (int column = 1; column <= metadata.getColumnCount(); column++) {
+            if (name.equalsIgnoreCase(metadata.getColumnLabel(column)) || name.equalsIgnoreCase(metadata.getColumnName(column))) {
+                return column;
+            }
+        }
+        return -1;
+    }
+
+    private static Object convert(Object value, Class<?> type) {
+        if (value == null || type == null || type == Object.class || type.isInstance(value)) {
+            return value;
+        }
+        if (value instanceof Number number) {
+            if (type == String.class) {
+                return number.toString();
+            }
+            if (type == Integer.class || type == int.class) {
+                return number.intValue();
+            }
+            if (type == Long.class || type == long.class) {
+                return number.longValue();
+            }
+            if (type == Short.class || type == short.class) {
+                return number.shortValue();
+            }
+            if (type == Byte.class || type == byte.class) {
+                return number.byteValue();
+            }
+            if (type == Float.class || type == float.class) {
+                return number.floatValue();
+            }
+            if (type == Double.class || type == double.class) {
+                return number.doubleValue();
+            }
+            if (type == BigDecimal.class) {
+                return new BigDecimal(number.toString());
+            }
+            if (type == BigInteger.class) {
+                return new BigDecimal(number.toString()).toBigInteger();
+            }
+        }
+        if (type == String.class) {
+            return value.toString();
+        }
+        throw new PersistenceException("The native result " + value.getClass().getName() + " cannot be converted to " + type.getName());
     }
 
     // ---- parameters: positional only; named parameters are not defined for native queries (§3.11.17) ------------

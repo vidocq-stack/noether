@@ -146,6 +146,20 @@ class ParserTest {
     }
 
     @Test
+    void setOperationsAndCast() { // Jakarta Persistence 3.2
+        Ast.SetQuery set = (Ast.SetQuery) Parser.parse("SELECT e.name FROM Emp e UNION ALL SELECT d.name FROM Dept d "
+            + "INTERSECT SELECT x.name FROM Other x EXCEPT SELECT z.name FROM Last z ORDER BY e.name DESC");
+        assertThat(set.operands()).hasSize(4);
+        assertThat(set.operations()).containsExactly(
+            new Ast.SetOperation(Ast.SetOperator.UNION, true),
+            new Ast.SetOperation(Ast.SetOperator.INTERSECT, false),
+            new Ast.SetOperation(Ast.SetOperator.EXCEPT, false));
+        assertThat(set.orderBy()).containsExactly(new Ast.OrderItem(new Path(List.of("e", "name")), true, null));
+        assertThat(select("SELECT CAST(e.age AS LONG), e.name || '!' FROM Emp e").items().getFirst().expression())
+            .isEqualTo(new Ast.Cast(new Path(List.of("e", "age")), Ast.CastType.LONG));
+    }
+
+    @Test
     void caseCoalesceNullifAndConstructors() { // §4.6.17.4, §4.8.2
         Select select = select("SELECT NEW com.example.Summary(e.name, CASE WHEN e.age > 30 THEN 'senior' ELSE 'junior' END), "
             + "CASE e.status WHEN 1 THEN 'on' WHEN 2 THEN 'off' END, COALESCE(e.nick, e.name), NULLIF(e.a, 0) FROM Emp e");
@@ -170,7 +184,8 @@ class ParserTest {
         Select select = select("SELECT e FROM Emp e WHERE EXISTS (SELECT p FROM e.projects p WHERE p.budget > ALL (SELECT q.budget "
             + "FROM Project q)) AND e.projects IS NOT EMPTY AND :p MEMBER OF e.projects AND SIZE(e.projects) > 1");
         assertThat(select.where().toString()).contains("Exists", "IsEmpty", "MemberOf", "SIZE");
-        Ast.Range correlated = ((Ast.Exists) ((Binary) ((Binary) ((Binary) select.where()).left()).left()).left()).select().from()
+        Ast.Range correlated = ((Ast.Select) ((Ast.Exists) ((Binary) ((Binary) ((Binary) select.where()).left()).left()).left()).select())
+            .from()
             .getFirst();
         assertThat(correlated.entity()).isNull();
         assertThat(correlated.collection()).isEqualTo(new Path(List.of("e", "projects")));

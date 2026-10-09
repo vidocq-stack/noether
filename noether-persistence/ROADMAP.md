@@ -508,16 +508,20 @@ with inheritance (P6) as much as with this milestone.
       required, pessimistic modes as `FOR UPDATE` / `FOR SHARE` after the paging with the lock timeout hint, the
       entities returned holding the lock (forced increments written at flush); the query and lock timeout hints. Every
       method of a query of a closed entity manager is an `IllegalStateException` (PERSISTENCE:SPEC:608).
+- [x] Slice 4 (`ParserTest`, `QueryRenderingTest`, `JpqlExpressionTest`): `UNION`, `INTERSECT`, `EXCEPT` (including
+      `ALL`), set-result ordering and paging, plus `CAST` for the Jakarta Persistence 3.2 target types. The SQL AST
+      carries set-query operands and keeps bind parameters in rendered order; `||`, `LEFT` / `RIGHT` / `REPLACE`,
+      `ID()`, `VERSION()` and the implicit identification variable are supported by the earlier slices.
 - [ ] Left for later slices: `KEY` / `VALUE` / `ENTRY` of maps in queries, embeddables compared as a whole,
-      navigating an enclosing variable inside a subquery, `TYPE` (P6), `CAST` and set operations (slice 4).
-- [ ] Semantic analysis against the entity model; SQL lowering through the dialect SPI
-      (joins, fetch joins, subqueries, `GROUP BY`/`HAVING`, constructor expressions, `CASE`,
-      functions, 3.2 additions: `UNION`/`INTERSECT`/`EXCEPT`, `||`, `LEFT`/`RIGHT`/`REPLACE`,
-      `CAST`, `ID()`, `VERSION()`, implicit identification variable).
-- [ ] `Query` / `TypedQuery`: parameters, pagination, hints, lock modes, `getResultStream`,
-      `getSingleResultOrNull`, bulk `UPDATE`/`DELETE`, named queries (`@NamedQuery`).
-- [ ] Native queries and `@SqlResultSetMapping` (entity, constructor, column results). Native `executeUpdate`
-      was brought forward to P4 (`query.NativeQuery`); this milestone adds the result side.
+      navigating an enclosing variable inside a subquery, `TYPE` (P6).
+- [x] Semantic analysis against the entity model and SQL lowering through the dialect SPI for the implemented JPQL
+      features: joins, subqueries, grouping, constructors, cases, functions and the 3.2 set operations and casts.
+- [x] `Query` / `TypedQuery`: parameters, pagination, hints, lock modes, `getResultStream`,
+      `getSingleResultOrNull`, bulk `UPDATE` / `DELETE`, named queries (`@NamedQuery`).
+- [ ] Native query results (`query.NativeQuery`): scalar and tuple results, entity results by `resultClass`, and
+      annotation-backed `@SqlResultSetMapping` metadata for entity, constructor and column results are implemented.
+      Unit tests pass; the focused `core.annotations.nativequery` TCK area is 10 / 12, with two constructor-result cases
+      still failing. Native `executeUpdate` was brought forward to P4.
 - [ ] `StoredProcedureQuery` / `@NamedStoredProcedureQuery` (IN / OUT / INOUT, ref cursors as
       the dialect allows).
 

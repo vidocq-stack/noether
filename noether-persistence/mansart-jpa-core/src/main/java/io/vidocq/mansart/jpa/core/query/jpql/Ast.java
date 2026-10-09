@@ -32,7 +32,11 @@ public final class Ast {
     }
 
     /** A statement of the language. */
-    public sealed interface Statement permits Select, Update, Delete {
+    public sealed interface Statement permits Query, Update, Delete {
+    }
+
+    /** A select statement, including a set operation (§4.8.9). */
+    public sealed interface Query extends Statement permits Select, SetQuery {
     }
 
     /** The identification variable of a statement that declares none (3.2, §4.4.2). */
@@ -55,13 +59,32 @@ public final class Ast {
 
     /** {@code SELECT … FROM … [WHERE …] [GROUP BY … [HAVING …]] [ORDER BY …]} (§4.2), also a subquery. */
     public record Select(boolean distinct, List<Item> items, List<Range> from, Expr where, List<Expr> groupBy, Expr having,
-            List<OrderItem> orderBy) implements Statement {
+            List<OrderItem> orderBy) implements Query {
         public Select {
             items = List.copyOf(items);
             from = List.copyOf(from);
             groupBy = List.copyOf(groupBy);
             orderBy = List.copyOf(orderBy);
         }
+    }
+
+    /** Selects combined by {@code UNION}, {@code INTERSECT} or {@code EXCEPT}, then optionally ordered. */
+    public record SetQuery(List<Select> operands, List<SetOperation> operations, List<OrderItem> orderBy) implements Query {
+        public SetQuery {
+            operands = List.copyOf(operands);
+            operations = List.copyOf(operations);
+            orderBy = List.copyOf(orderBy);
+            if (operands.size() < 2 || operations.size() != operands.size() - 1) {
+                throw new IllegalArgumentException("A set query needs one operation between each pair of selects");
+            }
+        }
+    }
+
+    public enum SetOperator {
+        UNION, INTERSECT, EXCEPT
+    }
+
+    public record SetOperation(SetOperator operator, boolean all) {
     }
 
     /** A select item and its result variable, or {@code null}. */
@@ -159,6 +182,14 @@ public final class Ast {
         }
     }
 
+    /** {@code CAST(expression AS type)} (Jakarta Persistence 3.2). */
+    public record Cast(Expr expression, CastType type) implements Expr {
+    }
+
+    public enum CastType {
+        STRING, INTEGER, LONG, FLOAT, DOUBLE, FIXED, BIGINTEGER, BIGDECIMAL
+    }
+
     /** {@code CASE [operand] WHEN … THEN … [ELSE otherwise] END} (§4.6.17.4); {@code operand} {@code null} for a general case. */
     public record Case(Expr operand, List<When> whens, Expr otherwise) implements Expr {
         public Case {
@@ -178,10 +209,10 @@ public final class Ast {
     }
 
     /** A subquery used as an expression (§4.5.10). */
-    public record Subquery(Select select) implements Expr {
+    public record Subquery(Query select) implements Expr {
     }
 
     /** {@code [NOT] EXISTS (subquery)}. */
-    public record Exists(Select select, boolean negated) implements Expr {
+    public record Exists(Query select, boolean negated) implements Expr {
     }
 }

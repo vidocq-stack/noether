@@ -22,6 +22,25 @@ Official suite: **Jakarta Persistence 3.2.1** TCK (bundle from eclipse.org, SHA-
 | P7 (in progress) — slice 1: the query path, selects, joins, predicates, aggregates, parameters | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 780 | 1351 | 4 |
 | P7 (in progress) — slice 2: functions, cases, constructors, subqueries, collection expressions, literals | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 840 | 1291 | 4 |
 | P7 (in progress) — slice 3: bulk updates and deletes, named queries, lock modes, hints | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 893 | 1238 | 4 |
+| P7 (in progress) — slice 4: set operations and casts | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 897 | 1234 | 4 |
+
+## P7, slice 4 — set operations and casts: 893 → 897
+
+Run of 2026-10-09: **897 pass, 1234 fail, 4 skipped**. The official suite now passes
+`test_unionOperator`, `test_intersectOperator`, `test_exceptOperator`, `test_concatStringOperator` and
+`test_castExpression` in `core.query.language`. The JPQL parser and SQL dialect AST cover `UNION` / `INTERSECT` /
+`EXCEPT` (with `ALL`), result ordering and paging, and `CAST` target types. The unit suite also exercises execution on
+H2, including casted parameter typing and set-query paging. The remaining failures are principally inheritance (P6),
+Criteria and metamodel APIs (P8), schema generation (P9), and XML mappings (P10); P7 still has native query results and
+stored procedures to implement.
+
+## P7, slice 5 — focused native-query area
+
+Focused official TCK run on 2026-10-09 (Temurin 25.0.3, PostgreSQL 17): `core.annotations.nativequery` reports
+**10 passed, 2 failed, 0 skipped** of 12 tests. Scalar, tuple, entity and most constructor/column result cases pass;
+`nativeQueryTestConstructorResultNoId` and `nativeQueryTestConstructorResultWithId` remain failing. This area-only
+result is not a full-suite pass count. `StoredProcedureQuery` and named stored-procedure queries are not implemented,
+so slice 5 remains in progress.
 
 ## P7, slice 3 — bulk statements, named queries, locks: 840 → 893
 

@@ -102,7 +102,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         this.resultClass = resultClass;
         this.statement = Parser.parse(jpql);
         Compiled compiled = Translator.translate(statement, runtime.mapping(), null, null, null);
-        if (!(statement instanceof Ast.Select) && resultClass != null && resultClass != Object.class) {
+        if (!(statement instanceof Ast.Query) && resultClass != null && resultClass != Object.class) {
             throw new IllegalArgumentException("An UPDATE or a DELETE has no results of type " + resultClass.getName() + ": " + jpql);
         }
         for (Compiled.Slot slot : compiled.slots()) {
@@ -134,7 +134,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     /** The Java type of the results of {@code jpql}, or {@code null} if it cannot be told (it is not a valid select). */
     static Class<?> resultType(String jpql, io.vidocq.mansart.jpa.core.mapping.MappedUnit unit) {
         try {
-            return Parser.parse(jpql) instanceof Ast.Select select ? Translator.translate(select, unit, null, null, null).resultType() : null;
+            return Parser.parse(jpql) instanceof Ast.Query query ? Translator.translate(query, unit, null, null, null).resultType() : null;
         } catch (RuntimeException e) {
             return null;
         }
@@ -189,7 +189,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     @Override
     public int executeUpdate() {
         checkOpen();
-        if (statement instanceof Ast.Select) {
+        if (statement instanceof Ast.Query) {
             throw new IllegalStateException("executeUpdate() runs an UPDATE or a DELETE, not a SELECT (§3.11): " + jpql);
         }
         checkBound();
@@ -222,7 +222,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     /** Runs the query for at most {@code maxResults} results. */
     @SuppressWarnings("unchecked")
     private List<X> run(int maxResults) {
-        if (!(statement instanceof Ast.Select)) {
+        if (!(statement instanceof Ast.Query)) {
             throw new IllegalStateException("An UPDATE or a DELETE has no results: run it with executeUpdate() (§3.11): " + jpql);
         }
         checkBound();

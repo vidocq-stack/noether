@@ -30,6 +30,7 @@ public final class PersistenceUnitModel {
     private final List<EntityModel> entities;
     private final List<ConverterModel> converters;
     private final List<NamedQueryModel> namedQueries;
+    private final List<SqlResultSetMappingModel> sqlResultSetMappings;
     private final Map<Class<?>, EntityModel> byClass = new LinkedHashMap<>();
     private final Map<String, EntityModel> byName = new LinkedHashMap<>();
 
@@ -38,9 +39,15 @@ public final class PersistenceUnitModel {
     }
 
     public PersistenceUnitModel(List<EntityModel> entities, List<ConverterModel> converters, List<NamedQueryModel> namedQueries) {
+        this(entities, converters, namedQueries, List.of());
+    }
+
+    public PersistenceUnitModel(List<EntityModel> entities, List<ConverterModel> converters, List<NamedQueryModel> namedQueries,
+            List<SqlResultSetMappingModel> sqlResultSetMappings) {
         this.entities = List.copyOf(entities);
         this.converters = List.copyOf(converters);
         this.namedQueries = List.copyOf(namedQueries);
+        this.sqlResultSetMappings = List.copyOf(sqlResultSetMappings);
         for (EntityModel entity : this.entities) {
             byClass.put(entity.javaType(), entity);
             byName.put(entity.entityName(), entity);
@@ -58,6 +65,14 @@ public final class PersistenceUnitModel {
     /** The named queries the managed classes declare, in the order of the classes. */
     public List<NamedQueryModel> namedQueries() {
         return namedQueries;
+    }
+
+    public List<SqlResultSetMappingModel> sqlResultSetMappings() {
+        return sqlResultSetMappings;
+    }
+
+    public Optional<SqlResultSetMappingModel> sqlResultSetMapping(String name) {
+        return sqlResultSetMappings.stream().filter(mapping -> mapping.name().equals(name)).findFirst();
     }
 
     public Optional<EntityModel> entity(Class<?> type) {

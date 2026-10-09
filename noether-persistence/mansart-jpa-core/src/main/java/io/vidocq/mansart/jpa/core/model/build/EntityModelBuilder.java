@@ -40,6 +40,7 @@ import io.vidocq.mansart.jpa.core.model.JoinTableModel;
 import io.vidocq.mansart.jpa.core.model.PendingAttribute;
 import io.vidocq.mansart.jpa.core.model.PersistenceUnitModel;
 import io.vidocq.mansart.jpa.core.model.SecondaryTableModel;
+import io.vidocq.mansart.jpa.core.model.SqlResultSetMappingModel;
 import io.vidocq.mansart.jpa.core.model.SequenceGeneratorModel;
 import io.vidocq.mansart.jpa.core.model.TableGeneratorModel;
 import io.vidocq.mansart.jpa.core.model.TableModel;
@@ -130,13 +131,44 @@ public final class EntityModelBuilder {
         }
         List<EntityModel> entities = new ArrayList<>();
         List<NamedQueryModel> namedQueries = new ArrayList<>();
+        List<SqlResultSetMappingModel> resultSetMappings = new ArrayList<>();
         for (ClassInfo info : listed) {
             if (info.isAnnotated(ENTITY)) {
                 entities.add(entity(info));
             }
             namedQueries.addAll(namedQueries(info));
+            resultSetMappings.addAll(sqlResultSetMappings(info));
         }
-        return new PersistenceUnitModel(entities, converters, namedQueries);
+        return new PersistenceUnitModel(entities, converters, namedQueries, resultSetMappings);
+    }
+
+    private List<SqlResultSetMappingModel> sqlResultSetMappings(ClassInfo info) {
+        List<AnnotationInfo> mappings = new ArrayList<>();
+        info.annotation(JPA + "SqlResultSetMapping").ifPresent(mappings::add);
+        info.annotation(JPA + "SqlResultSetMappings").ifPresent(container -> mappings.addAll(container.annotations("value")));
+        List<SqlResultSetMappingModel> result = new ArrayList<>();
+        for (AnnotationInfo mapping : mappings) {
+            List<SqlResultSetMappingModel.Result> items = new ArrayList<>();
+            for (AnnotationInfo entity : mapping.annotations("entities")) {
+                List<SqlResultSetMappingModel.FieldResult> fields = entity.annotations("fields").stream()
+                    .map(field -> new SqlResultSetMappingModel.FieldResult(field.string("name"), field.string("column"))).toList();
+                items.add(new SqlResultSetMappingModel.EntityResult(Types.load(entity.type("entityClass"), loader), fields));
+            }
+            for (AnnotationInfo constructor : mapping.annotations("classes")) {
+                List<SqlResultSetMappingModel.ColumnResult> columns = constructor.annotations("columns").stream()
+                    .map(this::columnResult).toList();
+                items.add(new SqlResultSetMappingModel.ConstructorResult(Types.load(constructor.type("targetClass"), loader), columns));
+            }
+            mapping.annotations("columns").stream().map(this::columnResult).forEach(items::add);
+            result.add(new SqlResultSetMappingModel(mapping.string("name"), items));
+        }
+        return result;
+    }
+
+    private SqlResultSetMappingModel.ColumnResult columnResult(AnnotationInfo column) {
+        ClassDesc type = column.type("type");
+        Class<?> resultType = type == null || type.descriptorString().equals("V") ? null : Types.load(type, loader);
+        return new SqlResultSetMappingModel.ColumnResult(column.string("name"), resultType);
     }
 
     // ---- named queries (§10.4.1) -------------------------------------------------------------------------

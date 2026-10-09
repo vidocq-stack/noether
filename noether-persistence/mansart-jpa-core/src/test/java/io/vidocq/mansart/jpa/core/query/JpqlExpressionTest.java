@@ -190,4 +190,20 @@ class JpqlExpressionTest {
             .containsExactly("Vidocq", "Coco");
         assertThat(list("SELECT ID(p) FROM Player p WHERE p.name = 'Coco'", Long.class)).containsExactly(12L);
     }
+
+    @Test
+    void setOperationsAndCast() { // Jakarta Persistence 3.2
+        assertThat(list("SELECT p.name FROM Player p UNION SELECT t.name FROM Team t", String.class))
+            .containsExactlyInAnyOrder("Vidocq", "Coco", "Brigade", "Sûreté");
+        assertThat(list("SELECT p.name FROM Player p INTERSECT SELECT t.name FROM Team t", String.class)).isEmpty();
+        assertThat(list("SELECT p.name FROM Player p EXCEPT SELECT t.name FROM Team t", String.class))
+            .containsExactlyInAnyOrder("Vidocq", "Coco");
+        assertThat(list("SELECT CAST(p.id AS STRING) FROM Player p ORDER BY p.id", String.class)).containsExactly("11", "12");
+        assertThat(list("SELECT CAST(p.id AS INTEGER) FROM Player p ORDER BY p.id", Integer.class)).containsExactly(11, 12);
+        var castParameter = em.createQuery("SELECT CAST(:id AS LONG) FROM Player p WHERE p.id = 11", Long.class);
+        assertThat(castParameter.getParameter("id").getParameterType()).isEqualTo(Long.class);
+        assertThat(castParameter.setParameter("id", 12L).getSingleResult()).isEqualTo(12L);
+        assertThat(em.createQuery("SELECT p.name FROM Player p UNION ALL SELECT p.name FROM Player p ORDER BY p.name", String.class)
+            .setMaxResults(2).getResultList()).containsExactly("Coco", "Coco");
+    }
 }

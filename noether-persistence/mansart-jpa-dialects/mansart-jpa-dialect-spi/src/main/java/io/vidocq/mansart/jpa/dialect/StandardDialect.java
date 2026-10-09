@@ -28,6 +28,8 @@ import io.vidocq.mansart.jpa.dialect.sql.Insert;
 import io.vidocq.mansart.jpa.dialect.sql.NextValue;
 import io.vidocq.mansart.jpa.dialect.sql.Query;
 import io.vidocq.mansart.jpa.dialect.sql.Select;
+import io.vidocq.mansart.jpa.dialect.sql.SelectStatement;
+import io.vidocq.mansart.jpa.dialect.sql.SetQuery;
 import io.vidocq.mansart.jpa.dialect.sql.Statement;
 import io.vidocq.mansart.jpa.dialect.sql.Table;
 import io.vidocq.mansart.jpa.dialect.sql.Update;
@@ -56,7 +58,7 @@ public abstract class StandardDialect implements Dialect {
             case NextValue next -> nextValue(next);
             case Increment increment -> "UPDATE " + table(increment.table()) + " SET " + name(increment.value()) + " = "
                 + name(increment.value()) + " + ? WHERE " + name(increment.key()) + " = ?";
-            case Query query -> renderQuery(query).sql();
+            case SelectStatement query -> renderQuery(query).sql();
             case UpdateQuery update -> renderQuery(update).sql();
             case DeleteQuery delete -> renderQuery(delete).sql();
         };
@@ -75,7 +77,7 @@ public abstract class StandardDialect implements Dialect {
     public Rendered renderQuery(Statement statement) {
         List<Expression.Parameter> marked = new ArrayList<>();
         String text = switch (statement) {
-            case Query query -> query(query, marked);
+            case SelectStatement query -> selectStatement(query, marked);
             case UpdateQuery update -> bulkUpdate(update, marked);
             case DeleteQuery delete -> "DELETE FROM " + table(delete.table()) + " AS " + delete.alias()
                 + (delete.where() == null ? "" : " WHERE " + expression(delete.where(), 0, marked));
@@ -95,6 +97,41 @@ public abstract class StandardDialect implements Dialect {
             }
         }
         return new Rendered(sql.toString(), parameters);
+    }
+
+    private String selectStatement(SelectStatement statement, List<Expression.Parameter> parameters) {
+        return switch (statement) {
+            case Query query -> query(query, parameters);
+            case SetQuery setQuery -> setQuery(setQuery, parameters);
+        };
+    }
+
+    private String setQuery(SetQuery query, List<Expression.Parameter> parameters) {
+        StringBuilder sql = new StringBuilder();
+        for (int i = 0; i < query.operands().size(); i++) {
+            if (i > 0) {
+                SetQuery.Operation operation = query.operations().get(i - 1);
+                sql.append(' ').append(operation.operator()).append(operation.all() ? " ALL " : " ");
+            }
+            sql.append('(').append(this.query(query.operands().get(i), parameters)).append(')');
+        }
+        if (!query.orderBy().isEmpty()) {
+            sql.append(" ORDER BY ");
+            for (int i = 0; i < query.orderBy().size(); i++) {
+                SetQuery.Order order = query.orderBy().get(i);
+                sql.append(i == 0 ? "" : ", ").append(order.position()).append(order.descending() ? " DESC" : "");
+                if (order.nullsFirst() != null) {
+                    sql.append(order.nullsFirst() ? " NULLS FIRST" : " NULLS LAST");
+                }
+            }
+        }
+        if (query.offset() != null && query.offset() > 0) {
+            sql.append(" OFFSET ").append(query.offset()).append(" ROWS");
+        }
+        if (query.limit() != null) {
+            sql.append(" FETCH FIRST ").append(query.limit()).append(" ROWS ONLY");
+        }
+        return sql.toString();
     }
 
     /** {@code UPDATE table AS alias SET column = value, … [WHERE …]}: the assigned columns unqualified, as SQL wants them. */
@@ -192,6 +229,8 @@ public abstract class StandardDialect implements Dialect {
                 yield expression(binary.left(), precedence, parameters) + ' ' + binary.operator().symbol() + ' '
                     + expression(binary.right(), associative ? precedence : precedence + 1, parameters);
             }
+            case Expression.Cast cast -> "CAST(" + expression(cast.expression(), 0, parameters) + " AS "
+                + castType(cast.type()) + ')';
             case Expression.Not not -> "NOT " + expression(not.operand(), 4, parameters);
             case Expression.IsNull isNull -> expression(isNull.operand(), 5, parameters) + (isNull.negated() ? " IS NOT NULL" : " IS NULL");
             case Expression.Between between -> expression(between.operand(), 5, parameters) + (between.negated() ? " NOT" : "")
@@ -225,13 +264,26 @@ public abstract class StandardDialect implements Dialect {
                 }
                 yield text.append(" END").toString();
             }
-            case Expression.Subquery subquery -> '(' + query(subquery.query(), parameters) + ')';
-            case Expression.Exists exists -> (exists.negated() ? "NOT EXISTS (" : "EXISTS (") + query(exists.query(), parameters) + ')';
+            case Expression.Subquery subquery -> '(' + selectStatement(subquery.query(), parameters) + ')';
+            case Expression.Exists exists -> (exists.negated() ? "NOT EXISTS (" : "EXISTS (")
+                + selectStatement(exists.query(), parameters) + ')';
             case Expression.InQuery in -> expression(in.operand(), 5, parameters) + (in.negated() ? " NOT" : "") + " IN ("
-                + query(in.query(), parameters) + ')';
-            case Expression.Quantified quantified -> quantified.quantifier() + " (" + query(quantified.query(), parameters) + ')';
+                + selectStatement(in.query(), parameters) + ')';
+            case Expression.Quantified quantified -> quantified.quantifier() + " ("
+                + selectStatement(quantified.query(), parameters) + ')';
         };
         return precedence(expression) < context ? '(' + sql + ')' : sql;
+    }
+
+    private static String castType(Expression.Cast.Type type) {
+        return switch (type) {
+            case VARCHAR -> "VARCHAR";
+            case INTEGER -> "INTEGER";
+            case BIGINT -> "BIGINT";
+            case REAL -> "REAL";
+            case DOUBLE_PRECISION -> "DOUBLE PRECISION";
+            case DECIMAL -> "DECIMAL";
+        };
     }
 
     /**

@@ -63,7 +63,7 @@ public final class Parser {
         } else if (parser.peek().is("DELETE")) {
             statement = parser.delete();
         } else {
-            statement = parser.select();
+            statement = parser.query();
         }
         parser.expectEnd();
         return statement;
@@ -105,7 +105,28 @@ public final class Parser {
 
     // ---- statements ---------------------------------------------------------------------------------------
 
-    private Ast.Select select() {
+    private Ast.Query query() {
+        List<Ast.Select> operands = new ArrayList<>();
+        List<Ast.SetOperation> operations = new ArrayList<>();
+        operands.add(selectCore());
+        while (peek().is("UNION") || peek().is("INTERSECT") || peek().is("EXCEPT")) {
+            Ast.SetOperator operator = Ast.SetOperator.valueOf(advance().text().toUpperCase(Locale.ROOT));
+            boolean all = accept("ALL");
+            if (!all) {
+                accept("DISTINCT");
+            }
+            operations.add(new Ast.SetOperation(operator, all));
+            operands.add(selectCore());
+        }
+        List<Ast.OrderItem> orderBy = orderBy();
+        if (!operations.isEmpty()) {
+            return new Ast.SetQuery(operands, operations, orderBy);
+        }
+        Ast.Select select = operands.getFirst();
+        return new Ast.Select(select.distinct(), select.items(), select.from(), select.where(), select.groupBy(), select.having(), orderBy);
+    }
+
+    private Ast.Select selectCore() {
         expect("SELECT");
         boolean distinct = accept("DISTINCT");
         List<Ast.Item> items = new ArrayList<>();
@@ -126,6 +147,10 @@ public final class Parser {
             } while (accept(","));
         }
         Expr having = accept("HAVING") ? condition() : null;
+        return new Ast.Select(distinct, items, from, where, groupBy, having, List.of());
+    }
+
+    private List<Ast.OrderItem> orderBy() {
         List<Ast.OrderItem> orderBy = new ArrayList<>();
         if (accept("ORDER")) {
             expect("BY");
@@ -145,7 +170,7 @@ public final class Parser {
                 orderBy.add(new Ast.OrderItem(key, descending, nullsFirst));
             } while (accept(","));
         }
-        return new Ast.Select(distinct, items, from, where, groupBy, having, orderBy);
+        return orderBy;
     }
 
     private Ast.Item item() {
@@ -299,7 +324,7 @@ public final class Parser {
         }
         expect("(");
         if (peek().is("SELECT")) {
-            Ast.Select subquery = select();
+            Ast.Query subquery = query();
             expect(")");
             return new Ast.In(left, List.of(new Ast.Subquery(subquery)), negated);
         }
@@ -331,9 +356,9 @@ public final class Parser {
         return op;
     }
 
-    private Ast.Select subquery() {
+    private Ast.Query subquery() {
         expect("(");
-        Ast.Select select = select();
+        Ast.Query select = query();
         expect(")");
         return select;
     }
@@ -410,7 +435,7 @@ public final class Parser {
         }
         if (accept("(")) {
             if (peek().is("SELECT")) {
-                Ast.Select subquery = select();
+                Ast.Query subquery = query();
                 expect(")");
                 return new Ast.Subquery(subquery);
             }
@@ -464,6 +489,22 @@ public final class Parser {
             advance();
             if (word.equals("TRIM")) {
                 return trim();
+            }
+            if (word.equals("CAST")) {
+                Expr expression = expression();
+                expect("AS");
+                Token type = advance();
+                if (type.kind() != Kind.NAME) {
+                    throw error("a CAST target type");
+                }
+                Ast.CastType castType;
+                try {
+                    castType = Ast.CastType.valueOf(type.text().toUpperCase(Locale.ROOT));
+                } catch (IllegalArgumentException e) {
+                    throw new IllegalArgumentException("Unknown CAST target type " + type.text() + ": " + query, e);
+                }
+                expect(")");
+                return new Ast.Cast(expression, castType);
             }
             if (word.equals("EXTRACT")) {
                 String field = name("a date or time field").toUpperCase(Locale.ROOT);

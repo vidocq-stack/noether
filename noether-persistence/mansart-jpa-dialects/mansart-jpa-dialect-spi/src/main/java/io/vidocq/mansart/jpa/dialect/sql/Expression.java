@@ -77,6 +77,13 @@ public sealed interface Expression {
     record Binary(Expression left, Operator operator, Expression right) implements Expression {
     }
 
+    /** {@code CAST(expression AS type)}. */
+    record Cast(Expression expression, Type type) implements Expression {
+        public enum Type {
+            VARCHAR, INTEGER, BIGINT, REAL, DOUBLE_PRECISION, DECIMAL
+        }
+    }
+
     /** {@code NOT operand}. */
     record Not(Expression operand) implements Expression {
     }
@@ -137,18 +144,18 @@ public sealed interface Expression {
     }
 
     /** A scalar subquery. */
-    record Subquery(Query query) implements Expression {
+    record Subquery(SelectStatement query) implements Expression {
     }
 
     /** {@code [NOT] EXISTS (query)}. */
-    record Exists(Query query, boolean negated) implements Expression {
+    record Exists(SelectStatement query, boolean negated) implements Expression {
     }
 
     /** {@code operand [NOT] IN (query)}. */
-    record InQuery(Expression operand, Query query, boolean negated) implements Expression {
+    record InQuery(Expression operand, SelectStatement query, boolean negated) implements Expression {
     }
 
     /** {@code ALL (query)} or {@code ANY (query)}, the right operand of a comparison. */
-    record Quantified(String quantifier, Query query) implements Expression {
+    record Quantified(String quantifier, SelectStatement query) implements Expression {
     }
 }

@@ -870,7 +870,7 @@ final class EntityManagerImpl implements EntityManager {
     public Query createNativeQuery(String sqlString) {
         checkOpen();
         try {
-            return new NativeQuery(sqlString, flushMode, this::executeNativeUpdate, () -> !closed);
+            return new NativeQuery(sqlString, flushMode, this::executeNativeUpdate, queries, null, null, () -> !closed);
         } catch (RuntimeException e) {
             throw failed(e);
         }
@@ -880,7 +880,7 @@ final class EntityManagerImpl implements EntityManager {
     public <T> Query createNativeQuery(String sqlString, Class<T> resultClass) {
         checkOpen();
         try {
-            return new NativeQuery(sqlString, flushMode, this::executeNativeUpdate, () -> !closed);
+            return new NativeQuery(sqlString, flushMode, this::executeNativeUpdate, queries, resultClass, null, () -> !closed);
         } catch (RuntimeException e) {
             throw failed(e);
         }
@@ -890,7 +890,7 @@ final class EntityManagerImpl implements EntityManager {
     public Query createNativeQuery(String sqlString, String resultSetMapping) {
         checkOpen();
         try {
-            return new NativeQuery(sqlString, flushMode, this::executeNativeUpdate, () -> !closed);
+            return new NativeQuery(sqlString, flushMode, this::executeNativeUpdate, queries, null, resultSetMapping, () -> !closed);
         } catch (RuntimeException e) {
             throw failed(e);
         }

@@ -35,7 +35,7 @@ import java.util.Objects;
  * @param noWait whether the lock must not wait
  */
 public record Query(boolean distinct, List<Expression> select, List<From> from, Expression where, List<Expression> groupBy,
-        Expression having, List<Order> orderBy, Integer offset, Integer limit, Select.Lock lock, boolean noWait) implements Statement {
+        Expression having, List<Order> orderBy, Integer offset, Integer limit, Select.Lock lock, boolean noWait) implements SelectStatement {
 
     /** A table of the {@code FROM} clause, its alias, and the tables joined to it. */
     public record From(Table table, String alias, List<Join> joins) {
@@ -117,6 +117,7 @@ public record Query(boolean distinct, List<Expression> select, List<From> from, 
                 collect(binary.left(), parameters);
                 collect(binary.right(), parameters);
             }
+            case Expression.Cast cast -> collect(cast.expression(), parameters);
             case Expression.Not not -> collect(not.operand(), parameters);
             case Expression.IsNull isNull -> collect(isNull.operand(), parameters);
             case Expression.Between between -> {
