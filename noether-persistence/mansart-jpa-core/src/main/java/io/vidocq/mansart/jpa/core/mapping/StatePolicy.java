@@ -23,6 +23,7 @@ import io.vidocq.mansart.jpa.core.jdbc.type.ValueBinders;
 import io.vidocq.mansart.jpa.core.model.AssociationAttribute;
 import io.vidocq.mansart.jpa.core.model.AttributeModel;
 import io.vidocq.mansart.jpa.core.model.BasicAttribute;
+import io.vidocq.mansart.jpa.core.model.ElementCollectionAttribute;
 import io.vidocq.mansart.jpa.core.model.EmbeddableModel;
 import io.vidocq.mansart.jpa.core.model.EmbeddedAttribute;
 import io.vidocq.mansart.jpa.core.model.ValueConversion;
@@ -252,7 +253,47 @@ public final class StatePolicy {
             case EmbeddedAttribute embedded -> embedded(embedded.embeddable(), embeddables, converters);
             case AssociationAttribute association when !association.singleValued() ->
                 association.owning() ? OWNED_COLLECTION : INVERSE_COLLECTION;
+            case ElementCollectionAttribute elements when elements.element() != null ->
+                elementCollection(copier(elements.element(), embeddables, converters));
             default -> REFERENCE;
+        };
+    }
+
+    /**
+     * An element collection (§2.7): the snapshot of each element, as its own copier keeps it (an embeddable as its
+     * state); the same elements in any order are the same collection. Values, not instances: compared by value.
+     */
+    private static Copier elementCollection(Copier element) {
+        return new Copier() {
+            @Override
+            public Object copy(Object value) {
+                List<Object> copies = new ArrayList<>();
+                CollectionMapping.elements(value).forEach(e -> copies.add(element.copy(e)));
+                return copies;
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public boolean same(Object snapshot, Object current) {
+                List<Object> before = snapshot == null ? List.of() : new ArrayList<>((List<Object>) snapshot);
+                List<Object> now = CollectionMapping.elements(current);
+                if (before.size() != now.size()) {
+                    return false;
+                }
+                for (Object e : now) {
+                    int match = -1;
+                    for (int i = 0; i < before.size() && match < 0; i++) {
+                        if (element.same(before.get(i), e)) {
+                            match = i;
+                        }
+                    }
+                    if (match < 0) {
+                        return false;
+                    }
+                    before.remove(match);
+                }
+                return true;
+            }
         };
     }
 

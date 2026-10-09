@@ -393,8 +393,7 @@ Spec: ch. 2.10–2.12 (relationships, defaults), ch. 2.4.2 (derived identities),
       update (an owned collection versions its owner, an inverse one does not, §3.4.2), deleted before their owner.
       Loaded with their owner in their `@OrderBy` (attributes of the target, or its identifier). A relationship to a
       class outside the unit fails the factory (§2.10).
-- [ ] Map collections (`@MapKey*` family), unidirectional one-to-many through a foreign key, single-valued
-      relationships through a join table, `@OrderBy` on paths into embeddables.
+- [ ] Unidirectional one-to-many through a foreign key, single-valued relationships through a join table.
 - [x] `orphanRemoval` of single-valued relationships (§2.9): the remove cascades, a target let go is removed at flush;
       `merge` without cascade points to the managed instance of the same identity (§3.2.7.1).
 - [x] `orphanRemoval` and merge of collections: the elements let go are removed; a merged collection holds the managed
@@ -404,8 +403,15 @@ Spec: ch. 2.10–2.12 (relationships, defaults), ch. 2.4.2 (derived identities),
 - [ ] Fetching: EAGER via joins or secondary selects; LAZY collections through Mansart collection
       wrappers; LAZY to-one through Class-File API subclasses (or treated as EAGER first — LAZY
       is only a hint to the provider). `PersistenceUnitUtil.isLoaded` / `PersistenceUtil` semantics.
-- [ ] `@ElementCollection`, `@CollectionTable`, `Map` collections (`@MapKey*` family),
-      `@OrderBy`, `@OrderColumn`.
+- [x] `@ElementCollection` of basic and embeddable values (`ElementCollectionTest`, `mapping.ElementCollectionMapping`):
+      the element read as an attribute of the collection (its `@Column`, default the attribute name; its conversion,
+      `@Enumerated`, `@Temporal`, `@Convert`; an embeddable with the `@AttributeOverride`s of the collection), in its
+      `@CollectionTable`, by default `<entity>_<attribute>` joined by `<entity>_<key column>` (§11.1.8, §11.1.25).
+      Snapshots keep the state of each element (an embeddable changed in place is seen); a changed collection versions
+      its owner and is written again whole; its rows are deleted before their owner; a merged one is a copy.
+- [x] `@OrderBy` on paths: attributes of the elements through embeddables (`zipcode.zip DESC`), or the value itself
+      for basic elements (`@OrderBy`, `@OrderBy("DESC")`).
+- [ ] `Map` collections (`@MapKey*` family), `@OrderColumn`.
 - [ ] Derived identities (`@MapsId`, all `ex1a…ex6b` shapes), nested embeddables.
 
 **TCK gate**: `core.relationship.*`, `core.derivedid.*`, `core.nestedembedding`,

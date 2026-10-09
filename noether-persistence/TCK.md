@@ -16,6 +16,18 @@ Official suite: **Jakarta Persistence 3.2.1** TCK (bundle from eclipse.org, SHA-
 | P4 — entity operations, identifier generation, callbacks, locking, secondary tables, native updates | 2026-10-08 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 609 | 1522 | 4 |
 | P5 (in progress) — single-valued relationships: foreign keys, loading, orphan removal | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 611 | 1520 | 4 |
 | P5 (in progress) — collection-valued relationships: join tables, inverse sides, orphans, merge | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 615 | 1516 | 4 |
+| P5 (in progress) — element collections, `@OrderBy` paths | 2026-10-09 | Temurin 25.0.3 | postgres:17-alpine | 2135 | 622 | 1509 | 4 |
+
+## P5, third slice — element collections: 615 → 622
+
+`@ElementCollection` of basic and embeddable values in their collection tables, and `@OrderBy` on paths into
+embeddables or on the value of basic elements. Run of 2026-10-09: **622 pass, 1509 fail, 4 skipped**. Compared test by
+test with the run at 615: 7 tests pass that failed, none fails that passed —
+`core.annotations.convert.Client#elementCollectionBasicType`,
+`core.annotations.elementcollection.Client2#elementCollectionBasicType`,
+`core.annotations.orderby.Client2#{field,property}DotNotationTest`,
+`core.annotations.orderby.Client3#{field,property}ElementCollectionBasicType`,
+`core.types.property.Client2#elementCollectionTest`.
 
 ## P5, second slice — collection-valued relationships: 611 → 615
 

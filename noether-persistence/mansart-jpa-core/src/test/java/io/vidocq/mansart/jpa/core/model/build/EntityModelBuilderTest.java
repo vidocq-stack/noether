@@ -386,7 +386,13 @@ class EntityModelBuilderTest {
         assertThat(books.targetEntity()).isEqualTo(Book.class); // List<Book>
         assertThat(books.fetch()).isEqualTo(FetchType.LAZY);
         assertThat(unit.entity(Author.class).orElseThrow().attribute("aliases").orElseThrow())
-            .isInstanceOf(ElementCollectionAttribute.class);
+            .isInstanceOfSatisfying(ElementCollectionAttribute.class, aliases -> { // §2.7: its element, a basic value
+                assertThat(aliases.element()).isInstanceOfSatisfying(BasicAttribute.class, element -> {
+                    assertThat(element.javaType()).isEqualTo(String.class);
+                    assertThat(element.column().name()).isEqualTo("aliases"); // §11.1.9: the attribute name by default
+                });
+                assertThat(aliases.table().name()).isNull(); // the default, <entity>_<attribute>, applied at mapping
+            });
         AssociationAttribute author = association(unit.entity(Book.class).orElseThrow(), "author");
         assertThat(author.kind()).isEqualTo(AssociationAttribute.Kind.MANY_TO_ONE);
         assertThat(author.targetEntity()).isEqualTo(Author.class);

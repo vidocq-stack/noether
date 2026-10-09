@@ -24,6 +24,7 @@ import io.vidocq.mansart.jpa.core.model.AssociationAttribute;
 import io.vidocq.mansart.jpa.core.model.AttributeModel;
 import io.vidocq.mansart.jpa.core.model.BasicAttribute;
 import io.vidocq.mansart.jpa.core.model.CallbackModel;
+import io.vidocq.mansart.jpa.core.model.CollectionTableModel;
 import io.vidocq.mansart.jpa.core.model.ColumnModel;
 import io.vidocq.mansart.jpa.core.model.ConverterModel;
 import io.vidocq.mansart.jpa.core.model.ElementCollectionAttribute;
@@ -248,7 +249,7 @@ public final class EntityModelBuilder {
             }
         }
         if (element.isAnnotated(JPA + "ElementCollection")) {
-            return new ElementCollectionAttribute(member.name(), type, member.access(), declaring, member.signature());
+            return elementCollection(member, type, declaring);
         }
         if (planner.embedded(member).isPresent()) {
             return embedded(member, type, declaring, prefixed(entityConverts, member.name() + "."));
@@ -315,6 +316,49 @@ public final class EntityModelBuilder {
             return null;
         }
         return Map.class.isAssignableFrom(type) && arguments.size() == 2 ? arguments.get(1) : arguments.getFirst();
+    }
+
+    // ---- element collections (§2.7, §11.1.8, §11.1.16) ---------------------------------------------------
+
+    /**
+     * An element collection: its element is read as an attribute of the collection — an embeddable with the
+     * {@code @AttributeOverride}s of the collection, or a basic value with its {@code @Column} (default: the name of the
+     * attribute) and its conversion — and its collection table as written.
+     */
+    private AttributeModel elementCollection(Member member, Class<?> type, Class<?> declaring) {
+        Annotated element = member.element();
+        AnnotationInfo collection = element.annotation(JPA + "ElementCollection").orElseThrow();
+        ClassDesc written = collection.type("targetClass");
+        Class<?> elementType;
+        if (written != null && !written.descriptorString().equals("V")) {
+            elementType = Types.load(written, loader);
+        } else {
+            List<Class<?>> arguments = GenericSignatures.memberTypeArguments(member.signature(), element instanceof MethodInfo, loader);
+            elementType = arguments == null ? null : Map.class.isAssignableFrom(type) && arguments.size() == 2 ? arguments.get(1)
+                : arguments.getFirst();
+        }
+        if (elementType == null) {
+            if (mappingFiles) {
+                return new PendingAttribute(member.name(), type, member.access(), declaring, member.signature());
+            }
+            throw new PersistenceException("The element collection " + member.name() + " of " + member.owner().name() + " is a raw "
+                + type.getName() + ": give its targetClass, or the type of its elements (§2.7)");
+        }
+        AttributeModel value = null;
+        if (!Map.class.isAssignableFrom(type)) {
+            boolean embeddable = source.read(elementType.getName()).map(i -> i.isAnnotated(JPA + "Embeddable")).orElse(false);
+            value = embeddable ? embedded(member, elementType, declaring, Map.of())
+                : basic(member, elementType, declaring, null, conversion(member, elementType));
+        }
+        CollectionTableModel table = element.annotation(JPA + "CollectionTable").map(t -> new CollectionTableModel(nonEmpty(t.string("name")),
+            nonEmpty(t.string("schema")), nonEmpty(t.string("catalog")), t.annotations("joinColumns").stream()
+                .map(EntityModelBuilder::joinColumn).toList())).orElse(CollectionTableModel.defaults());
+        String orderBy = element.annotation(JPA + "OrderBy").map(o -> o.string("value").trim()).orElse(null);
+        OrderColumnModel orderColumn = element.annotation(JPA + "OrderColumn").map(o -> new OrderColumnModel(nonEmpty(o.string("name")),
+            o.bool("nullable"), o.bool("insertable"), o.bool("updatable"))).orElse(null);
+        FetchType fetch = FetchType.valueOf(collection.enumConstant("fetch"));
+        return new ElementCollectionAttribute(member.name(), type, member.access(), declaring, member.signature(), value, table, orderBy,
+            orderColumn, fetch);
     }
 
     /** The {@code @JoinColumn}s written on an element, in order. */

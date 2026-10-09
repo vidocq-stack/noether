@@ -28,6 +28,7 @@ import io.vidocq.mansart.jpa.core.model.AttributeModel;
 import io.vidocq.mansart.jpa.core.model.BasicAttribute;
 import io.vidocq.mansart.jpa.core.model.CallbackModel;
 import io.vidocq.mansart.jpa.core.model.ColumnModel;
+import io.vidocq.mansart.jpa.core.model.ElementCollectionAttribute;
 import io.vidocq.mansart.jpa.core.model.EmbeddableModel;
 import io.vidocq.mansart.jpa.core.model.EmbeddedAttribute;
 import io.vidocq.mansart.jpa.core.model.EntityModel;
@@ -248,9 +249,10 @@ public final class MappedUnit {
                         prepare(embeddable.attributes(), valueBinders, generated, embeddables, binders);
                     }
                 }
+                case ElementCollectionAttribute elements when elements.element() != null ->
+                    prepare(List.of(elements.element()), valueBinders, generated, embeddables, binders);
                 default -> {
-                    // relationships and element collections are bound with their target (P5); pending attributes
-                    // with their mapping file
+                    // relationships are bound with their target; pending attributes with their mapping file
                 }
             }
         }

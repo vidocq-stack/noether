@@ -23,7 +23,9 @@ import io.vidocq.mansart.jpa.core.jdbc.type.ValueBinder;
 import io.vidocq.mansart.jpa.core.model.AssociationAttribute;
 import io.vidocq.mansart.jpa.core.model.AttributeModel;
 import io.vidocq.mansart.jpa.core.model.BasicAttribute;
+import io.vidocq.mansart.jpa.core.model.CollectionTableModel;
 import io.vidocq.mansart.jpa.core.model.ColumnModel;
+import io.vidocq.mansart.jpa.core.model.ElementCollectionAttribute;
 import io.vidocq.mansart.jpa.core.model.EmbeddableModel;
 import io.vidocq.mansart.jpa.core.model.EmbeddedAttribute;
 import io.vidocq.mansart.jpa.core.model.EntityModel;
@@ -114,19 +116,21 @@ public final class EntityStatements {
     private final Function<Class<?>, MappedEntity> entities;
     private final List<Reference> references;
     private final List<CollectionMapping> collections;
+    private final List<ElementCollectionMapping> elementCollections;
     private final List<Column> columns;
     private final List<TableStatements> tables;
     private final Integer version;
     private final Select versionSelect;
 
     private EntityStatements(String entity, String unsupported, Function<Class<?>, MappedEntity> entities, List<Reference> references,
-            List<CollectionMapping> collections, List<Column> columns, List<TableStatements> tables, Integer version,
-            Select versionSelect) {
+            List<CollectionMapping> collections, List<ElementCollectionMapping> elementCollections, List<Column> columns,
+            List<TableStatements> tables, Integer version, Select versionSelect) {
         this.entity = entity;
         this.unsupported = unsupported;
         this.entities = entities;
         this.references = references;
         this.collections = collections;
+        this.elementCollections = elementCollections;
         this.columns = columns;
         this.tables = tables;
         this.version = version;
@@ -159,6 +163,7 @@ public final class EntityStatements {
         List<Column> columns = new ArrayList<>();
         List<Reference> references = new ArrayList<>();
         List<CollectionMapping> collections = new ArrayList<>();
+        List<ElementCollectionMapping> elementCollections = new ArrayList<>();
         List<AttributeModel> attributes = model.attributes();
         for (int i = 0; i < attributes.size(); i++) {
             boolean id = ids.contains(i);
@@ -176,6 +181,8 @@ public final class EntityStatements {
                 }
                 case AssociationAttribute association when !association.singleValued() ->
                     collections.add(collection(model, association, i, models, binders));
+                case ElementCollectionAttribute elements when elements.element() != null ->
+                    elementCollection(model, elements, i, binders, embeddables).ifPresent(elementCollections::add);
                 default -> {
                     // inverse to-one sides have no column; element collections have their own tables
                 }
@@ -217,7 +224,7 @@ public final class EntityStatements {
         Select versionSelect = new Select(primary.select().table(), List.of(columns.get(version != null ? version : keys.getFirst()).name()),
             primary.select().conditions());
         return new EntityStatements(model.entityName(), null, entities, List.copyOf(references), List.copyOf(collections),
-            List.copyOf(columns), List.copyOf(tables), version, versionSelect);
+            List.copyOf(elementCollections), List.copyOf(columns), List.copyOf(tables), version, versionSelect);
     }
 
     // ---- foreign keys (§2.10, §11.1.25) -------------------------------------------------------------------
@@ -245,7 +252,7 @@ public final class EntityStatements {
         if (keys == null) {
             return "a relationship to an entity with a derived identity or a nested embedded identifier";
         }
-        JoinColumnModel[] joins = byKeyPart(association, association.joinColumns(), keys, target);
+        JoinColumnModel[] joins = byKeyPart(describe(association), association.joinColumns(), keys, target);
         if (joins == null) {
             return "a join column referencing a column that is not a key column of " + target.entityName();
         }
@@ -267,12 +274,11 @@ public final class EntityStatements {
      * order of its key parts (§11.1.25: matched by {@code referencedColumnName}, in order when there is one key
      * column); the defaults when none is written. {@code null} when one references a column that is not a key column.
      */
-    private static JoinColumnModel[] byKeyPart(AssociationAttribute association, List<JoinColumnModel> written, List<KeyColumn> keys,
+    private static JoinColumnModel[] byKeyPart(String relationship, List<JoinColumnModel> written, List<KeyColumn> keys,
             EntityModel target) {
-        String relationship = association.name() + " of " + association.declaringClass().getName();
         if (!written.isEmpty() && written.size() != keys.size()) {
-            throw new PersistenceException("The relationship " + relationship + " has " + written.size() + " join columns, "
-                + target.entityName() + " a key of " + keys.size());
+            throw new PersistenceException("The join columns of " + relationship + " are " + written.size() + ", the key of "
+                + target.entityName() + " has " + keys.size() + " columns");
         }
         JoinColumnModel[] joins = new JoinColumnModel[keys.size()];
         for (int k = 0; k < keys.size(); k++) {
@@ -298,6 +304,10 @@ public final class EntityStatements {
             joins[part] = join;
         }
         return joins;
+    }
+
+    private static String describe(AssociationAttribute association) {
+        return "the relationship " + association.name() + " of " + association.declaringClass().getName();
     }
 
     // ---- collections (§2.10, §11.1.27) --------------------------------------------------------------------
@@ -331,8 +341,8 @@ public final class EntityStatements {
             return new CollectionMapping.Unsupported(attribute, association, "a join table of an entity with a derived identity");
         }
         JoinTableModel written = association.joinTable() != null ? association.joinTable() : JoinTableModel.defaults();
-        JoinColumnModel[] ownerJoins = byKeyPart(association, written.joinColumns(), ownerKeys, owner);
-        JoinColumnModel[] targetJoins = byKeyPart(association, written.inverseJoinColumns(), targetKeys, target);
+        JoinColumnModel[] ownerJoins = byKeyPart(describe(association), written.joinColumns(), ownerKeys, owner);
+        JoinColumnModel[] targetJoins = byKeyPart(describe(association), written.inverseJoinColumns(), targetKeys, target);
         if (ownerJoins == null || targetJoins == null) {
             return new CollectionMapping.Unsupported(attribute, association, "a join column referencing a column that is not a key");
         }
@@ -356,6 +366,44 @@ public final class EntityStatements {
             written.catalog() == null ? null : Identifier.of(written.catalog()));
         return new CollectionMapping.JoinTable(attribute, association, table, ownerColumns, ownerBinders, targetColumns,
             targetBinders);
+    }
+
+    /**
+     * The collection table of the element collection {@code elements} of {@code owner} (§11.1.8): by default
+     * {@code <entity>_<attribute>}, joined by {@code <entity>_<key column>} (§11.1.25); the element columns are those
+     * of its basic value or of its embeddable, overrides applied. Empty for an owner whose key P5 does not reference yet.
+     */
+    private static Optional<ElementCollectionMapping> elementCollection(EntityModel owner, ElementCollectionAttribute elements,
+            int attribute, Function<BasicAttribute, ValueBinder> binders, Function<EmbeddableModel, ManagedAccess> embeddables) {
+        List<KeyColumn> ownerKeys = keyColumns(owner, binders);
+        if (ownerKeys == null) {
+            return Optional.empty();
+        }
+        CollectionTableModel written = elements.table();
+        JoinColumnModel[] joins = byKeyPart("the collection table of " + elements.name() + " of " + elements.declaringClass().getName(),
+            written.joinColumns(), ownerKeys, owner);
+        if (joins == null) {
+            return Optional.empty();
+        }
+        List<Identifier> ownerColumns = new ArrayList<>();
+        List<ValueBinder> ownerBinders = new ArrayList<>();
+        for (int k = 0; k < ownerKeys.size(); k++) {
+            String name = joins[k].name();
+            ownerColumns.add(Identifier.of(name != null ? name : owner.entityName() + "_" + ownerKeys.get(k).name()));
+            ownerBinders.add(ownerKeys.get(k).binder());
+        }
+        String tableName = written.name() != null ? written.name() : owner.entityName() + "_" + elements.name();
+        List<Column> columns = new ArrayList<>();
+        switch (elements.element()) {
+            case BasicAttribute basic -> columns.add(new Column(Identifier.of(basic.column().name()), binders.apply(basic), 0, new int[0],
+                new ManagedAccess[0], false, false, basic.column().insertable(), basic.column().updatable(), 0, null));
+            case EmbeddedAttribute embedded -> flatten(embedded, embedded.embeddable(), "", 0, new int[0], new ManagedAccess[0], false,
+                binders, embeddables, List.of(tableName), columns);
+            default -> throw new IllegalStateException("An element is basic or embeddable: " + elements.element());
+        }
+        Table table = new Table(Identifier.of(tableName), written.schema() == null ? null : Identifier.of(written.schema()),
+            written.catalog() == null ? null : Identifier.of(written.catalog()));
+        return Optional.of(new ElementCollectionMapping(attribute, elements, table, ownerColumns, ownerBinders, columns));
     }
 
     /** The attribute of {@code target} that is the inverse side of {@code association} of {@code owner}, if any. */
@@ -460,7 +508,7 @@ public final class EntityStatements {
         return -1;
     }
 
-    private static void flatten(EmbeddedAttribute owner, EmbeddableModel embeddable, String prefix, int attribute, int[] path,
+    static void flatten(EmbeddedAttribute owner, EmbeddableModel embeddable, String prefix, int attribute, int[] path,
             ManagedAccess[] accesses, boolean id, Function<BasicAttribute, ValueBinder> binders,
             Function<EmbeddableModel, ManagedAccess> embeddableAccess, List<String> tableNames, List<Column> columns) {
         ManagedAccess access = embeddableAccess.apply(embeddable);
@@ -491,8 +539,8 @@ public final class EntityStatements {
     }
 
     private static EntityStatements unsupported(EntityModel model, String milestone, String feature) {
-        return new EntityStatements(model.entityName(), milestone + ":" + feature, null, List.of(), List.of(), List.of(), List.of(), null,
-            null);
+        return new EntityStatements(model.entityName(), milestone + ":" + feature, null, List.of(), List.of(), List.of(), List.of(),
+            List.of(), null, null);
     }
 
     private void check() {
@@ -535,6 +583,18 @@ public final class EntityStatements {
         }
         Object id = type.id(target);
         return id == null ? null : type.statements().keyValues(id)[foreignKey.part()];
+    }
+
+    /** The element collections stored in a collection table. */
+    public List<ElementCollectionMapping> elementCollections() {
+        check();
+        return elementCollections;
+    }
+
+    /** The mapping of the element collection {@code attribute}, if it is stored. */
+    public Optional<ElementCollectionMapping> elementCollection(int attribute) {
+        check();
+        return elementCollections.stream().filter(c -> c.attribute() == attribute).findFirst();
     }
 
     /** The collection-valued relationships. */
@@ -657,6 +717,11 @@ public final class EntityStatements {
      */
     public void hydrate(Object[] values, boolean[] nulls, Object[] state) {
         check();
+        hydrate(columns, values, nulls, state);
+    }
+
+    /** {@link #hydrate(Object[], boolean[], Object[])} for any list of columns: an entity's, or a collection table's. */
+    static void hydrate(List<Column> columns, Object[] values, boolean[] nulls, Object[] state) {
         int c = 0;
         while (c < columns.size()) {
             Column column = columns.get(c);
@@ -672,13 +737,13 @@ public final class EntityStatements {
             while (end < columns.size() && columns.get(end).attribute() == column.attribute()) {
                 end++;
             }
-            state[column.attribute()] = embeddable(values, nulls, c, end, 0);
+            state[column.attribute()] = embeddable(columns, values, nulls, c, end, 0);
             c = end;
         }
     }
 
     /** The embeddable at {@code depth} whose columns are {@code values[from, to)}; {@code null} if they are all NULL. */
-    private Object embeddable(Object[] values, boolean[] nulls, int from, int to, int depth) {
+    private static Object embeddable(List<Column> columns, Object[] values, boolean[] nulls, int from, int to, int depth) {
         boolean empty = true;
         for (int c = from; c < to && empty; c++) {
             empty = nulls[c];
@@ -700,7 +765,7 @@ public final class EntityStatements {
             while (end < to && columns.get(end).path()[depth] == component) {
                 end++;
             }
-            components[component] = embeddable(values, nulls, c, end, depth + 1);
+            components[component] = embeddable(columns, values, nulls, c, end, depth + 1);
             c = end;
         }
         if (access.type().isRecord()) {

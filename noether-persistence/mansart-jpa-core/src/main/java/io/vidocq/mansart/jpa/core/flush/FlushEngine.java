@@ -21,7 +21,9 @@ package io.vidocq.mansart.jpa.core.flush;
 
 import io.vidocq.mansart.jpa.core.context.ManagedEntity;
 import io.vidocq.mansart.jpa.core.context.PersistenceContext;
+import io.vidocq.mansart.jpa.core.jdbc.type.ValueBinder;
 import io.vidocq.mansart.jpa.core.mapping.CollectionMapping;
+import io.vidocq.mansart.jpa.core.mapping.ElementCollectionMapping;
 import io.vidocq.mansart.jpa.core.mapping.EntityStatements;
 import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
 import io.vidocq.mansart.jpa.dialect.Dialect;
@@ -54,7 +56,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * an entity share one batch. A versioned entity is updated and deleted only if its row still has the version it was
  * read with (§3.4.2), else {@link OptimisticLockException}. Foreign keys that no order satisfies (a cycle, an instance
  * of the same entity met later) are inserted {@code NULL} and written once every row exists, and cleared before the
- * deletes of rows that reference each other: the constraints never need to be deferred.
+ * deletes of rows that reference each other: the constraints never need to be deferred. Join rows and the rows of
+ * element collections are written once every row of the flush exists, and deleted before their owner.
  *
  * <p>One engine per factory, shared by its entity managers: its state is the dialect and the SQL it rendered, cached
  * without lock contention ({@link ConcurrentHashMap}, pure computation). A flush runs on the calling thread, on the
@@ -146,16 +149,21 @@ public final class FlushEngine {
         writeReferences(later, false, connection);
         for (Work work : inserts) { // the join rows reference rows of both sides: every row exists now
             writeJoinRows(work, null, connection);
+            writeElements(work, true, connection);
         }
         for (List<Work> group : groups(updates)) {
             for (Work work : group) {
                 writeJoinRows(work, work.entry().snapshot(), connection);
+                writeElements(work, false, connection);
             }
             update(group, context, connection);
         }
         writeReferences(referencesBetween(deletes), true, connection);
         for (Work work : deletes) {
             deleteJoinRows(work, connection);
+            for (ElementCollectionMapping elements : work.type().statements().elementCollections()) {
+                deleteElements(work, elements, connection);
+            }
         }
         for (List<Work> group : groups(deletes)) {
             delete(group, context, connection);
@@ -376,6 +384,67 @@ public final class FlushEngine {
                 }
             }
         }
+    }
+
+    // ---- element collections (§2.7, §11.1.8) ---------------------------------------------------------------
+
+    /**
+     * Writes the element collections of {@code work}: all of them for a new owner ({@code inserted}), else those that
+     * changed since the snapshot, written again whole — their elements have no identity to update one row by.
+     */
+    private void writeElements(Work work, boolean inserted, Connection connection) {
+        MappedEntity type = work.type();
+        List<ElementCollectionMapping> mappings = type.statements().elementCollections();
+        if (mappings.isEmpty()) {
+            return;
+        }
+        List<Integer> changes = inserted ? List.of() : type.state().changes(work.entry().snapshot(), work.state());
+        for (ElementCollectionMapping elements : mappings) {
+            if (!inserted && !changes.contains(elements.attribute())) {
+                continue;
+            }
+            if (!inserted) {
+                deleteElements(work, elements, connection);
+            }
+            List<Object> values = CollectionMapping.elements(work.state()[elements.attribute()]);
+            if (values.isEmpty()) {
+                continue;
+            }
+            Object[] owner = type.statements().keyValues(type.id(work.entry().instance()));
+            try (PreparedStatement statement = connection.prepareStatement(render(elements.insert()))) {
+                for (Object value : values) {
+                    int index = bindOwner(statement, elements.ownerBinders(), owner);
+                    Object[] columns = elements.values(value);
+                    for (int c = 0; c < columns.length; c++) {
+                        elements.columns().get(c).binder().bind(dialect, statement, index++, columns[c]);
+                    }
+                    statement.addBatch();
+                }
+                statement.executeBatch();
+            } catch (SQLException e) {
+                throw failure("write of the element collection " + elements.model().name() + " of", type, e);
+            }
+        }
+    }
+
+    /** Deletes the rows of the element collection {@code elements} of the owner of {@code work}. */
+    private void deleteElements(Work work, ElementCollectionMapping elements, Connection connection) {
+        MappedEntity type = work.type();
+        Object[] owner = type.statements().keyValues(work.entry().key().id());
+        try (PreparedStatement statement = connection.prepareStatement(render(elements.deleteOwner()))) {
+            bindOwner(statement, elements.ownerBinders(), owner);
+            statement.executeUpdate();
+        } catch (SQLException e) {
+            throw failure("delete of the element collection " + elements.model().name() + " of", type, e);
+        }
+    }
+
+    /** Binds the key of an owner from parameter 1; returns the next parameter index. */
+    private int bindOwner(PreparedStatement statement, List<ValueBinder> binders, Object[] owner) throws SQLException {
+        for (int k = 0; k < owner.length; k++) {
+            binders.get(k).bind(dialect, statement, k + 1, owner[k]);
+        }
+        return owner.length + 1;
     }
 
     /** The elements of {@code from} that {@code removed} does not hold, compared by identity, as many times as left. */

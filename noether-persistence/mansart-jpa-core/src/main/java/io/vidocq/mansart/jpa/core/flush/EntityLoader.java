@@ -25,11 +25,16 @@ import io.vidocq.mansart.jpa.core.context.PersistenceContext;
 import io.vidocq.mansart.jpa.core.jdbc.type.ValueBinder;
 import io.vidocq.mansart.jpa.core.mapping.CollectionMapping;
 import io.vidocq.mansart.jpa.core.mapping.CompositeId;
+import io.vidocq.mansart.jpa.core.mapping.ElementCollectionMapping;
 import io.vidocq.mansart.jpa.core.mapping.EntityStatements;
 import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
 import io.vidocq.mansart.jpa.core.mapping.MappedUnit;
 import io.vidocq.mansart.jpa.core.model.AssociationAttribute;
 import io.vidocq.mansart.jpa.core.model.AttributeModel;
+import io.vidocq.mansart.jpa.core.model.ElementCollectionAttribute;
+import io.vidocq.mansart.jpa.core.model.EmbeddableModel;
+import io.vidocq.mansart.jpa.core.model.EmbeddedAttribute;
+import io.vidocq.mansart.jpa.core.spi.ManagedAccess;
 import io.vidocq.mansart.jpa.dialect.sql.Select;
 import jakarta.persistence.LockModeType;
 import jakarta.persistence.PersistenceException;
@@ -44,6 +49,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Function;
 
 /**
  * Builds managed instances from their rows (§3.2.8): the select by identifier of an entity, its columns read through
@@ -133,6 +139,15 @@ public final class EntityLoader {
         EntityStatements statements = type.statements();
         List<AttributeModel> attributes = type.model().attributes();
         for (int i = 0; i < attributes.size(); i++) {
+            if (attributes.get(i) instanceof ElementCollectionAttribute elements) {
+                Optional<ElementCollectionMapping> mapping = statements.elementCollection(i);
+                if (mapping.isPresent()) {
+                    Object value = elements(mapping.get(), statements.keyValues(id), connection);
+                    state[i] = value;
+                    type.access().set(instance, i, value);
+                }
+                continue;
+            }
             if (!(attributes.get(i) instanceof AssociationAttribute association)) {
                 continue;
             }
@@ -167,7 +182,8 @@ public final class EntityLoader {
                     continue; // a shape not mapped yet: the collection keeps what the instance holds
                 }
                 elements.removeIf(Objects::isNull);
-                order(association, entity(association.targetEntity()), elements);
+                MappedEntity target = entity(association.targetEntity());
+                order(association.orderBy(), target.model().attributes(), target.access(), target::id, describe(association), elements);
                 Collection<Object> collection = CollectionMapping.newCollection(association.javaType());
                 collection.addAll(elements);
                 value = collection;
@@ -250,45 +266,97 @@ public final class EntityLoader {
         return keys;
     }
 
+    // ---- element collections (§2.7) ------------------------------------------------------------------------
+
+    /** The elements of the collection {@code mapping} of the owner {@code key}, read from its collection table, in order. */
+    private Collection<Object> elements(ElementCollectionMapping mapping, Object[] key, Connection connection) {
+        List<Object> elements = new ArrayList<>();
+        List<EntityStatements.Column> columns = mapping.columns();
+        try (PreparedStatement select = connection.prepareStatement(engine.render(mapping.select()))) {
+            for (int k = 0; k < key.length; k++) {
+                mapping.ownerBinders().get(k).bind(engine.dialect(), select, k + 1, key[k]);
+            }
+            try (ResultSet rows = select.executeQuery()) {
+                while (rows.next()) {
+                    Object[] values = new Object[columns.size()];
+                    boolean[] nulls = new boolean[values.length];
+                    for (int c = 0; c < values.length; c++) {
+                        values[c] = columns.get(c).binder().read(rows, c + 1);
+                        nulls[c] = rows.wasNull();
+                    }
+                    elements.add(mapping.element(values, nulls));
+                }
+            }
+        } catch (SQLException e) {
+            throw new PersistenceException("The read of the element collection " + mapping.model().name() + " of "
+                + mapping.model().declaringClass().getName() + " failed: " + e.getMessage(), e);
+        }
+        ElementCollectionAttribute model = mapping.model();
+        String where = "the element collection " + model.name() + " of " + model.declaringClass().getName();
+        if (model.element() instanceof EmbeddedAttribute embedded) {
+            order(model.orderBy(), embedded.embeddable().attributes(), unit.access(embedded.embeddable()), Function.identity(), where,
+                elements);
+        } else {
+            order(model.orderBy(), List.of(), null, Function.identity(), where, elements);
+        }
+        Collection<Object> collection = CollectionMapping.newCollection(model.javaType());
+        collection.addAll(elements);
+        return collection;
+    }
+
+    // ---- @OrderBy (§11.1.42) ------------------------------------------------------------------------------
+
     /**
-     * Sorts the elements of a collection by its {@code @OrderBy} (§11.1.42): attributes of the target, each ascending
-     * unless {@code DESC}; the identifier for an empty one.
+     * Sorts {@code elements} by {@code orderBy}: a list of paths into the elements — attributes, through embeddables
+     * by dots — each ascending unless {@code DESC}; without a path (an empty {@code @OrderBy}, or {@code ASC} / {@code DESC}
+     * alone) by {@code natural}: the identifier of an entity, the value of a basic element.
+     *
+     * @param attributes the attributes of the elements, and {@code access} reads them; none for basic elements
      */
-    private static void order(AssociationAttribute association, MappedEntity target, List<Object> elements) {
-        String orderBy = association.orderBy();
+    private void order(String orderBy, List<AttributeModel> attributes, ManagedAccess access, Function<Object, Object> natural,
+            String where, List<Object> elements) {
         if (orderBy == null || elements.size() < 2) {
             return;
         }
         Comparator<Object> comparator = null;
-        if (orderBy.isEmpty()) {
-            comparator = (a, b) -> compare(target.id(a), target.id(b));
-        } else {
-            for (String item : orderBy.split(",")) {
-                String[] parts = item.trim().split("\\s+");
-                int index = attributeIndex(target, parts[0]);
-                if (index < 0) {
-                    throw new PersistenceException("The @OrderBy of " + association.name() + " of "
-                        + association.declaringClass().getName() + " names " + parts[0] + ", which "
-                        + target.model().entityName() + " does not have (paths into embeddables come later)");
-                }
-                Comparator<Object> by = (a, b) -> compare(target.access().get(a, index), target.access().get(b, index));
-                if (parts.length > 1 && parts[1].equalsIgnoreCase("DESC")) {
-                    by = by.reversed();
-                }
-                comparator = comparator == null ? by : comparator.thenComparing(by);
+        for (String item : orderBy.isEmpty() ? new String[] {""} : orderBy.split(",")) {
+            String[] parts = item.trim().split("\\s+");
+            boolean pathless = parts[0].isEmpty() || parts[0].equalsIgnoreCase("ASC") || parts[0].equalsIgnoreCase("DESC");
+            Function<Object, Object> key = pathless ? natural : path(parts[0], attributes, access, where);
+            String direction = pathless ? parts[0] : parts.length > 1 ? parts[1] : "";
+            Comparator<Object> by = (a, b) -> compare(key.apply(a), key.apply(b));
+            if (direction.equalsIgnoreCase("DESC")) {
+                by = by.reversed();
             }
+            comparator = comparator == null ? by : comparator.thenComparing(by);
         }
         elements.sort(comparator);
     }
 
-    private static int attributeIndex(MappedEntity type, String name) {
-        List<AttributeModel> attributes = type.model().attributes();
+    /** Reads the attribute at the dotted {@code path} of an element, through its embeddables. */
+    private Function<Object, Object> path(String path, List<AttributeModel> attributes, ManagedAccess access, String where) {
+        int dot = path.indexOf('.');
+        String name = dot < 0 ? path : path.substring(0, dot);
+        int index = -1;
         for (int i = 0; i < attributes.size(); i++) {
             if (attributes.get(i).name().equals(name)) {
-                return i;
+                index = i;
             }
         }
-        return -1;
+        if (index < 0 || dot >= 0 && !(attributes.get(index) instanceof EmbeddedAttribute)) {
+            throw new PersistenceException("The @OrderBy of " + where + " names " + path + ", which its elements do not have");
+        }
+        int attribute = index;
+        if (dot < 0) {
+            return element -> element == null ? null : access.get(element, attribute);
+        }
+        EmbeddableModel embeddable = ((EmbeddedAttribute) attributes.get(index)).embeddable();
+        Function<Object, Object> rest = path(path.substring(dot + 1), embeddable.attributes(), unit.access(embeddable), where);
+        return element -> element == null ? null : rest.apply(access.get(element, attribute));
+    }
+
+    private static String describe(AssociationAttribute association) {
+        return "the relationship " + association.name() + " of " + association.declaringClass().getName();
     }
 
     /** Compares two values of an attribute, {@code null} first; values that are not comparable keep their order. */

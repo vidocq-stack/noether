@@ -28,6 +28,7 @@ import io.vidocq.mansart.jpa.core.mapping.MappedEntity;
 import io.vidocq.mansart.jpa.core.mapping.MappedUnit;
 import io.vidocq.mansart.jpa.core.model.AssociationAttribute;
 import io.vidocq.mansart.jpa.core.model.AttributeModel;
+import io.vidocq.mansart.jpa.core.model.ElementCollectionAttribute;
 import io.vidocq.mansart.jpa.core.model.EmbeddableModel;
 import io.vidocq.mansart.jpa.core.model.EmbeddedAttribute;
 import io.vidocq.mansart.jpa.core.spi.ManagedAccess;
@@ -224,7 +225,8 @@ final class EntityOperations {
     }
 
     /**
-     * Copies the state of {@code from} onto {@code to}: values as they are, embeddables as new copies, the target of a
+     * Copies the state of {@code from} onto {@code to}: values as they are, embeddables and element collections as new
+     * copies, the target of a
      * single-valued relationship that does not cascade merge replaced by the managed instance of its identity
      * (§3.2.7.1); the relationships cascading merge are set by {@link #cascadeMerge}.
      */
@@ -238,6 +240,14 @@ final class EntityOperations {
             }
             if (attributes.get(i) instanceof EmbeddedAttribute embedded) {
                 state[i] = copy(embedded.embeddable(), state[i]);
+            } else if (attributes.get(i) instanceof ElementCollectionAttribute elements && state[i] instanceof Collection<?> values) {
+                // values, not instances: a collection of its own, embeddables copied
+                Collection<Object> copy = CollectionMapping.newCollection(elements.javaType());
+                for (Object value : values) {
+                    copy.add(value != null && elements.element() instanceof EmbeddedAttribute embedded
+                        ? copy(embedded.embeddable(), value) : value);
+                }
+                state[i] = copy;
             } else if (attributes.get(i) instanceof AssociationAttribute association) {
                 if (association.singleValued()) {
                     if (!association.cascades(CascadeType.MERGE)) {
