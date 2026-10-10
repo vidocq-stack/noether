@@ -38,7 +38,6 @@ import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.PersistenceConfiguration;
 import jakarta.persistence.PersistenceException;
 import jakarta.persistence.PersistenceUnitTransactionType;
-import jakarta.persistence.ValidationMode;
 import jakarta.persistence.spi.LoadState;
 import jakarta.persistence.spi.PersistenceProvider;
 import jakarta.persistence.spi.PersistenceUnitInfo;
@@ -147,12 +146,10 @@ public final class MansartPersistenceProvider implements PersistenceProvider {
             throw new PersistenceException("Persistence unit " + settings.unitName() + " is JTA: JTA entity managers come with "
                 + "the container integration (mansart-jpa-cdi); supply its TransactionIntegration bridge");
         }
-        if (settings.validationMode() == ValidationMode.CALLBACK && !BeanValidation.isAvailable(loader)) {
-            throw new PersistenceException("Persistence unit " + settings.unitName()
-                + " asks for validation mode CALLBACK, but no Bean Validation provider is available (§3.7.1)");
-        }
         MappedUnit mapping = mapping(settings, loader);
-        var factory = new EntityManagerFactoryImpl(settings, ConnectionSources.of(settings, loader), mapping);
+        BeanValidation.Validator validator = BeanValidation.open(settings, loader, mapping);
+        var connections = ConnectionSources.of(settings, loader);
+        var factory = new EntityManagerFactoryImpl(settings, connections, mapping, validator);
         try {
             ((io.vidocq.mansart.jpa.core.bootstrap.SchemaGeneration) factory.getSchemaManager()).generate();
             return factory;

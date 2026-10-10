@@ -175,10 +175,49 @@ class MansartPersistenceProviderTest {
     }
 
     @Test
-    void callbackValidationWithoutBeanValidationIsRefused() { // §3.7.1: no provider and mode CALLBACK
-        assertThatThrownBy(() -> Persistence.createEntityManagerFactory("callback")).isInstanceOf(PersistenceException.class);
-        assertThatThrownBy(() -> Persistence.createEntityManagerFactory("h2", Map.of("jakarta.persistence.validation.mode", "callback")))
-            .isInstanceOf(PersistenceException.class);
+    void callbackValidationWithoutBeanValidationIsRefused() { // §3.7.1: no API or provider and mode CALLBACK
+        ClassLoader original = Thread.currentThread().getContextClassLoader();
+        Thread.currentThread().setContextClassLoader(new ClassLoader(original) {
+            @Override
+            protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+                if (name.startsWith("jakarta.validation.")) {
+                    throw new ClassNotFoundException(name);
+                }
+                return super.loadClass(name, resolve);
+            }
+        });
+        try {
+            assertThatThrownBy(() -> Persistence.createEntityManagerFactory("callback")).isInstanceOf(PersistenceException.class);
+            assertThatThrownBy(() -> Persistence.createEntityManagerFactory("h2",
+                Map.of("jakarta.persistence.validation.mode", "callback"))).isInstanceOf(PersistenceException.class);
+            try (EntityManagerFactory auto = Persistence.createEntityManagerFactory("h2",
+                    Map.of("jakarta.persistence.validation.mode", "auto"))) {
+                assertThat(auto.isOpen()).isTrue();
+            }
+        } finally {
+            Thread.currentThread().setContextClassLoader(original);
+        }
+    }
+
+    @Test
+    void incompleteValidationApiIsRefusedInCallbackAndAuto() { // §3.7.1
+        ClassLoader original = Thread.currentThread().getContextClassLoader();
+        Thread.currentThread().setContextClassLoader(new ClassLoader(original) {
+            @Override
+            protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+                if (name.equals("jakarta.validation.spi.ValidationProvider")) {
+                    throw new ClassNotFoundException(name);
+                }
+                return super.loadClass(name, resolve);
+            }
+        });
+        try {
+            assertThatThrownBy(() -> Persistence.createEntityManagerFactory("callback")).isInstanceOf(PersistenceException.class);
+            assertThatThrownBy(() -> Persistence.createEntityManagerFactory("h2",
+                Map.of("jakarta.persistence.validation.mode", "auto"))).isInstanceOf(PersistenceException.class);
+        } finally {
+            Thread.currentThread().setContextClassLoader(original);
+        }
     }
 
     @Test

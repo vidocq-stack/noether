@@ -28,6 +28,7 @@
 @SuppressWarnings("module")
 module io.vidocq.mansart.jpa.core {
     requires jakarta.persistence;
+    requires static jakarta.validation;
     requires java.sql;
     requires java.xml;
     requires io.vidocq.mansart.jpa.dialect.spi;
@@ -37,6 +38,7 @@ module io.vidocq.mansart.jpa.core {
     exports io.vidocq.mansart.jpa.core.spi;
     uses io.vidocq.mansart.jpa.core.spi.ManagedAccessProvider;
     uses io.vidocq.mansart.jpa.dialect.DialectFactory;
+    uses jakarta.validation.spi.ValidationProvider;
 
     // the processor plans the generated accesses with the same code as the bootstrap (AccessPlanner)
     exports io.vidocq.mansart.jpa.core.model to io.vidocq.mansart.jpa.processor;

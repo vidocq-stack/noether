@@ -316,7 +316,8 @@ public final class EntityModelBuilder {
         Optional<Class<?>> superEntity = hierarchy.stream().filter(c -> c != info && c.isAnnotated(ENTITY))
             .reduce((first, second) -> second).map(c -> Types.load(c.name(), loader));
         return new EntityModel(type, entityName, table(info, entityName), AccessPlanner.classAccess(info, access), id, attributes, version,
-            superEntity, secondaryTables(info), callbacks(info));
+            superEntity, secondaryTables(info), callbacks(info),
+            info.annotation(JPA + "Cacheable").map(annotation -> annotation.bool("value")).orElse(null));
     }
 
     private void checkEntityClass(ClassInfo info) {

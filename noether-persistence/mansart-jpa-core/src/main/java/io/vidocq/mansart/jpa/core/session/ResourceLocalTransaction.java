@@ -125,8 +125,23 @@ final class ResourceLocalTransaction implements SessionTransaction {
                 listener.afterRollback();
                 throw end(current, new RollbackException("The commit failed: " + e.getMessage(), e));
             }
-            end(current, null);
-            listener.afterCommit();
+            RuntimeException releaseFailure = null;
+            try {
+                end(current, null);
+            } catch (RuntimeException failure) {
+                releaseFailure = failure;
+            }
+            try {
+                listener.afterCommit();
+            } catch (RuntimeException completionFailure) {
+                if (releaseFailure == null) {
+                    throw completionFailure;
+                }
+                releaseFailure.addSuppressed(completionFailure);
+            }
+            if (releaseFailure != null) {
+                throw releaseFailure;
+            }
         } finally {
             lock.unlock();
         }

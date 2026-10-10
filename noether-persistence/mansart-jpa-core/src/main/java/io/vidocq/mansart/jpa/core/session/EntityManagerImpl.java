@@ -65,11 +65,13 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
 
 /**
@@ -94,6 +96,12 @@ final class EntityManagerImpl implements EntityManager {
     private CacheRetrieveMode cacheRetrieveMode = CacheRetrieveMode.USE;
     private CacheStoreMode cacheStoreMode = CacheStoreMode.USE;
     private Connection executionConnection;
+    private final Set<EntityKey> transactionTouched = new HashSet<>();
+    private final Set<EntityKey> transactionCacheCandidates = new HashSet<>();
+    private final Set<EntityKey> bypassStore = new HashSet<>();
+    private long transactionCacheGeneration = -1;
+    private boolean cacheInvalidationPending;
+    private SecondLevelCache.Publication cachePublication;
 
     EntityManagerImpl(EntityManagerFactoryImpl factory, Map<?, ?> map) {
         this(factory, map, jakarta.persistence.SynchronizationType.SYNCHRONIZED);
@@ -112,6 +120,8 @@ final class EntityManagerImpl implements EntityManager {
             public void beforeCommit(Connection connection) {
                 withConnection(connection, current -> {
                     flush(current);
+                    cachePublication = factory.cache().stage(context, storeMode(), bypassStore, transactionTouched,
+                        transactionCacheCandidates, transactionCacheGeneration);
                     return null;
                 });
             }
@@ -119,10 +129,27 @@ final class EntityManagerImpl implements EntityManager {
             @Override
             public void afterRollback() {
                 context.clear(); // §3.3.2: the instances become detached
+                transactionTouched.clear();
+                transactionCacheCandidates.clear();
+                bypassStore.clear();
+                transactionCacheGeneration = -1;
+                cacheInvalidationPending = false;
+                cachePublication = null;
             }
 
             @Override
             public void afterCommit() {
+                if (cacheInvalidationPending) {
+                    factory.cache().invalidateAll();
+                } else {
+                    factory.cache().publish(cachePublication);
+                }
+                transactionTouched.clear();
+                transactionCacheCandidates.clear();
+                bypassStore.clear();
+                transactionCacheGeneration = -1;
+                cacheInvalidationPending = false;
+                cachePublication = null;
                 context.releaseLocks();
             }
         };
@@ -372,9 +399,59 @@ final class EntityManagerImpl implements EntityManager {
     /** An empty persistence context has nothing to write: no flush engine, hence no dialect, is needed for it. */
     private void flush(Connection connection) {
         if (context.size() > 0) {
+            Set<Object> newInstances = Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+            for (ManagedEntity entry : context.entries()) {
+                if (!entry.inserted()) {
+                    newInstances.add(entry.instance());
+                }
+                if (entry.key() != null && (entry.status() == ManagedEntity.Status.REMOVED || !entry.inserted()
+                        || entry.snapshot() != null && entry.type().state().dirty(entry.snapshot(), readState(entry)))) {
+                    touch(entry.key());
+                }
+            }
             operations.beforeFlush();
-            factory.flushEngine(connection).flush(context, connection);
+            factory.flushEngine(connection).flush(context, connection,
+                entry -> factory.validator().validate("pre-update", entry.instance()));
+            for (Object instance : newInstances) {
+                context.entry(instance).map(ManagedEntity::key).filter(java.util.Objects::nonNull)
+                    .ifPresent(this::touch);
+            }
         }
+    }
+
+    private void touch(EntityKey key) {
+        captureCacheGeneration(factory.cache().generation());
+        transactionTouched.add(key);
+    }
+
+    private void captureCacheGeneration(long observed) {
+        if (transactionCacheGeneration < 0) {
+            transactionCacheGeneration = observed;
+        }
+    }
+
+    private static Object[] readState(ManagedEntity entry) {
+        Object[] state = new Object[entry.type().model().attributes().size()];
+        entry.type().access().read(entry.instance(), state);
+        return state;
+    }
+
+    private SecondLevelCache.CacheStoreModeSetting storeMode() {
+        return switch (cacheStoreMode) {
+            case USE -> SecondLevelCache.CacheStoreModeSetting.USE;
+            case REFRESH -> SecondLevelCache.CacheStoreModeSetting.REFRESH;
+            case BYPASS -> SecondLevelCache.CacheStoreModeSetting.BYPASS;
+        };
+    }
+
+    private CacheRetrieveMode retrieveMode(Map<String, Object> operationProperties) {
+        Object value = operationProperties == null ? null : operationProperties.get(CACHE_RETRIEVE_MODE);
+        return value == null ? cacheRetrieveMode : enumValue(CacheRetrieveMode.class, CACHE_RETRIEVE_MODE, value);
+    }
+
+    private CacheStoreMode storeMode(Map<String, Object> operationProperties) {
+        Object value = operationProperties == null ? null : operationProperties.get(CACHE_STORE_MODE);
+        return value == null ? cacheStoreMode : enumValue(CacheStoreMode.class, CACHE_STORE_MODE, value);
     }
 
     /** §3.2.7: detaches every managed instance; changes not flushed are lost. */
@@ -466,6 +543,7 @@ final class EntityManagerImpl implements EntityManager {
                 if (queryFlushMode != FlushModeType.COMMIT) {
                     flush(connection);
                 }
+                cacheInvalidationPending = true;
                 try (PreparedStatement statement = connection.prepareStatement(sql)) {
                     for (int i = 0; i < parameters.size(); i++) {
                         Object value = parameters.get(i);
@@ -597,18 +675,45 @@ final class EntityManagerImpl implements EntityManager {
                 }
                 return entityClass.cast(instance);
             }
+            CacheRetrieveMode retrieve = retrieveMode(properties);
+            CacheStoreMode store = storeMode(properties);
+            EntityKey lookupKey = new EntityKey(type.root(), id);
+            if (!locking && !cacheInvalidationPending && !transactionTouched.contains(lookupKey)
+                    && retrieve == CacheRetrieveMode.USE
+                    && store != CacheStoreMode.REFRESH) {
+                Optional<Object> cached = factory.cache().restore(type, id, context);
+                if (cached.isPresent()) {
+                    return entityClass.cast(cached.get());
+                }
+            }
             Integer timeout = lockTimeout(properties, null);
-            return entityClass.cast(onConnection(connection -> {
-                Object loaded = factory.loader(connection).load(type, id, connection, context, lockMode, timeout);
-                if (loaded != null && locking) {
+            long cacheGeneration = factory.cache().generation();
+            if (transaction.isActive() && store != CacheStoreMode.BYPASS) {
+                captureCacheGeneration(cacheGeneration);
+            }
+            Object result = onConnection(connection -> {
+                Object found = factory.loader(connection).load(type, id, connection, context, lockMode, timeout);
+                if (found != null && locking) {
                     // the row is locked by the select already for a pessimistic mode: record the mode, check nothing
-                    ManagedEntity entry = context.entry(loaded).orElseThrow();
+                    ManagedEntity entry = context.entry(found).orElseThrow();
                     factory.locks(connection).lock(type, entry, Locks.pessimistic(lockMode) ? LockModeType.NONE : lockMode, timeout,
                         false, connection, context);
                     context.lock(entry, lockMode);
                 }
-                return loaded;
-            }));
+                return found;
+            });
+            if (result != null) {
+                if (transaction.isActive()) {
+                    if (store == CacheStoreMode.BYPASS) {
+                        bypassStore.add(new EntityKey(type.root(), id));
+                    } else {
+                        transactionCacheCandidates.add(new EntityKey(type.root(), id));
+                    }
+                } else if (store != CacheStoreMode.BYPASS) {
+                    factory.cache().store(type, result, cacheGeneration);
+                }
+            }
+            return entityClass.cast(result);
         } catch (RuntimeException e) {
             throw failed(e);
         }
@@ -821,6 +926,7 @@ final class EntityManagerImpl implements EntityManager {
                     if (queryFlushMode != FlushModeType.COMMIT) {
                         flush(connection);
                     }
+                    cacheInvalidationPending = true;
                     return work.apply(connection);
                 });
             } catch (RuntimeException e) {
@@ -851,7 +957,33 @@ final class EntityManagerImpl implements EntityManager {
         @Override
         public Object find(MappedEntity type, Object id, Connection connection) {
             Optional<ManagedEntity> known = context.find(new EntityKey(type.root(), id));
-            return known.isPresent() ? known.get().instance() : factory.loader(connection).load(type, id, connection, context);
+            if (known.isPresent()) {
+                return known.get().instance();
+            }
+            if (!cacheInvalidationPending && cacheRetrieveMode == CacheRetrieveMode.USE
+                    && cacheStoreMode != CacheStoreMode.REFRESH) {
+                Optional<Object> cached = factory.cache().restore(type, id, context);
+                if (cached.isPresent()) {
+                    return cached.get();
+                }
+            }
+            long cacheGeneration = factory.cache().generation();
+            if (transaction.isActive() && cacheStoreMode != CacheStoreMode.BYPASS) {
+                captureCacheGeneration(cacheGeneration);
+            }
+            Object loaded = factory.loader(connection).load(type, id, connection, context);
+            if (loaded != null) {
+                if (transaction.isActive()) {
+                    if (cacheStoreMode == CacheStoreMode.BYPASS) {
+                        bypassStore.add(new EntityKey(type.root(), id));
+                    } else {
+                        transactionCacheCandidates.add(new EntityKey(type.root(), id));
+                    }
+                } else if (cacheStoreMode != CacheStoreMode.BYPASS) {
+                    factory.cache().store(type, loaded, cacheGeneration);
+                }
+            }
+            return loaded;
         }
     };
 

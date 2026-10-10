@@ -202,7 +202,7 @@ Spec: ch. 7 (EM/EMF lifecycle, `EntityTransaction`), ch. 8 (`persistence.xml`), 
       Connections from a `DataSource` object (`jakarta.persistence.nonJtaDataSource` / `dataSource`) or from the
       `jakarta.persistence.jdbc.*` properties (the named driver is used directly, not through `DriverManager`).
 - [x] 3.2 API: `runInTransaction` / `callInTransaction`, `getName`, `getTransactionType`, `runWithConnection` /
-      `callWithConnection`; `SchemaManager` refused until P9; a no-op `Cache` until P11.
+      `callWithConnection`; `SchemaManager` refused until P9; a factory-scoped shared cache from P11.
 - [x] Validation mode `CALLBACK` without Bean Validation is a `PersistenceException` (§3.7.1), detected without linking
       `jakarta.validation`.
 - [ ] *Moved to P3:* dialect selection from the JDBC metadata. It needs decision **D4** (the shared dialect SPI is
@@ -714,23 +714,43 @@ untouched mode (`TCK_FIXTURES=official`) still reports 2096 / 2135 and is kept f
 patched result, never presented as an official result or a certification. Evidence: `TCK.md`; patch:
 `../PERISTENCE_TCK_PROPOSALS.md` and `mansart-jpa-tck/README.md`.
 
-### P11 — Second-level cache and Bean Validation ⏳
+### P11 — Second-level cache and Bean Validation ✅
 
 Spec: §3.10 (second-level cache), §3.7 (Bean Validation).
 
-- [ ] `Cache` API, `SharedCacheMode`, `@Cacheable`, `CacheRetrieveMode` / `CacheStoreMode`;
-      homegrown, opt-in, virtual-thread friendly (no external cache library).
-      The runner leaves `persistence.second.level.caching.supported` at `true` (changed in P4): the TCK's
-      `clearCache()` only clears the persistence context when it is `true`, and 63 test classes count on that; the
-      `se.cache` tests that check the cache itself fail until this milestone.
-- [ ] Bean Validation: no implementation is available, so the Vidocq ecosystem will get its own
-      (Jakarta Validation 3.1, a sibling building block inside Mansart — see D6).
-      `mansart-persistence` only consumes it through the `jakarta.validation` API (no dependency
-      on the implementation module): `ValidationMode.AUTO` is a no-op when no
-      provider is present; `CALLBACK` without a provider raises `PersistenceException` (spec);
-      with a provider, validation runs on `PrePersist` / `PreUpdate` / `PreRemove` (§3.7).
-      This item is **blocked** until that brick delivers a usable `ValidatorFactory`; the
-      Mansart side can be written against the API alone and tested with the provider-less paths.
+- [x] Factory-scoped, homegrown second-level cache with immutable copied entity-state graphs and identity references;
+      `Cache`, `SharedCacheMode`, inherited annotation/XML `@Cacheable`, `CacheRetrieveMode` / `CacheStoreMode`,
+      commit-only publication, rollback safety, generation-fenced fills, hierarchy-aware eviction and bulk/native
+      invalidation. No external cache library or I/O-held cache lock.
+- [x] Bean Validation integration uses an optional `jakarta.validation-api` dependency and `requires static` module
+      edge; the provider bridge is isolated so AUTO with a missing API/provider is a no-op and CALLBACK without one
+      raises `PersistenceException` without eager linking. When present, validation runs at PrePersist, PreUpdate and
+      PreRemove using bootstrap-checked comma-separated group properties (Class/Class[]/List also accepted).
+      Persist/update default to Default; remove defaults to no groups; explicitly empty groups skip validation.
+      Available-provider bootstrap/configuration failures are surfaced even in AUTO. Integration preserves caller ownership of a supplied
+      `ValidatorFactory`, avoids cascading association validation, and surfaces `ConstraintViolationException`
+      with transaction rollback semantics. The existing `mansart-validation` stopgap is test/TCK-only, not a
+      production dependency; its V0–V2 roadmap and implementation were not changed.
+
+**2026-10-10 status: DELIVERED.** The patched PostgreSQL 17 TCK reports **2135 tests, 2131 passed, 0 failures,
+0 errors, 4 official skips**; comparison with the preserved P10 patched baseline shows the same 2135 test identities,
+10 newly passing cache tests and zero regressions. The fixture patch remains the local TCK-BUG-001 default; this is
+not an untouched-fixture certification claim. Full validation neutrality run: **2135/2135 identical outcomes**
+with Bean Validation absent and present (2131 pass, 0 failures/errors, 4 skips in each mode). The clean persistence
+reactor passes **564 tests, 0 failures/errors/skips**, including **474 core tests**; `vauban/main` module tests also
+pass. Reports are retained under `mansart-jpa-tck/target/validation-neutrality/{off,on}/` and
+`mansart-jpa-tck/target/failsafe-reports/`; the pre-P11 patched baseline remains in
+`mansart-jpa-tck/target/p11-baseline/pre-run-patched-reports/`.
+
+**2026-10-10 correctness follow-up:** BUG-20261010-02 through -05 cover group semantics, optional bootstrap
+and owned-factory cleanup, class-eviction fences/graph dependencies, pre-hydration hierarchy/cacheability checks,
+and immutable pre-commit staging (no live-state capture after commit). Eleven additional regressions bring the
+full persistence `clean install` to **575 tests, including 485 core, with zero failures/errors/skips**.
+The prior 04:38:13Z P11 patched reports are preserved under `mansart-jpa-tck/target/p11-correctness-baseline/`.
+The post-correction full patched validation-off/on runs finish at 04:46:41Z and 04:48:00Z: **2135 identical
+identities/outcomes, 2131 passes, zero failures/errors, four skips each**, unchanged against that baseline.
+Both absent-API/provider second executions pass. Reports: `mansart-jpa-tck/target/p11-correctness-neutrality/{off,on}/`;
+red/green/reactor/full-run logs: `mansart-jpa-tck/target/p11-correctness/`.
 
 **What the TCK really asks of Bean Validation** (read in `persistence-tck-spec-tests-3.2.1-sources.jar`,
 checked 2026-10-08): no test declares a constraint, calls a `Validator` or expects a `ConstraintViolation`.
@@ -756,7 +776,7 @@ Consequences for this module and for the TCK runner:
   `ValidatorFactory.usingContext()`, and is safe to call from many virtual threads.
 
 **TCK gate**: `core.cache.*`, `se.cache.*`, the `entityManagerFactory` validation test (second execution, no
-provider).
+provider); additionally verified with the API and validation stopgap on the first execution.
 
 ### P12 — Certification, performance, ecosystem ⏳
 

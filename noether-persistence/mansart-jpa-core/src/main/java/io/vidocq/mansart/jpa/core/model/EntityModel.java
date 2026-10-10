@@ -29,10 +29,11 @@ import java.util.Optional;
  * @param superEntity the closest entity superclass, if any (its relational strategy is mapped at unit bootstrap)
  * @param secondaryTables the secondary tables of the entity (§11.1.46), in declaration order
  * @param callbacks its lifecycle callbacks, in the order §3.6.4 invokes those of a same event
+ * @param cacheable the explicit {@code @Cacheable} setting, or {@code null} when unspecified
  */
 public record EntityModel(Class<?> javaType, String entityName, TableModel table, AccessKind access, IdModel id,
         List<AttributeModel> attributes, Optional<BasicAttribute> version, Optional<Class<?>> superEntity,
-        List<SecondaryTableModel> secondaryTables, List<CallbackModel> callbacks) {
+        List<SecondaryTableModel> secondaryTables, List<CallbackModel> callbacks, Boolean cacheable) {
 
     public EntityModel {
         attributes = List.copyOf(attributes);

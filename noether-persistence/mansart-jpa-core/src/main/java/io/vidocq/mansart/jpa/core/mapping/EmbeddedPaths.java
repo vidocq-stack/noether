@@ -68,7 +68,7 @@ final class EmbeddedPaths {
         }
         if (paths.isEmpty()) return new Plan(model, access);
         EntityModel executable = new EntityModel(model.javaType(), model.entityName(), model.table(), model.access(), model.id(),
-            attributes, model.version(), model.superEntity(), model.secondaryTables(), model.callbacks());
+            attributes, model.version(), model.superEntity(), model.secondaryTables(), model.callbacks(), model.cacheable());
         int size = model.attributes().size();
         ManagedAccess composed = new ManagedAccess(model.javaType(), attributes.stream()
                 .map(a -> a.name() + ":" + a.access()).toList(), access.callbacks()) {

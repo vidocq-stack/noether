@@ -433,3 +433,116 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     Reports: `mansart-jpa-tck/target/failsafe-reports/execution-1/`; reactor log:
     `mansart-jpa-tck/target/embeddable-keys-clean-reactor.log`. No full TCK run, official fixture/DDL edits,
     delivered Data/Pool/Transactions changes, commit or push.
+
+## BUG-20261010-01 — Concurrent cache fills can resurrect stale state after commit
+
+- **Date**: 2026-10-10
+- **Status**: FIXED (working tree; no commit requested)
+- **Module**: `mansart-jpa-core` shared-cache generation and resource-local commit completion
+- **Symptom**: a database read racing a cache invalidation could install its pre-commit snapshot after the invalidation;
+  a cache publication could also be skipped when JDBC connection release failed after a successful commit.
+- **Minimal reproduction**:
+  ```bash
+  ./mvnw -ntp -pl mansart-persistence/mansart-jpa-core -am test \
+    -Dtest=SecondLevelCacheTest#publishesTransactionalReadsOnlyAfterCommitAndFencesStaleFills+SecondLevelCacheTest#runsCacheCompletionAfterCommitWhenConnectionReleaseFails \
+    -Dsurefire.failIfNoSpecifiedTests=false
+  ```
+- **Cause hypothesis**: cache fills had no generation fence, commits republished every managed snapshot, and the release exception
+  escaped before the post-commit listener could invalidate or publish committed state.
+- **Investigations**:
+  - 2026-10-10: added generation-conditional cache stores and transaction-scoped read candidates; commits invalidate changed
+    identities and publish only eligible snapshots. A deterministic stale-fill test verifies that an old generation cannot
+    repopulate the cache.
+  - 2026-10-10: run the post-commit listener after a successful database commit even if connection release fails, while
+    preserving the release failure. A regression test verifies committed cache visibility under a simulated close error.
+    Both targeted tests pass; fix remains uncommitted as requested.
+
+## BUG-20261010-02 — Validation incorrectly applies Default groups to removal and empty group settings
+
+- **Date**: 2026-10-10
+- **Status**: FIXED (working tree; no commit requested)
+- **Module**: `mansart-jpa-core` / `ValidationProviderBridge`
+- **Symptom**: default removal validates constraints, empty groups still validate Default, comma-separated
+  group names are rejected, and invalid group settings fail only on the first entity operation.
+- **Minimal reproduction**:
+  ```bash
+  ./mvnw -ntp -f mansart-persistence/pom.xml -pl mansart-jpa-core -am test \
+    -Dtest=PersistenceValidationTest -Dsurefire.failIfNoSpecifiedTests=false
+  ```
+- **Cause hypothesis**: all events shared one Default fallback; zero groups were passed to `Validator.validate`,
+  which means Default in the validation API, and properties were resolved lazily.
+- **Investigations**:
+  - 2026-10-10: two new regression methods failed before implementation. Resolve and validate group interfaces
+    at bootstrap using the unit loader; accept comma-separated names and existing Class/Class[]/List conveniences.
+    Persist/update default to Default; remove defaults to no groups; explicitly empty groups skip validation entirely.
+    Five callback/group/ownership tests pass, including default persist/update rollback and default remove success.
+
+## BUG-20261010-03 — Validation bootstrap rejects supplied factories or hides broken available providers
+
+- **Date**: 2026-10-10
+- **Status**: FIXED (working tree; no commit requested)
+- **Module**: `mansart-jpa-core` / `BeanValidation`, `ValidationProviderBridge`
+- **Symptom**: CALLBACK requires a service provider even with a caller-supplied factory; AUTO silently disables
+  validation on provider/configuration/linkage failures; an owned factory leaks when `usingContext()` fails.
+- **Minimal reproduction**:
+  ```bash
+  ./mvnw -ntp -f mansart-persistence/pom.xml -pl mansart-jpa-core -am test \
+    -Dtest=BeanValidationTest -Dsurefire.failIfNoSpecifiedTests=false
+  ```
+- **Cause hypothesis**: provider discovery preceded the supplied-factory check, AUTO caught all runtime/linkage
+  failures as absence, and context creation had no owned-factory cleanup.
+- **Investigations**:
+  - 2026-10-10: configuration and API-linkage regression checks reproduced silent AUTO success before the fix.
+    Only missing API/provider is optional; available-provider failures become `PersistenceException`.
+    An available API missing its SPI is broken, not a provider-absence simulation.
+  - 2026-10-10: isolated unnamed-loader fixtures verify an actually empty ServiceLoader, supplied-factory validation
+    and caller ownership, AUTO no-op/CALLBACK refusal without providers, and owned-factory closure on provider
+    context failure. Discovery and default-provider bootstrap both use the persistence-unit loader.
+    No validation implementation, dependency manifest or module descriptor was changed in this correction.
+
+## BUG-20261010-04 — Class eviction and hierarchy cache misses retain or restore unrelated stale state
+
+- **Date**: 2026-10-10
+- **Status**: FIXED (working tree; no commit requested)
+- **Module**: `mansart-jpa-core` / `SecondLevelCache`
+- **Symptom**: class eviction retains owner graphs referencing the evicted hierarchy and allows old-generation
+  fills; subtype misses populate the context with the wrong type; root lookups may cache a noncacheable subtype
+  using root metadata, while `contains` claims sibling subtype hits.
+- **Minimal reproduction**:
+  ```bash
+  ./mvnw -ntp -f mansart-persistence/pom.xml -pl mansart-jpa-core -am test \
+    -Dtest=SecondLevelCacheTest -Dsurefire.failIfNoSpecifiedTests=false
+  ```
+- **Cause hypothesis**: class eviction examined only entry root keys and did not advance generation; restore
+  checked assignability after graph hydration; storage/contains used requested instead of actual entity type.
+- **Investigations**:
+  - 2026-10-10: three new regressions failed before implementation. Class eviction now fences fills and removes
+    every graph containing hierarchy references. Restore checks the actual root type and graph cacheability
+    before touching context; contains uses the same predicate; capture resolves actual subtype metadata.
+  - 2026-10-10: all six SharedCacheMode settings are covered for explicitly noncacheable subtypes.
+    Unsupported optional state is skipped with explicit DEBUG logging rather than silently claimed as cached.
+
+## BUG-20261010-05 — Post-commit cache publication reads live state instead of the committed snapshot
+
+- **Date**: 2026-10-10
+- **Status**: FIXED (working tree; no commit requested)
+- **Module**: `mansart-jpa-core` / `SecondLevelCache`, `EntityManagerImpl`
+- **Symptom**: changing a live entity between SQL flush and cache completion publishes a value never committed
+  to the database. A JDBC commit-hook regression returned `"not flushed"` instead of `"flushed"`.
+- **Minimal reproduction**:
+  ```bash
+  ./mvnw -ntp -f mansart-persistence/pom.xml -pl mansart-jpa-core -am test \
+    -Dtest=SecondLevelCacheTest#publicationUsesFlushedStateRatherThanLiveInstancesAfterJdbcCommit \
+    -Dsurefire.failIfNoSpecifiedTests=false
+  ```
+- **Cause hypothesis**: afterCommit captured managed instances rather than immutable state staged after flush.
+- **Investigations**:
+  - 2026-10-10: deterministic commit-hook regression failed red. Stage copied graphs after the final flush and
+    before JDBC/JTA commit, then publish only that snapshot on successful completion. Rollback discards the stage;
+    generation fencing and invalidation remain commit-only. Concurrent readers still see only committed values.
+  - 2026-10-10: 25 focused tests pass, followed by the full persistence `clean install`: 575 tests
+    (485 core), zero failures/errors/skips. Logs are retained under `mansart-jpa-tck/target/p11-correctness/`.
+  - 2026-10-10: full patched PostgreSQL TCK revalidated with validation off and on: 2131/2135 pass,
+    zero failures/errors and four official skips each, all identities/outcomes unchanged against the preserved
+    pre-correction P11 baseline. Both second executions pass without the validation API/provider jars.
+    Reports: `mansart-jpa-tck/target/p11-correctness-neutrality/{off,on}/`.

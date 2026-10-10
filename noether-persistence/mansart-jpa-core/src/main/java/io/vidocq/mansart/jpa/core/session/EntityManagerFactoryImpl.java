@@ -20,6 +20,7 @@
 package io.vidocq.mansart.jpa.core.session;
 
 import io.vidocq.mansart.jpa.core.bootstrap.UnitSettings;
+import io.vidocq.mansart.jpa.core.bootstrap.BeanValidation;
 import io.vidocq.mansart.jpa.core.jdbc.ConnectionSource;
 import io.vidocq.mansart.jpa.core.flush.Dialects;
 import io.vidocq.mansart.jpa.core.flush.EntityLoader;
@@ -59,12 +60,13 @@ import java.util.function.Function;
 public final class EntityManagerFactoryImpl implements EntityManagerFactory {
 
     private final UnitSettings settings;
+    private final BeanValidation.Validator validator;
     private final ConnectionSource connections;
     private final MappedUnit mapping;
     private final AtomicReference<FlushEngine> flushEngine = new AtomicReference<>();
     private final AtomicReference<IdGenerators> idGenerators = new AtomicReference<>();
     private final int batchSize;
-    private final Cache cache = new NoSecondLevelCache();
+    private final SecondLevelCache cache;
     private final AtomicBoolean open = new AtomicBoolean(true);
     private final Set<ResourceLocalTransaction> activeTransactions = ConcurrentHashMap.newKeySet();
     private final NamedQueries namedQueries;
@@ -72,10 +74,13 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     private final EntityGraphs entityGraphs;
     private final io.vidocq.mansart.jpa.core.bootstrap.SchemaGeneration schemaGeneration;
 
-    public EntityManagerFactoryImpl(UnitSettings settings, ConnectionSource connections, MappedUnit mapping) {
+    public EntityManagerFactoryImpl(UnitSettings settings, ConnectionSource connections, MappedUnit mapping,
+            BeanValidation.Validator validator) {
         this.settings = settings;
+        this.validator = validator;
         this.connections = connections;
         this.mapping = mapping;
+        this.cache = new SecondLevelCache(mapping, settings.sharedCacheMode());
         this.namedQueries = new NamedQueries(mapping);
         this.metamodel = new io.vidocq.mansart.jpa.core.model.build.RuntimeMetamodel(mapping.model(), mapping.source(),
             mapping.loader());
@@ -154,6 +159,14 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
 
     UnitSettings settings() {
         return settings;
+    }
+
+    BeanValidation.Validator validator() {
+        return validator;
+    }
+
+    SecondLevelCache cache() {
+        return cache;
     }
 
     /** Where the connections of the unit come from: its pool, its data source, or the driver (decision D7). */
@@ -240,7 +253,11 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
             }
         }
         // after the transactions: their connections are back in the pool (or closed) before it closes
-        connections.close();
+        try {
+            connections.close();
+        } finally {
+            validator.close();
+        }
     }
 
     @Override

@@ -38,6 +38,45 @@ copy of the spec-tests jar; `TCK_FIXTURES=official` runs the untouched jar. Rows
 | P10 final verification — embedded associations, embeddable map keys and query identifiers; gate blocked | 2026-10-09 | Temurin 25.0.4+7-LTS | postgres:17-alpine | 2135 | 2096 | 35 | 4 |
 | P10 delivered — *untouched* fixtures (`TCK_FIXTURES=official`), provider unchanged | 2026-10-10 | Temurin 25.0.4+7-LTS | postgres:17-alpine | 2135 | 2096 | 35 | 4 |
 | P10 delivered — *patched* fixtures TCK-BUG-001 (runner default), provider unchanged | 2026-10-10 | Temurin 25.0.4+7-LTS | postgres:17-alpine | 2135 | 2121 | 10 | 4 |
+| P11 delivered — *patched* fixtures TCK-BUG-001 (runner default) | 2026-10-10 | Temurin 25.0.4+7-LTS | postgres:17-alpine | 2135 | 2131 | 0 | 4 |
+| P11 correctness follow-up — *patched* fixtures, validation off/on | 2026-10-10 | Temurin 25.0.4+7-LTS | postgres:17-alpine | 2135 each | 2131 each | 0 | 4 each |
+
+## P11 — second-level cache and Bean Validation
+
+**Patched full TCK, 2026-10-10: 2135 tests, 2131 passed, 0 failures, 0 errors, 4 official skips.** Compared by
+execution + class + test name against the preserved P10 patched run: the same 2135 identities, all 10 prior
+second-level-cache errors now pass, with zero regressions or other outcome changes. The patched result is a local
+development gate under TCK-BUG-001, **not** an untouched-fixture result or a certification claim. The fixture patch,
+official jar and exclusions were not changed for P11.
+
+Validation neutrality was checked with the patched TCK in both modes using
+`../check-validation-neutrality.sh`: **2135/2135 test identities and statuses identical**, 2131 pass, 0 failures,
+0 errors, 4 skips in each mode. `off` supplies neither Validation API nor provider; `on` adds the API and the
+test-only `mansart-validation-core`; the runner's second failsafe execution remains without either. Reports:
+`target/validation-neutrality/off/` and `target/validation-neutrality/on/`.
+
+The P11 full-run reports are at `target/failsafe-reports/`; the preserved P10 patched baseline used for the exact
+comparison is at `target/p11-baseline/pre-run-patched-reports/`. The untouched-fixture P10 history above is retained;
+an untouched-fixture full run was not repeated for P11.
+
+**Correctness follow-up, 2026-10-10 (BUG-20261010-02 through -05):** the full patched TCK was rerun
+with validation off (04:46:41Z) and on (04:48:00Z), after the validation bootstrap/group and cache
+eviction/type/publication corrections. Each run retains **2135 identities, 2131 passes, zero failures/errors
+and four skips**, with **zero outcome differences** against the preserved 04:38:13Z P11 baseline.
+Both second executions pass their single absent-validation test; their reported Java class paths contain
+neither `jakarta.validation-api` nor `mansart-validation-core`. Full persistence `clean install` passes
+**575 tests (485 core), zero failures/errors/skips**; 25 focused validation/cache tests also pass.
+Evidence: `target/p11-correctness/`, `target/p11-correctness-neutrality/{off,on}/` and
+`target/p11-correctness-baseline/failsafe-reports/`. Commands from the Mansart root:
+
+```bash
+./mvnw -ntp -f mansart-persistence/pom.xml clean install
+cd mansart-persistence
+OUT=mansart-jpa-tck/target/p11-correctness-neutrality ./check-validation-neutrality.sh
+```
+
+The original P11 neutrality evidence and P10 patched baseline remain preserved. No Validation implementation,
+official TCK fixtures, DDL, exclusions or Data sources were changed in this follow-up.
 
 ## TCK-BUG-001 local fixture patch — P10 gate met (2026-10-10)
 

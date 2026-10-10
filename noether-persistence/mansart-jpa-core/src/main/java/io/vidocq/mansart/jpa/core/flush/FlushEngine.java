@@ -49,6 +49,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 /**
  * Synchronises a persistence context with the database (§3.2.4): the new instances are inserted, the changed ones
@@ -108,6 +109,12 @@ public final class FlushEngine {
 
     /** Writes the changes of {@code context} through {@code connection}, then records them in the context. */
     public void flush(PersistenceContext context, Connection connection) {
+        flush(context, connection, ignored -> {
+        });
+    }
+
+    /** Flushes after callbacks; {@code validateUpdate} runs only for an entity that is actually being updated. */
+    public void flush(PersistenceContext context, Connection connection, Consumer<ManagedEntity> validateUpdate) {
         List<Work> inserts = new ArrayList<>();
         List<Work> updates = new ArrayList<>();
         List<Work> deletes = new ArrayList<>();
@@ -123,6 +130,7 @@ public final class FlushEngine {
                     } else if (type.state().dirty(entry.snapshot(), state)) {
                         // §3.6.3: PreUpdate may change the instance, its changes are written with the others
                         type.callback("PreUpdate", entry.instance());
+                        validateUpdate.accept(entry);
                         updates.add(new Work(entry, read(type, entry.instance())));
                     } else if (Locks.forcesIncrement(entry.lockMode())) {
                         updates.add(new Work(entry, state)); // §3.5: a new version, without a change
