@@ -40,6 +40,7 @@ copy of the spec-tests jar; `TCK_FIXTURES=official` runs the untouched jar. Rows
 | P10 delivered — *patched* fixtures TCK-BUG-001 (runner default), provider unchanged | 2026-10-10 | Temurin 25.0.4+7-LTS | postgres:17-alpine | 2135 | 2121 | 10 | 4 |
 | P11 delivered — *patched* fixtures TCK-BUG-001 (runner default) | 2026-10-10 | Temurin 25.0.4+7-LTS | postgres:17-alpine | 2135 | 2131 | 0 | 4 |
 | P11 correctness follow-up — *patched* fixtures, validation off/on | 2026-10-10 | Temurin 25.0.4+7-LTS | postgres:17-alpine | 2135 each | 2131 each | 0 | 4 each |
+| P12 final verification — *patched* fixtures, default runner mode | 2026-10-10 | Temurin 25.0.4+7-LTS | postgres:17-alpine | 2135 | 2131 | 0 | 4 |
 
 ## P11 — second-level cache and Bean Validation
 
@@ -77,6 +78,21 @@ OUT=mansart-jpa-tck/target/p11-correctness-neutrality ./check-validation-neutral
 
 The original P11 neutrality evidence and P10 patched baseline remain preserved. No Validation implementation,
 official TCK fixtures, DDL, exclusions or Data sources were changed in this follow-up.
+
+**P12 final TCK verification, 2026-10-10 08:45:02–08:46:26 +0200:** ran the full default patched runner
+once from a clean provider source state, with `TCK_FIXTURES` unset (so TCK-BUG-001 remained the runner default).
+PostgreSQL 17, Temurin 25.0.4+7-LTS: **2,135 run, 2,131 passed, 0 failures, 0 errors, 4 official skips**.
+The report contains the same 2,135 test identities and outcomes as the prior P11 baseline: zero additions,
+removals, regressions or outcome changes. Exact invocation:
+
+```bash
+cd mansart/main/mansart-persistence/mansart-jpa-tck
+env -u TCK_FIXTURES ./run-official-tck-persistence-3.2.sh
+```
+
+Current runner output: `mansart-jpa-tck/target/tck-report-persistence.txt` and
+`mansart-jpa-tck/target/tck-persistence-output.log`. This final replay is local fixture-patched evidence,
+not an untouched-fixture result or a formal certification claim.
 
 ## TCK-BUG-001 local fixture patch — P10 gate met (2026-10-10)
 

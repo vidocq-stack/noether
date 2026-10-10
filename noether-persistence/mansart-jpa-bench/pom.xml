@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- Deliberately standalone and out of the Mansart reactor. -->
+    <groupId>io.vidocq.mansart</groupId>
+    <artifactId>mansart-jpa-bench</artifactId>
+    <version>0.4.0-SNAPSHOT</version>
+    <name>Mansart JPA comparative benchmark harness</name>
+    <description>Isolated JMH harness; competing providers are benchmark-only dependencies.</description>
+
+    <properties>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <jmh.version>1.37</jmh.version>
+        <jakarta.persistence.version>3.2.0</jakarta.persistence.version>
+        <h2.version>2.3.232</h2.version>
+        <hibernate.version>7.4.12.Final</hibernate.version>
+        <eclipselink.version>5.0.2</eclipselink.version>
+        <mansart.version>0.4.0-SNAPSHOT</mansart.version>
+        <!-- run-bench.sh sets target/<provider> so each provider's clean leaves the others intact. -->
+        <bench.build.directory>${project.basedir}/target</bench.build.directory>
+    </properties>
+
+    <!--
+      Deliberate classpath-only exception for an out-of-reactor test harness. JMH and the
+      Hibernate/EclipseLink provider graphs (including their implementation libraries) must never
+      enter a Mansart production module or artifact. run-bench.sh activates one provider profile
+      and cleans only that provider's isolated build directory (target/<provider>).
+    -->
+    <dependencies>
+        <dependency>
+            <groupId>jakarta.persistence</groupId>
+            <artifactId>jakarta.persistence-api</artifactId>
+            <version>${jakarta.persistence.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <version>${h2.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.openjdk.jmh</groupId>
+            <artifactId>jmh-core</artifactId>
+            <version>${jmh.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+    <profiles>
+        <profile>
+            <id>mansart</id>
+            <dependencies>
+                <dependency>
+                    <groupId>io.vidocq.mansart</groupId>
+                    <artifactId>mansart-jpa-core</artifactId>
+                    <version>${mansart.version}</version>
+                    <scope>test</scope>
+                </dependency>
+                <dependency>
+                    <groupId>io.vidocq.mansart</groupId>
+                    <artifactId>mansart-jpa-dialect-h2</artifactId>
+                    <version>${mansart.version}</version>
+                    <scope>test</scope>
+                </dependency>
+            </dependencies>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>default-testCompile</id>
+                                <configuration>
+                                    <annotationProcessorPaths combine.self="override">
+                                        <path>
+                                            <groupId>io.vidocq.mansart</groupId>
+                                            <artifactId>mansart-jpa-processor</artifactId>
+                                            <version>${mansart.version}</version>
+                                        </path>
+                                        <path>
+                                            <groupId>org.openjdk.jmh</groupId>
+                                            <artifactId>jmh-generator-annprocess</artifactId>
+                                            <version>${jmh.version}</version>
+                                        </path>
+                                    </annotationProcessorPaths>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>hibernate</id>
+            <dependencies>
+                <dependency>
+                    <groupId>org.hibernate.orm</groupId>
+                    <artifactId>hibernate-core</artifactId>
+                    <version>${hibernate.version}</version>
+                    <scope>test</scope>
+                </dependency>
+            </dependencies>
+        </profile>
+        <profile>
+            <id>eclipselink</id>
+            <dependencies>
+                <dependency>
+                    <groupId>org.eclipse.persistence</groupId>
+                    <artifactId>org.eclipse.persistence.jpa</artifactId>
+                    <version>${eclipselink.version}</version>
+                    <scope>test</scope>
+                </dependency>
+            </dependencies>
+        </profile>
+    </profiles>
+
+    <build>
+        <directory>${bench.build.directory}</directory>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.14.0</version>
+                <executions>
+                    <execution>
+                        <id>default-testCompile</id>
+                        <goals>
+                            <goal>testCompile</goal>
+                        </goals>
+                        <configuration>
+                            <annotationProcessorPaths>
+                                <path>
+                                    <groupId>org.openjdk.jmh</groupId>
+                                    <artifactId>jmh-generator-annprocess</artifactId>
+                                    <version>${jmh.version}</version>
+                                </path>
+                            </annotationProcessorPaths>
+                            <compilerArgs>
+                                <arg>-proc:full</arg>
+                            </compilerArgs>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.8.1</version>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

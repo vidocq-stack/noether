@@ -6,9 +6,10 @@
 > Rules for contributors and agents: [`AGENTS.md`](AGENTS.md). Mansart-wide vision:
 > [`../PLAN.md`](../PLAN.md) and [`../ROADMAP.md`](../ROADMAP.md).
 >
-> **Ambition**: a complete, certified implementation that follows every Vidocq standard and aims at the best
-> performance of its class (measured against Hibernate ORM and EclipseLink in `BENCH.md`). This is the opposite of
-> `mansart-validation`, a stopgap that only has to run for this TCK.
+> **Ambition**: a scope-based Jakarta Persistence implementation with reproducible conformance evidence and
+> measured comparisons against Hibernate ORM and EclipseLink (`BENCH.md`). No formal certification is sought and
+> the Web Profile is not a target. This is the opposite of `mansart-validation`, a stopgap that only has to run
+> for its TCK.
 
 ## Guiding Principles
 
@@ -778,15 +779,27 @@ Consequences for this module and for the TCK runner:
 **TCK gate**: `core.cache.*`, `se.cache.*`, the `entityManagerFactory` validation test (second execution, no
 provider); additionally verified with the API and validation stopgap on the first execution.
 
-### P12 — Certification, performance, ecosystem ⏳
+### P12 — Comparative performance and AOT smoke ✅ (2026-10-10)
 
-- [ ] TCK **100% PASS** on PostgreSQL (official exclusions only), score and command in `TCK.md`,
-      `tck` page in the Antora docs (`docs/en`).
-- [ ] Optional H2 run with a ported DDL (convenience, not certification).
-- [ ] JMH benchmarks vs Hibernate ORM and EclipseLink (`BENCH.md`).
-- [ ] GraalVM native-image / Leyden CDS smoke test of an application using the APT path only.
-- [ ] Jakarta Data bridge: unlock the `PersistenceTests` of the Jakarta Data TCK
-      (requires a maintainer decision, `mansart-jakarta-data` being frozen).
+P12 is a bounded engineering and evidence milestone, not a certification programme. The maintainer
+does not seek a formal Jakarta Persistence certification, and the Web Profile is not a target.
+
+- [x] Reproducible JMH comparison harness against Hibernate ORM and EclipseLink, isolated from the
+      production reactor and dependencies. H2, an identical manually-created schema and fixed data,
+      resource-local transactions, disabled second-level caches and validated fixture counts are
+      shared across provider runs. The benchmark covers find, JPQL query, update and insert/update/delete;
+      JMH records warmup, measurement iterations, confidence intervals and allocation data. Raw results,
+      exact commands and environment are in `BENCH.md`; no performance winner is claimed. The first
+      `update` measurements (BENCH-20261010-01/02) were a mostly no-op workload and are marked invalid;
+      BENCH-20261010-03 reruns all three providers with a preflight-verified versioned `update`.
+- [x] Modular APT-only application smoke using JDK 25 Leyden AOT cache record/create/use. The application
+      package remains neither opened nor exported to Mansart and proves generated managed access with
+      actual persistence CRUD/query assertions. This is a Leyden AOT cache proof, not GraalVM
+      `native-image` support or a native-image claim.
+- [x] Keep the official TCK state and fixture patch transparent in `TCK.md`. The locally patched green
+      run is not an untouched official result and is not certification.
+- [x] Leave the optional H2 TCK run out of scope; the official PostgreSQL suite remains the recorded gate.
+- [x] Do not add a Jakarta Data bridge: Data remains frozen and producer/generation mutualisation is deferred.
 
 ## Decisions
 
