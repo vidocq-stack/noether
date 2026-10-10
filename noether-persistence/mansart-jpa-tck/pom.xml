@@ -76,6 +76,9 @@
         <!-- Filled by the tck-validation profile. -->
         <tck.validation.classpath></tck.validation.classpath>
         <tck.lib>${project.build.directory}/tck-lib</tck.lib>
+        <!-- The spec-tests jar the run uses: always passed by the script, after tools/tck_fixture_patch.py has verified
+             the official SHA-256 and, unless TCK_FIXTURES=official, derived the TCK-BUG-001 copy (see README). -->
+        <tck.spec.tests.jar>${project.build.directory}/tck-fixtures/persistence-tck-spec-tests-${tck.version}-tck-bug-001.jar</tck.spec.tests.jar>
     </properties>
 
     <dependencyManagement>
@@ -112,12 +115,16 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- The official tests. Every transitive dependency is cut: the spec-tests POM lists Hibernate ORM. -->
+        <!-- The official tests. Every transitive dependency is cut: the spec-tests POM lists Hibernate ORM.
+             The jar is taken from ${tck.spec.tests.jar} (system scope: no POM, no transitive dependency, never
+             packaged; this runner is test-only and out of the reactor). The script sets it to the untouched
+             installed jar (TCK_FIXTURES=official) or to the TCK-BUG-001 derived copy (default). -->
         <dependency>
             <groupId>jakarta.tck</groupId>
             <artifactId>persistence-tck-spec-tests</artifactId>
             <version>${tck.version}</version>
-            <scope>test</scope>
+            <scope>system</scope>
+            <systemPath>${tck.spec.tests.jar}</systemPath>
             <exclusions>
                 <exclusion>
                     <groupId>*</groupId>

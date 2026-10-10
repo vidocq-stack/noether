@@ -13,11 +13,18 @@
 # Environment:
 #   TCK_VALIDATION=off|on   Bean Validation on the class path of execution 1 (default off); see
 #                           ../check-validation-neutrality.sh
+#   TCK_FIXTURES=patched|official
+#                           patched (default): run a derived copy of the spec-tests jar carrying the local backport
+#                           TCK-BUG-001 of upstream fix jakartaee/persistence#1175 (two orm.xml fixtures lose
+#                           their <delimited-identifiers/> default; see README.md). Locally patched results are
+#                           not official TCK results. official: the untouched installed jar.
 #   PG_IMAGE                PostgreSQL image (default postgres:17-alpine)
 #   KEEP_DB=1               leave the database container running after the run
 #
-# Output: target/tck-persistence-output.log, target/tck-report-persistence.txt, target/failsafe-reports/.
-# The script exits 0 when the TCK ran and was reported, whatever its score; non-zero when it could not run.
+# Output: target/tck-persistence-output.log, target/tck-report-persistence.txt, target/failsafe-reports/,
+# target/tck-fixtures/fixture-provenance.json.
+# The script exits 0 when the TCK ran and was reported, whatever its score; non-zero when it could not run or when
+# a report did not run on exactly the prepared spec-tests jar.
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -30,13 +37,16 @@ while [ $# -gt 0 ]; do
         --area) AREA="$2"; shift 2 ;;
         --external) EXTERNAL=1; shift ;;
         --) shift; MAVEN_ARGS=("$@"); break ;;
-        -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
         *) echo "Unknown option: $1 (see --help)" >&2; exit 64 ;;
     esac
 done
 
 TCK_VER=3.2.1
 TCK_VALIDATION="${TCK_VALIDATION:-off}"
+TCK_FIXTURES="${TCK_FIXTURES:-patched}"
+OFFICIAL_SPEC_JAR="${HOME}/.m2/repository/jakarta/tck/persistence-tck-spec-tests/$TCK_VER/persistence-tck-spec-tests-$TCK_VER.jar"
+FIXTURES_DIR="target/tck-fixtures"
 PG_IMAGE="${PG_IMAGE:-postgres:17-alpine}"
 SQL_DIR="../.tck-cache/persistence-tck-$TCK_VER/sql/postgresql"
 LOG="target/tck-persistence-output.log"
@@ -47,12 +57,18 @@ DB_USER=cts1
 DB_PASSWORD=cts1
 
 case "$TCK_VALIDATION" in on|off) ;; *) echo "TCK_VALIDATION must be on or off" >&2; exit 64 ;; esac
+case "$TCK_FIXTURES" in patched|official) ;; *) echo "TCK_FIXTURES must be patched or official" >&2; exit 64 ;; esac
 
 rm -rf target/failsafe-reports
 mkdir -p target
 
 echo ">>> TCK artifacts"
 ./install-tck.sh
+
+echo ">>> Spec-tests fixtures: $TCK_FIXTURES (the installed official jar is only read, never modified)"
+SPEC_JAR="$(python3 -I tools/tck_fixture_patch.py prepare --mode "$TCK_FIXTURES" --source "$OFFICIAL_SPEC_JAR" \
+    --work-dir "$FIXTURES_DIR")"
+echo "    spec-tests jar: $SPEC_JAR"
 
 echo ">>> Build and install the provider under test (mansart-jpa-core)"
 (cd ../.. && ./mvnw -q -B -ntp -pl mansart-persistence/mansart-jpa-core,mansart-persistence/mansart-jpa-dialects/mansart-jpa-dialect-postgresql -am install -DskipTests)
@@ -139,7 +155,7 @@ fi
 
 echo ">>> Running the Jakarta Persistence $TCK_VER TCK (Bean Validation: $TCK_VALIDATION${AREA:+, area: $AREA})"
 "$MVNW" -B -ntp verify "-Dtck.jdbc.url=$JDBC_URL" "-Dtck.jdbc.user=$JDBC_USER" "-Dtck.jdbc.password=$JDBC_PASSWORD" \
-    "-Dtck.validation=$TCK_VALIDATION" ${SELECTION[@]+"${SELECTION[@]}"} ${MAVEN_ARGS[@]+"${MAVEN_ARGS[@]}"} 2>&1 | tee "$LOG" || true
+    "-Dtck.validation=$TCK_VALIDATION" "-Dtck.spec.tests.jar=$SPEC_JAR" ${SELECTION[@]+"${SELECTION[@]}"} ${MAVEN_ARGS[@]+"${MAVEN_ARGS[@]}"} 2>&1 | tee "$LOG" || true
 
 # ---- the report ----------------------------------------------------------------------------------------------
 python3 -I - target/failsafe-reports "$TCK_VALIDATION" "${AREA:-all}" > "$REPORT" <<'PY'
@@ -161,7 +177,7 @@ foreign = [c for c in cases if not c[0].startswith("ee.jakarta.tck.")]
 count = collections.Counter(c[2] for c in tck)
 print("Mansart Jakarta Persistence 3.2 TCK report")
 print(f"Generated  : {datetime.datetime.now(datetime.timezone.utc):%Y-%m-%dT%H:%M:%SZ}")
-print(f"Validation : {validation}    Area: {area}")
+print(f"Validation : {validation}    Area: {area}    Fixtures: see below")
 print(f"Tests      : {len(tck)}  pass={count['pass']}  fail={count['fail']}  skipped={count['skipped']}")
 for execution in sorted({c[4] for c in tck}):
     part = collections.Counter(c[2] for c in tck if c[4] == execution)
@@ -185,4 +201,9 @@ print("\nFailure causes (deepest cause):")
 for cause, n in causes.most_common(15):
     print(f"  {n:5d}  {cause}")
 PY
+LABEL_STATUS=0
+python3 -I tools/tck_fixture_patch.py label --provenance "$FIXTURES_DIR/fixture-provenance.json" \
+    --reports target/failsafe-reports > target/tck-fixtures/label.txt || LABEL_STATUS=$?
+{ echo; cat target/tck-fixtures/label.txt; } >> "$REPORT"
 cat "$REPORT"
+exit "$LABEL_STATUS"

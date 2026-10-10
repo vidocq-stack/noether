@@ -35,7 +35,7 @@
   `mansart-jpa-module-it` (runtime path, `opens`) and `mansart-jpa-processor-module-it` (build-time path,
   `provides`), plus `mansart-jpa-cdi` and the actual-Vauban/H2 `mansart-jpa-cdi-module-it`.
   `mansart-jpa-tck` stays out of the reactor.
-- Milestones P0 to P9 are implemented; P10 is partial, not delivered. P9's Vidocq baseline passes 6/6 tests,
+- Milestones P0 to P10 are implemented; P10 is delivered under a scope-based gate (local fixture patch TCK-BUG-001). P9's Vidocq baseline passes 6/6 tests,
   including adapter undeploy cleanup. P10 maps `orm.xml` through `model.xml.OrmOverlay` (a `ClassInfos` overlay
   feeding the single `EntityModelBuilder`/`AccessPlanner`), preserves delimited identifier case and supports
   inherited and entity-owned embedded annotation/XML association overrides. `mapping.EmbeddedPaths` lowers
@@ -43,7 +43,9 @@
   the semantic model/metamodel stays hierarchical and existing relationship planners execute the slots.
   Unsupported P5 shapes fail explicitly. The official baseline below predates this embedded execution fix.
   The untouched official TCK reports 2096 / 2135 passes: 10 P11 cache errors, 25 delimited-fixture/unquoted-DDL
-  incompatibilities and 4 official skips. The earlier 2121-pass result ignored quotation and is superseded.
+  incompatibilities and 4 official skips. With the default local fixture patch TCK-BUG-001 (byte-exact backport of
+  upstream commit `1fea05e`, derived jar only) it reports 2121 / 2135, the 10 remaining errors being P11; this is
+  not an official result and no certification is sought. The earlier quotation-ignoring 2121 result is superseded.
   Do not ignore the default, fold quoted names or modify official DDL to recover that score.
   The integration runs against a local Vauban snapshot carrying an upstream fix not yet released.
   The two real-container injection regressions are green after the upstream Vauban fix (pending release); the independent Arquillian gate and Vidocq extension
@@ -78,7 +80,10 @@ Module names are a plan, not a contract: a module is only created when a milesto
 - **Delivered modules are not modified by JPA work**: `mansart-jakarta-data`, `mansart-transactions`,
   `mansart-pool` and everything under them. JPA *depends on* them. A required change
   in the shared dialect SPI is a maintainer decision, recorded in `ROADMAP.md` before any edit.
-- **The official TCK is read-only, forever.** Only our runner (`mansart-jpa-tck`) is ours.
+- **The official TCK is read-only, forever.** Only our runner (`mansart-jpa-tck`) is ours. Single documented
+  exception, decided by the maintainer: TCK-BUG-001, the byte-exact local backport of upstream commit `1fea05e`
+  applied to a *derived* jar under `target/tck-fixtures` (installed M2 jar and `.tck-cache` never modified; see
+  `mansart-jpa-tck/README.md`). Any other fixture change needs a new maintainer decision.
   Never write a class named `Client` (it would match the TCK include and report a fake pass).
 - **No runtime reflection on entities** — no `Field.get/set`, no `Method.invoke`, no
   `setAccessible(true)`. Entity access goes through code generated, in this order of preference:

@@ -4,6 +4,11 @@ Official suite: **Jakarta Persistence 3.2.1** TCK (bundle from eclipse.org, SHA-
 **PostgreSQL 17** (official DDL and stored procedures of the bundle). Runner and command:
 [`mansart-jpa-tck/`](mansart-jpa-tck/README.md), `./run-official-tck-persistence-3.2.sh`.
 
+Since 2026-10-10 the runner applies by default the local fixture patch **TCK-BUG-001** (backport of upstream
+[jakartaee/persistence#1175](https://github.com/jakartaee/persistence/issues/1175), commit `1fea05e`) to a derived
+copy of the spec-tests jar; `TCK_FIXTURES=official` runs the untouched jar. Rows are labelled *untouched* or
+*patched*: a patched score is a local development result, not an official result, and no certification is claimed.
+
 ## Progress
 
 | Milestone | Date | Java | Database | Tests | Pass | Fail | Skipped |
@@ -31,6 +36,67 @@ Official suite: **Jakarta Persistence 3.2.1** TCK (bundle from eclipse.org, SHA-
 | P10 initial baseline — ORM XML; quotation ignored (superseded) | 2026-10-09 | Temurin 25.0.4+7-LTS | postgres:17-alpine | 2135 | 2121 | 10 | 4 |
 | P10 correctness hardening — partial, case-preserving quotation | 2026-10-09 | Temurin 25.0.4+7-LTS | postgres:17-alpine | 2135 | 2096 | 35 | 4 |
 | P10 final verification — embedded associations, embeddable map keys and query identifiers; gate blocked | 2026-10-09 | Temurin 25.0.4+7-LTS | postgres:17-alpine | 2135 | 2096 | 35 | 4 |
+| P10 delivered — *untouched* fixtures (`TCK_FIXTURES=official`), provider unchanged | 2026-10-10 | Temurin 25.0.4+7-LTS | postgres:17-alpine | 2135 | 2096 | 35 | 4 |
+| P10 delivered — *patched* fixtures TCK-BUG-001 (runner default), provider unchanged | 2026-10-10 | Temurin 25.0.4+7-LTS | postgres:17-alpine | 2135 | 2121 | 10 | 4 |
+
+## TCK-BUG-001 local fixture patch — P10 gate met (2026-10-10)
+
+Provider code is unchanged since `bb37a0a` (no source change in this step); only the runner changed
+(`tools/tck_fixture_patch.py`, `run-official-tck-persistence-3.2.sh`, `pom.xml`). The two 3.2.1 fixtures
+`core/annotations/nativequery/orm.xml` and `core/entitytest/apitests/orm.xml` lose their
+`persistence-unit-metadata`/`<delimited-identifiers/>` block in a derived jar, exactly as upstream commit
+[`1fea05e58151f10954206a15d70b18008043d3d9`](https://github.com/jakartaee/persistence/commit/1fea05e58151f10954206a15d70b18008043d3d9)
+does on the 4.0 line; the 3.2 namespace/version and every other entry are kept. Reasons and the planned backport
+request: TCK-BUG-001 in [`../PERISTENCE_TCK_PROPOSALS.md`](../PERISTENCE_TCK_PROPOSALS.md); mechanics:
+[`mansart-jpa-tck/README.md`](mansart-jpa-tck/README.md).
+
+| Artifact | SHA-256 |
+|---|---|
+| Bundle `jakarta-persistence-tck-3.2.1.zip` (unchanged) | `1d282675f43fa13cf8ab2537d6dbfb1e1c95f7b838ab7cdd053e185c363a6519` |
+| Official `persistence-tck-spec-tests-3.2.1.jar`, M2 and `.tck-cache` (unchanged, before and after) | `a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024` |
+| Derived `target/tck-fixtures/persistence-tck-spec-tests-3.2.1-tck-bug-001.jar` (1126 entries, identical in two runs) | `1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4` |
+| `nativequery/orm.xml` original → patched | `fdf87f63…72ed` → `0afff5fb…5126` |
+| `apitests/orm.xml` original → patched | `64810777…f39d` → `b01999cf…c767` |
+
+Commands (from `mansart-persistence/mansart-jpa-tck`, `JAVA_HOME` = Temurin 25.0.4+7-LTS, Maven 3.9.16):
+
+```bash
+python3 -m unittest discover -s tools -v               # 30 tests, OK (red first: module missing)
+./run-official-tck-persistence-3.2.sh                    # patched (default)
+TCK_FIXTURES=official ./run-official-tck-persistence-3.2.sh
+python3 tools/tck_fixture_patch.py compare <base>/failsafe-reports target/failsafe-reports
+```
+
+Results, compared by **execution + class + test name** with the preserved untouched run of 2026-10-09 20:43:24Z:
+
+- **Patched** (03:53:12Z, repeated 03:56:13Z with the identical derived jar and identical outcomes):
+  **2135 tests, 2121 passed, 0 failures, 10 errors, 4 skipped**; 0 added, 0 missing, **25 newly passing**,
+  0 regressions. The report verifies that all 259 failsafe reports ran with the derived jar alone on the class
+  path; the ShrinkWrap deployment `jpa_core_annotations_nativequery.jar` carries `META-INF/orm.xml` with the patched
+  SHA-256 `0afff5fb…5126`.
+- **Untouched** (`TCK_FIXTURES=official`, 03:54:47Z): **2096 passed, 35 errors, 4 skipped**, identical to the
+  preserved run test by test (0 changes): the raw mode reproduces the official situation.
+
+The 25 newly passing tests are exactly the 25 fixture errors recorded below:
+`core.annotations.nativequery.Client` — `createNativeQueryResultClassTQTest`, `createNativeQueryResultClassTest`,
+`createNativeQueryStringTest`, `getSingleResultTest`, `nativeQueryColumnResultTypeTest`, `nativeQueryTest2`,
+`nativeQueryTest3`, `nativeQueryTestConstructorResult`, `nativeQueryTestConstructorResultNoId`,
+`nativeQueryTestConstructorResultWithId`, `setParameterTest`; `core.entitytest.apitests.Client` — `entityAPITest2`,
+`entityAPITest12` to `entityAPITest16`, `entityAPITest18`, `getReferenceTest`, `namedNativeQueryInMappedSuperClass`,
+`namedQueryInMappedSuperClass`, `xmlNamedNativeQueryTest`, `xmlNamedQueryTest`, `xmlOverridesNamedNativeQueryTest`,
+`xmlOverridesNamedQueryTest`.
+
+P10 gate in the patched run: `core.annotations.nativequery` 12 / 12, `core.entitytest.apitests` 21 / 21,
+`core.override.*` 26 / 26, `core.callback.*` 66 / 66, `core.relationship.descriptors` 8 / 8, `se.descriptor` 1 / 1,
+`core.inheritance.mappedsc.descriptors` 2 / 2, `core.StoredProcedureQuery` 40 / 40,
+`core.annotations.elementcollection` 3 / 3. The **10 remaining errors are all P11** second-level cache assertions:
+`core.cache.basicTests.Client#evictTest1`, `#evictTest2`; `se.cache.inherit.Client#subClassInheritsCacheableTrue`,
+`#subClassInheritsCacheableFalse`; `se.cache.xml.all.Client#containsTest`, `#cacheStoreModeUSETest`,
+`#cacheStoreModeREFRESHTest`; `se.cache.xml.disableselective.Client#containsTest`;
+`se.cache.xml.enableselective.Client#containsTest`;
+`jpa22.se.repeatable.secondarytable.Client#subClassInheritsCacheableTrue`.
+The 4 skips are the official ones. No provider code changed, so the clean reactor (549 tests) and Vidocq
+Arquillian (6/6) results recorded below for the committed provider are unaffected (not re-run in this step).
 
 ## P10 hardening — partial; quotation must not be ignored to obtain a green score
 

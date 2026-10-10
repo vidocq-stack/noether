@@ -639,7 +639,7 @@ coordination and later milestones are not P9 implementation gaps:
 
 See `TCK.md` for exact commands, retained red counters and ownership evidence; `BUG.md` records the defects.
 
-### P10 — XML mapping descriptors 🚧 (partial; delivery gate not met)
+### P10 — XML mapping descriptors ✅ (delivered 2026-10-10; scope-based gate with local fixture patch TCK-BUG-001)
 
 Spec: ch. 12 (`orm.xml`), §8.2.1.6.2 (`mapping-file` in `persistence.xml`, default `META-INF/orm.xml`).
 
@@ -696,11 +696,23 @@ embeddable map-key and query identifier fixes: the same 2135 test identities, wi
 The clean JPA reactor passes **549 tests** (core 459), including closed APT module-path embedded/key access;
 the final Vidocq Arquillian run passes **6/6** against those installed artifacts.
 
-**Remaining delivery blocker:** resolution of the official fixture/DDL case contract without weakening quotation
-or editing the official suite. A fresh full official gate has been run; the fixture conflict is not a green gate.
 The query identifier surface is covered by genuine red/green native/procedure regressions, including real
 PostgreSQL mixed-case schemas/routines and quoted named IN/INOUT targets (provider-owned tests, not official TCK
 results). See `TCK.md` for the final official result and exact test-identity comparison.
+
+**Superseded blocker (resolved 2026-10-10):** the fixture/DDL case contract. Upstream recognised the fixtures as
+faulty ([jakartaee/persistence#1175](https://github.com/jakartaee/persistence/issues/1175), fixed on the 4.0 line by
+commit `1fea05e58151f10954206a15d70b18008043d3d9`). The maintainer decided to adopt that fix locally rather than
+wait for a 3.2 backport, since Mansart does not seek a certification (the full Web Profile is not targeted).
+
+**2026-10-10 status: DELIVERED, scope-based gate.** The runner applies by default **TCK-BUG-001**, a byte-exact
+backport of upstream commit `1fea05e` to a checksum-verified derived copy of the 3.2.1 spec-tests jar (only the two
+delimited-default fixtures change; official artifacts untouched; provider unchanged and still quoting). Patched full
+run: **2121 passes, 0 failures, 10 errors, 4 skips / 2135**, the 25 fixture errors pass, zero regressions, the same
+2135 test identities; every P10 gate area is green and the 10 remaining errors are P11 cache assertions. The
+untouched mode (`TCK_FIXTURES=official`) still reports 2096 / 2135 and is kept for reproduction. The gate is a locally
+patched result, never presented as an official result or a certification. Evidence: `TCK.md`; patch:
+`../PERISTENCE_TCK_PROPOSALS.md` and `mansart-jpa-tck/README.md`.
 
 ### P11 — Second-level cache and Bean Validation ⏳
 
