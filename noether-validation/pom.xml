@@ -62,7 +62,8 @@
     </licenses>
 
     <properties>
-        <maven.deploy.skip>false</maven.deploy.skip>
+        <!-- Local test/TCK stopgap: never publish this aggregator or its children. -->
+        <maven.deploy.skip>true</maven.deploy.skip>
         <jakarta.validation.version>3.1.1</jakarta.validation.version>
     </properties>
 
@@ -91,4 +92,16 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.sonatype.central</groupId>
+                <artifactId>central-publishing-maven-plugin</artifactId>
+                <configuration>
+                    <skipPublishing>true</skipPublishing>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>

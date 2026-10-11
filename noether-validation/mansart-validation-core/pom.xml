@@ -12,6 +12,11 @@
     <name>Mansart :: Validation :: Core</name>
     <description>Jakarta Validation 3.1 provider: bootstrap, ValidatorFactory, Validator and the validation engine.</description>
 
+    <properties>
+        <!-- Explicit for release-workflow generation, which reads each module's own properties. -->
+        <maven.deploy.skip>true</maven.deploy.skip>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>jakarta.validation</groupId>

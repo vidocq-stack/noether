@@ -20,6 +20,11 @@ Consequences:
 - V3 to V6 are **not planned**. They are kept below as a description of what a complete implementation would
   need, and are picked up only if the persistence TCK is found to need one of them.
 - No release, no `BENCH.md`, no documentation site page, no APT or Maven plugin.
+- Publication is blocked by inherited `maven.deploy.skip=true` (snapshot deployment) and
+  `central-publishing-maven-plugin` / `skipPublishing=true` (Maven Central releases). The release
+  workflow excludes the aggregator, core and module-path test vehicle from its deploy step.
+  They remain in the local build/install reactor for JPA tests and TCK runs; Persistence references
+  the implementation only in test scope, never as a production dependency.
 
 ## Why this brick exists
 
