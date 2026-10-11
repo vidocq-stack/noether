@@ -1,0 +1,20 @@
+= Usage
+:description: Standard Jakarta Persistence bootstrap and generated access.
+
+Use the standard `jakarta.persistence` API and entity annotations.
+In `META-INF/persistence.xml`, the explicit provider is:
+
+[source,xml]
+----
+<provider>io.vidocq.noether.jpa.core.NoetherPersistenceProvider</provider>
+----
+
+On the Java module path, declare generated-access providers with `provides
+io.vidocq.noether.jpa.core.spi.ManagedAccessProvider with
+your.package._NoetherJpaAccess;`. Generated-access entities do not require
+reflective opens. Opaque entities using the Class-File API bootstrap path must
+open their entity packages to `io.vidocq.noether.jpa.core`.
+
+CDI/JTA integration uses `noether-jpa-cdi` and the external Mansart transaction
+manager. The core does not import CDI, JTA or Vauban. See
+xref:modules/noether-persistence.adoc[the detailed Persistence guide].

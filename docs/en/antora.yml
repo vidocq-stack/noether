@@ -1,0 +1,11 @@
+name: noether
+title: Noether
+version: dev
+prerelease: true
+nav:
+  - modules/ROOT/nav.adoc
+asciidoc:
+  attributes:
+    lang: en
+    project-version: 0.4.0-SNAPSHOT
+    repo-noether: https://codefloe.com/Vidocq/noether

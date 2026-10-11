@@ -1,0 +1,23 @@
+= Performance
+:description: Comparative harness and preserved historical provenance.
+
+The standalone JMH harness is isolated from production dependencies:
+
+[source,sh]
+----
+cd noether-persistence/noether-jpa-bench
+./run-bench.sh noether
+./run-bench.sh hibernate
+./run-bench.sh eclipselink
+----
+
+The modular generated-access Leyden AOT cache smoke is
+`noether-persistence/noether-jpa-processor-module-it/run-aot-smoke.sh`.
+It is not a GraalVM native-image claim.
+
+link:{repo-noether}/src/branch/main/noether-persistence/BENCH.md[Historical raw benchmark evidence]
+retains original Mansart measurements, commands and revisions verbatim.
+Extraction does not establish a new performance result. Current commands,
+isolation and preflight behavior are documented in the renamed benchmark README.
+Record every new measurement with its hardware, JVM, exact command and raw
+results before making comparisons.

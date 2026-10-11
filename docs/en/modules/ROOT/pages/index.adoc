@@ -1,0 +1,37 @@
+= Noether
+:description: Jakarta Persistence 3.2 and a provisional Jakarta Validation provider for Vidocq.
+
+[.lead]
+Noether implements Jakarta Persistence 3.2 with strict Java Modules, generated
+entity access and virtual-thread JDBC execution. Its provisional Validation
+provider is a local test/TCK stopgap, not a complete implementation.
+
+== Origin of the name
+
+The project honours *Emmy Noether (1882–1935)*, the German mathematician whose
+work reshaped abstract algebra and established the connection between
+symmetries and conservation laws.
+
+== At a glance
+
+[cols="1,3"]
+|===
+| Item | Value
+| Runtime | Java 25, Maven 3.9.16
+| Coordinates | `io.vidocq.noether:noether-root`, version `{project-version}`
+| Persistence | `noether-jpa-core`, dialects, APT and CDI/JTA integration
+| Validation | `noether-validation-core`, provisional and not published
+| External integrations | Mansart Pool/Transactions, Vauban CDI
+| Source | {repo-noether}
+|===
+
+== Ecosystem
+
+Noether was extracted from Mansart on 2026-10-11. Mansart continues to own
+Jakarta Data, the JDBC pool and Transactions. The runtime consumes
+`vidocq-runtime-noether-persistence-extension` and its code-generation companion.
+
+== Quick links
+
+See xref:getting-started.adoc[Getting started], xref:tck.adoc[TCK],
+xref:performance.adoc[performance evidence] and xref:migration.adoc[migration].

@@ -1,14 +1,19 @@
-# Mansart JPA — Implementation Roadmap
+# Noether JPA — Implementation Roadmap
+
+> Extracted from Mansart on 2026-10-11. Pre-extraction test, TCK and performance
+> results below are historical Mansart evidence, not new Noether measurements.
+> Names and reproduction commands here describe the current Noether tree;
+> `TCK.md`, `BENCH.md` and `BUG.md` retain original evidence verbatim.
 
 > Jakarta Persistence 3.2 implementation in the Vidocq style: zero third-party implementation
 > libraries (Jakarta spec APIs only), Java 25, virtual threads, strict Java Modules, no runtime
 > reflection on entities, no runtime bytecode library — APT and the Class-File API instead.
-> Rules for contributors and agents: [`AGENTS.md`](AGENTS.md). Mansart-wide vision:
+> Rules for contributors and agents: [`AGENTS.md`](AGENTS.md). Noether-wide vision:
 > [`../PLAN.md`](../PLAN.md) and [`../ROADMAP.md`](../ROADMAP.md).
 >
 > **Ambition**: a scope-based Jakarta Persistence implementation with reproducible conformance evidence and
 > measured comparisons against Hibernate ORM and EclipseLink (`BENCH.md`). No formal certification is sought and
-> the Web Profile is not a target. This is the opposite of `mansart-validation`, a stopgap that only has to run
+> the Web Profile is not a target. This is the opposite of `noether-validation`, a stopgap that only has to run
 > for its TCK.
 
 ## Guiding Principles
@@ -20,20 +25,20 @@
 | Zero implementation library | Only `jakarta.persistence-api` (+ CDI/inject/transaction APIs in the integration module). JPQL parser hand-written, XML via StAX, no ORM borrowed. |
 | No runtime reflection on entities | Entity access, instantiation and metamodel are generated: APT for sources, Maven plugin for jars, Class-File API at bootstrap for opaque archives. |
 | No proxy / bytecode library | Lazy to-one via Class-File API generated subclasses, lazy collections via our own wrappers, dirty checking via snapshots. `ClassTransformer` is declined. |
-| Shared Mansart bricks | JTA through `mansart-transactions`; any `DataSource` (e.g. `mansart-pool`). SQL through Mansart JPA's own dialect SPI (D4: `mansart-jpa-dialect-*`, H2 and PostgreSQL). |
+| Shared Noether bricks | JTA through `mansart-transactions`; any `DataSource` (e.g. `mansart-pool`). SQL through Noether JPA's own dialect SPI (D4: `noether-jpa-dialect-*`, H2 and PostgreSQL). |
 | Virtual threads | JDBC on virtual threads; no `synchronized` around I/O; `ScopedValue` instead of `ThreadLocal`. |
 | Strict Java Modules | One `module-info.java` per module, provider published via `provides`, internals not exported. |
 | Measured performance | JMH from P12, vs Hibernate ORM and EclipseLink on the same JVM and database; numbers only in `BENCH.md`. |
 
 ## Testing Strategy
 
-- **Layer 1 — Unit tests (TDD)** on H2 in memory: drive each component of `mansart-jpa-core` (its query engine
+- **Layer 1 — Unit tests (TDD)** on H2 in memory: drive each component of `noether-jpa-core` (its query engine
   included, D8) without any container.
-- **Layer 2 — Integration tests** (`mansart-jpa-tests`): multi-module scenarios, PostgreSQL via
+- **Layer 2 — Integration tests** (`noether-jpa-tests`): multi-module scenarios, PostgreSQL via
   Testcontainers, module-path smoke tests (`*-module-it`) proving the provider works under Java
   Modules and not only on the classpath.
-- **Layer 3 — Official TCK** (`mansart-jpa-tck`, out of reactor): the conformance contract.
-- **Layer 4 — JMH** (`mansart-jpa-bench`, P12).
+- **Layer 3 — Official TCK** (`noether-jpa-tck`, out of reactor): the conformance contract.
+- **Layer 4 — JMH** (`noether-jpa-bench`, P12).
 
 ## The Official TCK — What We Know
 
@@ -96,37 +101,37 @@ Facts read from the official bundle `jakarta-persistence-tck-3.2.1.zip`
 ## Module Architecture (target)
 
 ```
-mansart-jpa-core          io.vidocq.mansart.jpa.core
+noether-jpa-core          io.vidocq.noether.jpa.core
   requires transitive jakarta.persistence
   requires java.sql, java.xml
-  requires io.vidocq.mansart.jpa.dialect.spi
-  uses     io.vidocq.mansart.jpa.dialect.DialectFactory
-  provides jakarta.persistence.spi.PersistenceProvider with …MansartPersistenceProvider
+  requires io.vidocq.noether.jpa.dialect.spi
+  uses     io.vidocq.noether.jpa.dialect.DialectFactory
+  provides jakarta.persistence.spi.PersistenceProvider with …NoetherPersistenceProvider
   → bootstrap (persistence.xml, PersistenceConfiguration), EMF, EM, persistence context,
     entity model, generated accessors (runtime path), flush engine, JDBC executor,
     PersistenceUnitUtil, schema generation
 
-mansart-jpa-dialect-spi   io.vidocq.mansart.jpa.dialect.spi   (D4)
+noether-jpa-dialect-spi   io.vidocq.noether.jpa.dialect.spi   (D4)
   requires java.sql
-  → sealed SQL AST (io.vidocq.mansart.jpa.dialect.sql), Dialect, DialectFactory, StandardDialect (ANSI rendering)
+  → sealed SQL AST (io.vidocq.noether.jpa.dialect.sql), Dialect, DialectFactory, StandardDialect (ANSI rendering)
 
-mansart-jpa-dialect-h2 / -postgresql   io.vidocq.mansart.jpa.dialect.h2 / .postgresql
-  provides io.vidocq.mansart.jpa.dialect.DialectFactory with …
+noether-jpa-dialect-h2 / -postgresql   io.vidocq.noether.jpa.dialect.h2 / .postgresql
+  provides io.vidocq.noether.jpa.dialect.DialectFactory with …
   → what each database renders differently (identity, sequences, locks, paging, DDL)
 
-  (the query engine — JPQL lexer/parser, sealed AST, translation, Criteria API — is part of mansart-jpa-core,
-   packages io.vidocq.mansart.jpa.core.query.*: decision D8; its SQL AST extends mansart-jpa-dialect-spi)
+  (the query engine — JPQL lexer/parser, sealed AST, translation, Criteria API — is part of noether-jpa-core,
+   packages io.vidocq.noether.jpa.core.query.*: decision D8; its SQL AST extends noether-jpa-dialect-spi)
 
-mansart-jpa-processor     io.vidocq.mansart.jpa.processor   (APT, RELEASE_25)
+noether-jpa-processor     io.vidocq.noether.jpa.processor   (APT, RELEASE_25)
   → _Entity static metamodel, entity accessors/instantiators for application sources
 
-mansart-jpa-maven-plugin  → same generation for entities in dependency jars
+noether-jpa-maven-plugin  → same generation for entities in dependency jars
 
-mansart-jpa-cdi           io.vidocq.mansart.jpa.cdi
+noether-jpa-cdi           io.vidocq.noether.jpa.cdi
   requires jakarta.cdi, jakarta.transaction, io.vidocq.mansart.transactions.api
   → BuildCompatibleExtension: @PersistenceContext / @PersistenceUnit, JTA-bound contexts
 
-mansart-jpa-tck           (out of reactor — standalone Model 4.0.0 POM)
+noether-jpa-tck           (out of reactor — standalone Model 4.0.0 POM)
 ```
 
 ## Milestones
@@ -140,17 +145,17 @@ delta in `TCK.md` when it closes.
 prints a counter. PASS = 0 is the expected, correct outcome — 17 pass anyway, none of them thanks to a provider
 (see `TCK.md`).
 
-- [x] Install the TCK artifacts in the local M2: `mansart-jpa-tck/install-tck.sh` downloads the bundle, checks
+- [x] Install the TCK artifacts in the local M2: `noether-jpa-tck/install-tck.sh` downloads the bundle, checks
       its published SHA-256, installs the jars with their POMs (`-DpomFile`, unlike the bundle's own
       `artifact-install.sh`) and unpacks it in `.tck-cache/` for the SQL scripts.
-- [x] `mansart-jpa-tck/` — standalone Model 4.0.0 POM, **out of the reactor**, no Java.
+- [x] `noether-jpa-tck/` — standalone Model 4.0.0 POM, **out of the reactor**, no Java.
 - [x] `jakarta.tck:persistence-tck-spec-tests:3.2.1`, every transitive dependency excluded (its POM lists
       Hibernate ORM) and the run-time needs listed explicitly; failsafe with the two executions of the reference
       runner, `dependenciesToScan`, one reports directory per execution.
 - [x] Standalone calibration: every system property the TCK reads is set (a missing one is a
       `NullPointerException` in its setup). **No `persistence.xml` in the runner**: in standalone mode the TCK
       builds its deployment jar and `persistence.xml` itself, from the template of `persistence-tck-common`; the
-      provider is named by `jakarta.persistence.provider` (`io.vidocq.mansart.jpa.core.MansartPersistenceProvider`).
+      provider is named by `jakarta.persistence.provider` (`io.vidocq.noether.jpa.core.NoetherPersistenceProvider`).
 - [x] PostgreSQL 17 in a throw-away Docker container started by the script (or an external database), DDL and
       stored procedures applied with `psql`, every table checked. *Deviation:* not Testcontainers — that would
       need Java code in the runner; the Docker CLI keeps P0 Java-free.
@@ -159,7 +164,7 @@ prints a counter. PASS = 0 is the expected, correct outcome — 17 pass anyway, 
       "No Persistence provider for EntityManager named JPATCK".
 - [x] Bean Validation switch for the first failsafe execution: `TCK_VALIDATION=off|on` (environment variable read
       by the script, `-Dtck.validation=on` for the POM). `on` adds `jakarta.validation-api` and
-      `mansart-validation-core` to the additional class path of execution 1, `off` adds neither; execution 2 never
+      `noether-validation-core` to the additional class path of execution 1, `off` adds neither; execution 2 never
       has them. [`check-validation-neutrality.sh`](check-validation-neutrality.sh) runs the suite both ways and
       compares the results test by test: NEUTRAL on 2026-10-08.
 
@@ -188,7 +193,7 @@ prints a counter. PASS = 0 is the expected, correct outcome — 17 pass anyway, 
 Spec: ch. 7 (EM/EMF lifecycle, `EntityTransaction`), ch. 8 (`persistence.xml`), ch. 9 (provider contracts,
 §9.2 Java SE bootstrapping), `PersistenceConfiguration` (new in 3.2).
 
-- [x] `mansart-jpa-core` module; `MansartPersistenceProvider` published via `provides` and `META-INF/services`
+- [x] `noether-jpa-core` module; `NoetherPersistenceProvider` published via `provides` and `META-INF/services`
       (classpath **and** module path; the unit tests run in the named module). Nothing exported, nothing opened.
 - [x] `persistence.xml` parser (StAX, schemas 1.0 to 3.2, `qualifier` and `scope` of 3.2, DTDs refused), read
       without the JDK jar URL cache (a jar rewritten under the same name — the TCK does it for every test — would
@@ -236,7 +241,7 @@ reaches entities, never what it sees.
 - [x] Units with mapping files: the `orm.xml` overlay (P10) completes the annotations; an attribute nothing maps is an
       error. Every package of the TCK maps as a unit (161 / 161).
 - [x] Generated access (`access.ManagedAccess`, decision D3): one hidden class per managed class, defined in this
-      module; the method handles (private lookup, so the package must be `opens … to io.vidocq.mansart.jpa.core`)
+      module; the method handles (private lookup, so the package must be `opens … to io.vidocq.noether.jpa.core`)
       are class data loaded by `ldc` of `classDataAt` dynamic constants, which the JIT treats as constants. Field and
       property access, mapped superclass attributes, records through their canonical constructor.
 - [x] Basic types bound to JDBC (`jdbc.type.ValueBinders`): §2.8 types, `java.time`, `Instant`, `Year`, `UUID`,
@@ -246,7 +251,7 @@ reaches entities, never what it sees.
       the `jar-file`s unless `exclude-unlisted-classes`.
 - [x] Everything built when the factory is created (`mapping.MappedUnit`), so that errors fail
       `createEntityManagerFactory`.
-- [x] Module-path integration test (`mansart-jpa-module-it`): entities in a named application module, with and
+- [x] Module-path integration test (`noether-jpa-module-it`): entities in a named application module, with and
       without the `opens` clause (the unit tests run inside the provider module and cannot exercise the refusal).
 - [x] Table/schema/column quoting rules (`<delimited-identifiers/>`, §2.15, §12.2.1.3) — shared by
       schema generation, SQL mapping/query execution and identifier generators (P10 hardening).
@@ -254,7 +259,7 @@ reaches entities, never what it sees.
   `AUTO`): they need the insert path and the dialect (D4). The model above carries their metadata.
 
 **P2b — build-time path** ✅ — required for AOT: GraalVM native-image cannot define hidden classes at run time and
-Leyden does not archive them, so the P2a path stays the fallback for archives nobody compiled with Mansart.
+Leyden does not archive them, so the P2a path stays the fallback for archives nobody compiled with Noether.
 
 Hand-over decided 2026-10-08 (maintainer): the ecosystem convention (Vauban, Cassini, Champollion) — generated
 classes in the application package, an SPI exported by the provider, `ServiceLoader`, the `provides` line written
@@ -263,16 +268,16 @@ by the application.
 - [x] Shared planning: `AccessPlanner` (which members are persistent, through which access type, in which order) over
       a `ClassInfos` source — class files at bootstrap, `javax.lang.model` elements in the processor — so that both
       list the attributes identically.
-- [x] SPI `io.vidocq.mansart.jpa.core.spi` (the only package exported to applications): `ManagedAccess`, which lists
+- [x] SPI `io.vidocq.noether.jpa.core.spi` (the only package exported to applications): `ManagedAccess`, which lists
       its attributes (`name:FIELD|PROPERTY`), and `ManagedAccessProvider`. At bootstrap a provided access is used
       only when its attribute list is the model's (else a warning and the hidden class): a stale build never maps
       wrongly.
-- [x] `mansart-jpa-processor`: `X$$MansartAccess` per entity and embedded embeddable, `_MansartJpaAccess` per
+- [x] `noether-jpa-processor`: `X$$NoetherAccess` per entity and embedded embeddable, `_NoetherJpaAccess` per
       package, `META-INF/services` for the class path, `provides` check with the line to add for the module path.
       Direct access where the language allows it, `static final` method handles from the generated class's own
       lookup otherwise (`privateLookupIn` within the module: no `opens`). Classes it cannot serve are left to the
       bootstrap with a warning. It claims no annotation (the Jakarta Data processor still sees the entities).
-- [x] Module-path proof (`mansart-jpa-processor-module-it`): entity package neither opened nor exported, mapped
+- [x] Module-path proof (`noether-jpa-processor-module-it`): entity package neither opened nor exported, mapped
       through its generated access; without the `provides` line the build warns and the bootstrap refuses, naming
       both remedies.
 - *Moved to P8* (decided 2026-10-08): the canonical static metamodel `X_` (§6.2.1.1). Its fields are initialised by
@@ -298,10 +303,10 @@ Spec: §3.3 (entity instance life cycle, synchronization to the database), §3.4
 context lifetime). Kept apart from P4 on purpose: this is the invariant every later milestone
 relies on, and it is fully testable without the TCK.
 
-- [x] SQL AST and dialects (decision D4): `mansart-jpa-dialect-spi` (`Insert`, `Update`, `Delete`, `Select` with
+- [x] SQL AST and dialects (decision D4): `noether-jpa-dialect-spi` (`Insert`, `Update`, `Delete`, `Select` with
       their parameters in order; `Dialect`, `DialectFactory`, `StandardDialect` ANSI rendering; generated-key names,
-      duplicate-key detection), `mansart-jpa-dialect-h2`, `mansart-jpa-dialect-postgresql`; the dialect is detected
-      from the JDBC metadata at the first flush, or named by `io.vidocq.mansart.jpa.dialect`.
+      duplicate-key detection), `noether-jpa-dialect-h2`, `noether-jpa-dialect-postgresql`; the dialect is detected
+      from the JDBC metadata at the first flush, or named by `io.vidocq.noether.jpa.dialect`.
 - [x] Identity map per persistence context (one managed instance per identity, `CompositeId` compared by value for
       `@EmbeddedId` / `@IdClass`), entity states (managed / removed, inserted or not) as an explicit state machine
       (`context.PersistenceContext`).
@@ -313,7 +318,7 @@ relies on, and it is fully testable without the TCK.
       flattened with their overrides, insert / update / delete / select by identifier with their parameters).
 - [x] Flush engine (`flush.FlushEngine`): inserts (an entity after those its owned to-one relationships reference)
       → updates → deletes in reverse, JDBC batching of consecutive statements of an entity (batch size
-      `io.vidocq.mansart.jpa.jdbc.batch-size`, default 50), `IDENTITY` keys read back, version initialised and
+      `io.vidocq.noether.jpa.jdbc.batch-size`, default 50), `IDENTITY` keys read back, version initialised and
       incremented, `OptimisticLockException` when a versioned row matches nothing, `EntityExistsException` on a
       duplicate key. `flush()` and `commit()` write the context (a failed flush at commit rolls back:
       `RollbackException`), a rollback and `clear()` detach.
@@ -476,7 +481,7 @@ Spec: ch. 4 (query language), §3.11 (query APIs), §3.11.11 (SQL queries), §3.
 
 Slices, each closed by its unit tests and a TCK run compared test by test:
 
-1. The query path end to end: the SQL AST of queries in `mansart-jpa-dialect-spi` (select items, joins, predicates,
+1. The query path end to end: the SQL AST of queries in `noether-jpa-dialect-spi` (select items, joins, predicates,
    ordering, paging), a hand-written JPQL lexer and recursive-descent parser to a sealed AST, its translation against
    the entity model (identification variables, paths, implicit joins of single-valued paths, explicit joins), and
    `Query` / `TypedQuery` for selects: entity, scalar and multiple results, parameters bound through the binders of
@@ -495,7 +500,7 @@ with inheritance (P6) as much as with this milestone.
 
 - [x] Slice 1 (`ParserTest`, `QueryRenderingTest`, `JpqlQueryTest`): the SQL AST of queries in the dialect SPI
       (`sql.Query`, `sql.Expression`, parameters listed in rendering order, SQL:2008 paging); a hand-written lexer and
-      recursive-descent parser to a sealed AST (`query.jpql`, in `mansart-jpa-core`, decision D8; the JDQL parser of
+      recursive-descent parser to a sealed AST (`query.jpql`, in `noether-jpa-core`, decision D8; the JDQL parser of
       `mansart-data-core` read for inspiration only); the translation (`query.Translator`): identification variables,
       paths through embeddables, single-valued navigation as inner joins (selected) or by the foreign key (compared,
       tested for null), declared `[LEFT] JOIN [FETCH] … ON` over single-valued relationships, foreign keys and join
@@ -542,7 +547,7 @@ with inheritance (P6) as much as with this milestone.
 - [x] `StoredProcedureQuery` / `@NamedStoredProcedureQuery`: IN / OUT / INOUT parameters, results and update counts,
       and ref cursors as the dialect allows. Reusable lifecycle (repeat `execute()`, rebinding resets results, a
       failed call stays retryable), trailing unbound `IN` parameters left to database defaults, `null` result list
-      for a non-result-set pending result (review fixes, `BUG.md` MANSART-008).
+      for a non-result-set pending result (review fixes, `BUG.md` NOETHER-008).
 - [x] P7 TCK gate run on PostgreSQL 17: 307 passed, 4 errors, 1 skipped across 312 tests. The four errors depend on
       ORM XML metadata/overrides (P10); `core.query` has no P7-attributable failures. Full TCK: 1063 / 2135 passed,
       0 failures, 1068 errors, 4 skipped; 58 newly passing vs P6 with no test-by-test regressions. See `TCK.md`.
@@ -593,7 +598,7 @@ Spec: §7.7 (container-managed persistence contexts), ch. 9 (container / provide
       explicitly not registered.
 - [x] Schema generation: `jakarta.persistence.schema-generation.*` (database and scripts
       actions), DDL rendered by the dialect; `SchemaManager` (`create`/`drop`/`validate`/`truncate`).
-- [x] `mansart-jpa-cdi`: Vauban BCE for `@PersistenceContext` / `@PersistenceUnit`, transaction-
+- [x] `noether-jpa-cdi`: Vauban BCE for `@PersistenceContext` / `@PersistenceUnit`, transaction-
       scoped and extended contexts, `SynchronizationType`, JTA join via `mansart-transactions`.
 - [x] Vidocq runtime extension: secure persistence-unit discovery, startup factory initialization,
       JTA and CDI-managed `DataSource` bootstrap, application-owned data-source pass-through, and
@@ -604,8 +609,8 @@ Spec: §7.7 (container-managed persistence contexts), ch. 9 (container / provide
       selection, application ownership and deployment-shutdown factory cleanup.
 
 **TCK gate**: `se.schemaGeneration.*`, `se.pluggability.*`. The JTA/CDI part is not covered by the
-standalone TCK: covered by `mansart-jpa-cdi-module-it` and the assembled runtime's Arquillian vehicle,
-`vidocq-runtime-it-mansart-persistence`.
+standalone TCK: covered by `noether-jpa-cdi-module-it` and the assembled runtime's Arquillian vehicle,
+`vidocq-runtime-it-noether-persistence`.
 
 **2026-10-09 status: IMPLEMENTATION COMPLETE.** Official PostgreSQL TCK: 2040 passes,
 0 failures, 91 errors, 4 skips / 2135 (+27 versus P8, zero baseline regressions/test-set changes).
@@ -613,7 +618,7 @@ The standalone schema/container gate has no errors/failures and one unchanged up
 A secondary-table schema unblock now exposes its
 separate P11 cache assertion; remaining owners are P10 (78) and P11 (13).
 
-Implemented and independently tested with real Mansart transactions and H2: synchronized and unsynchronized
+Implemented and independently tested with real Noether transactions and H2: synchronized and unsynchronized
 joining, commit flush, rollback detach, close-before-completion, transaction-scoped identity, extended ownership,
 queries created outside a transaction and rebound at execution, detached nontransactional reads, safe virtual
 JDBC callbacks/nested flushes and shared-facade metadata. Core depends only on its transaction SPI, not JTA/CDI/Vauban.
@@ -631,7 +636,7 @@ coordination and later milestones are not P9 implementation gaps:
   lifetime remains validated by the actual Vauban module-path vehicle; the Vidocq adapter does not
   expose a stateful-session-bean lifecycle.
 - **Local container facade:** done — stored-procedure queries are created outside a transaction and bound to the
-  current one at execution (`ContextStoredProcedureQuery`, tested on real H2/Mansart-TM). No full container
+  current one at execution (`ContextStoredProcedureQuery`, tested on real H2/Noether-TM). No full container
   conformance claim is made.
 - **Vidocq:** runtime extension and integration module are implemented in the `vidocq` checkout. The CDI
   factory remains owned/disposed by the deployment; user-managed `DataSource` instances are passed through
@@ -669,7 +674,7 @@ Spec: ch. 12 (`orm.xml`), §8.2.1.6.2 (`mapping-file` in `persistence.xml`, defa
 - [x] Callbacks: XML entity listeners and callback methods, default listeners first (§3.6.4),
       `exclude-default-listeners`, `exclude-superclass-listeners`; named JPQL/native queries, result-set mappings,
       stored procedures and entity graphs of mapping files, replacing annotated ones of the same name.
-- [x] Unknown or unsupported metadata (an attribute the class lacks, an element Mansart cannot honour) is an error,
+- [x] Unknown or unsupported metadata (an attribute the class lacks, an element Noether cannot honour) is an error,
       never a silent default. `<delimited-identifiers/>` now preserves exact case and quotes table/schema/column-level
       identifiers, including generated defaults, indexes/unique constraints, discriminator expressions and generators.
       Explicit double-quoted names use the same `Identifier`; native SQL supplied by callers is not rewritten.
@@ -681,7 +686,7 @@ Spec: ch. 12 (`orm.xml`), §8.2.1.6.2 (`mapping-file` in `persistence.xml`, defa
       H2 calls retain declared argument order.
       BUG-20261009-20 is fixed, not bypassed to accommodate the unquoted official DDL.
 - [x] A compiled access (APT) whose plan differs from the XML-mapped model is not used: the provider logs the
-      mismatch and generates the access at bootstrap (members only XML maps need the package opened to Mansart).
+      mismatch and generates the access at bootstrap (members only XML maps need the package opened to Noether).
 
 **TCK gate**: `core.override.*`, `core.callback.xml`, `core.relationship.descriptors`,
 `se.descriptor` — plus every XML-dependent native/stored-procedure/listener/`mappedsc.descriptors` test.
@@ -703,7 +708,7 @@ results). See `TCK.md` for the final official result and exact test-identity com
 **Superseded blocker (resolved 2026-10-10):** the fixture/DDL case contract. Upstream recognised the fixtures as
 faulty ([jakartaee/persistence#1175](https://github.com/jakartaee/persistence/issues/1175), fixed on the 4.0 line by
 commit `1fea05e58151f10954206a15d70b18008043d3d9`). The maintainer decided to adopt that fix locally rather than
-wait for a 3.2 backport, since Mansart does not seek a certification (the full Web Profile is not targeted).
+wait for a 3.2 backport, since Noether does not seek a certification (the full Web Profile is not targeted).
 
 **2026-10-10 status: DELIVERED, scope-based gate.** The runner applies by default **TCK-BUG-001**, a byte-exact
 backport of upstream commit `1fea05e` to a checksum-verified derived copy of the 3.2.1 spec-tests jar (only the two
@@ -712,7 +717,7 @@ run: **2121 passes, 0 failures, 10 errors, 4 skips / 2135**, the 25 fixture erro
 2135 test identities; every P10 gate area is green and the 10 remaining errors are P11 cache assertions. The
 untouched mode (`TCK_FIXTURES=official`) still reports 2096 / 2135 and is kept for reproduction. The gate is a locally
 patched result, never presented as an official result or a certification. Evidence: `TCK.md`; patch:
-`../PERISTENCE_TCK_PROPOSALS.md` and `mansart-jpa-tck/README.md`.
+`../PERISTENCE_TCK_PROPOSALS.md` and `noether-jpa-tck/README.md`.
 
 ### P11 — Second-level cache and Bean Validation ✅
 
@@ -729,7 +734,7 @@ Spec: §3.10 (second-level cache), §3.7 (Bean Validation).
       Persist/update default to Default; remove defaults to no groups; explicitly empty groups skip validation.
       Available-provider bootstrap/configuration failures are surfaced even in AUTO. Integration preserves caller ownership of a supplied
       `ValidatorFactory`, avoids cascading association validation, and surfaces `ConstraintViolationException`
-      with transaction rollback semantics. The existing `mansart-validation` stopgap is test/TCK-only, not a
+      with transaction rollback semantics. The existing `noether-validation` stopgap is test/TCK-only, not a
       production dependency; its V0–V2 roadmap and implementation were not changed.
 
 **2026-10-10 status: DELIVERED.** The patched PostgreSQL 17 TCK reports **2135 tests, 2131 passed, 0 failures,
@@ -738,19 +743,19 @@ Spec: §3.10 (second-level cache), §3.7 (Bean Validation).
 not an untouched-fixture certification claim. Full validation neutrality run: **2135/2135 identical outcomes**
 with Bean Validation absent and present (2131 pass, 0 failures/errors, 4 skips in each mode). The clean persistence
 reactor passes **564 tests, 0 failures/errors/skips**, including **474 core tests**; `vauban/main` module tests also
-pass. Reports are retained under `mansart-jpa-tck/target/validation-neutrality/{off,on}/` and
-`mansart-jpa-tck/target/failsafe-reports/`; the pre-P11 patched baseline remains in
-`mansart-jpa-tck/target/p11-baseline/pre-run-patched-reports/`.
+pass. Reports are retained under `noether-jpa-tck/target/validation-neutrality/{off,on}/` and
+`noether-jpa-tck/target/failsafe-reports/`; the pre-P11 patched baseline remains in
+`noether-jpa-tck/target/p11-baseline/pre-run-patched-reports/`.
 
 **2026-10-10 correctness follow-up:** BUG-20261010-02 through -05 cover group semantics, optional bootstrap
 and owned-factory cleanup, class-eviction fences/graph dependencies, pre-hydration hierarchy/cacheability checks,
 and immutable pre-commit staging (no live-state capture after commit). Eleven additional regressions bring the
 full persistence `clean install` to **575 tests, including 485 core, with zero failures/errors/skips**.
-The prior 04:38:13Z P11 patched reports are preserved under `mansart-jpa-tck/target/p11-correctness-baseline/`.
+The prior 04:38:13Z P11 patched reports are preserved under `noether-jpa-tck/target/p11-correctness-baseline/`.
 The post-correction full patched validation-off/on runs finish at 04:46:41Z and 04:48:00Z: **2135 identical
 identities/outcomes, 2131 passes, zero failures/errors, four skips each**, unchanged against that baseline.
-Both absent-API/provider second executions pass. Reports: `mansart-jpa-tck/target/p11-correctness-neutrality/{off,on}/`;
-red/green/reactor/full-run logs: `mansart-jpa-tck/target/p11-correctness/`.
+Both absent-API/provider second executions pass. Reports: `noether-jpa-tck/target/p11-correctness-neutrality/{off,on}/`;
+red/green/reactor/full-run logs: `noether-jpa-tck/target/p11-correctness/`.
 
 **What the TCK really asks of Bean Validation** (read in `persistence-tck-spec-tests-3.2.1-sources.jar`,
 checked 2026-10-08): no test declares a constraint, calls a `Validator` or expects a `ConstraintViolation`.
@@ -768,9 +773,9 @@ Consequences for this module and for the TCK runner:
 - the persistence provider must not link `jakarta.validation` classes eagerly: detect the provider
   reflection-free (`ServiceLoader` / guarded class loading) and only then touch the API, otherwise the second
   execution fails with a `NoClassDefFoundError` instead of a `PersistenceException`;
-- execution 1 puts `jakarta.validation-api` and `mansart-validation-core` on the class path (the
+- execution 1 puts `jakarta.validation-api` and `noether-validation-core` on the class path (the
   reference runner does the same with its `validator.classes`); execution 2 puts neither;
-- `Validation.buildDefaultValidatorFactory()` with `mansart-validation-core` was checked against every
+- `Validation.buildDefaultValidatorFactory()` with `noether-validation-core` was checked against every
   loadable class of the TCK jars (617 classes, 582 instances): no failure. The brick tolerates classes with no
   class file (a provider's generated lazy subclasses), honours a `TraversableResolver` imposed through
   `ValidatorFactory.usingContext()`, and is safe to call from many virtual threads.
@@ -792,7 +797,7 @@ does not seek a formal Jakarta Persistence certification, and the Web Profile is
       `update` measurements (BENCH-20261010-01/02) were a mostly no-op workload and are marked invalid;
       BENCH-20261010-03 reruns all three providers with a preflight-verified versioned `update`.
 - [x] Modular APT-only application smoke using JDK 25 Leyden AOT cache record/create/use. The application
-      package remains neither opened nor exported to Mansart and proves generated managed access with
+      package remains neither opened nor exported to Noether and proves generated managed access with
       actual persistence CRUD/query assertions. This is a Leyden AOT cache proof, not GraalVM
       `native-image` support or a native-image claim.
 - [x] Keep the official TCK state and fixture patch transparent in `TCK.md`. The locally patched green
@@ -806,14 +811,14 @@ Recorded before implementation; each entry: date, decision, reason.
 
 | # | Date | Decision | Status |
 |---|---|---|---|
-| D1 | 2026-10-07 | Folder `mansart-persistence/`, Maven parent `mansart-jpa`, sub-modules `mansart-jpa-*`, Java modules `io.vidocq.mansart.jpa.*`. | Actioned |
+| D1 | 2026-10-07 | Folder `noether-persistence/`, Maven parent `noether-jpa`, sub-modules `noether-jpa-*`, Java modules `io.vidocq.noether.jpa.*`. | Actioned |
 | D2 | 2026-10-07 | Certification database: PostgreSQL (official TCK DDL); H2 for unit tests only. | Actioned |
 | D3 | 2026-10-07 | No `ClassTransformer` / no instrumentation: lazy loading and dirty checking without enhancement. | Actioned |
-| D4 | 2026-10-08 | Mansart JPA renders its SQL from its **own sealed SQL AST** (statements of the flush, then queries, locks, DDL), through **its own dialect SPI** in separate modules — `mansart-jpa-dialect-spi`, `mansart-jpa-dialect-h2`, `mansart-jpa-dialect-postgresql`, found with `ServiceLoader` — rather than by extending `mansart-data-dialect-spi`: that SPI is model-centric (Jakarta Data `EntityModel`, single-attribute ids), `requires transitive jakarta.data`, and is delivered (Jakarta Data TCK 74/74). The SQL knowledge of the two SPIs is duplicated for now; converging them (Jakarta Data rendered through this AST) may be decided later. | Decided |
+| D4 | 2026-10-08 | Noether JPA renders its SQL from its **own sealed SQL AST** (statements of the flush, then queries, locks, DDL), through **its own dialect SPI** in separate modules — `noether-jpa-dialect-spi`, `noether-jpa-dialect-h2`, `noether-jpa-dialect-postgresql`, found with `ServiceLoader` — rather than by extending `mansart-data-dialect-spi`: that SPI is model-centric (Jakarta Data `EntityModel`, single-attribute ids), `requires transitive jakarta.data`, and is delivered (Jakarta Data TCK 74/74). The SQL knowledge of the two SPIs is duplicated for now; converging them (Jakarta Data rendered through this AST) may be decided later. | Decided |
 | D5 | — | `TABLE_PER_CLASS` inheritance (optional in the spec). | Open |
-| D6 | 2026-10-07 | Bean Validation is not available, so a Vidocq implementation (Jakarta Validation 3.1) will be created as a new building block **inside Mansart** (Mansart is the data character of the ecosystem; no new repository, no new `mani.yaml` / `GestionProjet` entry). It is put on the persistence TCK classpath. `mansart-persistence` depends only on `jakarta.validation-api`. Its own TCK runs both **out of the Vidocq reactor** (standalone runner, authoritative for the building block) and **inside it** (`vidocq-runtime-integration-tests`, `tck` profile, certifying the assembled runtime). Named `mansart-validation`; it is a stopgap that only has to run for this TCK (not polished, not published, to be replaced by the implementation another team member is writing); roadmap in [`../mansart-validation/ROADMAP.md`](../mansart-validation/ROADMAP.md). | Decided |
-| D8 | 2026-10-09 | The query engine — JPQL lexer, parser, translation to the SQL AST, and the Criteria API of P8 — lives in `mansart-jpa-core` (internal packages `io.vidocq.mansart.jpa.core.query.*`), not in a `mansart-jpa-query` module: `EntityManager.createQuery` belongs to the core, and the engine needs the core's mapping, persistence context, loader and flush. A separate module would need a query SPI found with `ServiceLoader` and qualified exports of most core packages, for one artifact more and no layering gained. The SQL AST of queries extends `mansart-jpa-dialect-spi` (D4). | Decided |
-| D7 | 2026-10-08 | Connection pooling in Java SE (the spec defines none: §8.2.1.9 only lists the `jakarta.persistence.jdbc.*` properties, and leaves Java SE data sources "to the requirements of the provider"). A unit configured by `jakarta.persistence.jdbc.*`, without a `DataSource`, gets a **`mansart-pool` pool by default** (virtual-thread-native, zero-dep), closed with its factory; `io.vidocq.mansart.jpa.pool=false` turns it off (one `DriverManager` connection per transaction), `io.vidocq.mansart.jpa.pool.max-size` / `.min-idle` / `.acquire-timeout` size it. A `DataSource` given by the application is used as is; in the Vidocq runtime the container passes its own (`vidocq-runtime-mansart-pool-extension`, P9). A driver named by `jakarta.persistence.jdbc.driver` that `DriverManager` cannot see is used unpooled, with a warning. | Decided |
+| D6 | 2026-10-07 | Bean Validation is not available, so a Vidocq implementation (Jakarta Validation 3.1) will be created as a new building block **inside Noether** (Noether is the data character of the ecosystem; no new repository, no new `mani.yaml` / `GestionProjet` entry). It is put on the persistence TCK classpath. `noether-persistence` depends only on `jakarta.validation-api`. Its own TCK runs both **out of the Vidocq reactor** (standalone runner, authoritative for the building block) and **inside it** (`vidocq-runtime-integration-tests`, `tck` profile, certifying the assembled runtime). Named `noether-validation`; it is a stopgap that only has to run for this TCK (not polished, not published, to be replaced by the implementation another team member is writing); roadmap in [`../noether-validation/ROADMAP.md`](../noether-validation/ROADMAP.md). | Decided |
+| D8 | 2026-10-09 | The query engine — JPQL lexer, parser, translation to the SQL AST, and the Criteria API of P8 — lives in `noether-jpa-core` (internal packages `io.vidocq.noether.jpa.core.query.*`), not in a `noether-jpa-query` module: `EntityManager.createQuery` belongs to the core, and the engine needs the core's mapping, persistence context, loader and flush. A separate module would need a query SPI found with `ServiceLoader` and qualified exports of most core packages, for one artifact more and no layering gained. The SQL AST of queries extends `noether-jpa-dialect-spi` (D4). | Decided |
+| D7 | 2026-10-08 | Connection pooling in Java SE (the spec defines none: §8.2.1.9 only lists the `jakarta.persistence.jdbc.*` properties, and leaves Java SE data sources "to the requirements of the provider"). A unit configured by `jakarta.persistence.jdbc.*`, without a `DataSource`, gets a **`mansart-pool` pool by default** (virtual-thread-native, zero-dep), closed with its factory; `io.vidocq.noether.jpa.pool=false` turns it off (one `DriverManager` connection per transaction), `io.vidocq.noether.jpa.pool.max-size` / `.min-idle` / `.acquire-timeout` size it. A `DataSource` given by the application is used as is; in the Vidocq runtime the container passes its own (`vidocq-runtime-mansart-pool-extension`, P9). A driver named by `jakarta.persistence.jdbc.driver` that `DriverManager` cannot see is used unpooled, with a warning. | Decided |
 
 ## Out of Scope
 

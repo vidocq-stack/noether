@@ -1,3 +1,7 @@
+> Historical evidence: recorded before the 2026-10-11 extraction from Mansart.
+> Original names, commands, source revisions and measurements are retained verbatim;
+> they are not results measured on Noether. See the repository README for current commands.
+
 # Bugs — Mansart JPA
 
 Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED → CLOSED.

@@ -1,0 +1,11 @@
+= Validation stopgap
+:description: Provisional local-only Jakarta Validation provider.
+
+`noether-validation-core` supplies the V0–V2 stopgap used by Persistence tests
+and the local TCK harness. It is not a complete Jakarta Validation 3.1
+implementation. See
+link:{repo-noether}/src/branch/main/noether-validation/ROADMAP.md[the roadmap].
+
+`maven.deploy.skip=true`, Central `skipPublishing=true` and release workflow
+exclusions prevent publishing the aggregator, core and integration vehicle.
+The standalone Validation runner remains outside the reactor.

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Checks that mansart-validation is neutral for the Jakarta Persistence TCK: the first failsafe execution is
+# Checks that noether-validation is neutral for the Jakarta Persistence TCK: the first failsafe execution is
 # run twice, once with no Bean Validation on the class path and once with jakarta.validation-api and
-# mansart-validation-core on it, and the two results are compared test by test.
+# noether-validation-core on it, and the two results are compared test by test.
 #
 # Why: no test of the TCK uses Bean Validation (see ROADMAP.md, P11), so the temporary validation brick must not
 # change a single result. If it does, the brick is in the way and has to be fixed.
 #
-# Contract with the runner (to be honoured by mansart-jpa-tck, milestone P0):
-#   TCK_VALIDATION=off   the first execution has neither jakarta.validation-api nor mansart-validation-core
+# Contract with the runner (to be honoured by noether-jpa-tck, milestone P0):
+#   TCK_VALIDATION=off   the first execution has neither jakarta.validation-api nor noether-validation-core
 #   TCK_VALIDATION=on    the first execution has both (the second execution never has them)
 #
 # Usage:
@@ -20,9 +20,9 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-RUNNER="${RUNNER:-mansart-jpa-tck/run-official-tck-persistence-3.2.sh}"
-REPORTS="${REPORTS:-mansart-jpa-tck/target/failsafe-reports}"
-OUT="${OUT:-mansart-jpa-tck/target/validation-neutrality}"
+RUNNER="${RUNNER:-noether-jpa-tck/run-official-tck-persistence-3.2.sh}"
+REPORTS="${REPORTS:-noether-jpa-tck/target/failsafe-reports}"
+OUT="${OUT:-noether-jpa-tck/target/validation-neutrality}"
 
 if [ ! -x "$RUNNER" ]; then
     echo "Runner not found or not executable: $RUNNER" >&2

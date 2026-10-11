@@ -1,0 +1,32 @@
+Vidocq
+Copyright (c) 2026 Yann Blazart, Antoine Sabot-Durand and the Vidocq contributors
+
+This product is licensed under a disjunctive triple license: you may use,
+modify and redistribute it under the terms of ANY ONE of the following
+licences, at your option:
+
+  - Eclipse Public License 2.0 (EPL-2.0)          -> see LICENSE
+  - European Union Public Licence 1.2 (EUPL-1.2)  -> see licenses/EUPL-1.2.txt
+  - GNU General Public License v2.0 or later      -> see licenses/GPL-2.0.txt
+    (GPL-2.0-or-later)
+
+The Eclipse Public License 2.0 (the file LICENSE) is the anchor licence.
+In accordance with EPL-2.0 section 1 ("Secondary License"), the GNU General
+Public License, version 2.0 or any later version, is made available as a
+Secondary License for this Program.
+
+SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
+
+This software depends on Jakarta EE and Eclipse MicroProfile specification
+APIs, which are licensed by their respective owners under their own terms.
+
+Third-party material bundled with noether-jpa-core:
+
+  Jakarta Persistence 3.2 object/relational mapping XML schema, orm_3_2.xsd
+  Source: https://jakarta.ee/xml/ns/persistence/orm/orm_3_2.xsd
+  Copyright (c) 2023, 2024 Oracle and/or its affiliates. All rights reserved.
+  Licensed under EPL-2.0 OR BSD-3-Clause (Eclipse Distribution License 1.0).
+  The original copyright and licence header is retained in
+  noether-persistence/noether-jpa-core/src/main/resources/io/vidocq/noether/jpa/core/model/xml/orm_3_2.xsd.
+  This material retains its upstream licence; the project's triple licence
+  does not replace it.

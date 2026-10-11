@@ -1,0 +1,240 @@
+= noether-persistence
+:description: Jakarta Persistence 3.2 (JPA) implementation — scope-based milestones P0 to P12; mansart-jakarta-data covers everyday needs.
+
+[.lead]
+`noether-persistence` implements {spec-jpa-3-2}[Jakarta Persistence 3.2]: `EntityManager`, JPQL, Criteria API, listeners and the standard metamodel. **P0–P12 are delivered under a scope-based gate. No formal certification is sought and the Web Profile is not a target.** TCK results, comparative JMH methodology and the Leyden AOT smoke are documented separately; the patched TCK result is not an official certification.
+
+[NOTE]
+====
+For everyday needs in Vidocq (CRUD, typed queries, pagination, `@Transactional`), `mansart-jakarta-data` (delivered) is largely enough. The `vidocq-runtime-mansart-h2-example` example shows a full integration without `noether-persistence`.
+====
+
+== Why a separate module
+
+Jakarta Data 1.0 and Jakarta Persistence 3.2 do not serve the same purpose:
+
+* **Jakarta Data** — typed declarative repositories, stateless, no L1 cache, direct ResultSet mapping. Covers 80% of common application needs. Delivered.
+* **Jakarta Persistence** — imperative `EntityManager`, persistence context (managed/detached), L1 cache, listeners (`@PrePersist`, `@PostLoad`), rich JPQL, Criteria API. Required for: complex entity graphs, long transactions with batches of modifications, applications ported from Hibernate that rely on the persistence context.
+
+Jakarta Data uses `mansart-data-dialect-spi`; Jakarta Persistence uses its own sealed SQL AST and `noether-jpa-dialect-*` modules (roadmap decision D4). Both use generated entity access rather than reflective state access.
+
+NOTE: All pre-extraction TCK, benchmark and integration results below were measured on Mansart, before 2026-10-11; they are not fresh Noether measurements. Names and commands here describe current reproduction; raw historical evidence retains original names.
+
+== Status
+
+✅ **Scope-based delivery** — milestones P0–P12 in link:{repo-noether}/src/branch/main/noether-persistence/ROADMAP.md[noether-persistence/ROADMAP.md]. The completed engineering scope is not a claim of formal certification; see link:{repo-noether}/src/branch/main/noether-persistence/TCK.md[TCK evidence] and xref:performance.adoc[performance methodology].
+
+Delivered:
+
+* P0 — the official Jakarta Persistence 3.2.1 TCK runner (PostgreSQL 17, out of the reactor).
+* P1 — `PersistenceProvider`, `persistence.xml` 1.0 to 3.2 and `PersistenceConfiguration` bootstrap, `EntityManagerFactory` / `EntityManager` life cycle, resource-local `EntityTransaction`.
+* P2a — the entity model (access types, hierarchies, embeddables and records, identifiers, converters, enums, temporal types), entity accesses without reflection, JDBC binders; every TCK entity maps at bootstrap.
+* P2b — `noether-jpa-processor`: entity accesses generated at build time (see below).
+* P3 — the persistence context (one instance per identity, snapshot-based dirty checking without enhancement) and the flush engine (ordered, batched statements, optimistic locking), with Noether JPA's own SQL AST and dialects for H2 and PostgreSQL.
+
+* P4 — the entity operations (`find`, `getReference`, `persist`, `merge`, `remove`, `refresh`, `detach`) with their cascades, identifier generation (`IDENTITY`, pooled `SEQUENCE` and `TABLE` without a lock held across the round trip, `UUID`, `AUTO`), lifecycle callbacks and entity listeners, optimistic and pessimistic locks with lock timeouts, the exception contract, secondary tables and native `executeUpdate`. TCK: 609 / 2135, no failure left that P4 owns.
+
+* P5 — relationships and collections: to-one relationships through foreign keys (cycles written without deferred constraints), one-to-many and many-to-many through the foreign keys of their elements or join tables, element collections of basic and embeddable values, maps (`@MapKey`, `@MapKeyColumn`, `@MapKeyJoinColumn`) and order columns, `@OrderBy`, orphan removal, derived identities (`@MapsId`, relationship identifiers), `PersistenceUnitUtil`. Relationships are loaded with their owner (`LAZY` is a hint). TCK: 635 / 2135, no failure left that P5 owns.
+
+* P6 — default and explicit `SINGLE_TABLE`, required `JOINED`, discriminator metadata and values, abstract entities and mapped superclasses, polymorphic loading and shared identity, JPQL polymorphic selection and `TYPE`, including joined bulk mutations.
+
+* P7 — JPQL selects, joins, predicates, map expressions, whole-embeddable comparison, correlated subqueries, `TREAT`, functions, constructors, bulk statements, named queries, locking, set operations and casts; native result mappings and stored procedures.
+
+The historical pre-P11 untouched PostgreSQL 17 run reported **2096 / 2135 passed**, 35 errors and four official skips.
+Ten errors were second-level cache assertions subsequently fixed in P11; 25 errors were confined to the two
+delimited-default fixtures whose declared case conflicts with the official unquoted DDL.
+With the default local fixture patch TCK-BUG-001 (byte-exact backport of upstream commit `1fea05e`,
+jakartaee/persistence#1175, applied to a derived jar only), the P10 run reported **2121 / 2135 passed**; P11 resolved
+the cache assertions. The latest full run reports **2131 / 2135 passed, 0 failures/errors, four official skips**, with
+no test identity or outcome changes against the prior P11 run. This is a local result, not an official one or formal
+certification. See
+link:{repo-noether}/src/branch/main/noether-persistence/TCK.md[the full counters and attribution].
+
+* P8 — runtime and canonical metamodel, Criteria selects/bulk statements/subqueries/joins, tuple and constructor results,
+  parameter identities, 3.2 temporal/set operations, entity graphs and fetch/load hints.
+  The dedicated official gate reports *924 passes, no failures/errors and one upstream skip / 925*.
+
+* P10 — `orm.xml` mapping files: `<mapping-file>` and default `META-INF/orm.xml` discovery, secure parsing (no DTD or
+  external entity, XSD validation, errors naming file and line), entities/mapped superclasses/embeddables without
+  annotations, `metadata-complete`, unit and file defaults, XML-over-annotation overrides, XML callbacks, entity and
+  default listeners, and XML named queries/result mappings/procedures/entity graphs. The XML becomes an overlay of the
+  class-file annotations, so one entity model and one access planner serve both. `<delimited-identifiers/>`
+  preserves exact case through the existing `Identifier`/dialect contract for schema, flush/load/query SQL and
+  generators. Native/procedure result mappings match delimited scalar, constructor, field and discriminator
+  labels exactly and reject ambiguous folded labels. Named and dynamic procedure calls preserve qualified
+  delimited names (quoted dots and escaped quotes included); PostgreSQL renders named argument targets with
+  ordinal JDBC binding, keeping parameter API keys unchanged. Caller-provided native SQL is not rewritten.
+  Inherited mapped-superclass association overrides retain the base relationship semantics and
+  override joins/foreign-key metadata. Entity-owned embedded relationships and collections execute through
+  composed generated accesses and existing planners; member/class dotted annotation/XML overrides retain
+  per-owner mapping views. JPQL/Criteria, cascades, orphan removal and dirty checking use the same executable
+  paths. Unsupported P5 shapes are rejected rather than silently omitted.
+  Embeddable map keys execute through the same generated-access/column/binder path, including nested
+  key/value overrides and conversions, record reconstruction, independent snapshots and merge copies.
+  The targeted official embeddable-metamodel regression gate is restored to 51/51; this is not a new full-suite score.
+
+* P11 — factory-scoped optional second-level cache and Bean Validation integration, with rollback-safe publication,
+  cache invalidation, configured validation groups and optional-provider behavior. The local fixture-patched
+  PostgreSQL TCK run is recorded in `TCK.md`; no formal certification is sought.
+
+* P12 — bounded JMH comparisons against Hibernate ORM and EclipseLink on H2, plus a modular APT-only JDK Leyden
+  AOT cache smoke. Exact commands and honest raw results live in `noether-persistence/BENCH.md`; see
+  xref:performance.adoc[performance methodology].
+
+== Schema generation and container integration (P9 complete)
+
+Standard `jakarta.persistence.schema-generation.*` database/script actions and metadata/script ordering
+render through the JPA dialect SQL AST. Script sources accept URL/Reader inputs and targets accept URL/Writer;
+caller-owned readers, writers and connections are not closed. `SchemaManager` creates, drops, validates mapped
+table/column presence and truncates the unit's tables, reloading the initial load script.
+The provider accepts `PersistenceUnitInfo` without registering any `ClassTransformer`.
+
+`noether-jpa-cdi` bridges JTA through the existing Mansart transaction manager/JDBC XA adapter.
+The core has no CDI, JTA, Inject or Vauban imports: `TransactionIntegration` is its isolated SPI.
+Transaction-scoped contexts share identity within the transaction; extended contexts belong to their CDI owner.
+Synchronized commit flushes and rollback detaches; unsynchronized contexts require explicit joining.
+Container-managed managers and injected factories reject application `close()` calls.
+
+The real Vauban module-path/H2 tests pass 4/4; the Vidocq Arquillian vehicle passes 6/6, exercising persistence
+injection, transaction commit/rollback, transaction-scoped identity, explicit joining of unsynchronized contexts
+and undeploy cleanup without closing the application DataSource. These runs used the local Vauban snapshot
+containing the upstream injection fix; they do not exhaustively test runtime L2 caching or Validation.
+The untouched and locally fixture-patched full-suite
+results, including their remaining scope and skips, are recorded in `TCK.md`; neither result is represented as
+formal certification.
+Stored-procedure queries created outside a transaction run against the current transaction at execution.
+
+== Metamodel, Criteria and entity graphs
+
+`EntityManagerFactory.getMetamodel()` exposes entity, mapped-superclass and embeddable types from the same entity
+model used by mapping and generated access. Identifiers, versions, inherited/declared attributes and plural/map
+key/value types retain their declaring type and Java type.
+
+`noether-jpa-processor` also generates standard canonical `Book_` classes (§6.2.1.1), not Data's `_Book` classes.
+Their public volatile fields are populated through package-local application helpers invoked by the existing
+generated access provider. This works without additional entity exports/opens or a dependency on `java.compiler`.
+Incremental builds regenerate JPA-owned canonical output and preserve helpers for unchanged managed classes.
+Opaque canonical classes are populated with method handles on public static fields; already explicitly opened
+packages may use their existing private lookup permission. Entity state is never read or written reflectively;
+`getJavaMember()` supplies the reflective metadata required by the standard API.
+
+Criteria is a second frontend for the *same immutable JPQL AST, SQL dialect and virtual-thread execution path*.
+This includes correlated subqueries, association/entity joins, `TREAT`, map keys/list indexes, predicates, aggregates,
+cases, constructors/arrays/tuples and aliases, named/anonymous parameter expressions, bulk mutations and 3.2 set
+operations. Named queries registered from Criteria retain their AST and settings.
+
+Graph metadata validates attributes and key/value/subclass subgraphs against the metamodel.
+Named graphs are immutable recursive snapshots; entity-manager graph copies are mutable and independent.
+`jakarta.persistence.fetchgraph` / `jakarta.persistence.loadgraph` hints and typed 3.2 graph APIs are supported.
+The eager loader legally loads the required graph state; these hints do not guarantee lazy exclusion of other state.
+
+[IMPORTANT]
+====
+Data and JPA processors can run together in either order without duplicate canonical-class generation.
+JPA retains canonical output owned by another producer. The frozen Data producer still emits singular canonical
+fields for collections: those incompatible fields are diagnosed and cannot be populated.
+Reconciliation requires a maintainer decision in the Data workstream; P8 does not modify delivered Data.
+====
+
+== Inheritance
+
+`SINGLE_TABLE` is the default for entity hierarchies, even without `@Inheritance`.
+All subclass state is stored in the root entity's primary table.
+The default discriminator is `DTYPE`, of type `STRING`; its default value is the entity name.
+`@DiscriminatorColumn` and `@DiscriminatorValue` customize this metadata, including `CHAR` and `INTEGER`.
+For these two types, unspecified discriminator values are assigned in stable binary class-name order, skipping explicit values.
+
+With `@Inheritance(strategy = JOINED)`, the root and every entity subclass have a primary table.
+`@PrimaryKeyJoinColumn(s)` customize the subclass key; composite keys are matched by `referencedColumnName`, not annotation order.
+An explicit discriminator is honored; without one, the presence of subclass rows identifies the concrete class.
+Inherited attributes stay in their declaring entity's table, including mapped-superclass state; nonentity state is not persisted.
+
+`find(Base.class, id)` and queries over a base return concrete descendants.
+Finding the same identity through compatible base and subclass types returns the same managed instance;
+finding it through an incompatible sibling returns `null`.
+Relationships use the same polymorphic loader, and inherited collections keep their declaring entity's mapping defaults.
+Callbacks, identifiers, versions, secondary tables and dirty checking use the existing generated-access and flush paths.
+The module-path tests also exercise inheritance with APT-generated accesses in a package neither opened nor exported to Noether.
+
+JPQL supports polymorphic ranges and entity selections, inherited and subclass attributes, and `TYPE` selection and predicates
+with entity literals and class-valued parameters, including `IN`.
+Joined bulk updates capture qualifying keys and assignment values before modifying any table;
+bulk deletes remove subclass rows before superclass rows and return an entity count, not a table-row count.
+
+`TABLE_PER_CLASS` is optional in the specification and is explicitly refused at bootstrap.
+Decision D5 remains open: this milestone neither implements the strategy nor decides against its future implementation.
+
+An application adds the dialect of its database at run time: `io.vidocq.noether:noether-jpa-dialect-postgresql` or `noether-jpa-dialect-h2`. The dialect is detected from the JDBC metadata; the property `io.vidocq.noether.jpa.dialect` names it explicitly.
+
+In Java SE, a persistence unit configured by the `jakarta.persistence.jdbc.*` properties gets its connections from a `mansart-pool` pool, closed with the `EntityManagerFactory`. It is sized by `io.vidocq.noether.jpa.pool.max-size` (default 10), `io.vidocq.noether.jpa.pool.min-idle` (default 0) and `io.vidocq.noether.jpa.pool.acquire-timeout` (ISO-8601, default `PT5S`), and turned off by `io.vidocq.noether.jpa.pool=false`. A `javax.sql.DataSource` passed as `jakarta.persistence.nonJtaDataSource` or `jakarta.persistence.dataSource` is used as is — that is what the Vidocq runtime does with its own pool.
+
+== Configuring an application
+
+Noether reaches entity state without reflection, through an *access* per managed class. There are two ways to get one:
+
+* **Compile the entities with `noether-jpa-processor`** (recommended). It generates the accesses as ordinary classes of the entity packages, so nothing is defined at run time and no package has to be opened:
++
+[source,xml]
+----
+<plugin>
+  <groupId>org.apache.maven.plugins</groupId>
+  <artifactId>maven-compiler-plugin</artifactId>
+  <configuration>
+    <annotationProcessorPaths>
+      <path>
+        <groupId>io.vidocq.noether</groupId>
+        <artifactId>noether-jpa-processor</artifactId>
+        <version>${noether.version}</version>
+      </path>
+    </annotationProcessorPaths>
+  </configuration>
+</plugin>
+----
++
+On the module path, the application module reads the provider and declares the accesses generated for each entity package (the processor prints the exact line, and fails the build if the `requires` is missing):
++
+[source,java]
+----
+module com.acme.shop {
+    requires jakarta.persistence;
+    requires io.vidocq.noether.jpa.core;
+
+    provides io.vidocq.noether.jpa.core.spi.ManagedAccessProvider
+        with com.acme.shop.model._NoetherJpaAccess;
+}
+----
++
+On the class path, the processor registers the accesses in `META-INF/services`; nothing else is needed.
+
+* **Let the provider generate the accesses at bootstrap**, for entities compiled without the processor (a third-party jar, for instance). It defines hidden classes reaching the entities through a private lookup, so a named module must open the entity packages to the provider: `opens com.acme.shop.model to io.vidocq.noether.jpa.core;`. This path is not available to GraalVM native images.
+
+An access generated at build time is used only if it still matches the entity class; a class changed since it was compiled falls back to the bootstrap path, with a warning.
+
+== Principles (already fixed)
+
+* **Zero reflection on entities** — entity state is reached through generated accesses (method handles, direct access where the language allows it). No runtime `EntityManagerProxy`.
+* **No bytecode library** — no Hibernate-style enhancement, no ASM, no Byte Buddy; dirty checking by state snapshots, lazy loading designed with the persistence context (P3/P5).
+* **Native virtual threads** — every JDBC execution under Loom. No `synchronized` block wrapping a blocking I/O.
+* **Strict Java Modules** — `module io.vidocq.noether.jpa.core`: the provider is found through `ServiceLoader`; the only exported package is the SPI the generated accesses implement.
+
+[#target-modules]
+== Implemented modules and remaining boundaries
+
+Production artifacts are `noether-jpa-core`, `noether-jpa-dialect-spi`, `noether-jpa-dialect-h2`,
+`noether-jpa-dialect-postgresql`, `noether-jpa-processor` and `noether-jpa-cdi`.
+`noether-jpa` is their POM aggregator, not a runtime dependency.
+The official TCK runner and comparative benchmark harness remain outside the production reactor.
+
+Some mapping shapes remain explicitly refused: to-one join tables, unidirectional one-to-many foreign-key
+collections and associations inside collection-table embeddable elements.
+`TABLE_PER_CLASS` is optional and deferred. Eager relationship loading is supported; lazy exclusion is not guaranteed.
+Data/JPA bridging and generation mutualisation remain deferred, without modifying the delivered Data producer.
+
+For declarative repository needs, use `mansart-jakarta-data`. For persistence contexts, JPQL, Criteria,
+entity graphs and callbacks, use `noether-persistence` within these documented boundaries.
+
+== See also
+
+* xref:mansart::modules/mansart-jakarta-data.adoc[mansart-jakarta-data] — delivered solution for everyday needs.
+* xref:concepts.adoc[Concepts] — Jakarta Data vs JPA differences.
+* xref:migration.adoc[Migration] — paths from Hibernate / EclipseLink.

@@ -1,0 +1,16 @@
+= Internals
+:description: Static generation, Java Modules and provider discovery.
+
+Entity metadata is read from class files. `AccessPlanner` is shared by bootstrap
+and the annotation processor; generated access handles state without reflective
+field/method invocation. The JDK Class-File API is used, not ASM or Byte Buddy.
+
+Java module descriptors expose minimal public contracts and qualified
+processor access. Dialects, generated entity accesses, CDI extensions and
+Persistence/Validation providers are registered through the appropriate
+`provides`/`uses` contracts; service resource files retain classpath discovery
+for the standalone official TCK harness.
+
+JDBC execution uses virtual threads. The external Mansart transaction identity
+is captured before virtual-thread offload. The extraction does not change
+transaction or pool behavior.

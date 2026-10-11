@@ -1,0 +1,23 @@
+= Reference
+:description: Noether artifacts and external integrations.
+
+All Noether artifacts are under `io.vidocq.noether`:
+
+[cols="2,3"]
+|===
+| Artifact | Role
+| `noether-root` | Repository reactor
+| `noether-jpa` | Persistence aggregator (directory `noether-persistence`)
+| `noether-jpa-core` | Persistence provider
+| `noether-jpa-dialect-spi` | SQL AST and dialect contract
+| `noether-jpa-dialect-h2`, `noether-jpa-dialect-postgresql` | Dialect adapters
+| `noether-jpa-processor` | APT and generated entity access
+| `noether-jpa-cdi` | Vauban CDI and Mansart JTA bridge
+| `noether-validation`, `noether-validation-core` | Provisional local-only Validation
+|===
+
+Java module names retain their suffixes under `io.vidocq.noether.jpa.*` and
+`io.vidocq.noether.validation.*`. External dependencies stay under
+`io.vidocq.mansart` and `io.vidocq.vauban`. `mansart.version` pins the independent
+Mansart version. Integration vehicles and all provisional Validation artifacts
+are excluded from release publishing.

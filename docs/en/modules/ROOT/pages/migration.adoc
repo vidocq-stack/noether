@@ -1,0 +1,23 @@
+= Migration from Mansart
+:description: Repository, Maven, package and provider renaming.
+
+The source now lives at {repo-noether}. The extraction preserves filtered
+Persistence/Validation history from Mansart's `persistence-work` branch,
+revision `c91d72c`.
+
+Replace `io.vidocq.mansart:mansart-jpa-*` with
+`io.vidocq.noether:noether-jpa-*`, and Validation coordinates in the same way.
+The root is `noether-root`; the Persistence aggregator is `noether-jpa` in
+`noether-persistence`; the Validation aggregator is `noether-validation`.
+
+Change Persistence/Validation imports and Java module references to
+`io.vidocq.noether`. Update explicit providers, service resource names,
+generated-access declarations (`_NoetherJpaAccess`) and `persistence.xml`.
+Do not change the external Mansart Data/Pool/Transactions packages.
+
+The Vidocq adapters are `vidocq-runtime-noether-persistence-extension` and
+`vidocq-runtime-noether-persistence-extension-codegen`; the extension name is
+`noether-persistence`. No persistence semantic or Data bridge change is included.
+
+Use current scripts for reproduction. Historical traceability files retain old
+names and source revisions and must not be presented as new Noether results.

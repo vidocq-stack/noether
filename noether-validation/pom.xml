@@ -3,25 +3,25 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>io.vidocq.mansart</groupId>
-        <artifactId>mansart-root</artifactId>
+        <groupId>io.vidocq.noether</groupId>
+        <artifactId>noether-root</artifactId>
         <version>0.4.0-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <groupId>io.vidocq.mansart</groupId>
-    <artifactId>mansart-validation</artifactId>
+    <groupId>io.vidocq.noether</groupId>
+    <artifactId>noether-validation</artifactId>
     <version>0.4.0-SNAPSHOT</version>
     <packaging>pom</packaging>
 
-    <name>Mansart :: Validation</name>
+    <name>Noether :: Validation</name>
     <description>Jakarta Validation 3.1 (Bean Validation) implementation for the Vidocq ecosystem.</description>
-    <url>https://codefloe.com/Vidocq/mansart</url>
+    <url>https://codefloe.com/Vidocq/noether</url>
 
     <scm>
-        <connection>scm:git:https://codefloe.com/Vidocq/mansart.git</connection>
-        <developerConnection>scm:git:ssh://git@codefloe.com/Vidocq/mansart.git</developerConnection>
-        <url>https://codefloe.com/Vidocq/mansart</url>
+        <connection>scm:git:https://codefloe.com/Vidocq/noether.git</connection>
+        <developerConnection>scm:git:ssh://git@codefloe.com/Vidocq/noether.git</developerConnection>
+        <url>https://codefloe.com/Vidocq/noether</url>
         <tag>HEAD</tag>
     </scm>
 
@@ -68,21 +68,21 @@
     </properties>
 
     <!--
-        Further modules (mansart-validation-processor, mansart-validation-el, ...) are
+        Further modules (noether-validation-processor, noether-validation-el, ...) are
         added milestone by milestone, each one with its first failing test — see
-        ROADMAP.md. The TCK runner (mansart-validation-tck) is never listed here: it is
+        ROADMAP.md. The TCK runner (noether-validation-tck) is never listed here: it is
         out of the reactor, like mansart-data-tck and mansart-transactions-tck.
     -->
     <modules>
-        <module>mansart-validation-core</module>
-        <module>mansart-validation-core-module-it</module>
+        <module>noether-validation-core</module>
+        <module>noether-validation-core-module-it</module>
     </modules>
 
     <dependencyManagement>
         <dependencies>
             <dependency>
-                <groupId>io.vidocq.mansart</groupId>
-                <artifactId>mansart-validation-core</artifactId>
+                <groupId>io.vidocq.noether</groupId>
+                <artifactId>noether-validation-core</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

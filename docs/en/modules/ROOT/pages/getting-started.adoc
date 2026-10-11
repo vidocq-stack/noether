@@ -1,0 +1,18 @@
+= Getting started
+:description: Build the independent Noether reactor.
+
+Use Java 25 (Temurin) and Maven 3.9.16 from `.sdkmanrc`. Install the external
+Mansart and Vauban snapshots required by the integration modules first.
+
+[source,sh]
+----
+sdk env
+./mvnw -ntp test
+./mvnw -ntp install
+----
+
+Applications use `io.vidocq.noether:noether-jpa-core`, a dialect adapter such
+as `noether-jpa-dialect-h2` and optionally `noether-jpa-cdi`.
+For generated entity access, configure `noether-jpa-processor` as the annotation
+processor. See xref:modules/noether-persistence.adoc[Persistence] for the
+Java module contracts and xref:usage.adoc[bootstrap].

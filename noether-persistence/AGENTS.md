@@ -1,21 +1,21 @@
-# AGENTS.md — mansart-persistence (Mansart JPA)
+# AGENTS.md — noether-persistence (Noether JPA)
 
 > Contribution guide for AI agents (GitHub Copilot, Copilot Chat, Claude Code…) working inside
-> `mansart-persistence/`. It **adds to** the repository-root files, it never overrides them: the
-> root `CLAUDE.md` / `AGENTS.md` (Mansart-wide conventions) and the workspace `CLAUDE.md`
+> `noether-persistence/`. It **adds to** the repository-root files, it never overrides them: the
+> root `CLAUDE.md` / `AGENTS.md` (Noether-wide conventions) and the workspace `CLAUDE.md`
 > (Vidocq philosophy, commit rules) apply here in full. If a rule below
 > contradicts them, the root file wins and this file must be fixed in the same change.
 
 ## Repository Mission
 
-- `mansart-persistence` is the home of **Mansart JPA** (Maven parent `io.vidocq.mansart:mansart-jpa`):
+- `noether-persistence` is the home of **Noether JPA** (Maven parent `io.vidocq.noether:noether-jpa`):
   an implementation of **Jakarta Persistence 3.2** in Java 25 for the Vidocq ecosystem.
 - **Zero third-party implementation libraries**: only spec APIs are compiled into production
   modules — `jakarta.persistence-api` (3.2.0), and, for the integration modules only,
   `jakarta.enterprise.cdi-api`, `jakarta.inject-api`, `jakarta.transaction-api`. JDBC, StAX
-  (`java.xml`) and the Class-File API are in the JDK. Reused Mansart bricks:
-  `mansart-transactions-api` (JTA). The SQL is Mansart JPA's own (decision D4): a sealed AST in
-  `mansart-jpa-dialect-spi`, rendered by the `mansart-jpa-dialect-*` modules.
+  (`java.xml`) and the Class-File API are in the JDK. Reused Noether bricks:
+  `mansart-transactions-api` (JTA). The SQL is Noether JPA's own (decision D4): a sealed AST in
+  `noether-jpa-dialect-spi`, rendered by the `noether-jpa-dialect-*` modules.
 - **No Hibernate, EclipseLink, OpenJPA, ANTLR, ASM, Byte Buddy, Caffeine, Jackson** — not in
   production, and never as the provider of a TCK run (that would measure *their* conformance).
 - **Virtual threads** for all I/O: every JDBC call runs on a virtual thread; no platform-thread
@@ -29,13 +29,13 @@
 
 ## Real Code State to Know Before Modifying
 
-- Modules in the reactor: `mansart-jpa-dialects` (`-spi`: the SQL AST and dialect SPI of decision D4; `-h2`,
-  `-postgresql`), `mansart-jpa-core` (provider, bootstrap, entity model, accesses, JDBC binders, persistence
+- Modules in the reactor: `noether-jpa-dialects` (`-spi`: the SQL AST and dialect SPI of decision D4; `-h2`,
+  `-postgresql`), `noether-jpa-core` (provider, bootstrap, entity model, accesses, JDBC binders, persistence
   context, flush engine),
-  `mansart-jpa-processor` (APT, entity accesses at build time) and two module-path test vehicles,
-  `mansart-jpa-module-it` (runtime path, `opens`) and `mansart-jpa-processor-module-it` (build-time path,
-  `provides`), plus `mansart-jpa-cdi` and the actual-Vauban/H2 `mansart-jpa-cdi-module-it`.
-  `mansart-jpa-tck` stays out of the reactor.
+  `noether-jpa-processor` (APT, entity accesses at build time) and two module-path test vehicles,
+  `noether-jpa-module-it` (runtime path, `opens`) and `noether-jpa-processor-module-it` (build-time path,
+  `provides`), plus `noether-jpa-cdi` and the actual-Vauban/H2 `noether-jpa-cdi-module-it`.
+  `noether-jpa-tck` stays out of the reactor.
 - Milestones P0 to P12 are delivered under a scope-based gate; P10 uses the local fixture patch TCK-BUG-001. P9's Vidocq baseline passes 6/6 tests,
   including adapter undeploy cleanup. P10 maps `orm.xml` through `model.xml.OrmOverlay` (a `ClassInfos` overlay
   feeding the single `EntityModelBuilder`/`AccessPlanner`), preserves delimited identifier case and supports
@@ -60,20 +60,20 @@
   polymorphic loads and one identity per hierarchy, JPQL `TYPE` and joined bulk mutations. Keep relationships,
   versions and callbacks on the existing generated-access paths. `TABLE_PER_CLASS` is explicitly refused;
   decision D5 remains open.
-- Several abandoned JPA attempts live on remote branches (`feature/*mansart*persistence*`). They
+- Several abandoned JPA attempts live on remote branches (`feature/*noether*persistence*`). They
   are history, not a base: nothing is cherry-picked from them without a test that justifies it.
 
 ## Planned Module Architecture
 
 | Module (artifactId) | Java module | Role |
 | --- | --- | --- |
-| `mansart-jpa-core` | `io.vidocq.mansart.jpa.core` | `PersistenceProvider`, EMF/EM, persistence context, entity model, flush, JDBC execution; the query engine (JPQL parser with a sealed AST, translation, Criteria API, SQL through the dialect SPI — decision D8). No CDI, no JTA import. |
-| `mansart-jpa-processor` | `io.vidocq.mansart.jpa.processor` | APT: canonical JPA metamodel `Entity_`, application-module initialization helpers and generated entity accessors/instantiators. Retain other producers' canonical output; do not change delivered Data to reconcile incompatible fields without a maintainer decision. |
-| `mansart-jpa-maven-plugin` | — | Build-time generation for entities living in pre-compiled jars (mirror of `mansart-data-maven-plugin`). |
-| `mansart-jpa-cdi` | `io.vidocq.mansart.jpa.cdi` | CDI 4.1 Lite BCE on Vauban: `@PersistenceContext` / `@PersistenceUnit`, JTA-bound contexts via `mansart-transactions`. |
-| `mansart-jpa-cdi-module-it` | `io.vidocq.mansart.jpa.cdi.moduleit` | Non-release actual Vauban/H2 module-path vehicle, including retained upstream resource/parameter injection regressions. |
-| `mansart-jpa-tests` | — | Cross-module and PostgreSQL (Testcontainers) integration tests. |
-| `mansart-jpa-tck` | — | Official TCK runner — **OUT OF REACTOR**, standalone Model 4.0.0 POM, never listed in `<modules>`. |
+| `noether-jpa-core` | `io.vidocq.noether.jpa.core` | `PersistenceProvider`, EMF/EM, persistence context, entity model, flush, JDBC execution; the query engine (JPQL parser with a sealed AST, translation, Criteria API, SQL through the dialect SPI — decision D8). No CDI, no JTA import. |
+| `noether-jpa-processor` | `io.vidocq.noether.jpa.processor` | APT: canonical JPA metamodel `Entity_`, application-module initialization helpers and generated entity accessors/instantiators. Retain other producers' canonical output; do not change delivered Data to reconcile incompatible fields without a maintainer decision. |
+| `noether-jpa-maven-plugin` | — | Build-time generation for entities living in pre-compiled jars (mirror of `mansart-data-maven-plugin`). |
+| `noether-jpa-cdi` | `io.vidocq.noether.jpa.cdi` | CDI 4.1 Lite BCE on Vauban: `@PersistenceContext` / `@PersistenceUnit`, JTA-bound contexts via `mansart-transactions`. |
+| `noether-jpa-cdi-module-it` | `io.vidocq.noether.jpa.cdi.moduleit` | Non-release actual Vauban/H2 module-path vehicle, including retained upstream resource/parameter injection regressions. |
+| `noether-jpa-tests` | — | Cross-module and PostgreSQL (Testcontainers) integration tests. |
+| `noether-jpa-tck` | — | Official TCK runner — **OUT OF REACTOR**, standalone Model 4.0.0 POM, never listed in `<modules>`. |
 
 Module names are a plan, not a contract: a module is only created when a milestone needs it.
 
@@ -82,33 +82,33 @@ Module names are a plan, not a contract: a module is only created when a milesto
 - **Delivered modules are not modified by JPA work**: `mansart-jakarta-data`, `mansart-transactions`,
   `mansart-pool` and everything under them. JPA *depends on* them. A required change
   in the shared dialect SPI is a maintainer decision, recorded in `ROADMAP.md` before any edit.
-- **The official TCK is read-only, forever.** Only our runner (`mansart-jpa-tck`) is ours. Single documented
+- **The official TCK is read-only, forever.** Only our runner (`noether-jpa-tck`) is ours. Single documented
   exception, decided by the maintainer: TCK-BUG-001, the byte-exact local backport of upstream commit `1fea05e`
   applied to a *derived* jar under `target/tck-fixtures` (installed M2 jar and `.tck-cache` never modified; see
-  `mansart-jpa-tck/README.md`). Any other fixture change needs a new maintainer decision.
+  `noether-jpa-tck/README.md`). Any other fixture change needs a new maintainer decision.
   Never write a class named `Client` (it would match the TCK include and report a fake pass).
 - **No runtime reflection on entities** — no `Field.get/set`, no `Method.invoke`, no
   `setAccessible(true)`. Entity access goes through code generated, in this order of preference:
-  1. by APT at compile time (application sources): `mansart-jpa-processor` writes `X$$MansartAccess` and a
-     `_MansartJpaAccess` per package, handed over by `ServiceLoader` (`provides
-     io.vidocq.mansart.jpa.core.spi.ManagedAccessProvider with <package>._MansartJpaAccess;` written by the
+  1. by APT at compile time (application sources): `noether-jpa-processor` writes `X$$NoetherAccess` and a
+     `_NoetherJpaAccess` per package, handed over by `ServiceLoader` (`provides
+     io.vidocq.noether.jpa.core.spi.ManagedAccessProvider with <package>._NoetherJpaAccess;` written by the
      application, `META-INF/services` on the class path) — no `opens` needed;
   2. by the Maven plugin at build time (dependency jars);
   3. by the **Class-File API** at `EntityManagerFactory` bootstrap (opaque archives such as the
      TCK), reading annotations from class bytes (`ClassFile.of().parse`) and defining accessors as
      hidden classes through `MethodHandles.privateLookupIn` — which requires the application to
-     `opens` its entity packages to `io.vidocq.mansart.jpa.core`. Document it; never work around it.
+     `opens` its entity packages to `io.vidocq.noether.jpa.core`. Document it; never work around it.
 - **No dynamic proxies, no ASM, no Byte Buddy, no `java.lang.instrument`.** `ClassTransformer`
   registration (`PersistenceUnitInfo.addTransformer`) is declined: lazy to-one associations use
   subclasses generated with the Class-File API (entity classes are non-final, §2.1), lazy
   collections use our own collection wrappers, dirty checking uses state snapshots.
-- `mansart-jpa-core` must **never import** `jakarta.enterprise.*`, `jakarta.inject.*`,
-  `jakarta.transaction.*`, nor any Vauban class. Container integration lives in `mansart-jpa-cdi`.
+- `noether-jpa-core` must **never import** `jakarta.enterprise.*`, `jakarta.inject.*`,
+  `jakarta.transaction.*`, nor any Vauban class. Container integration lives in `noether-jpa-cdi`.
 - **No `synchronized` around blocking I/O** — use `ReentrantLock`, `Semaphore`, atomics.
 - **No new `ThreadLocal`** — the delivered `mansart-transactions` manager currently uses one.
   Capture its transaction on the caller before virtual offload; use transaction objects as container context keys
   and an execution-owned connection for nested JDBC. Do not change delivered Transactions to match old prose.
-- **No inline SQL in the core**: every statement is built as a `mansart-jpa-dialect-spi` AST and
+- **No inline SQL in the core**: every statement is built as a `noether-jpa-dialect-spi` AST and
   rendered by the dialect (H2, PostgreSQL). Schema generation also executes caller-provided standard SQL scripts;
   generated DDL still goes through the SQL AST, never inline core SQL.
 - The persistence context (`EntityManager`) is **not thread-safe** by spec; the
@@ -122,10 +122,10 @@ Module names are a plan, not a contract: a module is only created when a milesto
   `mansart-transactions-core`.
 - `jakarta.persistence-api` 3.2 ships a `module-info.class` (`jakarta.persistence`); require it by
   that name. The provider is declared with
-  `provides jakarta.persistence.spi.PersistenceProvider with io.vidocq.mansart.jpa.core.…`
+  `provides jakarta.persistence.spi.PersistenceProvider with io.vidocq.noether.jpa.core.…`
   **and** `META-INF/services/jakarta.persistence.spi.PersistenceProvider` — the TCK runs on the
   classpath, production on the module path; both must work.
-- Dialects are found with `uses io.vidocq.mansart.jpa.dialect.DialectFactory` (`ServiceLoader`).
+- Dialects are found with `uses io.vidocq.noether.jpa.dialect.DialectFactory` (`ServiceLoader`).
 - `persistence.xml` and `orm.xml` are parsed with StAX (`java.xml`, JDK) — no JAXB, no DTD, no external entity;
   `orm.xml` is XSD-validated and becomes annotations of the `OrmOverlay`, never a second mapping engine.
 - Run the `java-modules-guardian` agent after every `module-info.java` or package change.
@@ -133,13 +133,13 @@ Module names are a plan, not a contract: a module is only created when a milesto
 ## Build & Test
 
 - Build from the repository root with the Maven wrapper:
-  `./mvnw -ntp -pl mansart-persistence/<module> -am test`. Red = not done.
+  `./mvnw -ntp -pl noether-persistence/<module> -am test`. Red = not done.
 - TCK (out of reactor, from its own directory):
-  `mansart-persistence/mansart-jpa-tck/run-official-tck-persistence-3.2.sh`.
+  `noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh`.
 - **TDD is mandatory**: Red → Green → Refactor. No production line before a failing test
   justifies it. Cite the Jakarta Persistence 3.2 section in test comments (e.g. `// §3.3.4`).
 - Unit tests sit in the same package as the class under test, named `<Class>Test`; JUnit Jupiter
-  as managed by the Mansart root POM; AssertJ allowed; **no Mockito** — hand-written test doubles.
+  as managed by the Noether root POM; AssertJ allowed; **no Mockito** — hand-written test doubles.
 - Unit tests run on **H2** (in-memory); PostgreSQL tests use **Testcontainers** in
   `<scope>test</scope>` only. The TCK reference database is PostgreSQL (official DDL shipped in the
   TCK bundle under `sql/postgresql/`).
@@ -148,18 +148,18 @@ Module names are a plan, not a contract: a module is only created when a milesto
 
 ## Traceability
 
-- Reproducible bugs → `mansart-persistence/BUG.md` (skill `/log-bug`): id, date, symptom,
+- Reproducible bugs → `noether-persistence/BUG.md` (skill `/log-bug`): id, date, symptom,
   minimal repro, hypothesis, status.
-- Performance figures → `mansart-persistence/BENCH.md` (skill `/log-bench`). No number in a
+- Performance figures → `noether-persistence/BENCH.md` (skill `/log-bench`). No number in a
   README or a commit without a `BENCH.md` entry.
-- TCK score → `mansart-persistence/TCK.md`, updated with every run that changes it: raw counters
+- TCK score → `noether-persistence/TCK.md`, updated with every run that changes it: raw counters
   (tests / pass / fail / error / skip), database, date, and the list of excluded or
   not-applicable tests with the reason for each.
 - Architectural decisions → `ROADMAP.md`, section "Decisions".
 
 ## Commits
 
-- **English**, Conventional Commits, scope = module without the `mansart-` prefix
+- **English**, Conventional Commits, scope = module without the `noether-` prefix
   (e.g. `feat(jpa-core): flush orders inserts before deletes (§3.3.4)`).
 - DCO sign-off (`git commit -s`); author and committer are the human; AI assistance recorded with
   a `Co-Authored-By:` trailer naming the tool (workspace `AI-POLICY.md`).
@@ -187,7 +187,7 @@ Jakarta EE / MicroProfile spec implementations.
 `index` → `getting-started` → `usage` → `concepts` → `internals` → `tck` →
 `performance` → `reference` → `migration`
 
-Multi-module projects (e.g. Vidocq, Mansart) may append `modules/*` / `sub-modules/*`
+Multi-module projects (e.g. Vidocq, Noether) may append `modules/*` / `sub-modules/*`
 sub-pages after `migration`.
 
 ### TCK / Performance rule (not mutually exclusive)

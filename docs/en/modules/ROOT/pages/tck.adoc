@@ -1,0 +1,23 @@
+= TCK
+:description: Standalone official TCK runners and historical evidence.
+
+The official Persistence 3.2 and Validation 3.1 runners stay outside the reactor.
+Run from the repository root:
+
+[source,sh]
+----
+noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+noether-validation/noether-validation-tck/run-official-tck-validation-3.1.sh
+noether-persistence/check-validation-neutrality.sh
+----
+
+The official artifact checksums and TCK-BUG-001 byte-exact derived-jar fixture
+patch are unchanged; original artifacts are never edited. `TCK_FIXTURES=official`
+selects the untouched Persistence fixture. See the runner README for setup.
+
+link:{repo-noether}/src/branch/main/noether-persistence/TCK.md[Historical Persistence evidence]
+and
+link:{repo-noether}/src/branch/main/noether-validation/noether-validation-tck/TCK.md[Validation evidence]
+retain pre-extraction names and results. They are not measurements on Noether.
+No formal Persistence certification is sought; the Web Profile is not a target.
+The provisional Validation provider is not claimed conformant.

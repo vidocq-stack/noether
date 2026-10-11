@@ -1,0 +1,15 @@
+= What's new
+:description: Noether extraction and compatibility changes.
+
+== 2026-10-11 — Independent Noether repository
+
+Persistence and the provisional Validation implementation moved from Mansart
+to Noether with their filtered Git history. Maven artifacts now use
+`io.vidocq.noether:noether-*`; packages, Java modules, generated accessors and
+service registrations use `io.vidocq.noether`.
+
+The provider is `io.vidocq.noether.jpa.core.NoetherPersistenceProvider`.
+Mansart Pool, Transactions and Data remain unchanged.
+Validation publishing remains blocked. Historical TCK/benchmark/bug evidence
+is retained verbatim and labelled; extraction is not a new measurement or
+certification claim. See xref:migration.adoc[migration instructions].

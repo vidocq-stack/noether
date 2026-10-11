@@ -1,0 +1,15 @@
+= Concepts
+:description: Noether ownership and persistence boundaries.
+
+Noether provides the Persistence context, ORM mapping, JPQL/Criteria execution,
+schema generation and generated entity access. Its SQL uses a dedicated sealed
+AST and dialect SPI, not the Jakarta Data dialect SPI.
+
+Mansart Data remains a direct JDBC repository implementation. Pool and
+Transactions are independent Mansart building blocks reused by Noether.
+Data/JPA integration and processor mutualisation remain deferred.
+
+`SINGLE_TABLE` and `JOINED` are within the delivered engineering scope;
+`TABLE_PER_CLASS` remains explicitly refused. Validation is an optional bridge;
+the included provider remains provisional. See the module roadmaps for precise
+scope and remaining limitations.

@@ -3,25 +3,25 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>io.vidocq.mansart</groupId>
-        <artifactId>mansart-root</artifactId>
+        <groupId>io.vidocq.noether</groupId>
+        <artifactId>noether-root</artifactId>
         <version>0.4.0-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <groupId>io.vidocq.mansart</groupId>
-    <artifactId>mansart-jpa</artifactId>
+    <groupId>io.vidocq.noether</groupId>
+    <artifactId>noether-jpa</artifactId>
     <version>0.4.0-SNAPSHOT</version>
     <packaging>pom</packaging>
 
-    <name>Mansart :: Jakarta Persistence 3.2</name>
+    <name>Noether :: Jakarta Persistence 3.2</name>
     <description>Jakarta Persistence 3.2 implementation for the Vidocq ecosystem.</description>
-    <url>https://codefloe.com/Vidocq/mansart</url>
+    <url>https://codefloe.com/Vidocq/noether</url>
 
     <scm>
-        <connection>scm:git:https://codefloe.com/Vidocq/mansart.git</connection>
-        <developerConnection>scm:git:ssh://git@codefloe.com/Vidocq/mansart.git</developerConnection>
-        <url>https://codefloe.com/Vidocq/mansart</url>
+        <connection>scm:git:https://codefloe.com/Vidocq/noether.git</connection>
+        <developerConnection>scm:git:ssh://git@codefloe.com/Vidocq/noether.git</developerConnection>
+        <url>https://codefloe.com/Vidocq/noether</url>
         <tag>HEAD</tag>
     </scm>
 
@@ -68,20 +68,20 @@
     </properties>
 
     <!--
-        Implementation modules (mansart-jpa-core, mansart-jpa-processor, ...) are
+        Implementation modules (noether-jpa-core, noether-jpa-processor, ...) are
         added milestone by milestone, each one with its first failing test — see
-        ROADMAP.md. The TCK runner (mansart-jpa-tck) is never listed here: it is
+        ROADMAP.md. The TCK runner (noether-jpa-tck) is never listed here: it is
         out of the reactor, like mansart-data-tck and mansart-transactions-tck.
     -->
 
     <modules>
-        <module>mansart-jpa-dialects</module>
-        <module>mansart-jpa-core</module>
-        <module>mansart-jpa-processor</module>
-        <module>mansart-jpa-module-it</module>
-        <module>mansart-jpa-processor-module-it</module>
-        <module>mansart-jpa-cdi</module>
-        <module>mansart-jpa-cdi-module-it</module>
+        <module>noether-jpa-dialects</module>
+        <module>noether-jpa-core</module>
+        <module>noether-jpa-processor</module>
+        <module>noether-jpa-module-it</module>
+        <module>noether-jpa-processor-module-it</module>
+        <module>noether-jpa-cdi</module>
+        <module>noether-jpa-cdi-module-it</module>
     </modules>
 
     <dependencyManagement>
@@ -92,34 +92,34 @@
                 <version>${jakarta.persistence.version}</version>
             </dependency>
             <dependency>
-                <groupId>io.vidocq.mansart</groupId>
-                <artifactId>mansart-jpa-core</artifactId>
+                <groupId>io.vidocq.noether</groupId>
+                <artifactId>noether-jpa-core</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>io.vidocq.mansart</groupId>
-                <artifactId>mansart-jpa-processor</artifactId>
+                <groupId>io.vidocq.noether</groupId>
+                <artifactId>noether-jpa-processor</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <!-- Decision D7: the default connection pool of jakarta.persistence.jdbc.* units in Java SE. -->
             <dependency>
                 <groupId>io.vidocq.mansart</groupId>
                 <artifactId>mansart-pool-core</artifactId>
+                <version>${mansart.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.vidocq.noether</groupId>
+                <artifactId>noether-jpa-dialect-spi</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>io.vidocq.mansart</groupId>
-                <artifactId>mansart-jpa-dialect-spi</artifactId>
+                <groupId>io.vidocq.noether</groupId>
+                <artifactId>noether-jpa-dialect-h2</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>io.vidocq.mansart</groupId>
-                <artifactId>mansart-jpa-dialect-h2</artifactId>
-                <version>${project.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>io.vidocq.mansart</groupId>
-                <artifactId>mansart-jpa-dialect-postgresql</artifactId>
+                <groupId>io.vidocq.noether</groupId>
+                <artifactId>noether-jpa-dialect-postgresql</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <!-- Unit tests run on H2 in memory; never at run time. -->
@@ -132,7 +132,7 @@
             <dependency>
                 <groupId>io.vidocq.mansart</groupId>
                 <artifactId>mansart-data-dialect-spi</artifactId>
-                <version>${project.version}</version>
+                <version>${mansart.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

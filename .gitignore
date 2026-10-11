@@ -1,0 +1,16 @@
+target/
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+!.mvn/wrapper/maven-wrapper.properties
+.idea/
+*.iml
+.DS_Store
+dependency-reduced-pom.xml
+# TCK Jakarta Transactions 2.0 — TCK déballé localement par install-tck.sh
+mansart-transactions/.tck-cache/
+
+# Claude Code / tooling local
+.claude/
+
+# Jakarta Persistence TCK bundle, unpacked by noether-persistence/noether-jpa-tck/install-tck.sh
+noether-persistence/.tck-cache/

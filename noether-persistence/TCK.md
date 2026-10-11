@@ -1,3 +1,34 @@
+## Noether post-extraction verification — 2026-10-11
+
+Full Jakarta Persistence 3.2.1 TCK on Temurin 25.0.4 and PostgreSQL 17:
+**2135 tests, 2131 passed, zero failures/errors, four skips**.
+All 2135 test identities and outcomes match the retained Mansart P11 correctness baseline.
+This run uses the documented local TCK-BUG-001 fixture patch, not an untouched official
+suite or a certification result. Validation is absent in execution 1 (`TCK_VALIDATION=off`);
+this run does not repeat the separate Validation-on neutrality comparison.
+
+Command from the Noether repository root:
+
+```bash
+export JAVA_HOME="$HOME/.sdkman/candidates/java/25.0.4-tem"
+export PATH="$JAVA_HOME/bin:$PATH"
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+Reports: `noether-jpa-tck/target/failsafe-reports/`,
+`noether-jpa-tck/target/tck-report-persistence.txt` and
+`noether-jpa-tck/target/tck-fixtures/fixture-provenance.json`.
+All 259 XML reports verify the prepared spec-tests jar on the actual classpath.
+Official jar SHA-256: `a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`;
+derived jar SHA-256: `1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+
+---
+
+> Historical evidence: recorded before the 2026-10-11 extraction from Mansart.
+> Original names, commands, source revisions and measurements are retained verbatim;
+> they are not results measured on Noether. See the repository README for current commands.
+
 # TCK status — Mansart JPA (Jakarta Persistence 3.2)
 
 Official suite: **Jakarta Persistence 3.2.1** TCK (bundle from eclipse.org, SHA-256 checked), standalone mode,
