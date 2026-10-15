@@ -1,3 +1,31 @@
+## Noether alternate relationship mappings verification — 2026-10-14
+
+After adding to-one join tables and unidirectional one-to-many target-table foreign keys,
+the full Jakarta Persistence 3.2.1 runner on Temurin 25.0.4 and PostgreSQL 17 reports
+**2135 tests, 2131 passed, zero failures, zero errors, four skips** (unchanged).
+Execution 1: 2134 tests / 2130 passes / four skips; execution 2: one test / one pass.
+The four skips remain the official exclusions listed below; no additional exclusions
+or fixture changes were introduced. These previously unsupported shapes are covered
+by unit regressions, not newly exercised official TCK tests.
+
+Command from the Noether repository root:
+
+```bash
+export JAVA_HOME="$HOME/.sdkman/candidates/java/25.0.4-tem"
+export PATH="$JAVA_HOME/bin:$PATH"
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+Both failsafe executions and their XML reports were inspected, not only the script exit
+code. All 259 reports verify the same derived spec-tests jar as the 2026-10-11 run below.
+Reports: `noether-jpa-tck/target/failsafe-reports/` and
+`noether-jpa-tck/target/tck-report-persistence.txt`.
+This uses the unchanged local TCK-BUG-001 patch: **not an untouched official result
+or a certification claim**. Validation remains absent in execution 1.
+
+---
+
 ## Noether post-extraction verification — 2026-10-11
 
 Full Jakarta Persistence 3.2.1 TCK on Temurin 25.0.4 and PostgreSQL 17:

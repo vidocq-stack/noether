@@ -258,12 +258,34 @@ class OrmXmlTest {
     }
 
     @Test
+    void embeddedForeignKeyCollectionsUseTheLoweredRelationshipSlot() {
+        try (EntityManagerFactory emf = new PersistenceConfiguration("embedded-foreign-key-children")
+                .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
+                .managedClass(EmbeddedLinks.UnsupportedHolder.class).managedClass(EmbeddedLinks.Holder.class)
+                .managedClass(EmbeddedLinks.Target.class)
+                .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:embedded-foreign-key-children")
+                .property(PersistenceConfiguration.SCHEMAGEN_DATABASE_ACTION, "create").createEntityManagerFactory()) {
+            emf.runInTransaction(em -> {
+                var holder = new EmbeddedLinks.UnsupportedHolder();
+                holder.id = 1;
+                holder.links = new EmbeddedLinks.ForeignKeyChildren();
+                var target = new EmbeddedLinks.Target();
+                target.setId(10);
+                holder.links.children.add(target);
+                em.persist(holder);
+                em.persist(target);
+            });
+            emf.runInTransaction(em -> {
+                var holder = em.find(EmbeddedLinks.UnsupportedHolder.class, 1L);
+                assertThat(holder.links.children).extracting(EmbeddedLinks.Target::getId).containsExactly(10L);
+                holder.links.children.clear();
+            });
+            emf.runInTransaction(em -> assertThat(em.find(EmbeddedLinks.UnsupportedHolder.class, 1L).links.children).isEmpty());
+        }
+    }
+
+    @Test
     void unsupportedEmbeddedCollectionShapesFailAtBootstrapRatherThanOmittingTheirState() {
-        assertThatThrownBy(() -> new PersistenceConfiguration("unsupported-embedded-children")
-            .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
-            .managedClass(EmbeddedLinks.UnsupportedHolder.class).managedClass(EmbeddedLinks.Holder.class)
-            .managedClass(EmbeddedLinks.Target.class).createEntityManagerFactory())
-            .isInstanceOf(PersistenceException.class).hasMessageContaining("links.children").hasMessageContaining("foreign key");
         assertThatThrownBy(() -> new PersistenceConfiguration("unsupported-embedded-elements")
             .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
             .managedClass(EmbeddedLinks.UnsupportedElementHolder.class).managedClass(EmbeddedLinks.Holder.class)

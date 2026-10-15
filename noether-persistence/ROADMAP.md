@@ -435,12 +435,24 @@ Spec: ch. 2.10–2.12 (relationships, defaults), ch. 2.4.2 (derived identities),
 **Left after P5** — shapes no TCK test exercises, mapped when an application or a later milestone needs them (each is
 refused or left as the instance holds it, naming P5, never mapped wrongly):
 
-- single-valued relationships through a join table; unidirectional one-to-many through a foreign key in the target;
 - relationships to an entity with a derived identity; a join column referencing a column that is not a key;
 - indexes on the inverse side of a many-to-many; relationships inside collection-table embeddable elements;
 - lazy loading proper — collection wrappers and to-one subclasses generated with the Class-File API — instead of
   loading everything with its owner: a performance concern, measured with P12 (`BENCH.md`), not a conformance one;
 - joins instead of secondary selects, with the SQL AST of P7.
+
+**Follow-up (2026-10-14)**: `@ManyToOne` / `@OneToOne` through `@JoinTable`, including inverse
+one-to-one lookup, and unidirectional `@OneToMany` through target-table foreign keys now execute.
+Annotation and XML mappings share the relational planners, generated accesses, schema generation,
+loading, snapshots, merge, reassignment/unlink/removal and JPQL/Criteria translation. Composite
+keys are matched by `referencedColumnName`; defaults and per-column `insertable` / `updatable`
+flags are preserved. Target-table links are included in target INSERTs (including generated owner
+identifiers and non-nullable links), with owner-before-target ordering, stored collection indexes,
+two-phase transfers and orphan removal. Secondary-table keys and JOINED targets are covered.
+To-one join tables enforce owner uniqueness and one-to-one target uniqueness; swaps release old
+links before writing new ones. Bulk to-one assignments and owner deletes reuse captured-key
+mutations, without cascading deletion to targets. `AssociationTablesTest` and the embedded/XML
+regressions cover these shapes; other P5 gaps above remain open.
 
 **Follow-up (2026-10-09, BUG-20261009-24)**: embeddable map keys now execute through the existing generated
 accesses, flattened columns, binders and hydration, for element collections and relationship maps.
@@ -669,8 +681,9 @@ Spec: ch. 12 (`orm.xml`), §8.2.1.6.2 (`mapping-file` in `persistence.xml`, defa
       member and class dotted overrides clone per-owner embeddable views, including schema foreign-key metadata;
       JPQL/Criteria, ordered join tables, embedded element collections, dotted inverse `mappedBy`, cascades,
       merge/refresh/detach, orphan removal and dirty checking share the existing planners (BUG-20261009-22 fixed).
-      Existing P5 unsupported shapes (to-one join tables, unidirectional one-to-many foreign-key collections and
-      associations inside collection-table embeddable elements) are explicitly refused, never silently omitted.
+      Remaining P5 unsupported shapes, including associations inside collection-table embeddable elements,
+      are explicitly refused, never silently omitted. To-one join tables and target-table one-to-many
+      foreign keys are covered by the 2026-10-14 follow-up above.
 - [x] Callbacks: XML entity listeners and callback methods, default listeners first (§3.6.4),
       `exclude-default-listeners`, `exclude-superclass-listeners`; named JPQL/native queries, result-set mappings,
       stored procedures and entity graphs of mapping files, replacing annotated ones of the same name.

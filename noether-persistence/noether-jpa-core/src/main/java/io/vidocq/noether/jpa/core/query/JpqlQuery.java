@@ -258,6 +258,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
                 }
                 for (Object item : captured) {
                     Object[] row = compiled.items().size() == 1 ? new Object[] {item} : (Object[]) item;
+                    if (mutation.required().stream().anyMatch(i -> row[i] == null)) continue;
                     for (int i = 0; i < mutation.values().size(); i++) {
                         mutation.binders().get(i).bind(dialect, statement, i + 1, row[mutation.values().get(i)]);
                     }

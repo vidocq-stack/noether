@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entity-mappings xmlns="https://jakarta.ee/xml/ns/persistence/orm" version="3.2">
+  <entity class="io.vidocq.noether.jpa.core.session.AssociationTablesTest$XmlOwner" name="XmlOwner" access="FIELD">
+    <attributes>
+      <id name="id"/>
+      <one-to-many name="children" target-entity="io.vidocq.noether.jpa.core.session.AssociationTablesTest$XmlTarget">
+        <join-column name="xml_parent"/>
+      </one-to-many>
+      <one-to-one name="target" target-entity="io.vidocq.noether.jpa.core.session.AssociationTablesTest$XmlTarget">
+        <join-table name="xml_to_one">
+          <join-column name="owner_key"/>
+          <inverse-join-column name="target_key"/>
+        </join-table>
+      </one-to-one>
+    </attributes>
+  </entity>
+  <entity class="io.vidocq.noether.jpa.core.session.AssociationTablesTest$XmlTarget" name="XmlTarget" access="FIELD">
+    <attributes>
+      <id name="id"/>
+      <one-to-one name="owner" mapped-by="target" target-entity="io.vidocq.noether.jpa.core.session.AssociationTablesTest$XmlOwner"/>
+    </attributes>
+  </entity>
+</entity-mappings>

@@ -144,7 +144,9 @@ final class Translator {
         String bulkEntity = statement instanceof Ast.Update update ? update.entity()
             : statement instanceof Ast.Delete delete ? delete.entity() : null;
         if (bulkEntity != null && (unit.inheritance(translator.entityNamed(bulkEntity).model().javaType()).joined()
-                || translator.entityNamed(bulkEntity).statements().tables().size() > 1)) {
+                || translator.entityNamed(bulkEntity).statements().tables().size() > 1
+                || translator.entityNamed(bulkEntity).statements().collections().stream()
+                    .anyMatch(m -> m instanceof CollectionMapping.ForeignKey || m.association().singleValued()))) {
             return translator.joinedBulk(statement);
         }
         return switch (statement) {
@@ -235,6 +237,7 @@ final class Translator {
         readers.forEach(b -> items.add(new Compiled.ValueItem(b, null)));
         Map<Integer, List<Integer>> assigned = new java.util.LinkedHashMap<>();
         Map<Integer, List<Identifier>> setColumns = new java.util.LinkedHashMap<>();
+        Map<CollectionMapping.JoinTable, List<Integer>> tableReferences = new java.util.LinkedHashMap<>();
         if (update != null) {
             for (Ast.Assignment assignment : update.assignments()) {
                 List<String> segments = assignment.path().segments();
@@ -244,6 +247,23 @@ final class Translator {
                 List<EntityStatements.Column> columns;
                 List<Expression> values;
                 if (attribute instanceof AssociationAttribute association && association.singleValued()) {
+                    var mapping = type.statements().collection(index).orElse(null);
+                    if (mapping instanceof CollectionMapping.JoinTable table) {
+                        Entity like = new Entity(entity(association.targetEntity()),
+                            names(variable.alias(), table.targetColumns()), table.targetBinders());
+                        values = assignment.value() instanceof Ast.Literal(Object v) && v == null
+                            ? table.targetColumns().stream().<Expression>map(_ -> new Expression.Literal(null)).toList()
+                            : sql(assignment.value() instanceof Ast.Parameter ? boundValue(assignment.value(), like) : value(assignment.value()));
+                        List<Integer> positions = new ArrayList<>();
+                        for (int k = 0; k < values.size(); k++) {
+                            positions.add(projected.size());
+                            projected.add(values.get(k));
+                            readers.add(table.targetBinders().get(k));
+                            items.add(new Compiled.ValueItem(table.targetBinders().get(k), null));
+                        }
+                        tableReferences.put(table, positions);
+                        continue;
+                    }
                     var reference = type.statements().reference(index).orElseThrow();
                     columns = Arrays.stream(reference.columns()).mapToObj(c -> type.statements().columns().get(c)).toList();
                     Entity like = new Entity(entity(association.targetEntity()), columns(variable, reference.columns()),
@@ -279,6 +299,15 @@ final class Translator {
         List<Integer> keyIndexes = java.util.stream.IntStream.range(0, type.statements().keyColumns().size()).boxed().toList();
         List<Compiled.Mutation> mutations = new ArrayList<>();
         if (update != null) {
+            for (var entry : tableReferences.entrySet()) {
+                var table = entry.getKey();
+                mutations.add(new Compiled.Mutation(table.deleteOwner(), keyIndexes, table.ownerBinders()));
+                List<Integer> values = new ArrayList<>(keyIndexes);
+                values.addAll(entry.getValue());
+                List<ValueBinder> binders = new ArrayList<>(table.ownerBinders());
+                binders.addAll(table.targetBinders());
+                mutations.add(new Compiled.Mutation(table.insert(), List.copyOf(values), List.copyOf(binders), entry.getValue()));
+            }
             for (int t : assigned.keySet()) {
                 var table = type.statements().tables().get(t).select();
                 List<Integer> values = new ArrayList<>(assigned.get(t));
@@ -287,6 +316,24 @@ final class Translator {
                     setColumns.get(t), table.conditions()), List.copyOf(values), values.stream().map(readers::get).toList()));
             }
         } else {
+            for (CollectionMapping mapping : type.statements().collections()) {
+                if (mapping instanceof CollectionMapping.JoinTable table && table.association().singleValued()) {
+                    mutations.add(new Compiled.Mutation(table.deleteOwner(), keyIndexes, table.ownerBinders()));
+                } else if (mapping instanceof CollectionMapping.ForeignKey foreign) {
+                    List<Integer> values = new ArrayList<>();
+                    for (var binder : foreign.ownerBinders()) {
+                        values.add(projected.size());
+                        projected.add(new Expression.Literal(null));
+                        readers.add(binder);
+                        items.add(new Compiled.ValueItem(binder, null));
+                    }
+                    values.addAll(keyIndexes);
+                    List<ValueBinder> binders = new ArrayList<>(foreign.ownerBinders());
+                    binders.addAll(foreign.ownerBinders());
+                    mutations.add(new Compiled.Mutation(new io.vidocq.noether.jpa.dialect.sql.Update(foreign.table(),
+                        foreign.ownerColumns(), foreign.ownerColumns()), List.copyOf(values), List.copyOf(binders)));
+                }
+            }
             Map<Table, List<Identifier>> tables = new java.util.LinkedHashMap<>();
             unit.inheritance(type.model().javaType()).hierarchy().stream()
                 .filter(e -> type.model().javaType().isAssignableFrom(e.javaType()))
@@ -300,6 +347,8 @@ final class Translator {
                     keyIndexes, keyIndexes.stream().map(readers::get).toList()));
             }
         }
+        // Delete cleanup may append NULL values projected for target-table updates.
+        selection = new Query(false, projected, from, where, List.of(), null, List.of(), null, null);
         return new Compiled(selection, List.copyOf(items), Object[].class, slots(selection.parameters()), List.copyOf(mutations));
     }
 
@@ -731,11 +780,12 @@ final class Translator {
         if (owned.isPresent()) { // from.fk = target.key
             on = equal(columns(from, owned.get().columns()), key(alias, target));
         } else if (!association.owning()) { // the owner's foreign key holds this key: target.fk = from.key
-            var reference = target.statements().reference(attribute(target, association.mappedBy())).orElseThrow(() ->
-                NotYet.milestone("P7", "a join through an inverse side that its owner does not map by a foreign key"));
+            var inverse = target.statements().reference(attribute(target, association.mappedBy()));
+            if (inverse.isEmpty()) return collectionJoin(from, attribute, association, kind, target);
+            var reference = inverse.get();
             on = foreignKeyPredicate(alias, target, reference.columns(), key(from.alias(), from.type()));
         } else {
-            throw NotYet.milestone("P7", "joins over a relationship through a join table");
+            return collectionJoin(from, attribute, association, kind, target);
         }
         Variable variable = new Variable(target, alias, from.root(), this);
         Expression restriction = inheritanceRestriction(variable);
@@ -756,6 +806,8 @@ final class Translator {
         switch (collection(from, attribute, association)) {
             case Link.ByForeignKey link -> list.add(new Query.Join(kind, table(target), alias,
                 foreignKeyPredicate(alias, target, link.columns(), key(from.alias(), from.type()))));
+            case Link.ByColumns link -> list.add(new Query.Join(kind, table(target), alias,
+                collectionKeyPredicate(alias, target, link, key(from.alias(), from.type()))));
             case Link.ByTable link -> {
                 String row = alias();
                 positions = row;
@@ -763,9 +815,11 @@ final class Translator {
                 list.add(new Query.Join(kind, table(target), alias, equal(key(alias, target), names(row, link.memberColumns()))));
             }
         }
-        io.vidocq.noether.jpa.core.mapping.IndexMapping index = switch (from.type().statements().collection(attribute).orElseThrow()) {
+        io.vidocq.noether.jpa.core.mapping.IndexMapping index = switch (from.type().statements().collection(attribute).orElse(null)) {
+            case null -> null;
             case CollectionMapping.JoinTable table -> table.index();
             case CollectionMapping.MappedBy inverse -> inverse.index();
+            case CollectionMapping.ForeignKey foreign -> foreign.index();
             case CollectionMapping.Unsupported _ -> null;
         };
         Expression position = index != null && index.positional() ? new Expression.Column(positions, index.columns().getFirst()) : null;
@@ -807,10 +861,23 @@ final class Translator {
             "the element collection " + from.type().model().attributes().get(attribute).name() + " of " + from.type().model().entityName()));
     }
 
+    private Expression collectionKeyPredicate(String targetAlias, MappedEntity target, Link.ByColumns link,
+            List<Expression> ownerKey) {
+        if (link.table().equals(table(target))) return equal(names(targetAlias, link.columns()), ownerKey);
+        String row = alias();
+        Expression where = new Binary(equal(names(row, link.keys()), key(targetAlias, target)), Operator.AND,
+            equal(names(row, link.columns()), ownerKey));
+        return new Expression.Exists(new Query(false, List.of(new Expression.Literal(1)),
+            List.of(new Query.From(link.table(), row, List.of())), where, List.of(), null, List.of(), null, null), false);
+    }
+
     /** How the members of a collection-valued relationship are reached from their owner. */
     private sealed interface Link {
         /** The members' foreign key {@code columns} (in the target's columns) hold the owner's key. */
         record ByForeignKey(int[] columns) implements Link {
+        }
+
+        record ByColumns(Table table, List<Identifier> columns, List<Identifier> keys) implements Link {
         }
 
         /** A table of rows, owner key then member key. */
@@ -820,21 +887,24 @@ final class Translator {
 
     private Link collection(Variable from, int attribute, AssociationAttribute association) {
         MappedEntity target = entity(association.targetEntity());
-        return switch (from.type().statements().collection(attribute).orElseThrow()) {
+        if (!association.owning()) {
+            int mappedBy = attribute(target, association.mappedBy());
+            var reference = target.statements().reference(mappedBy);
+            var owner = target.statements().collection(mappedBy);
+            if (reference.isPresent()) return new Link.ByForeignKey(reference.get().columns());
+            if (owner.isPresent() && owner.get() instanceof CollectionMapping.JoinTable table) {
+                return new Link.ByTable(table.table(), table.targetColumns(), table.ownerColumns());
+            }
+            throw NotYet.milestone("P7", "a collection whose owning side is mapped by a shape not mapped yet");
+        }
+        return switch (from.type().statements().collection(attribute).orElse(null)) {
             case CollectionMapping.JoinTable table -> new Link.ByTable(table.table(), table.ownerColumns(), table.targetColumns());
+            case CollectionMapping.ForeignKey foreign -> new Link.ByColumns(foreign.table(), foreign.ownerColumns(), foreign.targetColumns());
             case CollectionMapping.MappedBy _ -> {
-                int mappedBy = attribute(target, association.mappedBy());
-                var reference = target.statements().reference(mappedBy);
-                var owner = target.statements().collection(mappedBy);
-                if (reference.isPresent()) {
-                    yield new Link.ByForeignKey(reference.get().columns());
-                }
-                if (owner.isPresent() && owner.get() instanceof CollectionMapping.JoinTable table) {
-                    yield new Link.ByTable(table.table(), table.targetColumns(), table.ownerColumns());
-                }
                 throw NotYet.milestone("P7", "a collection whose owning side is mapped by a shape not mapped yet");
             }
             case CollectionMapping.Unsupported unsupported -> throw NotYet.milestone("P5", unsupported.feature());
+            case null -> throw NotYet.milestone("P5", "a relationship without a relational mapping");
         };
     }
 
@@ -859,11 +929,18 @@ final class Translator {
                 } else if (!association.owning()) {
                     var inverse = target.statements().reference(attribute(target, association.mappedBy()));
                     if (inverse.isEmpty()) {
-                        throw NotYet.milestone("P7", "a correlated path through an inverse relationship without a foreign key");
+                        var link = (Link.ByTable) collection(owner, attribute, association);
+                        Variable row = root(link.table(), null, null);
+                        correlations.add(equal(names(row.alias(), link.ownerColumns()), ownerKey));
+                        correlations.add(equal(names(row.alias(), link.memberColumns()), key(member.alias(), target)));
+                    } else {
+                        correlations.add(foreignKeyPredicate(member.alias(), target, inverse.get().columns(), ownerKey));
                     }
-                    correlations.add(foreignKeyPredicate(member.alias(), target, inverse.get().columns(), ownerKey));
                 } else {
-                    throw NotYet.milestone("P7", "a correlated path through a single-valued relationship using a join table");
+                    var link = (Link.ByTable) collection(owner, attribute, association);
+                    Variable row = root(link.table(), null, null);
+                    correlations.add(equal(names(row.alias(), link.ownerColumns()), ownerKey));
+                    correlations.add(equal(names(row.alias(), link.memberColumns()), key(member.alias(), target)));
                 }
                 yield member;
             }
@@ -873,6 +950,11 @@ final class Translator {
                     case Link.ByForeignKey link -> {
                         Variable member = root(table(target), target, null);
                         correlations.add(foreignKeyPredicate(member.alias(), target, link.columns(), ownerKey));
+                        yield member;
+                    }
+                    case Link.ByColumns link -> {
+                        Variable member = root(table(target), target, null);
+                        correlations.add(collectionKeyPredicate(member.alias(), target, link, ownerKey));
                         yield member;
                     }
                     case Link.ByTable link -> {
@@ -954,7 +1036,7 @@ final class Translator {
                 return embeddedPath(variable, attribute, segments.subList(s + 1, segments.size()));
             }
             if (inJoinCondition && variable.type().model().attributes().get(attribute) instanceof AssociationAttribute association
-                    && association.singleValued() && variable.type().statements().reference(attribute).isPresent()) {
+                    && association.singleValued()) {
                 // An ON path must not introduce a later/global inner join that removes an unmatched LEFT root.
                 String name = "_noether_on_" + alias();
                 while (lookup(name) != null) name += "_";
@@ -981,6 +1063,22 @@ final class Translator {
                     EntityStatements statements = variable.type().statements();
                     yield new Entity(entity(association.targetEntity()), columns(variable, owned.get().columns()),
                         binders(statements, owned.get().columns()));
+                }
+                if (!selecting && (association.owning() && variable.type().statements().collection(attribute).isPresent()
+                        || !association.owning() && entity(association.targetEntity()).statements()
+                            .collection(attribute(entity(association.targetEntity()), association.mappedBy())).isPresent())) {
+                    Link.ByTable link = (Link.ByTable) collection(variable, attribute, association);
+                    List<Expression> keys = new ArrayList<>();
+                    for (Identifier column : link.memberColumns()) {
+                        String row = alias();
+                        keys.add(new Expression.Subquery(new Query(false, names(row, List.of(column)),
+                            List.of(new Query.From(link.table(), row, List.of())),
+                            equal(names(row, link.ownerColumns()), key(variable.alias(), variable.type())),
+                            List.of(), null, List.of(), null, null)));
+                    }
+                    MappedEntity target = entity(association.targetEntity());
+                    yield new Entity(target, List.copyOf(keys),
+                        target.statements().keyColumns().stream().map(EntityStatements.Column::binder).toList());
                 }
                 Variable target = navigate(variable, attribute, selecting ? Query.Join.Kind.INNER : Query.Join.Kind.LEFT);
                 yield entityValue(target.alias(), target.type());

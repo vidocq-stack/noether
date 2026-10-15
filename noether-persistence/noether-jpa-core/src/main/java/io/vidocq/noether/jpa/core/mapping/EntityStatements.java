@@ -197,6 +197,11 @@ public final class EntityStatements {
                     binders, embeddables, tableNames, columns, id ? mapsIds.keySet() : Set.of(), delimited);
                 case AssociationAttribute association when association.singleValued() && association.owning() -> {
                     boolean identifier = id || association.mapsId() != null;
+                    if (association.joinTable() != null && !identifier) {
+                        collections.add(collection(inheritance == null ? model : inheritance.declaringEntity(association.declaringClass()),
+                            association, i, models, binders, embeddables, inheritances, delimited));
+                        continue;
+                    }
                     String problem = foreignKey(association, i, identifier, models, binders, tableNames, columns, references, inheritances, delimited);
                     if (problem != null) {
                         return unsupported(model, "P5", problem);
@@ -455,14 +460,50 @@ public final class EntityStatements {
         if (!association.owning()) {
             return inverse(association, attribute, target, index, binders, inheritances, delimited);
         }
-        if (association.kind() == AssociationAttribute.Kind.ONE_TO_MANY && association.joinTable() == null
-                && !association.joinColumns().isEmpty()) {
-            return new CollectionMapping.Unsupported(attribute, association, "a unidirectional one-to-many through a foreign key");
-        }
         List<KeyColumn> ownerKeys = relationalKeys(owner, binders, inheritances, delimited);
         List<KeyColumn> targetKeys = relationalKeys(target, binders, inheritances, delimited);
         if (ownerKeys == null || targetKeys == null) {
             return new CollectionMapping.Unsupported(attribute, association, "a join table of an entity with a derived identity");
+        }
+        if (association.kind() == AssociationAttribute.Kind.ONE_TO_MANY && association.joinTable() == null
+                && !association.joinColumns().isEmpty()) {
+            JoinColumnModel[] joins = byKeyPart(describe(association), association.joinColumns(), ownerKeys, owner, delimited);
+            if (joins == null) {
+                return new CollectionMapping.Unsupported(attribute, association, "a join column referencing a column that is not a key");
+            }
+            String tableName = joins[0].table();
+            if (Arrays.stream(joins).anyMatch(j -> !java.util.Objects.equals(tableName, j.table()))) {
+                throw new PersistenceException("The join columns of " + describe(association) + " must belong to one target table");
+            }
+            TableModel targetTable = primaryTable(target, inheritances);
+            List<Identifier> targetNames = targetKeys.stream().map(k -> k.identifier(delimited)).toList();
+            if (tableName != null && !tableName.equals(targetTable.name())) {
+                InheritanceMapping targetInheritance = inheritances.apply(target.javaType());
+                List<SecondaryTableModel> targetTables = targetInheritance == null
+                    ? target.secondaryTables() : targetInheritance.tables();
+                SecondaryTableModel selected = targetTables.stream()
+                    .filter(t -> t.table().name().equals(tableName)).findFirst()
+                    .orElseThrow(() -> new PersistenceException("Unknown target table " + tableName + " of " + describe(association)));
+                targetTable = selected.table();
+                List<Identifier> keyNames = keyColumns(target, binders).stream().map(k -> k.identifier(delimited)).toList();
+                if (selected.joinColumns().size() == keyNames.size()) {
+                    targetNames = selected.joinColumns().stream().map(n -> Identifier.of(n, delimited)).toList();
+                } else if (targetInheritance != null && targetInheritance.joined()) {
+                    int t = targetTables.indexOf(selected);
+                    targetNames = t < targetInheritance.chain().size()
+                        ? targetInheritance.keyNames(t, keyNames)
+                        : targetInheritance.secondaryKeys(selected, keyNames);
+                }
+            }
+            List<Identifier> names = new ArrayList<>();
+            for (int k = 0; k < ownerKeys.size(); k++) {
+                names.add(Identifier.of(joins[k].name() == null
+                    ? owner.entityName() + "_" + ownerKeys.get(k).name() : joins[k].name(), delimited));
+            }
+            return new CollectionMapping.ForeignKey(attribute, association, table(targetTable, delimited), names,
+                ownerKeys.stream().map(KeyColumn::binder).toList(),
+                targetNames,
+                targetKeys.stream().map(KeyColumn::binder).toList(), List.of(joins), index);
         }
         JoinTableModel written = association.joinTable() != null ? association.joinTable() : JoinTableModel.defaults();
         JoinColumnModel[] ownerJoins = byKeyPart(describe(association), written.joinColumns(), ownerKeys, owner, delimited);
@@ -491,7 +532,7 @@ public final class EntityStatements {
         Table table = new Table(Identifier.of(tableName, delimited), written.schema() == null ? null : Identifier.of(written.schema(), delimited),
             written.catalog() == null ? null : Identifier.of(written.catalog(), delimited));
         return new CollectionMapping.JoinTable(attribute, association, table, ownerColumns, ownerBinders, targetColumns,
-            targetBinders, index);
+            targetBinders, index, List.of(ownerJoins), List.of(targetJoins));
     }
 
     /**

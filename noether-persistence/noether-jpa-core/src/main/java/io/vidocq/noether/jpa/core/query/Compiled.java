@@ -42,7 +42,11 @@ record Compiled(Statement sql, List<Item> items, Class<?> resultType, List<Slot>
     }
 
     /** A table mutation whose parameters come from a captured key/value row (§4.10, joined inheritance). */
-    record Mutation(Statement sql, List<Integer> values, List<ValueBinder> binders) {}
+    record Mutation(Statement sql, List<Integer> values, List<ValueBinder> binders, List<Integer> required) {
+        Mutation(Statement sql, List<Integer> values, List<ValueBinder> binders) {
+            this(sql, values, binders, List.of());
+        }
+    }
 
     /**
      * What a SQL parameter binds: the query parameter, the element of a collection-valued one ({@code element} ≥ 0,

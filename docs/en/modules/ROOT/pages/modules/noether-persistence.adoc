@@ -225,8 +225,17 @@ Production artifacts are `noether-jpa-core`, `noether-jpa-dialect-spi`, `noether
 `noether-jpa` is their POM aggregator, not a runtime dependency.
 The official TCK runner and comparative benchmark harness remain outside the production reactor.
 
-Some mapping shapes remain explicitly refused: to-one join tables, unidirectional one-to-many foreign-key
-collections and associations inside collection-table embeddable elements.
+To-one relationships (`@ManyToOne` / `@OneToOne`) may use `@JoinTable`, including inverse
+one-to-one lookup. Unidirectional `@OneToMany` may use `@JoinColumn` / `@JoinColumns` in the
+target table, including stored indexes and non-nullable links. These annotation and XML mappings
+share schema generation, CRUD, snapshots, merge, orphan removal and JPQL/Criteria plans.
+Composite keys, join-column defaults and write flags are supported; target secondary tables and
+JOINED inheritance use their mapped relational keys. To-one bulk assignments and bulk owner
+deletes maintain the corresponding relationship rows; bulk operations do not cascade to targets.
+
+Some mapping shapes remain explicitly refused: relationships to derived-identity targets,
+joins referencing non-key columns, inverse many-to-many indexes and associations inside
+collection-table embeddable elements.
 `TABLE_PER_CLASS` is optional and deferred. Eager relationship loading is supported; lazy exclusion is not guaranteed.
 Data/JPA bridging and generation mutualisation remain deferred, without modifying the delivered Data producer.
 

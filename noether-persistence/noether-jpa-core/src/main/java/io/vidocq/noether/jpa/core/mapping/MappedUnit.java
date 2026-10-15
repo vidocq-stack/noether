@@ -186,11 +186,26 @@ public final class MappedUnit {
             Set<Class<?>> targets = new LinkedHashSet<>();
             for (AttributeModel attribute : entity.attributes()) {
                 if (attribute instanceof AssociationAttribute association && association.owning() && association.singleValued()
-                        && entities.contains(association.targetEntity()) && association.targetEntity() != entity.javaType()) {
+                        && association.joinTable() == null && entities.contains(association.targetEntity())
+                        && association.targetEntity() != entity.javaType()) {
                     targets.add(association.targetEntity());
                 }
             }
             references.put(entity.javaType(), targets);
+        }
+        for (EntityModel entity : model.entities()) {
+            for (AttributeModel attribute : entity.attributes()) {
+                if (attribute instanceof AssociationAttribute association && association.owning()
+                        && association.kind() == AssociationAttribute.Kind.ONE_TO_MANY && association.joinTable() == null
+                        && !association.joinColumns().isEmpty() && entities.contains(association.targetEntity())
+                        && association.targetEntity() != entity.javaType()) {
+                    for (Class<?> candidate : entities) {
+                        if (association.targetEntity().isAssignableFrom(candidate) && candidate != entity.javaType()) {
+                            references.get(candidate).add(entity.javaType());
+                        }
+                    }
+                }
+            }
         }
         Map<Class<?>, Integer> ranks = new IdentityHashMap<>();
         int rank = 0;

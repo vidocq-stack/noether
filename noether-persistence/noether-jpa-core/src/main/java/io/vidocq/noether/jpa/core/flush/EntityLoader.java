@@ -216,7 +216,13 @@ public final class EntityLoader {
                     List<Indexed> owners = inverse(association, null, id, statements, connection, context);
                     value = owners.isEmpty() ? null : owners.getFirst().element();
                 } else {
-                    continue; // through a join table: later in P5
+                    CollectionMapping mapping = statements.collection(i).orElseThrow();
+                    if (!(mapping instanceof CollectionMapping.JoinTable table)) continue;
+                    List<Object[]> found = keys(table.targets(), table.ownerBinders(), statements.keyValues(id),
+                        table.targetBinders(), describe(association), connection);
+                    value = found.isEmpty() || Arrays.stream(found.getFirst()).allMatch(java.util.Objects::isNull)
+                        ? null : find(entity(association.targetEntity()),
+                        entity(association.targetEntity()).statements().key(found.getFirst()), connection, context);
                 }
             } else {
                 MappedEntity target = entity(association.targetEntity());
@@ -237,6 +243,18 @@ public final class EntityLoader {
                         yield found;
                     }
                     case CollectionMapping.MappedBy inverse -> inverse(association, inverse.index(), id, statements, connection, context);
+                    case CollectionMapping.ForeignKey foreign -> {
+                        List<ValueBinder> readers = new ArrayList<>(foreign.targetBinders());
+                        if (foreign.index() != null) readers.addAll(foreign.index().binders());
+                        int width = foreign.targetBinders().size();
+                        List<Indexed> found = new ArrayList<>();
+                        for (Object[] columns : keys(foreign.targets(), foreign.ownerBinders(), statements.keyValues(id),
+                                readers, describe(association), connection)) {
+                            Object element = find(target, target.statements().key(Arrays.copyOf(columns, width)), connection, context);
+                            found.add(new Indexed(element, index(foreign.index(), columns, width, connection, context)));
+                        }
+                        yield found;
+                    }
                     case CollectionMapping.Unsupported _ -> null;
                 };
                 if (elements == null) {
@@ -254,6 +272,7 @@ public final class EntityLoader {
         return switch (mapping) {
             case CollectionMapping.JoinTable table -> table.index();
             case CollectionMapping.MappedBy inverse -> inverse.index();
+            case CollectionMapping.ForeignKey foreign -> foreign.index();
             case CollectionMapping.Unsupported _ -> null;
         };
     }

@@ -79,6 +79,27 @@ final class SchemaPlan {
                     foreignKey(join.table(), join.targetColumns(), unit.entity(join.association().targetEntity()).orElseThrow(),
                         annotation == null ? null : annotation.annotation("inverseForeignKey"));
                     if (annotation != null) constraints(join.table(), annotation);
+                    if (join.association().singleValued()) {
+                        joinNullability(columnsByName, join.ownerColumns(), join.ownerJoins());
+                        joinNullability(columnsByName, join.targetColumns(), join.targetJoins());
+                        unique(join.table(), join.ownerColumns(), "_owner");
+                        if (join.association().kind() == AssociationAttribute.Kind.ONE_TO_ONE) {
+                            unique(join.table(), join.targetColumns(), "_target");
+                        }
+                    }
+                } else if (collection instanceof CollectionMapping.ForeignKey foreign) {
+                    var columnsByName = tables.computeIfAbsent(foreign.table(), _ -> new LinkedHashMap<>());
+                    addKeys(columnsByName, foreign.ownerColumns(), entity);
+                    for (int k = 0; k < foreign.ownerColumns().size(); k++) {
+                        Identifier name = foreign.ownerColumns().get(k);
+                        var definition = columnsByName.get(name);
+                        columnsByName.put(name, new SchemaStatement.Column(name, definition.type(), definition.length(),
+                            definition.precision(), definition.scale(), foreign.joins().get(k).nullable(), false, false, null));
+                    }
+                    addIndex(columnsByName, foreign.index());
+                    AnnotationInfo annotation = attributeAnnotation(model, foreign.association(), "jakarta.persistence.JoinColumn");
+                    foreignKey(foreign.table(), foreign.ownerColumns(), entity,
+                        annotation == null ? null : annotation.annotation("foreignKey"));
                 } else if (collection instanceof CollectionMapping.MappedBy inverse && inverse.indexUpdate() != null) {
                     addIndex(tables.computeIfAbsent(inverse.indexUpdate().table(), _ -> new LinkedHashMap<>()), inverse.index());
                 }
@@ -120,6 +141,21 @@ final class SchemaPlan {
                     }
                 }
             });
+        }
+    }
+
+    private void unique(Table table, List<Identifier> columns, String suffix) {
+        indexes.add(new SchemaStatement(CREATE_INDEX, table, List.of(), List.of(),
+            identifier(table.name().name() + suffix),
+            columns.stream().map(c -> new SchemaStatement.IndexColumn(c, false)).toList(), true, 1, 1));
+    }
+
+    private void joinNullability(Map<Identifier, SchemaStatement.Column> columns, List<Identifier> names,
+            List<JoinColumnModel> joins) {
+        for (int k = 0; k < names.size(); k++) {
+            var column = columns.get(names.get(k));
+            columns.put(names.get(k), new SchemaStatement.Column(column.name(), column.type(), column.length(),
+                column.precision(), column.scale(), joins.get(k).nullable(), false, column.unique(), column.definition()));
         }
     }
 

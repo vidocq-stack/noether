@@ -21,6 +21,7 @@ package io.vidocq.noether.jpa.core.mapping;
 
 import io.vidocq.noether.jpa.core.jdbc.type.ValueBinder;
 import io.vidocq.noether.jpa.core.model.AssociationAttribute;
+import io.vidocq.noether.jpa.core.model.JoinColumnModel;
 import io.vidocq.noether.jpa.dialect.sql.Delete;
 import io.vidocq.noether.jpa.dialect.sql.Identifier;
 import io.vidocq.noether.jpa.dialect.sql.Insert;
@@ -38,8 +39,8 @@ import java.util.TreeSet;
 import java.util.Vector;
 
 /**
- * How a collection-valued relationship (§2.10, {@code @OneToMany} and {@code @ManyToMany}) reaches the database: the
- * rows of a join table its owner writes, or, on the inverse side, whatever the owning side of the target writes.
+ * Relationship rows outside their owner's entity table (§2.10): join tables (including to-one relationships),
+ * target-table collection foreign keys, or, on the inverse side, whatever the owning side writes.
  */
 public sealed interface CollectionMapping {
 
@@ -49,11 +50,12 @@ public sealed interface CollectionMapping {
     AssociationAttribute association();
 
     /**
-     * The owning side of a many-to-many, or of a unidirectional one-to-many (§2.10.5.1): one row per element, the key
+     * A relationship through a join table: one row per target (at most one for a to-one), the key
      * of the owner then the key of the element, each in the order of {@link EntityStatements#keyValues(Object)}.
      */
     record JoinTable(int attribute, AssociationAttribute association, Table table, List<Identifier> ownerColumns,
-            List<ValueBinder> ownerBinders, List<Identifier> targetColumns, List<ValueBinder> targetBinders, IndexMapping index)
+            List<ValueBinder> ownerBinders, List<Identifier> targetColumns, List<ValueBinder> targetBinders, IndexMapping index,
+            List<JoinColumnModel> ownerJoins, List<JoinColumnModel> targetJoins)
             implements CollectionMapping {
 
         public JoinTable {
@@ -61,6 +63,8 @@ public sealed interface CollectionMapping {
             ownerBinders = List.copyOf(ownerBinders);
             targetColumns = List.copyOf(targetColumns);
             targetBinders = List.copyOf(targetBinders);
+            ownerJoins = List.copyOf(ownerJoins);
+            targetJoins = List.copyOf(targetJoins);
         }
 
         /** The row of one element: the owner columns, the element columns, then the index columns, if any. */
@@ -102,6 +106,34 @@ public sealed interface CollectionMapping {
         /** The keys of the owners of an element, by the key of the element: how the inverse side reads the table. */
         public Select owners() {
             return new Select(table, ownerColumns, targetColumns);
+        }
+    }
+
+    /** §2.10.5: an owning one-to-many writes its key and optional index in the target's table. */
+    record ForeignKey(int attribute, AssociationAttribute association, Table table, List<Identifier> ownerColumns,
+            List<ValueBinder> ownerBinders, List<Identifier> targetColumns, List<ValueBinder> targetBinders,
+            List<JoinColumnModel> joins, IndexMapping index) implements CollectionMapping {
+        public ForeignKey {
+            ownerColumns = List.copyOf(ownerColumns);
+            ownerBinders = List.copyOf(ownerBinders);
+            targetColumns = List.copyOf(targetColumns);
+            targetBinders = List.copyOf(targetBinders);
+            joins = List.copyOf(joins);
+        }
+
+        public Select targets() {
+            List<Identifier> columns = new ArrayList<>(targetColumns);
+            if (index != null) columns.addAll(index.columns());
+            return new Select(table, columns, ownerColumns);
+        }
+
+        public Update update(boolean inserted) {
+            List<Identifier> columns = new ArrayList<>();
+            for (int k = 0; k < joins.size(); k++) {
+                if (inserted ? joins.get(k).insertable() : joins.get(k).updatable()) columns.add(ownerColumns.get(k));
+            }
+            if (index != null && (inserted ? index.insertable() : index.updatable())) columns.addAll(index.columns());
+            return columns.isEmpty() ? null : new Update(table, columns, targetColumns);
         }
     }
 
