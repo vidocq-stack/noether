@@ -29,7 +29,7 @@ unloaded state is ignored by merge. Shared-cache graphs containing unloaded refe
 are not captured, avoiding a forced load or retained context. An eager cache graph that
 would reuse an existing unloaded reference falls back to ordinary loading before allocating
 any nodes, preserving identity and eager semantics. Fully loaded graphs retain the original
-cache behavior. Collection fetch joins and entity graphs use secondary selects, not SQL join batching.
+cache behavior. Entity graphs keep secondary selects; eligible collection fetch joins use the D12 path below.
 
 Eligible to-one fetch joins (decision D11) add the target's statement columns — primary and
 secondary tables — to the translated select (`Compiled.hydrations()`, fetched entities first).
@@ -37,6 +37,35 @@ After reading each row, the query hands them to `EntityLoader`, which builds the
 `find` does: generated access, converters, relationships, snapshot, `PostLoad` and shared-cache
 storage. A known identity is never overwritten; an unloaded reference of that type is hydrated
 in place. A row whose target key columns are all null hydrates nothing.
+
+For one eligible collection fetch (D12), the same statement-column pipeline captures every
+owner and entity target, plus element values, row presence and stored list/map indexes.
+`EntityLoader.loadCollection` registers all identities before relationship resolution,
+then resolves staged relationships before collection assembly (sorted target comparators
+can read those relationships). It reuses the collection assembler and generated access,
+completes unloaded wrappers in
+place, retains dirty managed state, then records whole snapshots and invokes callbacks.
+Shared-cache publication follows complete assembly, never a partially accumulated collection.
+Non-`DISTINCT` queries retain repeated owner references; `DISTINCT` removes repeated managed
+identities without discarding equal bag elements or merging different owners with equal
+application `equals` implementations.
+
+Eligibility is one root entity selection and exactly one declared collection fetch, without
+grouping or locking, concrete owner/target statement mappings, basic/embeddable values,
+stored list positions, basic map keys or derived `@MapKey`. Multiple/nested/embedded fetches,
+extra joins, restricted collection aliases, polymorphism, entity/embeddable map keys and
+complex query shapes keep complete secondary loading. Eager relationships outside the
+fetched collection may require additional statements. The existing null-element assembler
+limitation is traced in BUG-20261015-09.
+
+Explicit pagination takes a separate safe path: a single-root entity selection with no
+grouping/lock and scalar root ordering pages *distinct owner identities in SQL*, then runs
+the ordinary complete collection fetch plan. Sort columns are projected for PostgreSQL's
+distinct-ordering rule but are not user result items. Other pagination shapes throw
+`PersistenceException` before SQL: never a joined-row limit or hidden in-memory pagination.
+Unbounded single-result calls read every collection row.
+The pagination check uses the translator's actual collection-join metadata, including
+entity-join aliases and set operands, rather than a second mapping/path interpreter.
 
 Java module descriptors expose minimal public contracts and qualified
 processor access. Dialects, generated entity accesses, CDI extensions and

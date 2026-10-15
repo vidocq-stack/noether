@@ -1,6 +1,21 @@
 = What's new
 :description: Noether extraction and compatibility changes.
 
+== 2026-10-15 — SQL collection fetch joins
+
+One eligible JPQL or Criteria inner/left collection fetch now returns owner and elements
+from the same SQL statement. Entity and basic/embeddable element collections retain list
+positions/map keys, managed identity, dirty state and in-place unloaded wrappers.
+Snapshots, callbacks and cache publication see complete collections. `DISTINCT` deduplicates
+managed owner identities, not bag values or application equality.
+
+Complex/multiple/polymorphic fetches retain complete secondary loading. Pagination uses
+SQL distinct-owner paging followed by complete secondary loads for single-root selections
+with scalar root ordering; unsupported projections/grouping/locks/element ordering fail
+explicitly before SQL. No partial collections or silent in-memory pagination.
+Batching remains the next prioritized lot. See xref:internals.adoc[] and xref:tck.adoc[].
+The preexisting D11 date below is retained as recorded, not rewritten by this delivery.
+
 == 2026-10-16 — SQL to-one fetch joins
 
 JPQL `JOIN FETCH` / `LEFT JOIN FETCH` and Criteria `fetch` of to-one relationships now load the

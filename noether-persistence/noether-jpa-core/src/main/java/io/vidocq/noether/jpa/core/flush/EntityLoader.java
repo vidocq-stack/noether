@@ -52,6 +52,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -136,6 +137,92 @@ public final class EntityLoader {
             }
         }
         return instance;
+    }
+
+    /** Entity columns captured by a SQL fetch query, not a second mapping representation. */
+    public record FetchedEntity(MappedEntity type, Object id, Object[] values, boolean[] nulls) {}
+
+    /** One collection row; an absent LEFT row still records its owner. Entity elements carry their identifier. */
+    public record FetchedElement(Object ownerId, Object element, Object[] index, boolean present) {}
+
+    /**
+     * Registers all identities before resolving relationships, then completes whole collections and snapshots before
+     * any PostLoad callback. Existing managed state is preserved; an unloaded wrapper is completed in place.
+     */
+    public void loadCollection(List<FetchedEntity> rows, MappedEntity owner, int attribute, List<FetchedElement> elements,
+            Connection connection, PersistenceContext context) {
+        Map<ManagedEntity, Row> pending = new LinkedHashMap<>();
+        for (FetchedEntity fetched : rows) {
+            MappedEntity type = fetched.type();
+            var known = context.find(new EntityKey(type.root(), fetched.id()));
+            if (known.isPresent() && !LazyReference.unloaded(known.get().instance())) continue;
+            Row row = new Row(fetched.values(), fetched.nulls());
+            if (known.isPresent()) {
+                ManagedEntity entry = known.get();
+                ((LazyReference) entry.instance()).$noetherState().hydrate(() -> state(type, entry.instance(), row));
+                pending.put(entry, row);
+            } else {
+                Object instance = type.access().instantiate();
+                Object[] state = state(type, instance, row);
+                if (type.keepsFoundIdentifier()) {
+                    state[type.idAttributes()[0]] = fetched.id();
+                    type.access().set(instance, type.idAttributes()[0], fetched.id());
+                }
+                pending.put(context.loaded(instance, type, fetched.id(), type.state().snapshot(state)), row);
+            }
+        }
+        Map<Object, List<Indexed>> grouped = new LinkedHashMap<>();
+        AttributeModel model = owner.model().attributes().get(attribute);
+        MappedEntity target = model instanceof AssociationAttribute a ? entity(a.targetEntity()) : null;
+        IndexMapping index = target == null ? owner.statements().elementCollection(attribute).orElseThrow().index()
+            : indexOf(owner.statements().collection(attribute).orElseThrow());
+        for (FetchedElement row : elements) {
+            List<Indexed> group = grouped.computeIfAbsent(row.ownerId(), _ -> new ArrayList<>());
+            if (!row.present()) continue;
+            Object element = target == null ? row.element()
+                : context.find(new EntityKey(target.root(), row.element())).orElseThrow().instance();
+            group.add(new Indexed(element, index(index, row.index(), 0, connection, context)));
+        }
+        for (var item : pending.entrySet()) {
+            ManagedEntity entry = item.getKey();
+            MappedEntity type = entry.type();
+            Object[] state = new Object[type.model().attributes().size()];
+            type.access().read(entry.instance(), state);
+            relationships(type, entry.key().id(), entry.instance(), state, item.getValue(), connection, context,
+                null, type == owner && grouped.containsKey(entry.key().id()) ? attribute : -1);
+            type.deriveId(entry.instance());
+        }
+        for (var group : grouped.entrySet()) {
+            ManagedEntity entry = context.find(new EntityKey(owner.root(), group.getKey())).orElseThrow();
+            Object current = owner.access().get(entry.instance(), attribute);
+            if (!pending.containsKey(entry) && !LazyCollection.unloaded(current)) continue;
+            Object value;
+            if (model instanceof AssociationAttribute a) {
+                value = assemble(a.javaType(), index, group.getValue(), target, a.orderBy(),
+                    target.model().attributes(), target.access(), target::id, describe(a));
+            } else {
+                ElementCollectionAttribute e = (ElementCollectionAttribute) model;
+                EmbeddedAttribute embedded = e.element() instanceof EmbeddedAttribute b ? b : null;
+                value = assemble(e.javaType(), index, group.getValue(), null, e.orderBy(),
+                    embedded == null ? List.of() : embedded.embeddable().attributes(),
+                    embedded == null ? null : unit.access(embedded.embeddable()), Function.identity(), e.name());
+            }
+            Object baseline = owner.state().copy(attribute, value);
+            if (LazyCollection.unloaded(current)) {
+                LazyCollection lazy = (LazyCollection) current;
+                if (entry.snapshot() != null && entry.snapshot()[attribute] == lazy) entry.snapshot()[attribute] = baseline;
+                lazy.complete(value, baseline);
+            } else {
+                owner.access().set(entry.instance(), attribute, value);
+            }
+        }
+        // No snapshot or callback sees a graph whose later rows/relationships are still missing.
+        for (ManagedEntity entry : pending.keySet()) {
+            Object[] state = new Object[entry.type().model().attributes().size()];
+            entry.type().access().read(entry.instance(), state);
+            context.updated(entry, entry.type().state().snapshot(state));
+        }
+        for (ManagedEntity entry : pending.keySet()) entry.type().callback("PostLoad", entry.instance());
     }
 
     /** Makes a new instance of {@code type} managed from its {@code row}, then resolves its relationships. */
@@ -279,9 +366,15 @@ public final class EntityLoader {
      */
     private void relationships(MappedEntity type, Object id, Object instance, Object[] state, Row row, Connection connection,
             PersistenceContext context, Object[] previous) {
+        relationships(type, id, instance, state, row, connection, context, previous, -1);
+    }
+
+    private void relationships(MappedEntity type, Object id, Object instance, Object[] state, Row row, Connection connection,
+            PersistenceContext context, Object[] previous, int fetchedCollection) {
         EntityStatements statements = type.statements();
         List<AttributeModel> attributes = type.model().attributes();
         for (int i = 0; i < attributes.size(); i++) {
+            if (i == fetchedCollection) continue;
             Object value;
             if (attributes.get(i) instanceof AssociationAttribute association && association.singleValued()) {
                 Optional<EntityStatements.Reference> owned = statements.reference(i);

@@ -128,8 +128,30 @@ existing unloaded references hydrated in place, managed (possibly modified) inst
 overwritten, snapshots and `PostLoad` as for `find`. Eligible: non-`DISTINCT` and
 non-grouped top-level selects without lock mode, a selected root variable and fetch paths
 `var.attribute` chained from it, targets of one concrete type (no subclass, no joined or
-table-per-class inheritance). Other shapes, collection fetches, entity graph hints and
-`find` keep the existing correct follow-up selects.
+table-per-class inheritance). Other shapes, entity graph hints and `find` keep the existing
+correct follow-up selects; collection fetching has its own bounded D12 path below.
+
+One collection `JOIN FETCH` / `LEFT JOIN FETCH` (JPQL or Criteria, decision D12,
+2026-10-15) reads the owner and all fetched elements in the same SQL statement.
+Eligible queries select one concrete root, with just that collection join and no grouping
+or lock mode. Entity collections and basic/embeddable element collections reuse existing
+generated access and mapping; ordered lists, basic map keys and derived `@MapKey` keys
+retain their positions/keys. Non-`DISTINCT` results retain repeated owner references;
+`DISTINCT` deduplicates owners without discarding duplicate bag elements. Existing dirty
+state is preserved, unloaded wrappers initialize in place, and snapshots/callbacks/cache
+publication follow complete assembly. Other mapped eager relationships may still require reads.
+
+Multiple/nested fetches, extra joins, restricted collection aliases, polymorphic or
+`JOINED`/`TABLE_PER_CLASS` owners/targets, embedded fetch paths and entity/embeddable map
+keys retain complete secondary loading. Fetch/load graph hints and `find` are not rewritten.
+Pagination (`setFirstResult` above zero or finite `setMaxResults`) of a single-root entity
+selection uses a safe fallback: **page distinct owner identities in SQL, then load their
+complete collections through ordinary secondary selects**. Only scalar root ordering is
+admitted; grouped/locked queries, complex projections and element ordering throw
+`PersistenceException` before SQL. No partial collection or silent in-memory pagination.
+Unbounded `getSingleResult` reads all joined rows.
+Null collection elements retain the existing assembler limitation (BUG-20261015-09);
+batching and broader SQL fetch shapes remain in the prioritized roadmap.
 
 The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;

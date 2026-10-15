@@ -4,7 +4,7 @@ Noether owns the implementations extracted from Mansart on 2026-10-11.
 
 | Building block | Status | Detailed roadmap |
 | --- | --- | --- |
-| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D11); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
+| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D12); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
 | Jakarta Validation 3.1 | V0–V2 provisional local test/TCK stopgap; not published | [Validation](noether-validation/ROADMAP.md) |
 
 The extraction changes repository, artifact, package and provider names, not
@@ -52,16 +52,35 @@ or joined/table-per-class targets, entity graph hints and `find` keep the existi
 selects. This is not a general fetch-join optimization: see the D11 section of the detailed
 roadmap for the exact eligibility and fallbacks.
 
+Decision D12 (2026-10-15) adds SQL hydration of **one collection fetch** per query:
+JPQL and Criteria inner/left fetches of concrete-root entity or element collections,
+including `DISTINCT`, stored list positions, basic map keys and derived `@MapKey` keys.
+All identities are registered before relationships are resolved; complete collections,
+snapshots and callbacks are published only after all rows are assembled. Existing dirty
+entities/initialized collections are retained, and unloaded wrappers initialize in place.
+The existing mapping, dialect AST, generated accesses, assembly and cache paths are reused.
+Multiple/nested fetches, extra joins, collection-alias restrictions, grouping, locking,
+set/subqueries, polymorphic/`JOINED`/`TABLE_PER_CLASS` owners or targets, embedded fetch
+paths and entity/embeddable map keys retain secondary loading. Entity graph hints and
+`find` are not rewritten. Explicit pagination of a single-root entity selection with
+scalar-root ordering uses **SQL distinct-owner pagination, then complete secondary loading**;
+grouped/locked/complex projections or element ordering throw `PersistenceException`.
+No joined-row limit or hidden in-memory pagination can truncate a collection.
+Unbounded single-result queries read all fetch rows.
+The D11 date/evidence above is retained as recorded; D12 uses the actual local delivery date.
+
 ## Remaining Persistence work
 
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
-1. SQL hydration of collection fetch joins (today: follow-up selects per owner and element).
-2. Batch loading of lazy collections and lazy to-one references.
-3. Broader SQL to-one fetch eligibility: polymorphic/`JOINED`/`TABLE_PER_CLASS` targets,
+1. Batch loading of lazy collections and lazy to-one references.
+2. Broader SQL fetch eligibility: multiple/nested collection fetches, same-query owner pagination,
+   entity/embeddable map keys; polymorphic/`JOINED`/`TABLE_PER_CLASS` targets,
    `DISTINCT` and locking queries, entity graph hints and `find` with a graph.
-4. Broader lazy to-one support beyond the D10 eligible shapes.
-5. Missing relational mapping shapes still refused explicitly (derived-identity targets,
+3. Broader lazy to-one support beyond the D10 eligible shapes.
+4. Missing relational mapping shapes still refused explicitly (derived-identity targets,
    non-key join columns, inverse many-to-many indexes, relationships in collection-table
-   embeddables).
+   embeddables); null collection elements currently omitted by the shared assembler
+   (BUG-20261015-09).
+5. Deferred Data/JPA integration and generation mutualisation with Mansart.

@@ -15,7 +15,30 @@ The official artifact checksums and TCK-BUG-001 byte-exact derived-jar fixture
 patch are unchanged; original artifacts are never edited. `TCK_FIXTURES=official`
 selects the untouched Persistence fixture. See the runner README for setup.
 
-== Current SQL to-one fetch join verification (2026-10-16)
+== Current SQL collection fetch join verification (2026-10-15)
+
+After D12, `CollectionFetchJoinTest` passes 17 SQL-observing scenarios. Its initial nine
+scenarios were red before production changes (8 assertion failures, 1 error); further red
+tests cover identity-based distinct results and safe owner pagination. The focused
+collection/to-one/lazy/cache gate passes 84 tests. `./mvnw -ntp clean install` passes
+865 reactor tests, zero failures/errors/skips (848 + 17), independently summed from
+84 Surefire XML reports.
+
+The full `TCK_FIXTURES=patched TCK_VALIDATION=off` PostgreSQL 17 run retains
+2135 tests, 2131 passes, zero failures/errors and four unchanged official skips.
+All 259 XML reports, 2135 unique execution/test identities, fixture classpaths and
+official/derived jar hashes were independently verified; the runner exit status alone
+is not evidence. A development pagination-guard regression in four Criteria scenarios
+was fixed with SQL distinct-owner paging and complete secondary collection loading;
+the focused official area then passed 151/151 before the final full run.
+
+See the current `noether-persistence/TCK.md` entry for exact commands, skipped identities
+and fixture hashes, and xref:internals.adoc[] for eligibility and explicit pagination
+refusals. This is locally patched evidence, not certification. Null collection elements
+retain the preexisting shared-assembler limitation (BUG-20261015-09), outside this delivery.
+The D11 date/evidence below is preserved as originally recorded.
+
+== SQL to-one fetch join verification (2026-10-16)
 
 After decision D11 (eligible to-one fetch joins read from the owner's SQL row), the new
 SQL-counting `FetchJoinTest` was red first (10 select-count failures) and now passes 14 tests;

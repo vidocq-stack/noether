@@ -1,3 +1,69 @@
+## Noether SQL collection fetch join verification — 2026-10-15
+
+Decision D12 hydrates one eligible JPQL/Criteria collection fetch from the owner's SQL
+result, through the D11 statement columns and the existing loader/collection assembler.
+Before production edits, nine new scenarios produced **8 assertion failures and 1 error**:
+secondary reads (for example 5 or 9 selects instead of 1), missing pagination safety,
+repeated-owner single-result handling, and the preexisting null-element omission now
+tracked as BUG-20261015-09 (outside the supported null-element scope). Additional red tests
+caught application-equality deduplication (BUG-20261015-10) and verified bounded owner paging.
+
+The final `CollectionFetchJoinTest` passes **17 SQL-observing scenarios**, including JPQL
+and Criteria inner/left fetches, empty collections, repeated owner identities and shared
+targets, ordered entity/element lists, duplicate bag values, basic/derived map keys,
+embeddable elements, sorted target comparators reading resolved relationships, dirty entities/collections,
+unloaded wrappers/references initialized
+in place, complete `PostLoad` graphs, cache publication, orphan removal and flush baselines.
+Pagination tests verify SQL distinct-owner paging with complete secondary loading, plus
+explicit pre-SQL refusal of unsupported pagination. Multiple/restricted fetches retain
+complete fallback collections. The focused collection/to-one/lazy/cache gate passes
+**84 tests** (`CollectionFetchJoinTest`, unchanged `FetchJoinTest`, `LazyCollectionTest`,
+`LazyToOneTest`, `SecondLevelCacheTest`).
+
+On Temurin **25.0.4+7-LTS**, Maven **3.9.16**, from the Noether root:
+
+```bash
+export JAVA_HOME="$HOME/.sdkman/candidates/java/25.0.4-tem"
+export PATH="$JAVA_HOME/bin:$PATH"
+./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test \
+  -Dtest=CollectionFetchJoinTest,FetchJoinTest,LazyCollectionTest,LazyToOneTest,SecondLevelCacheTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw -ntp clean install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+The final full clean reactor passes **865 tests, zero failures/errors/skips** (848 + 17),
+independently summed from 84 Surefire XML reports. The final PostgreSQL `postgres:17-alpine`
+patched Persistence 3.2.1 run retains **2135 tests, 2131 passed, 0 failures, 0 errors,
+4 official skips**. All **259** failsafe XML reports and **2135 unique execution/test
+identities** were independently parsed, with every classpath verified against the derived
+spec-tests jar. The four skipped identities are unchanged:
+
+- `core.query.language.Client6#resultContainsFetchReference`
+- `core.metamodelapi.identifiabletype.Client#getDeclaredSingularAttributes`
+- `se.entityManagerFactory.Client2#createEntityManagerFactoryStringMapTest`
+- `se.schemaGeneration.annotations.tableGenerator.Client#tableGeneratorTest`
+
+The first full development run exposed four Criteria metamodel-fetch errors from a blanket
+pagination refusal (BUG-20261015-11). The bounded SQL distinct-owner fallback restored all
+**151/151** tests in `--area core.criteriaapi.metamodelquery`, then the full unchanged score
+above. No TCK test or official input was modified to achieve that result.
+
+Final red/green regressions also cover explicit entity-join aliases in pagination safety
+(BUG-20261015-12: use authoritative translator metadata, not a duplicate model walk), and
+sorted collection assembly after relationship resolution (BUG-20261015-13). Callbacks and
+snapshots remain deferred until complete collection assembly.
+
+Fixture SHA-256 values remain unchanged:
+
+- official installed jar: `a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`;
+- derived TCK-BUG-001 jar: `1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+
+This is locally patched evidence, not certification. SQL statement-count assertions are
+correctness checks, not benchmarks. The preexisting D11 date/evidence below is retained
+verbatim; the new delivery uses the actual system date.
+
 ## Noether SQL to-one fetch join verification — 2026-10-16
 
 Decision D11 reads eligible JPQL/Criteria to-one fetch targets from the owner's SQL row. Before

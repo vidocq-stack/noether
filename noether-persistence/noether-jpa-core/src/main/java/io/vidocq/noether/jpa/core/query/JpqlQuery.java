@@ -86,6 +86,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     private final Ast.Statement statement;
     private final Class<X> resultClass;
     private final QueryRuntime runtime;
+    private final boolean collectionFetch;
     private Integer lockTimeout;
     private final Map<Object, QueryParameter<?>> parameters = new LinkedHashMap<>();
     private final Map<Object, Object> values = new HashMap<>();
@@ -122,6 +123,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         this.resultClass = resultClass;
         this.statement = statement;
         Compiled compiled = Translator.translate(statement, runtime.mapping(), null, null, null);
+        collectionFetch = compiled.collectionFetch();
         if (!(statement instanceof Ast.Query) && resultClass != null && resultClass != Object.class) {
             throw new IllegalArgumentException("An UPDATE or a DELETE has no results of type " + resultClass.getName() + ": " + jpql);
         }
@@ -201,6 +203,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     public X getSingleResult() {
         checkOpen();
         List<X> results = run(Math.min(getMaxResults(), 2));
+        if (collectionFetch()) results = uniqueReferences(results);
         if (results.isEmpty()) {
             throw new NoResultException("The query found no result: " + jpql);
         }
@@ -214,6 +217,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     public X getSingleResultOrNull() {
         checkOpen();
         List<X> results = run(Math.min(getMaxResults(), 2));
+        if (collectionFetch()) results = uniqueReferences(results);
         if (results.size() > 1) {
             throw new NonUniqueResultException("The query found several results: " + jpql);
         }
@@ -352,6 +356,9 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
             throw new IllegalStateException("An UPDATE or a DELETE has no results: run it with executeUpdate() (§3.11): " + jpql);
         }
         checkBound();
+        boolean collectionFetch = collectionFetch();
+        boolean paginateCollection = collectionFetch && (getFirstResult() > 0 || getMaxResults() < Integer.MAX_VALUE);
+        if (paginateCollection && lockMode != LockModeType.NONE) throw Translator.collectionPagination();
         if (lockMode != LockModeType.NONE && !runtime.inTransaction()) {
             throw new jakarta.persistence.TransactionRequiredException("A query with the lock mode " + lockMode
                 + " runs in a transaction (§3.11)");
@@ -359,10 +366,25 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         if (maxResults == 0) {
             return new ArrayList<>();
         }
-        Compiled compiled = Translator.translate(statement, runtime.mapping(), p -> values.get(key(p)),
-            getFirstResult() > 0 ? getFirstResult() : null, maxResults < Integer.MAX_VALUE ? maxResults : null,
+        Compiled compiled = paginateCollection
+            ? Translator.paginateCollection(statement, runtime.mapping(), p -> values.get(key(p)),
+                getFirstResult() > 0 ? getFirstResult() : null, getMaxResults() < Integer.MAX_VALUE ? getMaxResults() : null)
+            : Translator.translate(statement, runtime.mapping(), p -> values.get(key(p)),
+            getFirstResult() > 0 ? getFirstResult() : null, !collectionFetch && maxResults < Integer.MAX_VALUE ? maxResults : null,
             lockMode == LockModeType.NONE); // a locking query reads its entities as before: its rows are the locked ones
         return (List<X>) runtime.read(getFlushMode(), connection -> execute(compiled, connection));
+    }
+
+    /** A collection fetch anywhere in the query must never receive a SQL row limit. */
+    private boolean collectionFetch() {
+        return collectionFetch;
+    }
+
+    private static <T> List<T> uniqueReferences(List<T> rows) {
+        Set<T> seen = Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        List<T> unique = new ArrayList<>();
+        for (T row : rows) if (seen.add(row)) unique.add(row);
+        return unique;
     }
 
     private List<Object> execute(Compiled compiled, Connection connection) {
@@ -380,6 +402,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         Dialect.Rendered rendered = dialect.renderQuery(sql);
         List<Object> rows = new ArrayList<>();
         List<Fetched[]> fetchedRows = new ArrayList<>();
+        List<io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedElement> collectionRows = new ArrayList<>();
         try (PreparedStatement statement = connection.prepareStatement(rendered.sql())) {
             if (pessimistic) {
                 io.vidocq.noether.jpa.core.flush.Locks.timeout(dialect, lockTimeout, connection);
@@ -403,6 +426,34 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
                     if (!compiled.hydrations().isEmpty()) {
                         fetchedRows.add(fetched(compiled.hydrations(), results, column));
                     }
+                    if (compiled.collection() != null) {
+                        var collection = compiled.collection();
+                        Object[] payload = new Object[collection.readers().size()];
+                        boolean[] nulls = new boolean[payload.length];
+                        for (int c = 0; c < payload.length; c++) {
+                            payload[c] = collection.readers().get(c).read(results, column[0]++);
+                            nulls[c] = results.wasNull();
+                            if (nulls[c]) payload[c] = null;
+                        }
+                        Object element;
+                        boolean present;
+                        int indexFrom;
+                        if (collection.elements() != null) {
+                            int width = collection.elements().columns().size();
+                            present = !nulls[0];
+                            element = present ? collection.elements().element(java.util.Arrays.copyOfRange(payload, 1, width + 1),
+                                java.util.Arrays.copyOfRange(nulls, 1, width + 1)) : null;
+                            indexFrom = width + 1;
+                        } else {
+                            Fetched target = fetchedRows.getLast()[1];
+                            present = target != null;
+                            element = present ? target.id() : null;
+                            indexFrom = 0;
+                        }
+                        collectionRows.add(new io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedElement(
+                            ((EntityKey) row[0]).id(), element,
+                            java.util.Arrays.copyOfRange(payload, indexFrom, payload.length), present));
+                    }
                 }
             }
         } catch (SQLException e) {
@@ -414,8 +465,18 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         // entities found, and results constructed, once the rows are read: the loader runs statements of its own
         List<Object> resultList = new ArrayList<>(rows.size());
         FetchPlan[] plans = fetchPlans();
+        if (compiled.collection() != null) {
+            List<io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedEntity> entities = new ArrayList<>();
+            for (Fetched[] row : fetchedRows) {
+                for (Fetched fetched : row) {
+                    if (fetched != null) entities.add(new io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedEntity(
+                        fetched.type(), fetched.id(), fetched.values(), fetched.nulls()));
+                }
+            }
+            runtime.hydrateCollection(entities, compiled.collection().owner(), compiled.collection().attribute(), collectionRows, connection);
+        }
         for (int r = 0; r < rows.size(); r++) {
-            if (!fetchedRows.isEmpty()) { // the fetched entities first: finding their owners resolves them from the context
+            if (compiled.collection() == null && !fetchedRows.isEmpty()) { // the fetched entities first
                 for (Fetched fetched : fetchedRows.get(r)) {
                     if (fetched != null) runtime.hydrate(fetched.type(), fetched.id(), fetched.values(), fetched.nulls(), connection);
                 }
@@ -435,6 +496,9 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         }
         if (lockMode != LockModeType.NONE) {
             resultList.forEach(this::lockEntities);
+        }
+        if (compiled.collection() != null && statement instanceof Ast.Select select && select.distinct()) {
+            return uniqueReferences(resultList);
         }
         return resultList;
     }

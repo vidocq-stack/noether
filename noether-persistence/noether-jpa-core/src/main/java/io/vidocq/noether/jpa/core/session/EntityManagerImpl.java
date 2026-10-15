@@ -1138,6 +1138,27 @@ final class EntityManagerImpl implements EntityManager {
             }
         }
 
+        @Override
+        public void hydrateCollection(List<io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedEntity> rows,
+                MappedEntity owner, int attribute,
+                List<io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedElement> elements, Connection connection) {
+            Map<EntityKey, MappedEntity> fresh = new java.util.LinkedHashMap<>();
+            for (var row : rows) {
+                EntityKey key = new EntityKey(row.type().root(), row.id());
+                if (context.find(key).isPresent()) continue;
+                if (!cacheInvalidationPending && cacheRetrieveMode == CacheRetrieveMode.USE
+                        && cacheStoreMode != CacheStoreMode.REFRESH
+                        && factory.cache().restore(row.type(), row.id(), context).isPresent()) continue;
+                fresh.putIfAbsent(key, row.type());
+            }
+            long generation = factory.cache().generation();
+            if (!fresh.isEmpty() && transaction.isActive() && cacheStoreMode != CacheStoreMode.BYPASS) captureCacheGeneration(generation);
+            factory.loader(connection).loadCollection(rows, owner, attribute, elements, connection, context);
+            for (var item : fresh.entrySet()) {
+                stored(item.getValue(), item.getKey().id(), context.find(item.getKey()).orElseThrow().instance(), generation);
+            }
+        }
+
         /** Records a newly loaded instance for the shared cache, as a find by identifier does (§3.10). */
         private Object stored(MappedEntity type, Object id, Object loaded, long cacheGeneration) {
             if (loaded != null) {

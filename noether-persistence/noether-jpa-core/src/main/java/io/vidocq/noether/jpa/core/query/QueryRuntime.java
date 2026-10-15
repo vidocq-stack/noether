@@ -25,6 +25,7 @@ import io.vidocq.noether.jpa.dialect.Dialect;
 import jakarta.persistence.FlushModeType;
 import jakarta.persistence.LockModeType;
 import java.sql.Connection;
+import java.util.List;
 import java.util.function.Function;
 
 /** What a query needs from the entity manager that created it. */
@@ -93,5 +94,12 @@ public interface QueryRuntime {
      */
     default void hydrate(MappedEntity type, Object id, Object[] values, boolean[] nulls, Connection connection) {
         find(type, id, connection);
+    }
+
+    /** Completes one SQL-fetched collection after registering all row identities, before publishing snapshots. */
+    default void hydrateCollection(List<io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedEntity> rows,
+            MappedEntity owner, int attribute,
+            List<io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedElement> elements, Connection connection) {
+        throw new UnsupportedOperationException("SQL collection hydration is not available");
     }
 }

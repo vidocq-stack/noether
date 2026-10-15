@@ -698,3 +698,83 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
   - 2026-10-15: reproduced in the existing strict runtime module vehicle. Such modules now retain
     eager loading, with no added read edge or module-descriptor change. The closed APT module
     already declares the required provider read edge and retains static lazy subclasses.
+
+## BUG-20261015-09 — Null collection elements are omitted by the existing assembler
+
+- **Date**: 2026-10-15
+- **Status**: OPEN (outside the SQL collection-fetch delivery)
+- **Module**: `noether-jpa-core/flush/EntityLoader`
+- **Symptom**: an ordered basic element collection containing `["z", "a", "z", null]`
+  reloads as `["z", "a", "z"]`, through both ordinary loading and fetch joins.
+- **Minimal reproduction**: persist an `@ElementCollection @OrderColumn List<String>` with
+  the four values above, clear the context/cache, then read the collection.
+- **Cause hypothesis**: the shared `assemble` method filters every null element before
+  constructing the collection, without distinguishing absent outer-join rows.
+- **Investigations**:
+  - 2026-10-15: reproduced before production changes in the collection-fetch red gate.
+    Fetch hydration retains SQL row presence separately, but intentionally reuses the existing
+    assembler's null-element semantics. Null-element support is not claimed in D12.
+
+## BUG-20261015-10 — SQL collection DISTINCT used application equality instead of identity
+
+- **Date**: 2026-10-15
+- **Status**: FIXED (working tree)
+- **Module**: `noether-jpa-core/query/JpqlQuery`
+- **Symptom**: during D12 development, two different owner identifiers whose entities compare
+  equal collapsed to one `DISTINCT` result; single-result checks could miss non-unique owners.
+- **Minimal reproduction**: `CollectionFetchJoinTest#distinctAndSingleResultUseManagedIdentityNotApplicationEquality`.
+- **Cause hypothesis**: confirmed — deduplicating hydrated roots with `LinkedHashSet` invoked
+  the application's `equals`, instead of testing the managed identity.
+- **Investigations**:
+  - 2026-10-15: reproduced red (one owner instead of two). Query-local deduplication now uses
+    instance identity; the persistence context already guarantees one instance per entity identity.
+
+## BUG-20261015-11 — Blanket collection-fetch pagination refusal regressed four TCK scenarios
+
+- **Date**: 2026-10-15
+- **Status**: FIXED (working tree)
+- **Module**: `noether-jpa-core/query/Translator`, `JpqlQuery`
+- **Symptom**: the initial D12 full patched TCK had four new errors in Criteria metamodel
+  collection-fetch tests using finite `setMaxResults`; the initial blanket pagination guard refused them.
+- **Minimal reproduction**: `CollectionFetchJoinTest#paginationLimitsDistinctOwnersInSqlThenLoadsTheirWholeCollections`;
+  official area `core.criteriaapi.metamodelquery` (`test_fetchjoin_1xM`, the two
+  `fetchPluralAttribute*1xMTest` methods and `test_fetchjoin_MxM`).
+- **Cause hypothesis**: confirmed — safety was enforced with an exception even where the existing
+  identifier-query / secondary-fetch pipeline can safely page distinct owner identities in SQL.
+- **Investigations**:
+  - 2026-10-15: full run independently reported 2135 tests / 2127 passes / four errors / four skips.
+    Added a red owner-pagination regression, then a bounded SQL distinct-owner pagination fallback
+    with complete ordinary collection initialization. Complex projections, grouping, locks and
+    non-scalar-root ordering remain explicitly refused; no in-memory pagination or partial hydration.
+  - 2026-10-15: verified fixed with 151/151 Criteria metamodel-query tests and the final full
+    patched TCK: 2135 tests, 2131 passes, zero failures/errors, four unchanged official skips.
+
+## BUG-20261015-12 — Entity-join aliases bypassed the collection pagination guard
+
+- **Date**: 2026-10-15
+- **Status**: FIXED (working tree)
+- **Module**: `noether-jpa-core/query/Translator`, `JpqlQuery`
+- **Symptom**: during final D12 review, pagination of a collection fetch rooted at an explicit
+  entity-join alias did not take the safe owner-page path or the documented complex-shape refusal.
+- **Minimal reproduction**: `CollectionFetchJoinTest#unsupportedPaginationIsExplicitlyRefusedBeforeReadingPartialCollections`,
+  the `select c ... join CfOwner c ... join fetch c.children` case.
+- **Cause hypothesis**: confirmed — the query's separate AST/model walk did not track entity-join aliases.
+- **Investigations**:
+  - 2026-10-15: reproduced red (no exception). Removed that duplicate walk: the actual translator
+    now records whether a declared fetch joins a collection as it resolves the mapping, and propagates
+    that fact through set operands. Pagination safety uses this authoritative compiled metadata.
+
+## BUG-20261015-13 — Sorted fetch collections compared partially hydrated targets
+
+- **Date**: 2026-10-15
+- **Status**: FIXED (working tree)
+- **Module**: `noether-jpa-core/flush/EntityLoader`
+- **Symptom**: assembling a fetched `SortedSet` invoked target `compareTo` before its
+  relationships had been resolved; a comparator reading the owner's identifier threw `NullPointerException`.
+- **Minimal reproduction**: `CollectionFetchJoinTest#sortedCollectionComparatorSeesResolvedElementRelationships`.
+- **Cause hypothesis**: confirmed — identities and scalar fields were registered, but collection
+  assembly ran before the graph's ordinary relationship-resolution phase.
+- **Investigations**:
+  - 2026-10-15: reproduced red. Resolve all staged entity relationships first (skipping only
+    the fetched collection itself), then assemble complete collections, snapshots and callbacks.
+    This preserves the shared assembler's existing ordering contract and complete lifecycle state.

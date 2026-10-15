@@ -36,7 +36,18 @@ import java.util.List;
  * @param slots what the parameters of {@code sql} bind, in their order
  */
 record Compiled(Statement sql, List<Item> items, Class<?> resultType, List<Slot> slots, List<Mutation> mutations,
-        List<Hydration> hydrations) {
+        List<Hydration> hydrations, CollectionHydration collection, boolean collectionFetch) {
+
+    Compiled(Statement sql, List<Item> items, Class<?> resultType, List<Slot> slots, List<Mutation> mutations,
+            List<Hydration> hydrations) {
+        this(sql, items, resultType, slots, mutations, hydrations, null, false);
+    }
+
+    /** One complete collection from fetch rows; its payload follows the entity hydrations. */
+    record CollectionHydration(MappedEntity owner, int attribute, MappedEntity target,
+            io.vidocq.noether.jpa.core.mapping.ElementCollectionMapping elements,
+            io.vidocq.noether.jpa.core.mapping.IndexMapping index, List<ValueBinder> readers) {
+    }
 
     Compiled(Statement sql, List<Item> items, Class<?> resultType, List<Slot> slots) {
         this(sql, items, resultType, slots, List.of(), List.of());

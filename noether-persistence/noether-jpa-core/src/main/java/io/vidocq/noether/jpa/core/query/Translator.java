@@ -126,6 +126,9 @@ final class Translator {
     private final Map<String, String> tableAliases = new HashMap<>();
     private final Map<Ast.Join, Variable> declaredJoins = new java.util.IdentityHashMap<>();
     private final List<Compiled.Hydration> hydrations = new ArrayList<>();
+    private Compiled.CollectionHydration collectionHydration;
+    private final java.util.Set<String> collectionAliases = new java.util.HashSet<>();
+    private boolean collectionFetch;
     private boolean hydrating;
     private boolean selecting;
 
@@ -144,6 +147,44 @@ final class Translator {
     static Compiled translate(Ast.Statement statement, MappedUnit unit, Function<Ast.Parameter, Object> bindings, Integer offset,
             Integer limit) {
         return translate(statement, unit, bindings, offset, limit, false);
+    }
+
+    /**
+     * Pages distinct owner identities in SQL, then lets the ordinary fetch plan load complete collections.
+     * Only scalar root ordering is admitted: an element's ordering could give several distinct rows per owner.
+     */
+    static Compiled paginateCollection(Ast.Statement statement, MappedUnit unit, Function<Ast.Parameter, Object> bindings,
+            Integer offset, Integer limit) {
+        if (!(statement instanceof Ast.Select select) || select.from().size() != 1 || select.items().size() != 1
+                || !select.groupBy().isEmpty() || select.having() != null
+                || select.from().getFirst().entity() == null
+                || !(select.items().getFirst().expression() instanceof Ast.Path root)
+                || root.treatEntity() != null || root.segments().size() != 1
+                || !root.segments().getFirst().equalsIgnoreCase(select.from().getFirst().variable())) {
+            throw collectionPagination();
+        }
+        EntityModel owner = unit.model().entity(select.from().getFirst().entity()).orElseThrow();
+        for (Ast.OrderItem order : select.orderBy()) {
+            if (!(order.expression() instanceof Ast.Path path) || path.treatEntity() != null || path.segments().size() != 2
+                    || !path.segments().getFirst().equalsIgnoreCase(root.segments().getFirst())
+                    || !(owner.attribute(path.segments().get(1)).orElse(null) instanceof BasicAttribute)) {
+                throw collectionPagination();
+            }
+        }
+        Ast.Select owners = new Ast.Select(true, select.items(), select.from(), select.where(), List.of(), null, select.orderBy());
+        Compiled compiled = translate(owners, unit, bindings, offset, limit, false);
+        Query query = (Query) compiled.sql();
+        List<Expression> columns = new ArrayList<>(query.select());
+        for (Query.Order order : query.orderBy()) {
+            if (!columns.contains(order.expression())) columns.add(order.expression());
+        }
+        Query sql = new Query(true, columns, query.from(), query.where(), List.of(), null, query.orderBy(), offset, limit);
+        return new Compiled(sql, compiled.items(), compiled.resultType(), slots(sql.parameters()));
+    }
+
+    static jakarta.persistence.PersistenceException collectionPagination() {
+        return new jakarta.persistence.PersistenceException("Pagination with a collection fetch requires one root entity,"
+            + " no grouping or locking, and scalar root ordering; this shape cannot page complete owners in SQL (§3.11.1)");
     }
 
     /**
@@ -170,7 +211,7 @@ final class Translator {
                 SelectStatement sql = translator.selectStatement(query, offset, limit, items);
                 Class<?> resultType = items.size() > 1 ? Object[].class : type(items.getFirst());
                 yield new Compiled(sql, List.copyOf(items), resultType == null ? null : boxed(resultType), slots(sql.parameters()),
-                    List.of(), List.copyOf(translator.hydrations));
+                    List.of(), List.copyOf(translator.hydrations), translator.collectionHydration, translator.collectionFetch);
             }
             case Ast.Update update -> {
                 UpdateQuery sql = translator.update(update);
@@ -195,7 +236,9 @@ final class Translator {
         List<Compiled.Item> firstItems = null;
         for (Ast.Select operand : setQuery.operands()) {
             List<Compiled.Item> operandItems = new ArrayList<>();
-            Query sql = new Translator(unit, bindings, this).query(operand, null, null, operandItems);
+            Translator translator = new Translator(unit, bindings, this);
+            Query sql = translator.query(operand, null, null, operandItems);
+            collectionFetch |= translator.collectionFetch;
             if (firstItems == null) {
                 firstItems = operandItems;
                 items.addAll(operandItems);
@@ -519,16 +562,100 @@ final class Translator {
                 orderBy.add(new Query.Order(key, order.descending(), order.nullsFirst()));
             }
         }
-        if (hydrating && parent == null && !select.distinct() && groupBy.isEmpty() && having == null) {
-            hydrations(select, sqlItems);
+        if (hydrating && parent == null && groupBy.isEmpty() && having == null) {
+            if (!collectionHydration(select, sqlItems) && !select.distinct()) hydrations(select, sqlItems);
         }
         List<Query.From> from = new ArrayList<>();
         for (int r = 0; r < roots.size(); r++) {
             from.add(new Query.From(roots.get(r), rootAliases.get(r), joins.get(r)));
         }
-        return new Query(select.distinct(), sqlItems, from, where, groupBy, having, orderBy, offset, limit);
+        return new Query(select.distinct() && collectionHydration == null, sqlItems, from, where, groupBy, having, orderBy, offset, limit);
     }
 
+    /** A single unrestricted collection fetch of the selected concrete root; other shapes retain secondary loading. */
+    private boolean collectionHydration(Ast.Select select, List<Expression> sqlItems) {
+        if (select.from().size() != 1 || select.items().size() != 1) return false;
+        Ast.Range range = select.from().getFirst();
+        if (range.entity() == null || range.joins().size() != 1
+                || !(select.items().getFirst().expression() instanceof Ast.Path selected)
+                || selected.treatEntity() != null || selected.segments().size() != 1
+                || !selected.segments().getFirst().equalsIgnoreCase(range.variable())) return false;
+        Ast.Join join = range.joins().getFirst();
+        List<String> path = join.path().segments();
+        if (!join.fetch() || join.on() != null || join.path().treatEntity() != null
+                || path.size() != 2 || !path.getFirst().equalsIgnoreCase(range.variable())) return false;
+        if (collectionRestriction(select.where(), join.variable())
+                || select.orderBy().stream().anyMatch(o -> collectionRestriction(o.expression(), join.variable()))) return false;
+        Variable owner = variables.get(range.variable().toLowerCase(Locale.ROOT));
+        Variable target = declaredJoins.get(join);
+        if (owner == null || target == null || !hydratable(owner.type())) return false;
+        int attribute = attribute(owner.type(), path.get(1));
+        AttributeModel model = owner.type().model().attributes().get(attribute);
+        if (!(model instanceof ElementCollectionAttribute)
+                && !(model instanceof AssociationAttribute association && !association.singleValued())) return false;
+        if (target.type() != null && !hydratable(target.type())) return false;
+        IndexMapping index = target.index();
+        // Entity-valued keys need their own hydration graph; embeddable keys keep the established loader for now.
+        if (index != null && (index.keyEntity() != null || index.index() instanceof CollectionIndex.ByEmbedded)) return false;
+        addHydration(owner, sqlItems);
+        if (target.type() != null) addHydration(target, sqlItems);
+        List<ValueBinder> readers = new ArrayList<>();
+        if (target.element() != null) {
+            // The owner FK distinguishes an absent LEFT row from a present row with a NULL value.
+            sqlItems.add(new Expression.Column(target.alias(), target.element().ownerColumns().getFirst()));
+            readers.add(target.element().ownerBinders().getFirst());
+            for (EntityStatements.Column column : target.element().columns()) {
+                sqlItems.add(new Expression.Column(target.alias(), column.name()));
+                readers.add(column.binder());
+            }
+        }
+        if (index != null) {
+            for (int i = 0; i < index.columns().size(); i++) {
+                sqlItems.add(new Expression.Column(target.indexAlias(), index.columns().get(i)));
+                readers.add(index.binders().get(i));
+            }
+        }
+        collectionHydration = new Compiled.CollectionHydration(owner.type(), attribute, target.type(), target.element(),
+            index, List.copyOf(readers));
+        return true;
+    }
+
+    /** Conservatively retain complete secondary loading when predicates could restrict the fetched rows. */
+    private boolean collectionRestriction(Ast.Expr expression, String alias) {
+        return switch (expression) {
+            case null -> false;
+            case Ast.Path path -> path.treatEntity() != null
+                || alias != null && path.segments().getFirst().equalsIgnoreCase(alias);
+            case Ast.Literal _, Ast.Parameter _ -> false;
+            case Ast.Binary b -> collectionRestriction(b.left(), alias) || collectionRestriction(b.right(), alias);
+            case Ast.Not n -> collectionRestriction(n.operand(), alias);
+            case Ast.Negate n -> collectionRestriction(n.operand(), alias);
+            case Ast.IsNull n -> collectionRestriction(n.operand(), alias);
+            case Ast.Between b -> collectionRestriction(b.operand(), alias) || collectionRestriction(b.low(), alias)
+                || collectionRestriction(b.high(), alias);
+            case Ast.Like l -> collectionRestriction(l.operand(), alias) || collectionRestriction(l.pattern(), alias)
+                || collectionRestriction(l.escape(), alias);
+            case Ast.In i -> collectionRestriction(i.operand(), alias)
+                || i.values().stream().anyMatch(e -> collectionRestriction(e, alias));
+            case Ast.Function f -> f.arguments().stream().anyMatch(e -> collectionRestriction(e, alias));
+            case Ast.Cast c -> collectionRestriction(c.expression(), alias);
+            default -> true;
+        };
+    }
+
+    private void addHydration(Variable variable, List<Expression> sqlItems) {
+        EntityStatements statements = variable.type().statements();
+        List<Integer> read = new ArrayList<>();
+        for (int t = 0; t < statements.tables().size(); t++) {
+            for (int c : statements.tables().get(t).selected()) {
+                EntityStatements.Column column = statements.columns().get(c);
+                sqlItems.add(new Expression.Column(tableAlias(variable, t), unit.queryColumn(variable.type(), column)));
+                read.add(c);
+            }
+        }
+        int[] key = statements.tables().getFirst().selectParameters().stream().mapToInt(EntityStatements.Parameter::column).toArray();
+        hydrations.add(new Compiled.Hydration(variable.type(), read.stream().mapToInt(Integer::intValue).toArray(), key));
+    }
     /**
      * §4.4.5.3: the entities the to-one fetch joins of a selected root return with it, read from the same row. Eligible:
      * a fetch join {@code var.attribute} of a single-valued relationship, from the selected root variable or from the
@@ -567,18 +694,7 @@ final class Translator {
             ordered.addAll(targets);
         }
         for (int i = ordered.size() - 1; i >= 0; i--) {
-            Variable variable = ordered.get(i);
-            EntityStatements statements = variable.type().statements();
-            List<Integer> read = new ArrayList<>();
-            for (int t = 0; t < statements.tables().size(); t++) {
-                for (int c : statements.tables().get(t).selected()) {
-                    EntityStatements.Column column = statements.columns().get(c);
-                    sqlItems.add(new Expression.Column(tableAlias(variable, t), unit.queryColumn(variable.type(), column)));
-                    read.add(c);
-                }
-            }
-            int[] key = statements.tables().getFirst().selectParameters().stream().mapToInt(EntityStatements.Parameter::column).toArray();
-            hydrations.add(new Compiled.Hydration(variable.type(), read.stream().mapToInt(Integer::intValue).toArray(), key));
+            addHydration(ordered.get(i), sqlItems);
         }
     }
 
@@ -675,6 +791,7 @@ final class Translator {
                     table(target), alias, restriction == null ? new Expression.Literal(true) : restriction));
             } else joined = join(join.path(), join.kind());
             declaredJoins.put(join, joined);
+            if (join.fetch() && (joined.element() != null || collectionAliases.contains(joined.alias()))) collectionFetch = true;
             if (join.variable() != null) {
                 define(join.variable(), joined);
             }
@@ -943,6 +1060,7 @@ final class Translator {
         };
         Expression position = index != null && index.positional() ? new Expression.Column(positions, index.columns().getFirst()) : null;
         Variable variable = new Variable(target, alias, from.root(), this, null, position, index, positions);
+        if (!association.singleValued()) collectionAliases.add(alias);
         Expression restriction = inheritanceRestriction(variable);
         if (restriction != null) {
             Query.Join last = list.getLast();
