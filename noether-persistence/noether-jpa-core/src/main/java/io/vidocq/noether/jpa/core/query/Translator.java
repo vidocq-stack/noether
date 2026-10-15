@@ -124,6 +124,9 @@ final class Translator {
     private final List<List<Query.Join>> joins = new ArrayList<>();
     private final List<Expression> correlations = new ArrayList<>();
     private final Map<String, String> tableAliases = new HashMap<>();
+    private final Map<Ast.Join, Variable> declaredJoins = new java.util.IdentityHashMap<>();
+    private final List<Compiled.Hydration> hydrations = new ArrayList<>();
+    private boolean hydrating;
     private boolean selecting;
 
     /** @param bindings the values bound to the parameters, to expand those holding collections; {@code null} to validate */
@@ -140,7 +143,18 @@ final class Translator {
      */
     static Compiled translate(Ast.Statement statement, MappedUnit unit, Function<Ast.Parameter, Object> bindings, Integer offset,
             Integer limit) {
+        return translate(statement, unit, bindings, offset, limit, false);
+    }
+
+    /**
+     * Like {@link #translate(Ast.Statement, MappedUnit, Function, Integer, Integer)}; with {@code hydrate}, a select
+     * also reads the columns of the entities its eligible to-one fetch joins return with their owners
+     * ({@link Compiled#hydrations()}).
+     */
+    static Compiled translate(Ast.Statement statement, MappedUnit unit, Function<Ast.Parameter, Object> bindings, Integer offset,
+            Integer limit, boolean hydrate) {
         Translator translator = new Translator(unit, bindings, null);
+        translator.hydrating = hydrate;
         String bulkEntity = statement instanceof Ast.Update update ? update.entity()
             : statement instanceof Ast.Delete delete ? delete.entity() : null;
         if (bulkEntity != null && (unit.inheritance(translator.entityNamed(bulkEntity).model().javaType()).joined()
@@ -155,7 +169,8 @@ final class Translator {
                 List<Compiled.Item> items = new ArrayList<>();
                 SelectStatement sql = translator.selectStatement(query, offset, limit, items);
                 Class<?> resultType = items.size() > 1 ? Object[].class : type(items.getFirst());
-                yield new Compiled(sql, List.copyOf(items), resultType == null ? null : boxed(resultType), slots(sql.parameters()));
+                yield new Compiled(sql, List.copyOf(items), resultType == null ? null : boxed(resultType), slots(sql.parameters()),
+                    List.of(), List.copyOf(translator.hydrations));
             }
             case Ast.Update update -> {
                 UpdateQuery sql = translator.update(update);
@@ -504,11 +519,75 @@ final class Translator {
                 orderBy.add(new Query.Order(key, order.descending(), order.nullsFirst()));
             }
         }
+        if (hydrating && parent == null && !select.distinct() && groupBy.isEmpty() && having == null) {
+            hydrations(select, sqlItems);
+        }
         List<Query.From> from = new ArrayList<>();
         for (int r = 0; r < roots.size(); r++) {
             from.add(new Query.From(roots.get(r), rootAliases.get(r), joins.get(r)));
         }
         return new Query(select.distinct(), sqlItems, from, where, groupBy, having, orderBy, offset, limit);
+    }
+
+    /**
+     * §4.4.5.3: the entities the to-one fetch joins of a selected root return with it, read from the same row. Eligible:
+     * a fetch join {@code var.attribute} of a single-valued relationship, from the selected root variable or from the
+     * variable of an eligible fetch join of it; the root is read too when one of its fetch joins is. An entity is read
+     * only when its rows hold one concrete type: no entity subclass, no joined or table-per-class inheritance. Anything
+     * else keeps being found by identifier after the rows are read.
+     */
+    private void hydrations(Ast.Select select, List<Expression> sqlItems) {
+        java.util.Set<String> selected = new java.util.HashSet<>();
+        for (Ast.Item item : select.items()) {
+            if (item.expression() instanceof Ast.Path path && path.segments().size() == 1 && path.treatEntity() == null) {
+                selected.add(path.segments().getFirst().toLowerCase(Locale.ROOT));
+            }
+        }
+        List<Variable> ordered = new ArrayList<>(); // what fetches before what it fetches
+        for (Ast.Range range : select.from()) {
+            String rootName = range.variable() == null ? null : range.variable().toLowerCase(Locale.ROOT);
+            if (range.entity() == null || !selected.contains(rootName)) continue;
+            java.util.Set<String> fetched = new java.util.HashSet<>(List.of(rootName));
+            List<Variable> targets = new ArrayList<>();
+            for (Ast.Join join : range.joins()) {
+                List<String> segments = join.path().segments();
+                if (!join.fetch() || segments.size() != 2 || join.path().treatEntity() != null
+                        || !fetched.contains(segments.getFirst().toLowerCase(Locale.ROOT))) continue;
+                Variable source = variables.get(segments.getFirst().toLowerCase(Locale.ROOT));
+                Variable target = declaredJoins.get(join);
+                if (source == null || source.type() == null || target == null || target.owner() != this || target.element() != null
+                        || !(source.type().model().attribute(segments.get(1)).orElse(null) instanceof AssociationAttribute association)
+                        || !association.singleValued()) continue;
+                if (join.variable() != null) fetched.add(join.variable().toLowerCase(Locale.ROOT));
+                if (hydratable(target.type())) targets.add(target);
+            }
+            if (targets.isEmpty()) continue;
+            Variable root = variables.get(rootName);
+            if (hydratable(root.type())) ordered.add(root);
+            ordered.addAll(targets);
+        }
+        for (int i = ordered.size() - 1; i >= 0; i--) {
+            Variable variable = ordered.get(i);
+            EntityStatements statements = variable.type().statements();
+            List<Integer> read = new ArrayList<>();
+            for (int t = 0; t < statements.tables().size(); t++) {
+                for (int c : statements.tables().get(t).selected()) {
+                    EntityStatements.Column column = statements.columns().get(c);
+                    sqlItems.add(new Expression.Column(tableAlias(variable, t), unit.queryColumn(variable.type(), column)));
+                    read.add(c);
+                }
+            }
+            int[] key = statements.tables().getFirst().selectParameters().stream().mapToInt(EntityStatements.Parameter::column).toArray();
+            hydrations.add(new Compiled.Hydration(variable.type(), read.stream().mapToInt(Integer::intValue).toArray(), key));
+        }
+    }
+
+    /** Whether the rows of {@code type} are of that one concrete entity, read from its own tables. */
+    private boolean hydratable(MappedEntity type) {
+        if (type == null || !type.statements().supported()) return false;
+        var inheritance = unit.inheritance(type.model().javaType());
+        return !inheritance.joined() && !inheritance.tablePerClass() && !inheritance.abstractEntity(type.model())
+            && inheritance.hierarchy().stream().noneMatch(e -> e.javaType() != type.model().javaType() && type.model().javaType().isAssignableFrom(e.javaType()));
     }
 
     private Compiled.Item selectItem(Value value, List<Expression> sqlItems) {
@@ -595,6 +674,7 @@ final class Translator {
                     join.kind() == Ast.Join.Kind.LEFT ? Query.Join.Kind.LEFT : Query.Join.Kind.INNER,
                     table(target), alias, restriction == null ? new Expression.Literal(true) : restriction));
             } else joined = join(join.path(), join.kind());
+            declaredJoins.put(join, joined);
             if (join.variable() != null) {
                 define(join.variable(), joined);
             }

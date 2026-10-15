@@ -1118,7 +1118,28 @@ final class EntityManagerImpl implements EntityManager {
             if (transaction.isActive() && cacheStoreMode != CacheStoreMode.BYPASS) {
                 captureCacheGeneration(cacheGeneration);
             }
-            Object loaded = factory.loader(connection).load(type, id, connection, context);
+            return stored(type, id, factory.loader(connection).load(type, id, connection, context), cacheGeneration);
+        }
+
+        @Override
+        public void hydrate(MappedEntity type, Object id, Object[] values, boolean[] nulls, Connection connection) {
+            Optional<ManagedEntity> known = context.find(new EntityKey(type.root(), id));
+            if (known.isEmpty() && !cacheInvalidationPending && cacheRetrieveMode == CacheRetrieveMode.USE
+                    && cacheStoreMode != CacheStoreMode.REFRESH && factory.cache().restore(type, id, context).isPresent()) {
+                return; // as find(): the shared cache's state, when it is the one find would give
+            }
+            long cacheGeneration = factory.cache().generation();
+            if (known.isEmpty() && transaction.isActive() && cacheStoreMode != CacheStoreMode.BYPASS) {
+                captureCacheGeneration(cacheGeneration);
+            }
+            Object loaded = factory.loader(connection).load(type, id, values, nulls, connection, context);
+            if (known.isEmpty()) {
+                stored(type, id, loaded, cacheGeneration);
+            }
+        }
+
+        /** Records a newly loaded instance for the shared cache, as a find by identifier does (§3.10). */
+        private Object stored(MappedEntity type, Object id, Object loaded, long cacheGeneration) {
             if (loaded != null) {
                 if (transaction.isActive()) {
                     if (cacheStoreMode == CacheStoreMode.BYPASS) {

@@ -1,6 +1,15 @@
 = What's new
 :description: Noether extraction and compatibility changes.
 
+== 2026-10-16 — SQL to-one fetch joins
+
+JPQL `JOIN FETCH` / `LEFT JOIN FETCH` and Criteria `fetch` of to-one relationships now load the
+owner and its fetched targets from one SQL statement instead of a select per target, keeping
+one managed instance per identity, hydrating unloaded references in place and never overwriting
+managed instances. `DISTINCT`, grouped, locking and nested queries, polymorphic or
+joined/table-per-class targets, collection fetches, entity graph hints and `find` keep the
+previous follow-up selects. Collection fetch hydration and batching are not part of this change.
+
 == 2026-10-15 — Bounded lazy to-one references
 
 Owning LAZY `@ManyToOne`/`@OneToOne` foreign-key properties can defer their target row

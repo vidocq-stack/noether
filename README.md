@@ -118,8 +118,18 @@ as their accessors and a read edge to the provider SPI (`requires io.vidocq.noet
 An opened module without that read edge stays eager; no module reads are injected into it.
 No instrumentation, dynamic proxy or reflective entity access is used.
 Cache graphs containing unloaded to-one references are not stored (no forced load);
-batching and SQL fetch joins remain outside this feature. See the detailed Persistence
+batching remains outside this feature. See the detailed Persistence
 roadmap and `docs/en` for the exact boundaries.
+
+JPQL `JOIN FETCH` / `LEFT JOIN FETCH` and Criteria `fetch` of single-valued relationships
+read the owner and its fetched to-one targets from the same SQL row (decision D11), with no
+follow-up select per target. Hydration reuses the loader: one managed instance per identity,
+existing unloaded references hydrated in place, managed (possibly modified) instances never
+overwritten, snapshots and `PostLoad` as for `find`. Eligible: non-`DISTINCT` and
+non-grouped top-level selects without lock mode, a selected root variable and fetch paths
+`var.attribute` chained from it, targets of one concrete type (no subclass, no joined or
+table-per-class inheritance). Other shapes, collection fetches, entity graph hints and
+`find` keep the existing correct follow-up selects.
 
 The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;

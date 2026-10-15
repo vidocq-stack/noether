@@ -360,7 +360,8 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
             return new ArrayList<>();
         }
         Compiled compiled = Translator.translate(statement, runtime.mapping(), p -> values.get(key(p)),
-            getFirstResult() > 0 ? getFirstResult() : null, maxResults < Integer.MAX_VALUE ? maxResults : null);
+            getFirstResult() > 0 ? getFirstResult() : null, maxResults < Integer.MAX_VALUE ? maxResults : null,
+            lockMode == LockModeType.NONE); // a locking query reads its entities as before: its rows are the locked ones
         return (List<X>) runtime.read(getFlushMode(), connection -> execute(compiled, connection));
     }
 
@@ -378,6 +379,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         }
         Dialect.Rendered rendered = dialect.renderQuery(sql);
         List<Object> rows = new ArrayList<>();
+        List<Fetched[]> fetchedRows = new ArrayList<>();
         try (PreparedStatement statement = connection.prepareStatement(rendered.sql())) {
             if (pessimistic) {
                 io.vidocq.noether.jpa.core.flush.Locks.timeout(dialect, lockTimeout, connection);
@@ -398,6 +400,9 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
                         row[i] = read(items.get(i), results, column);
                     }
                     rows.add(row.length == 1 ? row[0] : row);
+                    if (!compiled.hydrations().isEmpty()) {
+                        fetchedRows.add(fetched(compiled.hydrations(), results, column));
+                    }
                 }
             }
         } catch (SQLException e) {
@@ -409,7 +414,13 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         // entities found, and results constructed, once the rows are read: the loader runs statements of its own
         List<Object> resultList = new ArrayList<>(rows.size());
         FetchPlan[] plans = fetchPlans();
-        for (Object row : rows) {
+        for (int r = 0; r < rows.size(); r++) {
+            if (!fetchedRows.isEmpty()) { // the fetched entities first: finding their owners resolves them from the context
+                for (Fetched fetched : fetchedRows.get(r)) {
+                    if (fetched != null) runtime.hydrate(fetched.type(), fetched.id(), fetched.values(), fetched.nulls(), connection);
+                }
+            }
+            Object row = rows.get(r);
             Object resolved = resolve(row, connection, followOn);
             fetch(resolved, plans, connection);
             if (!tupleElements.isEmpty()) {
@@ -440,6 +451,37 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
             lockEntities(entry.getKey());
             lockEntities(entry.getValue());
         }
+    }
+
+    /** The columns of an entity a fetch join read with its owner, indexed like its statement columns. */
+    private record Fetched(MappedEntity type, Object id, Object[] values, boolean[] nulls) {
+    }
+
+    /** Reads, after the select items, the columns of each fetched entity; {@code null} for one the row does not hold. */
+    private static Fetched[] fetched(List<Compiled.Hydration> hydrations, ResultSet results, int[] column) throws SQLException {
+        Fetched[] fetched = new Fetched[hydrations.size()];
+        for (int h = 0; h < fetched.length; h++) {
+            Compiled.Hydration hydration = hydrations.get(h);
+            List<io.vidocq.noether.jpa.core.mapping.EntityStatements.Column> columns = hydration.type().statements().columns();
+            Object[] values = new Object[columns.size()];
+            boolean[] nulls = new boolean[values.length];
+            java.util.Arrays.fill(nulls, true);
+            for (int c : hydration.columns()) {
+                values[c] = columns.get(c).binder().read(results, column[0]++);
+                nulls[c] = results.wasNull();
+                if (nulls[c] && columns.get(c).foreignKey() != null) {
+                    values[c] = null;
+                }
+            }
+            Object[] key = new Object[hydration.key().length];
+            boolean empty = true;
+            for (int k = 0; k < key.length; k++) {
+                key[k] = values[hydration.key()[k]];
+                empty &= nulls[hydration.key()[k]];
+            }
+            fetched[h] = empty ? null : new Fetched(hydration.type(), hydration.type().statements().key(key), values, nulls);
+        }
+        return fetched;
     }
 
     /** The identity of an entity read in a row, found once the rows are read. */

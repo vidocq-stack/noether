@@ -37,3 +37,11 @@ non-final. Field access, final forms, inverse one-to-one, join tables, embedded 
 inheritance, composite/derived keys and XML-only/remapped target identifiers stay eager.
 Final entity classes are a non-portable eager-only extension. See xref:internals.adoc[]
 for generation and cache boundaries.
+
+JPQL `JOIN FETCH` / `LEFT JOIN FETCH` and Criteria `fetch` of a to-one relationship read the
+target from the same SQL row as its owner. The context still holds one instance per identity:
+an unloaded reference is filled in place, and an instance already managed (even modified) is
+kept as is. Only non-`DISTINCT`, non-grouped, non-locking top-level selects of the root
+variable, with fetch paths `variable.attribute` to targets of one concrete entity type (no
+subclass, no joined or table-per-class inheritance), are read this way; other queries,
+collection fetches, entity graph hints and `find` load their targets with follow-up selects.

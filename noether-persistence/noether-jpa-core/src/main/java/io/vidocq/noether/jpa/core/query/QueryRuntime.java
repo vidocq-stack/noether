@@ -85,4 +85,13 @@ public interface QueryRuntime {
 
     /** The managed instance of {@code type} with identity {@code id}: the persistence context's, else loaded; null if none. */
     Object find(MappedEntity type, Object id, Connection connection);
+
+    /**
+     * Makes the instance of {@code type} with identity {@code id} managed from the columns a fetch join read for it
+     * ({@code values} and {@code nulls} indexed like the entity's statement columns), unless the persistence context
+     * already manages it: then that instance keeps its state, an unloaded reference being initialized in place.
+     */
+    default void hydrate(MappedEntity type, Object id, Object[] values, boolean[] nulls, Connection connection) {
+        find(type, id, connection);
+    }
 }

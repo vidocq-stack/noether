@@ -1,3 +1,24 @@
+## Noether SQL to-one fetch join verification — 2026-10-16
+
+Decision D11 reads eligible JPQL/Criteria to-one fetch targets from the owner's SQL row. Before
+production edits, the new `FetchJoinTest` (13 scenarios then) produced **10 select-count failures**
+(for example 6 selects instead of 1 for an inner `JOIN FETCH`, 9 for nested and Criteria fetches,
+3 for a preexisting unloaded reference); the 3 others assert unchanged fallbacks. After the change,
+`FetchJoinTest` passes **14 tests** (one shared-cache scenario added during green), and the related
+`LazyToOneTest`, `LazyCollectionTest`, `ToOneTest`, `SecondLevelCacheTest`, `SecondaryTablesTest`,
+JPQL/Criteria/inheritance/lock/graph suites pass **143 tests**. The full clean reactor passes
+**848 tests, zero failures/errors/skips** (834 + 14).
+
+`TCK_FIXTURES=patched TCK_VALIDATION=off ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh`
+on Temurin 25.0.4 / Maven 3.9.16 / `postgres:17-alpine`: all **259** failsafe XML reports parsed
+independently of the wrapper's exit status give **2135 tests, 2131 passes, 0 failures, 0 errors,
+4 official skips** (unchanged: `query.language.Client6#resultContainsFetchReference`,
+`metamodelapi.identifiabletype.Client#getDeclaredSingularAttributes`,
+`se.entityManagerFactory.Client2#createEntityManagerFactoryStringMapTest`,
+`se.schemaGeneration.annotations.tableGenerator.Client#tableGeneratorTest`). Official and derived
+fixture hashes are unchanged (TCK-BUG-001 patch only). Locally patched result, not certification.
+SQL statement counts are correctness assertions, not performance figures.
+
 ## Noether lazy to-one verification — 2026-10-15
 
 Decision D10 delivers bounded lazy owning foreign-key to-one properties through JDK Class-File API

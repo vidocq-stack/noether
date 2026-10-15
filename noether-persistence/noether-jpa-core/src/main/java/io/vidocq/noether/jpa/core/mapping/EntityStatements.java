@@ -857,6 +857,11 @@ public final class EntityStatements {
             List.of(), null, null, null, null);
     }
 
+    /** Whether the entity's mapping can be read and written: otherwise its statements throw. */
+    public boolean supported() {
+        return unsupported == null;
+    }
+
     private void check() {
         if (unsupported != null) {
             int colon = unsupported.indexOf(':');

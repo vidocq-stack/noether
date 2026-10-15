@@ -15,7 +15,15 @@ The official artifact checksums and TCK-BUG-001 byte-exact derived-jar fixture
 patch are unchanged; original artifacts are never edited. `TCK_FIXTURES=official`
 selects the untouched Persistence fixture. See the runner README for setup.
 
-== Current lazy to-one verification (2026-10-15)
+== Current SQL to-one fetch join verification (2026-10-16)
+
+After decision D11 (eligible to-one fetch joins read from the owner's SQL row), the new
+SQL-counting `FetchJoinTest` was red first (10 select-count failures) and now passes 14 tests;
+`./mvnw -ntp clean install` passes 848 reactor tests (zero failures, errors or skips). The full
+patched PostgreSQL 17 run below retains 2135 tests, 2131 passes, zero failures/errors and the
+four unchanged official skips, aggregated from all 259 XML reports. Fixture hashes are unchanged.
+
+== Lazy to-one verification (2026-10-15)
 
 After the bounded lazy to-one follow-up, `./mvnw -ntp clean install` passes 834 reactor tests
 (zero failures, errors or skips). The focused SQL/generation/module regressions pass 53 tests,

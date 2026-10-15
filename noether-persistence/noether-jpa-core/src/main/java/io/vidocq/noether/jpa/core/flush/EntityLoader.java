@@ -111,6 +111,35 @@ public final class EntityLoader {
         if (row == null) {
             return null;
         }
+        return managed(type, id, row, connection, context);
+    }
+
+    /**
+     * The managed instance of {@code type} with identity {@code id}, built from the columns a fetch join query already
+     * read for it ({@code values} and {@code nulls} indexed like {@link EntityStatements#columns()}): the instance the
+     * context already manages, an unloaded reference of it initialized in place from them, else a new managed instance.
+     * {@code type} is the concrete type of the row: the query only reads the columns of an entity without subclasses.
+     */
+    public Object load(MappedEntity type, Object id, Object[] values, boolean[] nulls, Connection connection,
+            PersistenceContext context) {
+        Row row = new Row(values, nulls);
+        Optional<ManagedEntity> known = context.find(new EntityKey(type.root(), id));
+        if (known.isEmpty()) {
+            return managed(type, id, row, connection, context);
+        }
+        Object instance = known.get().instance();
+        if (LazyReference.unloaded(instance)) {
+            if (known.get().type() == type) {
+                ((LazyReference) instance).$noetherState().hydrate(() -> hydrateReference(known.get(), row, connection, context));
+            } else {
+                LazyReference.initialize(instance);
+            }
+        }
+        return instance;
+    }
+
+    /** Makes a new instance of {@code type} managed from its {@code row}, then resolves its relationships. */
+    private Object managed(MappedEntity type, Object id, Row row, Connection connection, PersistenceContext context) {
         Object instance = type.access().instantiate();
         Object[] state = state(type, instance, row);
         if (type.keepsFoundIdentifier()) {
@@ -138,12 +167,19 @@ public final class EntityLoader {
         Row row = row(type, entry.key().id(), connection, LockModeType.NONE, null);
         if (row == null) throw new jakarta.persistence.EntityNotFoundException(
             "The row of " + type.model().entityName() + " " + entry.key().id() + " no longer exists");
+        hydrateReference(entry, row, connection, context);
+        ((LazyReference) instance).$noetherState().complete();
+    }
+
+    /** Writes {@code row} into the registered reference of {@code entry}, its snapshot and relationships included. */
+    private void hydrateReference(ManagedEntity entry, Row row, Connection connection, PersistenceContext context) {
+        MappedEntity type = entry.type();
+        Object instance = entry.instance();
         Object[] state = state(type, instance, row);
         relationships(type, entry.key().id(), instance, state, row, connection, context);
         type.access().read(instance, state);
         context.updated(entry, type.state().snapshot(state));
         type.callback("PostLoad", instance);
-        ((LazyReference) instance).$noetherState().complete();
     }
 
     private Object reference(AssociationAttribute association, MappedEntity target, Object key,

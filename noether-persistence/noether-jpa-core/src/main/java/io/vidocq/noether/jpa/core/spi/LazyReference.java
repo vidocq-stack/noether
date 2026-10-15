@@ -46,6 +46,22 @@ public interface LazyReference {
             }
         }
 
+        /**
+         * Initializes the reference with {@code hydration}, state the caller already read (a fetch join row), instead of
+         * its loader; nothing if it is loaded or loading.
+         */
+        public void hydrate(Runnable hydration) {
+            if (loaded || loading) return;
+            loading = true;
+            try {
+                hydration.run();
+                loaded = true;
+                loader = null;
+            } finally {
+                loading = false;
+            }
+        }
+
         public void complete() {
             loaded = true;
             loader = null;

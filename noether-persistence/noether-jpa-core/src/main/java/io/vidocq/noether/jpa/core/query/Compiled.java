@@ -35,10 +35,26 @@ import java.util.List;
  *        several
  * @param slots what the parameters of {@code sql} bind, in their order
  */
-record Compiled(Statement sql, List<Item> items, Class<?> resultType, List<Slot> slots, List<Mutation> mutations) {
+record Compiled(Statement sql, List<Item> items, Class<?> resultType, List<Slot> slots, List<Mutation> mutations,
+        List<Hydration> hydrations) {
 
     Compiled(Statement sql, List<Item> items, Class<?> resultType, List<Slot> slots) {
-        this(sql, items, resultType, slots, List.of());
+        this(sql, items, resultType, slots, List.of(), List.of());
+    }
+
+    Compiled(Statement sql, List<Item> items, Class<?> resultType, List<Slot> slots, List<Mutation> mutations) {
+        this(sql, items, resultType, slots, mutations, List.of());
+    }
+
+    /**
+     * An entity a to-one fetch join returns with its owner (§4.4.5.3): its columns follow the select items, in the
+     * order of {@code columns}, and build its managed instance from the same row, in the order of the list, the fetched
+     * ones before what fetches them.
+     *
+     * @param columns the indexes, in the entity's statement columns, of the columns read, in their order in the row
+     * @param key the indexes of its key columns, in the order of its key
+     */
+    record Hydration(MappedEntity type, int[] columns, int[] key) {
     }
 
     /** A table mutation whose parameters come from a captured key/value row (§4.10, joined inheritance). */

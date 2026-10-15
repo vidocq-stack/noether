@@ -29,7 +29,14 @@ unloaded state is ignored by merge. Shared-cache graphs containing unloaded refe
 are not captured, avoiding a forced load or retained context. An eager cache graph that
 would reuse an existing unloaded reference falls back to ordinary loading before allocating
 any nodes, preserving identity and eager semantics. Fully loaded graphs retain the original
-cache behavior. Fetch joins and entity graphs use secondary selects, not SQL join batching.
+cache behavior. Collection fetch joins and entity graphs use secondary selects, not SQL join batching.
+
+Eligible to-one fetch joins (decision D11) add the target's statement columns — primary and
+secondary tables — to the translated select (`Compiled.hydrations()`, fetched entities first).
+After reading each row, the query hands them to `EntityLoader`, which builds the entity as
+`find` does: generated access, converters, relationships, snapshot, `PostLoad` and shared-cache
+storage. A known identity is never overwritten; an unloaded reference of that type is hydrated
+in place. A row whose target key columns are all null hydrates nothing.
 
 Java module descriptors expose minimal public contracts and qualified
 processor access. Dialects, generated entity accesses, CDI extensions and
