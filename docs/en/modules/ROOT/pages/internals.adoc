@@ -5,6 +5,32 @@ Entity metadata is read from class files. `AccessPlanner` is shared by bootstrap
 and the annotation processor; generated access handles state without reflective
 field/method invocation. The JDK Class-File API is used, not ASM or Byte Buddy.
 
+For eligible lazy to-one targets the same planner feeds `LazySubclassGenerator`.
+APT writes the subclass class file and the generated access's `instantiateLazy` factory
+inside the application's module. The existing access provider supplies it through
+ServiceLoader: a closed package needs neither exports nor opens, and no bytecode is
+generated at runtime on this path. Opaque precompiled entities instead use bootstrap
+generation, requiring their existing package opens to `io.vidocq.noether.jpa.core`.
+Their module must also read that provider module for the reference SPI; an opened module
+without that read edge stays eager, with no read edge injected by the provider.
+The planned JPA Maven-plugin module is not delivered; there is no separate plugin
+generation path. No runtime reflection or instrumentation is introduced.
+
+Each pending reference is already the managed object for its identity, not a placeholder
+replaced later by `find`. The first intercepted call hydrates it in place, records its
+snapshot and invokes `PostLoad`. The identifier getter stays callable without SQL when
+it only reads the identifier; all other accessible declared methods, including setters,
+initialize first. Final/native/abstract methods, exposed instance fields, interfaces and
+inheritance are conservatively excluded. XML fetch/column overlays share the normal model,
+but identifier/access-plan changes fall back to eager loading.
+
+Unloaded reference entries are excluded from flush and persist cascades, and detached
+unloaded state is ignored by merge. Shared-cache graphs containing unloaded references
+are not captured, avoiding a forced load or retained context. An eager cache graph that
+would reuse an existing unloaded reference falls back to ordinary loading before allocating
+any nodes, preserving identity and eager semantics. Fully loaded graphs retain the original
+cache behavior. Fetch joins and entity graphs use secondary selects, not SQL join batching.
+
 Java module descriptors expose minimal public contracts and qualified
 processor access. Dialects, generated entity accesses, CDI extensions and
 Persistence/Validation providers are registered through the appropriate

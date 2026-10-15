@@ -98,11 +98,12 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
         for (EntityManagerFactoryImpl factory : open) {
             Optional<MappedEntity> type = factory.isOpen() ? factory.mapping.entity(entity.getClass()) : Optional.empty();
             if (type.isEmpty()) continue;
-            if (attributeName == null) return jakarta.persistence.spi.LoadState.LOADED;
+            if (attributeName == null) return new UnitUtil(factory.mapping).isLoaded(entity)
+                ? jakarta.persistence.spi.LoadState.LOADED : jakarta.persistence.spi.LoadState.NOT_LOADED;
             int index = UnitUtil.index(type.get(), attributeName);
             if (index < 0) continue;
-            return io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(type.get().access().get(entity, index))
-                ? jakarta.persistence.spi.LoadState.NOT_LOADED : jakarta.persistence.spi.LoadState.LOADED;
+            return new UnitUtil(factory.mapping).isLoaded(entity, attributeName)
+                ? jakarta.persistence.spi.LoadState.LOADED : jakarta.persistence.spi.LoadState.NOT_LOADED;
         }
         return jakarta.persistence.spi.LoadState.UNKNOWN;
     }

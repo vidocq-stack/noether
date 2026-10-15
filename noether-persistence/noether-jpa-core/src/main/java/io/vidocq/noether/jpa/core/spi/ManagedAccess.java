@@ -81,6 +81,11 @@ public abstract class ManagedAccess {
         throw new UnsupportedOperationException(type.getName() + " is not instantiated without its components");
     }
 
+    /** A generated interceptable reference, or null when this access cannot safely provide one. */
+    public Object instantiateLazy() {
+        return null;
+    }
+
     /** A new record, through its canonical constructor, from its components in attribute order. */
     public Object construct(Object... components) {
         throw new UnsupportedOperationException(type.getName() + " is not a record");

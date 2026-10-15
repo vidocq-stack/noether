@@ -278,6 +278,20 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
         String source;
         try {
             source = writer.write(type, className, members, record, callbacks);
+            var info = infos.read(type);
+            if (!record && !type.getModifiers().contains(javax.lang.model.element.Modifier.SEALED)
+                    && io.vidocq.noether.jpa.core.model.build.LazySubclassGenerator.supports(info, members)) {
+                String lazy = io.vidocq.noether.jpa.core.model.build.LazySubclassGenerator.name(info.name());
+                try (var output = filer.createClassFile(lazy, type).openOutputStream()) {
+                    output.write(io.vidocq.noether.jpa.core.model.build.LazySubclassGenerator.bytes(info, members));
+                }
+                int end = source.lastIndexOf('}');
+                source = source.substring(0, end)
+                    + "    @java.lang.Override public java.lang.Object instantiateLazy() { return new " + lazy
+                    + "(); }\n" + source.substring(end);
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException("Cannot write lazy entity subclass", e);
         } catch (AccessWriter.Unsupported e) {
             note(type, e.getMessage());
             return false;

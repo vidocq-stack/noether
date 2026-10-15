@@ -128,6 +128,7 @@ public final class FlushEngine {
         List<ManagedEntity> checks = new ArrayList<>();
         List<Work> indexes = new ArrayList<>();
         for (ManagedEntity entry : context.entries()) {
+            if (io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(entry.instance())) continue;
             MappedEntity type = entry.type();
             switch (entry.status()) {
                 case MANAGED -> {
@@ -168,6 +169,7 @@ public final class FlushEngine {
         inserts.forEach(work -> pending.add(work.entry().instance()));
         Map<Object, List<CollectionKeyWrite>> collectionInserts = new IdentityHashMap<>();
         for (ManagedEntity entry : context.entries()) {
+            if (io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(entry.instance())) continue;
             if (entry.status() != ManagedEntity.Status.MANAGED) continue;
             Work owner = new Work(entry, read(entry.type(), entry.instance()));
             for (CollectionMapping mapping : owner.type().statements().collections()) {

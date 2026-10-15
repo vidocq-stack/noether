@@ -417,7 +417,7 @@ class EntityModelBuilderTest {
 
     @Test
     void invalidEntityClassesAreRejected() { // §2.1
-        assertThatThrownBy(() -> build(FinalEntity.class)).isInstanceOf(PersistenceException.class).hasMessageContaining("final");
+        assertThat(build(FinalEntity.class).entity(FinalEntity.class)).isPresent(); // non-portable eager-only extension
         assertThatThrownBy(() -> build(NoDefaultConstructor.class)).isInstanceOf(PersistenceException.class)
             .hasMessageContaining("constructor");
         assertThatThrownBy(() -> build(Unmappable.class)).isInstanceOf(PersistenceException.class).hasMessageContaining("thread");

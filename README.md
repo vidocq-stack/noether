@@ -94,8 +94,32 @@ LAZY collections (`@OneToMany`, `@ManyToMany`, `@ElementCollection` declared as
 load on first access inside their persistence context; unloaded collections of detached
 or closed-context instances throw `PersistenceException`, and `PersistenceUnitUtil.isLoaded`
 reports their state. EAGER mappings, JOIN FETCH and fetch/load graphs initialize them.
-Concrete collection field types and collections inside embeddables stay eager; lazy
-to-one relationships are not implemented yet (loaded with their owner).
+Concrete collection field types and collections inside embeddables stay eager.
+
+LAZY owning `@ManyToOne`/`@OneToOne` foreign-key properties can now hold a generated
+entity subclass: a simple identifier getter needs no SQL; the first other getter or
+setter initializes the **same managed instance** once. `find`, queries, EAGER mappings,
+JOIN FETCH, Criteria fetches and fetch/load graphs preserve identity and initialize
+their required targets. `PersistenceUnitUtil` reports the reference's exact load state
+and canonical entity class. Missing rows throw `EntityNotFoundException`; accessing
+unloaded state after detach/clear/close/rollback throws `PersistenceException`.
+
+The deliberately narrow target scope is a public, non-final, non-sealed concrete class,
+directly extending `Object`, with no implemented interfaces, non-private instance fields
+or non-interceptable instance methods; persistent state must use properties and the
+identifier must be one annotated basic primitive, boxed integral/character, or `String` property. An owning
+property getter and its owner class must also be non-final. Field-access associations,
+final classes/methods, inverse one-to-one, join tables, embedded paths, inheritance,
+composite/derived identifiers and XML-only/remapped target identifiers stay safely eager.
+Final entity classes are accepted as an explicitly non-portable, eager-only extension.
+APT emits subclasses with the JDK Class-File API in the application's closed Java module;
+opaque archives use bootstrap generation and need the same documented package `opens`
+as their accessors and a read edge to the provider SPI (`requires io.vidocq.noether.jpa.core`).
+An opened module without that read edge stays eager; no module reads are injected into it.
+No instrumentation, dynamic proxy or reflective entity access is used.
+Cache graphs containing unloaded to-one references are not stored (no forced load);
+batching and SQL fetch joins remain outside this feature. See the detailed Persistence
+roadmap and `docs/en` for the exact boundaries.
 
 The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;

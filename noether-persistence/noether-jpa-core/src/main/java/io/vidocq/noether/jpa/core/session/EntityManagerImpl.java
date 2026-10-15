@@ -120,6 +120,7 @@ final class EntityManagerImpl implements EntityManager {
             }
         });
         context.lazyLoader(this::loadLazy);
+        context.referenceLoader(this::loadReference);
         TransactionListener listener = new TransactionListener() {
             @Override
             public void beforeCommit(Connection connection) {
@@ -226,6 +227,22 @@ final class EntityManagerImpl implements EntityManager {
      * connection of the active transaction, else on a connection of its own; {@link PersistenceException} once the
      * owner is detached or the entity manager closed.
      */
+    private void loadReference(Object instance) {
+        if (closed && !transaction.isActive() || !factory.isOpen()) {
+            throw failed(new PersistenceException("The lazy to-one reference cannot be loaded: its entity manager is closed"));
+        }
+        ManagedEntity entry = context.entry(instance).orElseThrow(() -> failed(new PersistenceException(
+            "The lazy to-one reference cannot be loaded: it is detached")));
+        try {
+            onConnection(connection -> {
+                factory.loader(connection).initializeReference(entry, connection, context);
+                return null;
+            });
+        } catch (PersistenceException failure) {
+            throw failed(failure);
+        }
+    }
+
     private void loadLazy(LazyCollection lazy) {
         String what = lazy.owner().getClass().getSimpleName() + "." + lazy.attributeName();
         if (closed && !transaction.isActive() || !factory.isOpen()) {
@@ -735,6 +752,7 @@ final class EntityManagerImpl implements EntityManager {
                 if (known.get().status() != ManagedEntity.Status.MANAGED || !entityClass.isInstance(instance)) {
                     return null;
                 }
+                io.vidocq.noether.jpa.core.spi.LazyReference.initialize(instance);
                 if (locking) {
                     lock(instance, lockMode, properties);
                 }
@@ -831,6 +849,7 @@ final class EntityManagerImpl implements EntityManager {
             int index = UnitUtil.index(type.get(), attribute.getKey());
             if (index < 0) continue; // an attribute of another subtype of a graph
             Object value = type.get().access().get(instance, index);
+            io.vidocq.noether.jpa.core.spi.LazyReference.initialize(value);
             if (value instanceof LazyCollection lazy && !lazy.initialized()) {
                 Optional<ManagedEntity> entry = lazy.owner() == instance ? context.entry(instance) : Optional.empty();
                 if (entry.isEmpty()) continue;
@@ -1085,6 +1104,7 @@ final class EntityManagerImpl implements EntityManager {
         public Object find(MappedEntity type, Object id, Connection connection) {
             Optional<ManagedEntity> known = context.find(new EntityKey(type.root(), id));
             if (known.isPresent()) {
+                io.vidocq.noether.jpa.core.spi.LazyReference.initialize(known.get().instance());
                 return known.get().instance();
             }
             if (!cacheInvalidationPending && cacheRetrieveMode == CacheRetrieveMode.USE

@@ -38,6 +38,7 @@ import io.vidocq.noether.jpa.core.model.ElementCollectionAttribute;
 import io.vidocq.noether.jpa.core.model.EmbeddableModel;
 import io.vidocq.noether.jpa.core.model.EmbeddedAttribute;
 import io.vidocq.noether.jpa.core.spi.ManagedAccess;
+import io.vidocq.noether.jpa.core.spi.LazyReference;
 import io.vidocq.noether.jpa.dialect.sql.Identifier;
 import io.vidocq.noether.jpa.dialect.sql.Select;
 import jakarta.persistence.LockModeType;
@@ -61,8 +62,8 @@ import java.util.function.Function;
  * their binders, the state rebuilt (embeddables included) and written through the access, then the instance made
  * managed with its snapshot. Shares the SQL the flush engine rendered.
  *
- * <p>Single-valued relationships are loaded with their owner (§2.10; {@code FetchType.LAZY} is a hint for them,
- * §11.1.26): the owning side from its foreign key, an inverse side from the owning side of its target. A LAZY collection
+ * <p>Eligible LAZY owning to-one foreign-key properties receive a generated managed reference; unsupported forms
+ * remain eager (§2.10, §11.1.26). An inverse side is resolved from the owning side of its target. A LAZY collection
  * (a to-many relationship or an element collection) is a {@link LazyCollection} that {@link #initialize loads} its
  * elements on its first access; an EAGER one is loaded with its owner, from its join table, the foreign keys of its
  * targets or its collection table. The instance is managed before its relationships are resolved, so that a cycle
@@ -94,6 +95,9 @@ public final class EntityLoader {
             Integer timeout) {
         Optional<ManagedEntity> known = context.find(new EntityKey(type.root(), id));
         if (known.isPresent()) {
+            if (LazyReference.unloaded(known.get().instance())) {
+                LazyReference.initialize(known.get().instance());
+            }
             return type.model().javaType().isInstance(known.get().instance())
                 && known.get().status() == ManagedEntity.Status.MANAGED
                 ? known.get().instance() : null;
@@ -124,6 +128,35 @@ public final class EntityLoader {
         type.access().read(instance, state);
         context.updated(entry, type.state().snapshot(state));
         type.callback("PostLoad", instance); // §3.6.3: once the state is loaded
+        return instance;
+    }
+
+    /** Hydrates the already registered reference, never allocating a second instance for its identity. */
+    public void initializeReference(ManagedEntity entry, Connection connection, PersistenceContext context) {
+        MappedEntity type = entry.type();
+        Object instance = entry.instance();
+        Row row = row(type, entry.key().id(), connection, LockModeType.NONE, null);
+        if (row == null) throw new jakarta.persistence.EntityNotFoundException(
+            "The row of " + type.model().entityName() + " " + entry.key().id() + " no longer exists");
+        Object[] state = state(type, instance, row);
+        relationships(type, entry.key().id(), instance, state, row, connection, context);
+        type.access().read(instance, state);
+        context.updated(entry, type.state().snapshot(state));
+        type.callback("PostLoad", instance);
+        ((LazyReference) instance).$noetherState().complete();
+    }
+
+    private Object reference(AssociationAttribute association, MappedEntity target, Object key,
+            Connection connection, PersistenceContext context) {
+        boolean supported = unit.lazyReference(association) && context.referenceLoader() != null;
+        if (!supported) return find(target, key, connection, context);
+        var known = context.find(new EntityKey(target.root(), key));
+        if (known.isPresent()) return known.get().instance();
+        Object instance = target.access().instantiateLazy();
+        if (instance == null) return find(target, key, connection, context);
+        target.access().set(instance, target.idAttributes()[0], key);
+        context.reference(instance, target, key);
+        ((LazyReference) instance).$noetherState(new LazyReference.State(() -> context.referenceLoader().accept(instance)));
         return instance;
     }
 
@@ -218,7 +251,7 @@ public final class EntityLoader {
                 Optional<EntityStatements.Reference> owned = statements.reference(i);
                 if (owned.isPresent()) {
                     Object key = statements.referencedKey(owned.get(), row.values());
-                    value = key == null ? null : find(entity(association.targetEntity()), key, connection, context);
+                    value = key == null ? null : reference(association, entity(association.targetEntity()), key, connection, context);
                 } else if (!association.owning()) {
                     List<Indexed> owners = inverse(association, null, id, statements, connection, context);
                     value = owners.isEmpty() ? null : owners.getFirst().element();
@@ -364,6 +397,7 @@ public final class EntityLoader {
     /** The managed instance of {@code type} with identity {@code key}: the context's, else loaded; {@code null} if none. */
     private Object find(MappedEntity type, Object key, Connection connection, PersistenceContext context) {
         Optional<ManagedEntity> known = context.find(new EntityKey(type.root(), key));
+        if (known.isPresent()) LazyReference.initialize(known.get().instance());
         return known.isPresent() ? type.model().javaType().isInstance(known.get().instance()) ? known.get().instance() : null
             : load(type, key, connection, context);
     }

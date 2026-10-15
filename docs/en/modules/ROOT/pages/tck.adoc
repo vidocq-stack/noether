@@ -15,9 +15,29 @@ The official artifact checksums and TCK-BUG-001 byte-exact derived-jar fixture
 patch are unchanged; original artifacts are never edited. `TCK_FIXTURES=official`
 selects the untouched Persistence fixture. See the runner README for setup.
 
-link:{repo-noether}/src/branch/main/noether-persistence/TCK.md[Historical Persistence evidence]
+== Current lazy to-one verification (2026-10-15)
+
+After the bounded lazy to-one follow-up, `./mvnw -ntp clean install` passes 834 reactor tests
+(zero failures, errors or skips). The focused SQL/generation/module regressions pass 53 tests,
+including 18 new lazy to-one scenarios, the unchanged 19 lazy-collection scenarios, static
+generation inside a closed application module and eager fallback in an opened module without
+a provider read edge.
+
+[source,sh]
+----
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+----
+
+The full PostgreSQL 17 run on Temurin 25.0.4 / Maven 3.9.16 retains 2135 tests, 2131 passes,
+zero failures, zero errors and four unchanged official skips. All 259 XML reports were parsed
+independently of the wrapper's exit status; official and derived fixture hashes are unchanged.
+This is a local patched result, not certification or an untouched official result.
+
+link:{repo-noether}/src/branch/main/noether-persistence/TCK.md[Current and historical Persistence evidence]
 and
 link:{repo-noether}/src/branch/main/noether-validation/noether-validation-tck/TCK.md[Validation evidence]
-retain pre-extraction names and results. They are not measurements on Noether.
+retain historical sections with pre-extraction names and results; those historical sections
+are not measurements on Noether.
 No formal Persistence certification is sought; the Web Profile is not a target.
 The provisional Validation provider is not claimed conformant.

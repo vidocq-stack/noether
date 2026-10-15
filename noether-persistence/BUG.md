@@ -602,3 +602,99 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     collection from the declared type (`CollectionMapping.newCollection` / `IndexMapping.newMap`),
     so sorted sets and maps come back as `TreeSet`/`TreeMap`. `LazyCollectionTest` (19) and the
     full `noether-jpa-core` suite (528) pass.
+
+## BUG-20261015-03 — Lazy subclass eligibility accidentally replans non-entity accesses
+
+- **Date**: 2026-10-15
+- **Status**: FIXED (working tree)
+- **Module**: `noether-jpa-core/access/AccessGenerator`
+- **Symptom**: the first lazy-to-one implementation rejected existing embeddables, id classes and
+  XML-only entities with "no identifier" during bootstrap.
+- **Minimal reproduction**: `./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test`.
+- **Cause hypothesis**: confirmed — optional subclass generation invoked the annotation entity
+  planner for every generated access, including non-entities and XML-only mappings.
+- **Investigations**:
+  - 2026-10-15: reproduced in the core regression suite; optional generation now first requires
+    an annotated entity with an annotated property identifier. Other accesses retain their original
+    generation path; XML-only target mappings remain eager.
+
+## BUG-20261015-04 — Cached eager graphs can retain an unloaded to-one reference
+
+- **Date**: 2026-10-15
+- **Status**: FIXED (working tree)
+- **Module**: `noether-jpa-core/session/SecondLevelCache`
+- **Symptom**: restoring an eager graph reused an existing lazy reference without initializing it;
+  `isLoaded(owner, attribute)` was false despite the eager mapping.
+- **Minimal reproduction**: `./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test
+  -Dtest=LazyToOneTest#cachedEagerGraphInitializesAnAlreadyManagedLazyReference
+  -Dsurefire.failIfNoSpecifiedTests=false`.
+- **Cause hypothesis**: confirmed — cache restore skipped state writes for already managed identities,
+  assuming all managed instances were fully loaded.
+- **Investigations**:
+  - 2026-10-15: reproduced red; restore now declines such a graph before allocating nodes.
+    The ordinary loader initializes the existing reference in place, preserving eager semantics and identity.
+
+## BUG-20261015-05 — Generated lazy factory resolves application names instead of Java types
+
+- **Date**: 2026-10-15
+- **Status**: FIXED (working tree)
+- **Module**: `noether-jpa-processor/NoetherJpaProcessor`
+- **Symptom**: compilation failed in application packages declaring their own `Override` or `Object`,
+  because the added lazy factory used unqualified Java names.
+- **Minimal reproduction**: `./mvnw -ntp -pl noether-persistence/noether-jpa-processor -am test
+  -Dtest=EdgeCasesTest -Dsurefire.failIfNoSpecifiedTests=false`.
+- **Cause hypothesis**: confirmed — unlike the existing accessor templates, the lazy factory
+  insertion did not fully qualify `java.lang.Override` and `java.lang.Object`.
+- **Investigations**:
+  - 2026-10-15: three existing processor regressions failed in the clean reactor;
+    all names in the factory insertion are now qualified.
+
+## BUG-20261015-06 — Identifier-named overload bypasses reference initialization
+
+- **Date**: 2026-10-15
+- **Status**: FIXED (working tree)
+- **Module**: `noether-jpa-core/model/build/LazySubclassGenerator`
+- **Symptom**: a non-identifier method such as `String getId(int ignored)` could return
+  an uninitialized default value instead of loading the target row.
+- **Minimal reproduction**: `./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test
+  -Dtest=LazyToOneTest#anOverloadNamedLikeTheIdentifierGetterStillInitializesState
+  -Dsurefire.failIfNoSpecifiedTests=false`.
+- **Cause hypothesis**: confirmed — the exemption matched the identifier getter name without
+  checking the no-argument signature.
+- **Investigations**:
+  - 2026-10-15: reproduced red (`null` instead of `"target"`); only the actual zero-argument
+    identifier getter is now exempt. Bootstrap subclass names also differ from APT output so
+    an old build-time class cannot substitute for freshly planned bootstrap interception.
+
+## BUG-20261015-07 — Refreshing an unloaded reference reads its row twice
+
+- **Date**: 2026-10-15
+- **Status**: FIXED (working tree)
+- **Module**: `noether-jpa-core/session/EntityOperations`
+- **Symptom**: refreshing a pending reference selected its row twice and invoked the load path
+  again while collecting its previous state.
+- **Minimal reproduction**: `./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test
+  -Dtest=LazyToOneTest#refreshingAPendingReferenceHydratesItInPlaceWithOneSelect
+  -Dsurefire.failIfNoSpecifiedTests=false`.
+- **Cause hypothesis**: confirmed — ordinary refresh assumes it can read previous entity state;
+  an intercepted getter initialized the reference during that read.
+- **Investigations**:
+  - 2026-10-15: reproduced red with two identical selects; a pending reference now uses its
+    initial hydration as the refresh and then applies the normal refresh cascades.
+
+## BUG-20261015-08 — Optional bootstrap subclasses require an undeclared module read edge
+
+- **Date**: 2026-10-15
+- **Status**: FIXED (working tree)
+- **Module**: `noether-jpa-core/access/AccessGenerator`
+- **Symptom**: a property entity in an opened application module that reads only
+  `jakarta.persistence` failed bootstrap when an optional subclass referenced the provider SPI.
+- **Minimal reproduction**: `./mvnw -ntp -pl noether-persistence/noether-jpa-module-it -am test
+  -Dtest=OpensModulePathTest#aModuleWithoutAReadEdgeToTheGeneratedReferenceSpiKeepsEagerLoading
+  -Dsurefire.failIfNoSpecifiedTests=false`.
+- **Cause hypothesis**: confirmed — package opens allow accessor lookups, but do not make the
+  application module read the generated reference SPI.
+- **Investigations**:
+  - 2026-10-15: reproduced in the existing strict runtime module vehicle. Such modules now retain
+    eager loading, with no added read edge or module-descriptor change. The closed APT module
+    already declares the required provider read edge and retains static lazy subclasses.

@@ -324,9 +324,7 @@ public final class EntityModelBuilder {
         if (info.isInterface() || info.isEnum() || info.isRecord()) {
             throw new PersistenceException("The entity " + info.name() + " must be a class, not an interface, an enum or a record (§2.1)");
         }
-        if (info.isFinal()) {
-            throw new PersistenceException("The entity class " + info.name() + " must not be final (§2.1)");
-        }
+        // Final entities are a non-portable extension: never enhanced, and every to-one targeting them stays eager.
         boolean noArgConstructor = info.methods().stream().anyMatch(m -> m.name().equals(ConstantDescs.INIT_NAME)
             && m.type().parameterCount() == 0 && (m.flags() & (ClassFile.ACC_PUBLIC | ClassFile.ACC_PROTECTED)) != 0);
         if (!info.isAbstract() && !noArgConstructor) {

@@ -29,6 +29,9 @@ import static java.lang.constant.ConstantDescs.INIT_NAME;
 import io.vidocq.noether.jpa.core.model.AccessKind;
 import io.vidocq.noether.jpa.core.model.AttributeModel;
 import io.vidocq.noether.jpa.core.model.CallbackModel;
+import io.vidocq.noether.jpa.core.model.build.AccessPlanner;
+import io.vidocq.noether.jpa.core.model.build.LazySubclassGenerator;
+import io.vidocq.noether.jpa.core.model.source.ClassFileSource;
 import io.vidocq.noether.jpa.core.spi.ManagedAccess;
 import jakarta.persistence.PersistenceException;
 import java.lang.classfile.ClassFile;
@@ -89,11 +92,13 @@ final class AccessGenerator {
         try {
             MethodHandles.Lookup lookup = Handles.lookupIn(type);
             int creator = -1;
+            int lazyCreator = -1;
             if (record) {
                 creator = add(handles, canonicalConstructor(lookup, type, attributes));
             } else if (!type.accessFlags().contains(AccessFlag.ABSTRACT)) {
                 creator = add(handles, lookup.findConstructor(type, MethodType.methodType(void.class))
                     .asType(MethodType.methodType(Object.class)));
+                lazyCreator = lazyCreator(type, lookup, handles);
             }
             int[] getters = new int[attributes.size()];
             int[] setters = new int[record ? 0 : attributes.size()];
@@ -122,7 +127,7 @@ final class AccessGenerator {
                 }
                 callbacks[i] = add(handles, handle.asType(MethodType.methodType(void.class, Object.class)));
             }
-            byte[] bytes = bytes(type, record, creator, getters, setters, callbacks);
+            byte[] bytes = bytes(type, record, creator, lazyCreator, getters, setters, callbacks);
             MethodHandles.Lookup hidden = Handles.own().defineHiddenClassWithClassData(bytes, List.copyOf(handles), true);
             return (ManagedAccess) hidden.findConstructor(hidden.lookupClass(),
                 MethodType.methodType(void.class, Class.class, List.class, List.class))
@@ -139,6 +144,34 @@ final class AccessGenerator {
     private static int add(List<MethodHandle> handles, MethodHandle handle) {
         handles.add(handle);
         return handles.size() - 1;
+    }
+
+    private static int lazyCreator(Class<?> type, MethodHandles.Lookup lookup, List<MethodHandle> handles)
+            throws ReflectiveOperationException {
+        if (!type.getModule().canRead(ManagedAccess.class.getModule())) return -1;
+        var source = new ClassFileSource(type.getClassLoader());
+        var info = source.read(type.getName()).orElseThrow();
+        if (type.isSealed() || !info.isAnnotated("jakarta.persistence.Entity")
+                || info.methods().stream().noneMatch(m -> m.isAnnotated("jakarta.persistence.Id"))) return -1;
+        var members = new AccessPlanner(source).entityMembers(info);
+        if (!LazySubclassGenerator.supports(info, members)) return -1;
+        String name = LazySubclassGenerator.name(type.getName()) + "$Bootstrap";
+        Class<?> subclass;
+        try {
+            subclass = Class.forName(name, false, type.getClassLoader());
+        } catch (ClassNotFoundException absent) {
+            try {
+                subclass = lookup.defineClass(LazySubclassGenerator.bytes(info, members, name));
+            } catch (LinkageError concurrentDefinition) {
+                try {
+                    subclass = Class.forName(name, false, type.getClassLoader());
+                } catch (ClassNotFoundException notConcurrent) {
+                    throw concurrentDefinition;
+                }
+            }
+        }
+        return add(handles, lookup.findConstructor(subclass, MethodType.methodType(void.class))
+            .asType(MethodType.methodType(Object.class)));
     }
 
     private static MethodHandle canonicalConstructor(MethodHandles.Lookup lookup, Class<?> type, List<AttributeModel> components)
@@ -194,13 +227,17 @@ final class AccessGenerator {
 
     // ---- bytecode ---------------------------------------------------------------------------------------
 
-    private static byte[] bytes(Class<?> type, boolean record, int creator, int[] getters, int[] setters, int[] callbacks) {
+    private static byte[] bytes(Class<?> type, boolean record, int creator, int lazyCreator, int[] getters, int[] setters, int[] callbacks) {
         ClassDesc self = ClassDesc.of(AccessGenerator.class.getPackageName(), "Access_" + type.getSimpleName());
         return ClassFile.of().build(self, cb -> {
             cb.withFlags(ClassFile.ACC_FINAL | ClassFile.ACC_SUPER | ClassFile.ACC_SYNTHETIC);
             cb.withSuperclass(CD_MANAGED_ACCESS);
             cb.withMethodBody(INIT_NAME, CONSTRUCTOR, ClassFile.ACC_PUBLIC, code -> code
                 .aload(0).aload(1).aload(2).aload(3).invokespecial(CD_MANAGED_ACCESS, INIT_NAME, CONSTRUCTOR).return_());
+            if (lazyCreator >= 0) {
+                cb.withMethodBody("instantiateLazy", INSTANTIATE, ClassFile.ACC_PUBLIC, code -> code
+                    .ldc(handle(lazyCreator)).invokevirtual(CD_MethodHandle, "invokeExact", INSTANTIATE).areturn());
+            }
             if (creator >= 0 && record) {
                 cb.withMethodBody("construct", CONSTRUCT, ClassFile.ACC_PUBLIC | ClassFile.ACC_VARARGS, code -> code
                     .ldc(handle(creator)).aload(1).invokevirtual(CD_MethodHandle, "invokeExact", CONSTRUCT).areturn());

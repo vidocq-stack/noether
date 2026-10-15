@@ -1,3 +1,60 @@
+## Noether lazy to-one verification — 2026-10-15
+
+Decision D10 delivers bounded lazy owning foreign-key to-one properties through JDK Class-File API
+subclasses. The final full clean reactor passes **834 tests, zero failures/errors/skips**
+(814 baseline + 18 SQL-observing `LazyToOneTest` scenarios + one closed APT-module test +
+one opened runtime-module fallback test). The focused run passes **53 tests**:
+`LazyToOneTest` (18), unchanged `LazyCollectionTest` (19), `EdgeCasesTest` (5),
+`OpensModulePathTest` (4) and `GeneratedAccessModulePathTest` (7).
+Before production edits, the initial five SQL tests produced four assertion failures:
+loading an owner selected its LAZY target immediately. Additional red regressions caught
+cache eager-state reuse, identifier-named overloads, duplicate pending-reference refresh and
+the missing module read-edge fallback; the processor's existing name-shadowing tests also
+caught an unqualified generated factory declaration. These implementation bugs are tracked
+in `BUG.md` (BUG-20261015-03 through BUG-20261015-08).
+
+Coverage includes identifier access without SQL, one initialization, persistence identity across
+`find` and fetches, untouched flush and setter writes, detached merge and relationship replacement,
+refresh/remove/rollback, missing/closed/detached references, JPQL/Criteria fetches, entity graphs,
+XML fetch overrides, shared-cache graphs, owning/inverse one-to-one and safe eager fallbacks for
+field access and final classes/methods. The strict closed module verifies a statically generated
+subclass with no package opens or exports. The runtime module verifies eager fallback without
+adding a read edge to the application module. Final entity classes are now an explicitly
+non-portable eager-only extension; inheritance/composite identifiers and XML-only/remapped target
+identifiers remain eager. Full mapping and integration regression suites remain green.
+
+On Temurin **25.0.4**, Maven **3.9.16** and PostgreSQL **17**, the final full patched Persistence
+3.2.1 TCK reports **2135 tests / 2131 passes / zero failures / zero errors / four official skips**.
+Independent XML parsing verified all **259 reports**: execution 1 has 2134 tests, 2130 passes and
+four skips; execution 2 has one test and one pass. The wrapper's exit status is not used as proof.
+The unchanged skipped scenarios are:
+
+- `core.query.language.Client6#resultContainsFetchReference`
+- `core.metamodelapi.identifiabletype.Client#getDeclaredSingularAttributes`
+- `se.entityManagerFactory.Client2#createEntityManagerFactoryStringMapTest`
+- `se.schemaGeneration.annotations.tableGenerator.Client#tableGeneratorTest`
+
+Commands from the Noether root:
+
+```bash
+export JAVA_HOME="$HOME/.sdkman/candidates/java/25.0.4-tem"
+export PATH="$JAVA_HOME/bin:$PATH"
+./mvnw -ntp -pl noether-persistence/noether-jpa-core,noether-persistence/noether-jpa-module-it,noether-persistence/noether-jpa-processor,noether-persistence/noether-jpa-processor-module-it \
+  -am test -Dtest=LazyToOneTest,LazyCollectionTest,OpensModulePathTest,GeneratedAccessModulePathTest,EdgeCasesTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw -ntp clean install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+No fixture, checksum guard, exclusion or TCK patch changed. Independently verified SHA-256:
+official jar `a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`;
+derived jar `1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+This remains a **local patched result, not an untouched official result or certification**.
+No new AOT/native-image or performance claim is made; SQL counts are correctness assertions.
+
+---
+
 ## Noether lazy collections verification — 2026-10-15
 
 Decision D9 makes `LAZY` collections load on first access, without changing official fixtures,

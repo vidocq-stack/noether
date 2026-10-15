@@ -52,6 +52,25 @@ class OpensModulePathTest {
     }
 
     @Test
+    void aModuleWithoutAReadEdgeToTheGeneratedReferenceSpiKeepsEagerLoading() { // §2.10, §11.1.26
+        var type = io.vidocq.noether.jpa.moduleit.opened.PropertyBook.class;
+        assertThat(type.getModule().canRead(ModuleLayer.boot().findModule("io.vidocq.noether.jpa.core").orElseThrow())).isFalse();
+        try (var emf = unit(type).property(PersistenceConfiguration.SCHEMAGEN_DATABASE_ACTION, "drop-and-create")
+                .createEntityManagerFactory()) {
+            var parent = new io.vidocq.noether.jpa.moduleit.opened.PropertyBook(1, "parent", null);
+            emf.runInTransaction(em -> {
+                em.persist(parent);
+                em.persist(new io.vidocq.noether.jpa.moduleit.opened.PropertyBook(2, "child", parent));
+            });
+            try (var em = emf.createEntityManager()) {
+                var child = em.find(type, 2L);
+                assertThat(emf.getPersistenceUnitUtil().isLoaded(child, "parent")).isTrue();
+                assertThat(child.getParent().getTitle()).isEqualTo("parent");
+            }
+        }
+    }
+
+    @Test
     void anEntityOfAPackageThatIsNotOpenedIsRefusedWithTheClauseToAdd() {
         assertThatThrownBy(() -> unit(Secret.class).createEntityManagerFactory()).isInstanceOf(PersistenceException.class)
             .hasMessageContaining(Secret.class.getName())

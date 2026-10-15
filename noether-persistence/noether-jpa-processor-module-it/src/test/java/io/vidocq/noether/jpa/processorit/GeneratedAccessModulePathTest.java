@@ -35,6 +35,34 @@ import org.junit.jupiter.api.Test;
 class GeneratedAccessModulePathTest {
 
     @Test
+    void lazyToOneUsesAClassFileGeneratedSubclassInAClosedApplicationModule() { // §2.10, §7.11
+        var unit = new PersistenceConfiguration("processor-lazy-one")
+            .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
+            .managedClass(io.vidocq.noether.jpa.processorit.closed.LazyOwner.class)
+            .managedClass(io.vidocq.noether.jpa.processorit.closed.LazyAccount.class)
+            .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:processor-lazy-one;DB_CLOSE_DELAY=-1")
+            .property(PersistenceConfiguration.SCHEMAGEN_DATABASE_ACTION, "drop-and-create");
+        try (var emf = unit.createEntityManagerFactory(); var em = emf.createEntityManager()) {
+            var account = new io.vidocq.noether.jpa.processorit.closed.LazyAccount(1, "closed");
+            emf.runInTransaction(writer -> {
+                writer.persist(account);
+                writer.persist(new io.vidocq.noether.jpa.processorit.closed.LazyOwner(2, account));
+            });
+            var owner = em.find(io.vidocq.noether.jpa.processorit.closed.LazyOwner.class, 2L);
+            var reference = owner.getAccount();
+            assertThat(emf.getPersistenceUnitUtil().isLoaded(owner, "account")).isFalse();
+            assertThat(reference.getClass().getName()).endsWith("$$NoetherLazy");
+            assertThat(reference.getClass().getModule()).isSameAs(account.getClass().getModule());
+            assertThat(account.getClass().getModule().isOpen(account.getClass().getPackageName(),
+                io.vidocq.noether.jpa.core.spi.ManagedAccess.class.getModule())).isFalse();
+            assertThat(reference.getId()).isEqualTo(1);
+            assertThat(emf.getPersistenceUnitUtil().isLoaded(reference)).isFalse();
+            assertThat(reference.getName()).isEqualTo("closed");
+            assertThat(reference).isSameAs(em.find(io.vidocq.noether.jpa.processorit.closed.LazyAccount.class, 1L));
+        }
+    }
+
+    @Test
     void xmlTablePerClassUsesClosedPackageGeneratedAccessAndMetamodel() { // §2.14.3, §12.2
         var unit = new PersistenceConfiguration("processor-tpc")
             .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")

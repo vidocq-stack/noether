@@ -42,6 +42,15 @@ public final class PersistenceContext {
     private final Map<Instance, ManagedEntity> byInstance = new LinkedHashMap<>();
     private long sequence;
     private LazyCollection.Loader lazyLoader;
+    private java.util.function.Consumer<Object> referenceLoader;
+
+    public java.util.function.Consumer<Object> referenceLoader() { return referenceLoader; }
+    public void referenceLoader(java.util.function.Consumer<Object> loader) { referenceLoader = loader; }
+
+    public ManagedEntity reference(Object instance, MappedEntity type, Object id) {
+        return register(new ManagedEntity(instance, type, sequence++, new EntityKey(type.root(), id),
+            ManagedEntity.Status.MANAGED, true, null));
+    }
 
     /**
      * The loader of the LAZY collections of the instances of this context (§2.10); {@code null}: the collections are
@@ -211,6 +220,8 @@ public final class PersistenceContext {
 
     /** An unloaded collection stays in the snapshot of its owner until it is loaded or the attribute replaced. */
     private static void disconnect(ManagedEntity entry) {
+        if (entry.instance() instanceof io.vidocq.noether.jpa.core.spi.LazyReference reference
+                && reference.$noetherState() != null) reference.$noetherState().disconnect();
         Object[] snapshot = entry.snapshot();
         if (snapshot == null) return;
         for (Object value : snapshot) {

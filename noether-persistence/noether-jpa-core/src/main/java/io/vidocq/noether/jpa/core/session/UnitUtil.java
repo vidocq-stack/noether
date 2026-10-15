@@ -26,10 +26,8 @@ import jakarta.persistence.PersistenceUnitUtil;
 import jakarta.persistence.metamodel.Attribute;
 
 /**
- * The {@link PersistenceUnitUtil} of a factory (§7.11). Noether loads the state of an entity, its relationships
- * included, when it loads the entity ({@code FetchType.LAZY} is a hint, §11.1.6): an entity of the unit is always
- * loaded, and loading it again does nothing. No proxies: the class of an instance is its entity class. Immutable,
- * shared by the threads of the factory.
+ * The {@link PersistenceUnitUtil} of a factory (§7.11): exact lazy collection/reference load state without SQL,
+ * explicit loading and the canonical mapped class of generated references. Immutable, shared by the factory.
  */
 final class UnitUtil implements PersistenceUnitUtil {
 
@@ -66,7 +64,14 @@ final class UnitUtil implements PersistenceUnitUtil {
     /** §7.11: false only for a LAZY collection not loaded yet; reads no row. */
     @Override
     public boolean isLoaded(Object entity, String attributeName) {
-        return !LazyCollection.unloaded(attribute(entity, attributeName));
+        MappedEntity type = entity(entity);
+        int index = index(type, attributeName);
+        if (index < 0) throw new IllegalArgumentException("Unknown persistent attribute " + attributeName);
+        if (io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(entity)) {
+            return java.util.Arrays.stream(type.idAttributes()).anyMatch(i -> i == index);
+        }
+        Object value = attribute(entity, attributeName);
+        return !LazyCollection.unloaded(value) && !io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(value);
     }
 
     @Override
@@ -77,11 +82,13 @@ final class UnitUtil implements PersistenceUnitUtil {
     @Override
     public boolean isLoaded(Object entity) {
         entity(entity);
-        return true;
+        return !io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(entity);
     }
 
     @Override
     public void load(Object entity, String attributeName) {
+        io.vidocq.noether.jpa.core.spi.LazyReference.initialize(entity);
+        io.vidocq.noether.jpa.core.spi.LazyReference.initialize(attribute(entity, attributeName));
         // §7.11: a LAZY collection loads through its persistence context, a PersistenceException once it is detached
         if (attribute(entity, attributeName) instanceof LazyCollection lazy) {
             lazy.initialize();
@@ -96,6 +103,7 @@ final class UnitUtil implements PersistenceUnitUtil {
     @Override
     public void load(Object entity) {
         entity(entity);
+        io.vidocq.noether.jpa.core.spi.LazyReference.initialize(entity);
     }
 
     @Override
@@ -111,7 +119,7 @@ final class UnitUtil implements PersistenceUnitUtil {
     @SuppressWarnings("unchecked")
     public <T> Class<? extends T> getClass(T entity) {
         entity(entity);
-        return (Class<? extends T>) entity.getClass();
+        return (Class<? extends T>) entity(entity).model().javaType();
     }
 
     /** §7.11: the identifier the application sees — its id class instance for an {@code @IdClass} — or null if it has none yet. */

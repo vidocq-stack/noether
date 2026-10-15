@@ -43,6 +43,8 @@ import io.vidocq.noether.jpa.core.model.IdModel;
 import io.vidocq.noether.jpa.core.model.PersistenceUnitModel;
 import io.vidocq.noether.jpa.core.model.ValueConversion;
 import io.vidocq.noether.jpa.core.model.build.EntityModelBuilder;
+import io.vidocq.noether.jpa.core.model.build.AccessPlanner;
+import io.vidocq.noether.jpa.core.model.build.LazySubclassGenerator;
 import io.vidocq.noether.jpa.core.model.build.Types;
 import io.vidocq.noether.jpa.core.model.source.ClassFileSource;
 import io.vidocq.noether.jpa.core.model.source.ClassInfos;
@@ -79,6 +81,7 @@ public final class MappedUnit {
     private final ClassLoader loader;
     private final ClassInfos source;
     private final Map<Class<?>, InheritanceMapping> inheritance;
+    private final Set<AssociationAttribute> lazyReferences;
 
     private MappedUnit(PersistenceUnitModel model, Map<Class<?>, ManagedAccess> entities,
             Map<EmbeddableModel, ManagedAccess> embeddables, Map<BasicAttribute, ValueBinder> binders,
@@ -91,6 +94,50 @@ public final class MappedUnit {
         this.binders = binders;
         this.mapped = mapped;
         this.inheritance = inheritance;
+        this.lazyReferences = lazyReferences();
+    }
+
+    private Set<AssociationAttribute> lazyReferences() {
+        Set<AssociationAttribute> supported = new LinkedHashSet<>();
+        ClassFileSource classes = new ClassFileSource(loader);
+        AccessPlanner planner = new AccessPlanner(classes);
+        for (MappedEntity owner : mapped.values()) {
+            if (owner.model().javaType().accessFlags().contains(java.lang.reflect.AccessFlag.FINAL)) continue;
+            for (AttributeModel attribute : owner.model().attributes()) {
+                if (!(attribute instanceof AssociationAttribute association) || !association.singleValued()
+                        || !association.owning() || association.fetch() != FetchType.LAZY
+                        || association.access() != AccessKind.PROPERTY || association.name().contains(".")
+                        || association.mapsId() != null
+                        || owner.model().id() instanceof IdModel.Derived derived && derived.relationship().equals(association)) continue;
+                var declaring = classes.read(association.declaringClass().getName()).orElseThrow();
+                String suffix = Character.toUpperCase(association.name().charAt(0)) + association.name().substring(1);
+                boolean getter = declaring.methods().stream().anyMatch(m ->
+                    (m.name().equals("get" + suffix) || m.name().equals("get" + association.name()))
+                    && m.type().parameterCount() == 0 && !m.isPrivate()
+                    && (m.flags() & java.lang.classfile.ClassFile.ACC_FINAL) == 0);
+                MappedEntity target = mapped.get(association.targetEntity());
+                if (!getter || target == null || !(target.model().id() instanceof IdModel.Single id)
+                        || target.model().javaType().isSealed()
+                        || !target.model().javaType().getModule().canRead(ManagedAccess.class.getModule())
+                        || inheritance.get(association.targetEntity()).hierarchy().size() != 1) continue;
+                var info = classes.read(association.targetEntity().getName()).orElseThrow();
+                if (!info.isAnnotated("jakarta.persistence.Entity")
+                        || info.methods().stream().noneMatch(m -> m.isAnnotated("jakarta.persistence.Id"))) continue;
+                var members = planner.entityMembers(info);
+                if (!LazySubclassGenerator.supports(info, members)
+                        || !Accesses.descriptor(target.model().attributes()).equals(
+                            members.stream().map(m -> m.name() + ":" + m.access()).toList())) continue;
+                var identifier = members.stream().filter(m -> m.element().isAnnotated("jakarta.persistence.Id"))
+                    .findFirst().orElseThrow();
+                if (identifier.name().equals(id.attribute().name())) supported.add(association);
+            }
+        }
+        return Set.copyOf(supported);
+    }
+
+    /** Whether the effective annotation/XML mapping permits a safely interceptable to-one reference. */
+    public boolean lazyReference(AssociationAttribute association) {
+        return lazyReferences.contains(association);
     }
 
     /** Maps the managed classes named {@code classNames}, loaded with {@code loader}. */
@@ -140,9 +187,9 @@ public final class MappedUnit {
             mapped.put(entity.javaType(), new MappedEntity(plan.model(), plan.access(), root(model, entity), embeddedId,
                 idClass, state, m -> EntityStatements.of(m, MappedEntity.idIndexes(m), binders::get, embeddables::get,
                     target -> plans.containsKey(target) ? plans.get(target).model() : null,
-                    mapped::get, inheritance.get(m.javaType()), inheritance::get,
+                    c -> mapped.get(entityClass(c)), inheritance.get(m.javaType()), inheritance::get,
                     source.delimitedIdentifiers()),
-                ranks.get(entity.javaType()), mapped::get));
+                ranks.get(entity.javaType()), c -> mapped.get(entityClass(c))));
         }
         for (EntityModel entity : model.entities()) {
             MappedEntity executable = mapped.get(entity.javaType());
@@ -504,7 +551,11 @@ public final class MappedUnit {
 
     /** The entity {@code type} as the persistence context and the flush engine use it. */
     public Optional<MappedEntity> entity(Class<?> type) {
-        return Optional.ofNullable(mapped.get(type));
+        return Optional.ofNullable(mapped.get(entityClass(type)));
+    }
+
+    private static Class<?> entityClass(Class<?> type) {
+        return io.vidocq.noether.jpa.core.spi.LazyReference.class.isAssignableFrom(type) ? type.getSuperclass() : type;
     }
 
     /** The access of {@code entity}. */

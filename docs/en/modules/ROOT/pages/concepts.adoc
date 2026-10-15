@@ -20,5 +20,20 @@ collection or map interface — load on first access within their persistence co
 typed wrappers assigned by the generated access. Once the owner is detached or its entity
 manager closed, an unloaded collection throws `PersistenceException`; initialized ones stay
 usable. EAGER mappings, fetch joins and fetch/load graphs initialize them. Concrete collection
-field types and collections inside embeddables stay eager; lazy to-one relationships are not
-implemented yet.
+field types and collections inside embeddables stay eager.
+
+Owning LAZY many-to-one and one-to-one foreign-key properties can hold an interceptable
+generated entity subclass. The context registers one instance for the target identity:
+reading its simple identifier does not select a row; another getter or a setter loads
+that same instance once. `isLoaded` reports the pending state without SQL and `load`
+initializes it. Missing targets throw `EntityNotFoundException`; detached/closed unloaded
+references throw `PersistenceException` rather than exposing default field values.
+EAGER, fetch joins, Criteria fetches and entity graphs initialize their required targets.
+
+The target must be a public, non-final/non-sealed property-access class directly extending
+`Object`, with a single annotated basic identifier, no interfaces, no non-private instance
+fields and no non-interceptable instance methods. The owning getter and class must be
+non-final. Field access, final forms, inverse one-to-one, join tables, embedded paths,
+inheritance, composite/derived keys and XML-only/remapped target identifiers stay eager.
+Final entity classes are a non-portable eager-only extension. See xref:internals.adoc[]
+for generation and cache boundaries.

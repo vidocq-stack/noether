@@ -154,6 +154,7 @@ final class EntityOperations {
     }
 
     private Object merge(Object entity, Map<Object, Object> merged) {
+        if (io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(entity)) return managedReference(entity);
         Object done = merged.get(entity);
         if (done != null) {
             return done;
@@ -218,7 +219,7 @@ final class EntityOperations {
         for (int i = 0; i < attributes.size(); i++) {
             if (attributes.get(i) instanceof AssociationAttribute association && association.cascades(CascadeType.MERGE)) {
                 Object value = type.access().get(entity, i);
-                if (LazyCollection.unloaded(value)) {
+                if (LazyCollection.unloaded(value) || io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(value)) {
                     continue; // §3.2.7.1: not loaded, nothing of it was changed to merge
                 }
                 if (value instanceof Collection<?> collection) {
@@ -257,7 +258,7 @@ final class EntityOperations {
             if (state[i] == null) {
                 continue;
             }
-            if (LazyCollection.unloaded(state[i])) {
+            if (LazyCollection.unloaded(state[i]) || io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(state[i])) {
                 // §3.2.7.1: a LAZY collection that was not loaded is not merged, the managed instance keeps its own
                 state[i] = type.access().get(to, i);
                 continue;
@@ -403,7 +404,13 @@ final class EntityOperations {
         ManagedEntity entry = context.entry(entity).filter(e -> e.status() == ManagedEntity.Status.MANAGED)
             .orElseThrow(() -> new IllegalArgumentException("Only a managed instance can be refreshed (§3.2.5)"));
         Object id = entry.key().id();
-        Object[] snapshot = connections.on(connection -> factory.loader(connection).refresh(type, id, entity, connection, context));
+        Object[] snapshot;
+        if (io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(entity)) {
+            io.vidocq.noether.jpa.core.spi.LazyReference.initialize(entity);
+            snapshot = entry.snapshot();
+        } else {
+            snapshot = connections.on(connection -> factory.loader(connection).refresh(type, id, entity, connection, context));
+        }
         if (snapshot == null) {
             throw new EntityNotFoundException("The row of " + type.model().entityName() + " " + id + " no longer exists");
         }
@@ -439,6 +446,7 @@ final class EntityOperations {
         removeOrphans();
         Set<Object> visited = visited();
         for (ManagedEntity entry : context.entries()) {
+            if (io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(entry.instance())) continue;
             if (entry.status() != ManagedEntity.Status.MANAGED) {
                 continue;
             }
@@ -511,6 +519,11 @@ final class EntityOperations {
 
     /** Applies {@code operation} to the instances that the relationships of {@code entity} cascading it reach. */
     private void cascade(Object entity, MappedEntity type, CascadeType operation, Consumer<Object> apply) {
+        if (io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(entity)) {
+            if (operation == CascadeType.REMOVE || operation == CascadeType.REFRESH) {
+                io.vidocq.noether.jpa.core.spi.LazyReference.initialize(entity);
+            } else return;
+        }
         List<AttributeModel> attributes = type.model().attributes();
         for (int i = 0; i < attributes.size(); i++) {
             if (attributes.get(i) instanceof AssociationAttribute association && association.cascades(operation)) {

@@ -115,6 +115,12 @@ final class SecondLevelCache implements Cache {
         if (graph == null || !matches(requested, graph)) {
             return Optional.empty();
         }
+        // A cached graph must not leave an EAGER edge pointing at an existing unloaded reference.
+        // Fall back before creating any nodes; the ordinary loader hydrates that same managed instance.
+        if (graph.nodes().keySet().stream().anyMatch(node -> context.find(node)
+                .map(managed -> io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(managed.instance())).orElse(false))) {
+            return Optional.empty();
+        }
         try {
             Map<EntityKey, Object> instances = new LinkedHashMap<>();
             Map<EntityKey, MappedEntity> types = new LinkedHashMap<>();
@@ -318,6 +324,7 @@ final class SecondLevelCache implements Cache {
     }
 
     private void capture(MappedEntity type, Object instance, Map<EntityKey, Node> nodes) {
+        if (io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(instance)) throw new UnsupportedState();
         if (!enabled(type)) {
             throw new UnsupportedState();
         }
