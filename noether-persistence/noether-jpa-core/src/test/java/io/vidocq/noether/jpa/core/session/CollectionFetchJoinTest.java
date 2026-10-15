@@ -71,6 +71,64 @@ class CollectionFetchJoinTest {
         return em.createQuery("select o from CfOwner o " + join + " order by o.id", Owner.class).getResultList();
     }
 
+    private void persistNullElements() {
+        em.getTransaction().begin();
+        Owner owner = em.find(Owner.class, 1L);
+        owner.labels.add(null);
+        owner.bag.add(null);
+        owner.settings.put("null-value", null);
+        Inventory eager = new Inventory();
+        eager.id = 91;
+        eager.tags.addAll(Arrays.asList("z", "a", "z", null));
+        em.persist(eager);
+        em.getTransaction().commit();
+        em.clear();
+        factory.getCache().evictAll();
+        sql.clear();
+    }
+
+    @Test
+    void ordinaryLazyLoadingPreservesPersistedNullRowsAndBagDuplicates() {
+        // §2.7: a persisted null value is a row, not an absent outer-join row.
+        persistNullElements();
+        Owner owner = em.find(Owner.class, 1L);
+        assertThat(owner.labels).containsExactly("z", "a", "z", null);
+        assertThat(owner.bag).containsExactlyInAnyOrder("same", "same", "different", null);
+        assertThat(owner.settings).containsEntry("null-value", null).hasSize(3);
+        assertThat(em.find(Owner.class, 2L).labels).isEmpty();
+    }
+
+    @Test
+    void graphEagerLoadingPreservesPersistedNullRows() {
+        persistNullElements();
+        var graph = em.createEntityGraph(Owner.class);
+        graph.addAttributeNodes("labels", "settings", "bag");
+        Owner owner = em.find(Owner.class, 1L, Map.of("jakarta.persistence.loadgraph", graph));
+        assertThat(owner.labels).containsExactly("z", "a", "z", null);
+        assertThat(owner.settings).containsEntry("null-value", null);
+        assertThat(owner.bag).containsExactlyInAnyOrder("same", "same", "different", null);
+        Inventory eager = em.find(Inventory.class, 91L);
+        assertThat(factory.getPersistenceUnitUtil().isLoaded(eager, "tags")).isTrue();
+        assertThat(eager.tags).containsExactly("z", "z", "a", null);
+        assertThat(Inventory.loadedSize).isEqualTo(4);
+    }
+
+    @Test
+    void leftFetchDistinguishesNullElementFromEmptyOwner() {
+        persistNullElements();
+        var owners = query("left join fetch o.labels").stream().distinct().toList();
+        assertThat(owners.getFirst().labels).containsExactly("z", "a", "z", null);
+        assertThat(owners.get(1).labels).isEmpty();
+        em.clear();
+        owners = query("left join fetch o.bag").stream().distinct().toList();
+        assertThat(owners.getFirst().bag).containsExactlyInAnyOrder("same", "same", "different", null);
+        assertThat(owners.get(1).bag).isEmpty();
+        em.clear();
+        owners = query("left join fetch o.settings").stream().distinct().toList();
+        assertThat(owners.getFirst().settings).containsEntry("null-value", null);
+        assertThat(owners.get(1).settings).isEmpty();
+    }
+
     @Test void innerFetchPreservesDuplicateOwnerRowsAndCompleteOrderedChildren() {
         List<Owner> rows = query("join fetch o.children");
         assertThat(rows).hasSize(2);

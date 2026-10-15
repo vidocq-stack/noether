@@ -165,8 +165,8 @@ class LazyCollectionTest {
         assertThat(util.isLoaded(owner, "name")).isTrue();
         assertThat(statements).isEmpty();
         assertThat(owner.children).extracting(c -> c.id).containsExactly(10L, 11L);
-        // one select of the collection, then its elements by their ids (secondary selects, no batching yet)
-        assertThat(statements).filteredOn(s -> s.contains("where owner_id")).hasSize(1);
+        // One collection statement, then a bounded full-state target batch.
+        assertThat(statements).filteredOn(s -> s.contains("where b.owner_id")).hasSize(1);
         assertThat(statements).allMatch(s -> s.contains("lazychild"));
         int firstAccess = statements.size();
         assertThat(virtual).containsOnly(true);
@@ -226,7 +226,7 @@ class LazyCollectionTest {
         reset();
         // the pending insert is not flushed by the collection load, which reads the committed and flushed rows only
         assertThat(owner.children).extracting(c -> c.id).containsExactly(10L, 11L);
-        assertThat(statements).filteredOn(s -> s.contains("where owner_id")).hasSize(1);
+        assertThat(statements).filteredOn(s -> s.contains("where b.owner_id")).hasSize(1);
         assertThat(statements).noneMatch(s -> s.startsWith("insert"));
         em.getTransaction().rollback();
     }
@@ -241,7 +241,7 @@ class LazyCollectionTest {
         reset();
         owner.children.removeFirst();
         assertThat(util(factory).isLoaded(owner, "children")).isTrue();
-        assertThat(statements).filteredOn(s -> s.contains("where owner_id")).hasSize(1);
+        assertThat(statements).filteredOn(s -> s.contains("where b.owner_id")).hasSize(1);
         assertThat(statements).allMatch(s -> s.startsWith("select") && s.contains("lazychild"));
         owner.tags.add(blue);
         owner.nicknames.add("three");

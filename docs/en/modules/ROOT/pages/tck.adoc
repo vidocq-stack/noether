@@ -15,7 +15,34 @@ The official artifact checksums and TCK-BUG-001 byte-exact derived-jar fixture
 patch are unchanged; original artifacts are never edited. `TCK_FIXTURES=official`
 selects the untouched Persistence fixture. See the runner README for setup.
 
-== Current SQL collection fetch join verification (2026-10-15)
+== Current null-row and lazy batch verification (2026-10-15)
+
+Decision D13 first fixes BUG-20261015-09 (three red ordinary/graph/LEFT-fetch null-row
+regressions), then adds bounded lazy collection and D10 reference batching (five red
+assertions before batch implementation). `LazyBatchTest` now passes 17 SQL-observing
+scenarios: owner/target groups and remainders, in-place identity and duplicate references,
+null/empty/list/map contents, composite tuples and the 512-key-parameter ceiling, dirty
+state/cache/snapshots, disabled/invalid settings, missing targets, detach/clear/close and
+eligibility fallbacks, plus primitive SQL NULL binder defaults for entity and embedded
+element state (two further red regressions, BUG-20261015-16).
+The final D10–D13 focused gate passes *104 tests*.
+
+`./mvnw -ntp clean install` passes *885 reactor tests*, zero failures/errors/skips,
+independently counted from *85 Surefire XML reports* (865 + 3 + 17). The full
+`TCK_FIXTURES=patched TCK_VALIDATION=off` PostgreSQL 17 run on
+2026-10-15 reports *2135 tests, 2131 passes, zero failures/errors, four unchanged
+official skips*. All 259 Failsafe XML reports and 2135 unique execution/test identities
+were independently parsed, with every fixture classpath checked; all 36 original
+fixture/cache checksums remain unchanged. Both official and derived jar hashes match
+the earlier evidence below. The runner exit status alone is not a conformance result.
+
+See `noether-persistence/TCK.md` for exact commands, reports, skips and hashes;
+xref:reference.adoc#_lazy_read_batching[] for the default 16 / allowed 1–256 setting,
+transaction/cache scope and complete ordinary-loader fallbacks. No official inputs
+were changed. SQL counts are correctness checks, not timing benchmarks; the result
+is locally patched, not certification. Earlier delivery evidence remains below.
+
+== SQL collection fetch join verification (2026-10-15)
 
 After D12, `CollectionFetchJoinTest` passes 17 SQL-observing scenarios. Its initial nine
 scenarios were red before production changes (8 assertion failures, 1 error); further red

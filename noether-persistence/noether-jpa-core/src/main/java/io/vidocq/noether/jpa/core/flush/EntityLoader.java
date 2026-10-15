@@ -41,6 +41,8 @@ import io.vidocq.noether.jpa.core.spi.ManagedAccess;
 import io.vidocq.noether.jpa.core.spi.LazyReference;
 import io.vidocq.noether.jpa.dialect.sql.Identifier;
 import io.vidocq.noether.jpa.dialect.sql.Select;
+import io.vidocq.noether.jpa.dialect.sql.Expression;
+import io.vidocq.noether.jpa.dialect.sql.Query;
 import jakarta.persistence.LockModeType;
 import jakarta.persistence.PersistenceException;
 import java.sql.Connection;
@@ -74,10 +76,16 @@ public final class EntityLoader {
 
     private final FlushEngine engine;
     private final MappedUnit unit;
+    private final int batchSize;
 
     public EntityLoader(FlushEngine engine, MappedUnit unit) {
+        this(engine, unit, 1);
+    }
+
+    public EntityLoader(FlushEngine engine, MappedUnit unit, int batchSize) {
         this.engine = engine;
         this.unit = unit;
+        this.batchSize = batchSize;
     }
 
     /**
@@ -151,6 +159,11 @@ public final class EntityLoader {
      */
     public void loadCollection(List<FetchedEntity> rows, MappedEntity owner, int attribute, List<FetchedElement> elements,
             Connection connection, PersistenceContext context) {
+        loadRows(rows, owner, attribute, elements, connection, context, null);
+    }
+
+    private void loadRows(List<FetchedEntity> rows, MappedEntity owner, int attribute, List<FetchedElement> elements,
+            Connection connection, PersistenceContext context, ManagedEntity initializing) {
         Map<ManagedEntity, Row> pending = new LinkedHashMap<>();
         for (FetchedEntity fetched : rows) {
             MappedEntity type = fetched.type();
@@ -159,7 +172,12 @@ public final class EntityLoader {
             Row row = new Row(fetched.values(), fetched.nulls());
             if (known.isPresent()) {
                 ManagedEntity entry = known.get();
-                ((LazyReference) entry.instance()).$noetherState().hydrate(() -> state(type, entry.instance(), row));
+                if (entry == initializing) {
+                    state(type, entry.instance(), row);
+                    ((LazyReference) entry.instance()).$noetherState().complete();
+                } else {
+                    ((LazyReference) entry.instance()).$noetherState().hydrate(() -> state(type, entry.instance(), row));
+                }
                 pending.put(entry, row);
             } else {
                 Object instance = type.access().instantiate();
@@ -172,9 +190,9 @@ public final class EntityLoader {
             }
         }
         Map<Object, List<Indexed>> grouped = new LinkedHashMap<>();
-        AttributeModel model = owner.model().attributes().get(attribute);
+        AttributeModel model = owner == null ? null : owner.model().attributes().get(attribute);
         MappedEntity target = model instanceof AssociationAttribute a ? entity(a.targetEntity()) : null;
-        IndexMapping index = target == null ? owner.statements().elementCollection(attribute).orElseThrow().index()
+        IndexMapping index = owner == null ? null : target == null ? owner.statements().elementCollection(attribute).orElseThrow().index()
             : indexOf(owner.statements().collection(attribute).orElseThrow());
         for (FetchedElement row : elements) {
             List<Indexed> group = grouped.computeIfAbsent(row.ownerId(), _ -> new ArrayList<>());
@@ -250,6 +268,24 @@ public final class EntityLoader {
     /** Hydrates the already registered reference, never allocating a second instance for its identity. */
     public void initializeReference(ManagedEntity entry, Connection connection, PersistenceContext context) {
         MappedEntity type = entry.type();
+        if (batchSize > 1 && batchable(type)) {
+            List<Object> ids = new ArrayList<>();
+            ids.add(entry.key().id());
+            int bound = bound(type.statements().keyColumns().size());
+            for (ManagedEntity candidate : context.entries()) {
+                if (ids.size() >= bound) break;
+                if (candidate != entry && candidate.type() == type
+                        && candidate.status() == ManagedEntity.Status.MANAGED
+                        && LazyReference.unloaded(candidate.instance())) ids.add(candidate.key().id());
+            }
+            List<FetchedEntity> rows = entityRows(type, ids, connection);
+            if (rows.stream().noneMatch(r -> Objects.equals(r.id(), entry.key().id()))) {
+                throw new jakarta.persistence.EntityNotFoundException(
+                    "The row of " + type.model().entityName() + " " + entry.key().id() + " no longer exists");
+            }
+            loadRows(rows, null, -1, List.of(), connection, context, entry);
+            return;
+        }
         Object instance = entry.instance();
         Row row = row(type, entry.key().id(), connection, LockModeType.NONE, null);
         if (row == null) throw new jakarta.persistence.EntityNotFoundException(
@@ -450,6 +486,8 @@ public final class EntityLoader {
     public void initialize(ManagedEntity entry, LazyCollection lazy, Connection connection, PersistenceContext context) {
         MappedEntity type = entry.type();
         int i = lazy.attribute();
+        if (batchSize > 1 && type.access().get(entry.instance(), i) == lazy
+                && batchable(type) && batchCollection(type, i, entry, lazy, connection, context)) return;
         Object value = collection(type, i, entry.key().id(), connection, context);
         if (value == NOT_MAPPED) {
             throw new PersistenceException("The collection " + lazy.attributeName() + " of " + type.model().entityName()
@@ -461,6 +499,205 @@ public final class EntityLoader {
             snapshot[i] = baseline;
         }
         lazy.complete(value, baseline);
+    }
+
+    /** Deliberately conservative: secondary tables and polymorphism keep the ordinary complete loader. */
+    private boolean batchable(MappedEntity type) {
+        return type.statements().tables().size() == 1
+            && unit.inheritance(type.model().javaType()).hierarchy().size() == 1
+            && type.statements().keyColumns().size() <= 512;
+    }
+
+    /** Both shipped databases allow at least 512 parameters; cap composite-key groups by their actual width. */
+    private int bound(int width) {
+        return Math.min(batchSize, 512 / Math.max(1, width));
+    }
+
+    private boolean batchCollection(MappedEntity type, int attribute, ManagedEntity requested, LazyCollection lazy,
+            Connection connection, PersistenceContext context) {
+        AttributeModel model = type.model().attributes().get(attribute);
+        ElementCollectionMapping elements = type.statements().elementCollection(attribute).orElse(null);
+        MappedEntity target = model instanceof AssociationAttribute a ? entity(a.targetEntity()) : null;
+        Select select;
+        List<ValueBinder> owners;
+        List<ValueBinder> readers = new ArrayList<>();
+        IndexMapping index;
+        int elementWidth;
+        if (elements != null) {
+            select = elements.select();
+            owners = elements.ownerBinders();
+            index = elements.index();
+            if (index != null) readers.addAll(index.binders());
+            readers.addAll(elements.columns().stream().map(EntityStatements.Column::binder).toList());
+            elementWidth = elements.columns().size();
+        } else {
+            if (target == null || !batchable(target)) return false;
+            CollectionMapping mapping = type.statements().collection(attribute).orElse(null);
+            index = indexOf(mapping);
+            if (mapping instanceof CollectionMapping.JoinTable table) {
+                select = table.targets();
+                owners = table.ownerBinders();
+                readers.addAll(table.targetBinders());
+            } else if (mapping instanceof CollectionMapping.ForeignKey foreign) {
+                select = foreign.targets();
+                owners = foreign.ownerBinders();
+                readers.addAll(foreign.targetBinders());
+            } else if (mapping instanceof CollectionMapping.MappedBy inverse) {
+                AssociationAttribute association = inverse.association();
+                int owning = -1;
+                for (int i = 0; i < target.model().attributes().size(); i++) {
+                    if (target.model().attributes().get(i).name().equals(association.mappedBy())) owning = i;
+                }
+                var reference = target.statements().reference(owning).orElse(null);
+                if (reference == null) return false; // inverse join tables retain the ordinary loader
+                select = target.statements().ownersSelect(reference);
+                owners = Arrays.stream(reference.columns()).mapToObj(c -> target.statements().columns().get(c).binder()).toList();
+                readers.addAll(target.statements().keyColumns().stream().map(EntityStatements.Column::binder).toList());
+                if (index != null && index.stored()) {
+                    List<Identifier> columns = new ArrayList<>(select.columns());
+                    columns.addAll(index.columns());
+                    select = new Select(select.table(), columns, select.conditions());
+                }
+            } else return false;
+            elementWidth = readers.size();
+            if (index != null && index.stored()) readers.addAll(index.binders());
+        }
+        if (index != null && index.keyEntity() != null || owners.size() > 512) return false;
+
+        List<ManagedEntity> group = new ArrayList<>();
+        group.add(requested);
+        for (ManagedEntity candidate : context.entries()) {
+            if (group.size() >= bound(owners.size())) break;
+            if (candidate == requested || candidate.type() != type || candidate.key() == null
+                    || candidate.status() != ManagedEntity.Status.MANAGED
+                    || LazyReference.unloaded(candidate.instance())) continue;
+            Object value = type.access().get(candidate.instance(), attribute);
+            if (LazyCollection.unloaded(value) && ((LazyCollection) value).owner() == candidate.instance()) group.add(candidate);
+        }
+        List<Object[]> keys = group.stream().map(e -> type.statements().keyValues(e.key().id())).toList();
+        List<Row> rows = batchKeys(select, owners, keys, readers, connection);
+        List<FetchedElement> fetched = new ArrayList<>();
+        for (ManagedEntity entry : group) fetched.add(new FetchedElement(entry.key().id(), null, new Object[0], false));
+        List<Object> targetIds = new ArrayList<>();
+        for (Row row : rows) {
+            int width = owners.size();
+            Object ownerId = type.statements().key(Arrays.copyOf(row.values(), width));
+            Object value;
+            Object[] indexes;
+            if (elements != null) {
+                int indexWidth = elements.indexColumns().size();
+                value = elements.element(Arrays.copyOfRange(row.values(), width + indexWidth, width + indexWidth + elementWidth),
+                    Arrays.copyOfRange(row.nulls(), width + indexWidth, width + indexWidth + elementWidth));
+                indexes = nullableValues(row, width, width + indexWidth);
+            } else {
+                Object[] id = nullableValues(row, width, width + elementWidth);
+                if (Arrays.stream(id).allMatch(Objects::isNull)) continue;
+                value = target.statements().key(id);
+                targetIds.add(value);
+                indexes = nullableValues(row, width + elementWidth, row.values().length);
+            }
+            fetched.add(new FetchedElement(ownerId, value, indexes, true));
+        }
+        if (target != null) {
+            List<Object> missing = targetIds.stream().distinct().filter(id -> context.find(new EntityKey(target.root(), id))
+                .map(e -> LazyReference.unloaded(e.instance())).orElse(true)).toList();
+            for (int from = 0; from < missing.size(); from += bound(target.statements().keyColumns().size())) {
+                List<Object> chunk = missing.subList(from, Math.min(missing.size(), from + bound(target.statements().keyColumns().size())));
+                loadRows(entityRows(target, chunk, connection), null, -1, List.of(), connection, context, null);
+            }
+            // A dangling FK must not publish a partial collection or an uninitialized reference.
+            for (Object id : targetIds) {
+                var known = context.find(new EntityKey(target.root(), id));
+                if (known.isEmpty() || LazyReference.unloaded(known.get().instance())) {
+                    throw new jakarta.persistence.EntityNotFoundException("Missing collection target " + id);
+                }
+            }
+        }
+        loadCollection(List.of(), type, attribute, fetched, connection, context);
+        return true;
+    }
+
+    /** Reads full entity statement columns, then lets the same D12 assembler register/hydrate every identity. */
+    private List<FetchedEntity> entityRows(MappedEntity type, List<Object> ids, Connection connection) {
+        EntityStatements statements = type.statements();
+        var table = statements.tables().getFirst();
+        List<ValueBinder> readers = Arrays.stream(table.selected()).mapToObj(c -> statements.columns().get(c).binder()).toList();
+        List<Row> rows = batchKeys(table.select(),
+            statements.keyColumns().stream().map(EntityStatements.Column::binder).toList(),
+            ids.stream().map(statements::keyValues).toList(), readers, connection);
+        List<FetchedEntity> result = new ArrayList<>();
+        for (Row row : rows) {
+            Object[] values = new Object[statements.columns().size()];
+            boolean[] nulls = new boolean[values.length];
+            Arrays.fill(nulls, true);
+            for (int i = 0; i < table.selected().length; i++) {
+                int c = table.selected()[i];
+                values[c] = row.values()[statements.keyColumns().size() + i];
+                nulls[c] = row.nulls()[statements.keyColumns().size() + i];
+                if (nulls[c] && statements.columns().get(c).foreignKey() != null) values[c] = null;
+            }
+            result.add(new FetchedEntity(type, statements.key(Arrays.copyOf(row.values(), statements.keyColumns().size())), values, nulls));
+        }
+        return result;
+    }
+
+    private static Object[] nullableValues(Row row, int from, int to) {
+        Object[] values = Arrays.copyOfRange(row.values(), from, to);
+        for (int i = from; i < to; i++) if (row.nulls()[i]) values[i - from] = null;
+        return values;
+    }
+
+    /** Reuses a mapped Select's table/columns/conditions; composite keys are ORs of complete key tuples. */
+    private List<Row> batchKeys(Select select, List<ValueBinder> binders, List<Object[]> keys,
+            List<ValueBinder> readers, Connection connection) {
+        List<Expression> columns = new ArrayList<>();
+        select.conditions().forEach(c -> columns.add(new Expression.Column("b", c)));
+        select.columns().forEach(c -> columns.add(new Expression.Column("b", c)));
+        Expression predicate = null;
+        if (binders.size() == 1) {
+            List<Expression> parameters = new ArrayList<>();
+            for (int i = 0; i < keys.size(); i++) parameters.add(new Expression.Parameter(i));
+            predicate = new Expression.In(new Expression.Column("b", select.conditions().getFirst()), parameters, false);
+        } else {
+            for (int i = 0; i < keys.size(); i++) {
+                Expression tuple = null;
+                for (int c = 0; c < binders.size(); c++) {
+                    Expression comparison = new Expression.Binary(new Expression.Column("b", select.conditions().get(c)),
+                        Expression.Operator.EQ, new Expression.Parameter(i * binders.size() + c));
+                    tuple = tuple == null ? comparison : new Expression.Binary(tuple, Expression.Operator.AND, comparison);
+                }
+                predicate = predicate == null ? tuple : new Expression.Binary(predicate, Expression.Operator.OR, tuple);
+            }
+        }
+        Query query = new Query(false, columns, List.of(new Query.From(select.table(), "b", List.of())), predicate,
+            List.of(), null, List.of(), null, null);
+        var rendered = engine.dialect().renderQuery(query);
+        List<ValueBinder> allReaders = new ArrayList<>(binders);
+        allReaders.addAll(readers);
+        List<Row> result = new ArrayList<>();
+        try (PreparedStatement statement = connection.prepareStatement(rendered.sql())) {
+            for (int p = 0; p < rendered.parameters().size(); p++) {
+                int slot = (Integer) rendered.parameters().get(p).slot();
+                binders.get(slot % binders.size()).bind(engine.dialect(), statement, p + 1,
+                    keys.get(slot / binders.size())[slot % binders.size()]);
+            }
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    Object[] values = new Object[allReaders.size()];
+                    boolean[] nulls = new boolean[values.length];
+                    for (int c = 0; c < values.length; c++) {
+                        values[c] = allReaders.get(c).read(rows, c + 1);
+                        nulls[c] = rows.wasNull();
+                        // Preserve primitive binder defaults in state columns, as the ordinary row loader does.
+                        if (nulls[c] && c < binders.size()) values[c] = null;
+                    }
+                    result.add(new Row(values, nulls));
+                }
+            }
+        } catch (SQLException failure) {
+            throw new PersistenceException("The lazy batch read failed: " + failure.getMessage(), failure);
+        }
+        return result;
     }
 
     /** The elements of the collection attribute {@code i} of the instance {@code id}, read from the database. */
@@ -628,7 +865,9 @@ public final class EntityLoader {
      */
     private Object assemble(Class<?> type, IndexMapping index, List<Indexed> read, MappedEntity target, String orderBy,
             List<AttributeModel> attributes, ManagedAccess access, Function<Object, Object> natural, String where) {
-        List<Indexed> elements = new ArrayList<>(read.stream().filter(e -> e.element() != null).toList());
+        // Element-collection rows may contain SQL NULL. Absent LEFT rows were removed before assembly.
+        List<Indexed> elements = new ArrayList<>(target == null ? read
+            : read.stream().filter(e -> e.element() != null).toList());
         if (Map.class.isAssignableFrom(type)) {
             Map<Object, Object> map = IndexMapping.newMap(type);
             for (Indexed element : elements) {

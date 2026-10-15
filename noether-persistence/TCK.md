@@ -1,3 +1,73 @@
+## Noether null collection rows and lazy batch verification — 2026-10-15
+
+Decision D13 fixes BUG-20261015-09 before adding bounded lazy collection and eligible
+D10 to-one batching. Before production changes, three null-row regressions failed;
+after the common assembler fix all **20 CollectionFetchJoinTest scenarios** passed.
+The initial batch suite then failed **5 of 8 assertions** (no errors), proving absent
+grouping, full-state target batching and property validation before implementation.
+Additional regressions cover candidate scans retaining unloaded owner references
+(BUG-20261015-14), and existing replacement/merge/cache flush tests caught snapshot-wrapper
+completion (BUG-20261015-15). Two later red nullable external-schema regressions caught
+erased primitive binder defaults (BUG-20261015-16). All are fixed, preserving the audit
+trail in `BUG.md`.
+
+`LazyBatchTest` now passes **17 SQL-observing scenarios**. It verifies actual SELECT
+counts over multiple owners/targets, bounded groups/remainders, duplicate referenced IDs,
+identifier/association getters requiring no SQL, in-place managed identity, null/empty/list/map
+contents, inverse target-FK collections, composite owner tuples, the maximum-configured
+512-key-parameter budget, a many-element single owner without per-element `find`, dirty
+state/snapshots/cache round trips, disable/invalid settings, missing target errors,
+detach/clear/close, polymorphic fallback and primitive SQL NULL binder defaults in entity
+and embedded element state. The factory setting
+`io.vidocq.noether.jpa.fetch.batch-size` defaults to **16**, accepts **1–256**
+(**1** disables), independent of write batching. Exact eligibility, transaction/cache
+scope and ordinary-loader fallbacks are recorded in D13 of `ROADMAP.md`.
+
+On Temurin **25.0.4+7-LTS**, Maven **3.9.16**, from the Noether root:
+
+```bash
+export JAVA_HOME="$HOME/.sdkman/candidates/java/25.0.4-tem"
+export PATH="$JAVA_HOME/bin:$PATH"
+./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test \
+  -Dtest=LazyBatchTest,CollectionFetchJoinTest,FetchJoinTest,LazyCollectionTest,LazyToOneTest,SecondLevelCacheTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw -ntp clean install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+The final focused gate passes **104 tests**, zero failures/errors/skips.
+The full clean reactor passes **885 tests**, zero failures/errors/skips
+(865 + 3 null regressions + 17 batch regressions), independently counted from
+**85 Surefire XML reports**. The full patched PostgreSQL **17** run on
+**2026-10-15** reports **2135 tests / 2131 passed / 0 failures /
+0 errors / 4 official skips**. All **259 Failsafe XML reports** and **2135 unique
+execution/class/method identities** were independently parsed; every report classpath
+contained exactly the derived fixture jar, not the official jar. The runner's zero exit
+status was not used as proof of the score.
+
+The four unchanged official skips are:
+
+- `core.query.language.Client6#resultContainsFetchReference`
+- `core.metamodelapi.identifiabletype.Client#getDeclaredSingularAttributes`
+- `se.entityManagerFactory.Client2#createEntityManagerFactoryStringMapTest`
+- `se.schemaGeneration.annotations.tableGenerator.Client#tableGeneratorTest`
+
+Reports: reactor `**/target/surefire-reports/TEST-*.xml`; TCK
+`noether-jpa-tck/target/failsafe-reports/execution-{1,2}/TEST-*.xml`;
+fixture provenance `noether-jpa-tck/target/tck-fixtures/fixture-provenance.json`.
+All **36** original fixture/cache files snapshotted before the run retain their checksums.
+SHA-256 remains:
+
+- official installed spec-tests jar:
+  `a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`;
+- derived TCK-BUG-001 jar:
+  `1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+
+Official inputs, exclusions and TCK fixture patch rules are unchanged. This is locally
+patched evidence, not certification. SQL-count assertions are correctness tests, not
+timing benchmarks. Prior delivery evidence below is retained as historical evidence.
+
 ## Noether SQL collection fetch join verification — 2026-10-15
 
 Decision D12 hydrates one eligible JPQL/Criteria collection fetch from the owner's SQL

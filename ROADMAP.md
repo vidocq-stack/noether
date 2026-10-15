@@ -4,7 +4,7 @@ Noether owns the implementations extracted from Mansart on 2026-10-11.
 
 | Building block | Status | Detailed roadmap |
 | --- | --- | --- |
-| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D12); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
+| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D13); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
 | Jakarta Validation 3.1 | V0–V2 provisional local test/TCK stopgap; not published | [Validation](noether-validation/ROADMAP.md) |
 
 The extraction changes repository, artifact, package and provider names, not
@@ -69,18 +69,36 @@ No joined-row limit or hidden in-memory pagination can truncate a collection.
 Unbounded single-result queries read all fetch rows.
 The D11 date/evidence above is retained as recorded; D12 uses the actual local delivery date.
 
+Decision D13 (2026-10-15) fixes BUG-20261015-09 in the shared collection assembler,
+then adds bounded lazy collection and D10 to-one-reference loading. Pending compatible
+managed identities are grouped on first access, through the dialect SQL AST and the
+existing full-state hydration/collection pipeline. The factory property
+`io.vidocq.noether.jpa.fetch.batch-size` defaults to **16**, accepts **1–256**,
+and **1** disables grouping. A conservative **512-key-parameter** ceiling also bounds
+composite-owner groups. Lists/bags/maps retain null rows, duplicates, positions and empty
+owners; entity collection targets use bounded full-state reads, not per-element `find`.
+Managed dirty state is retained and references hydrate in place.
+
+Eligible owners/targets are single-table and non-polymorphic. Element collections,
+owning join-table/foreign-key collections and target-FK inverse collections batch;
+entity-valued map keys, inverse join tables, secondary tables, inheritance and replaced
+snapshot wrappers retain ordinary complete loading. D10 eligibility is unchanged.
+Active transaction connections, no-auto-flush semantics, cache storage restrictions,
+snapshots/callbacks and detach/clear/close behavior are preserved. Graphs, EAGER contracts
+and SQL fetch eligibility are not extended. Earlier delivery history remains unchanged.
+
 ## Remaining Persistence work
 
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
-1. Batch loading of lazy collections and lazy to-one references.
-2. Broader SQL fetch eligibility: multiple/nested collection fetches, same-query owner pagination,
+1. Broader SQL fetch eligibility: multiple/nested collection fetches, same-query owner pagination,
    entity/embeddable map keys; polymorphic/`JOINED`/`TABLE_PER_CLASS` targets,
    `DISTINCT` and locking queries, entity graph hints and `find` with a graph.
-3. Broader lazy to-one support beyond the D10 eligible shapes.
-4. Missing relational mapping shapes still refused explicitly (derived-identity targets,
+2. Broader lazy to-one support beyond the D10 eligible shapes, and batching beyond D13's
+   single-table/non-polymorphic scope (secondary tables, inheritance, inverse join tables,
+   entity-valued map keys).
+3. Missing relational mapping shapes still refused explicitly (derived-identity targets,
    non-key join columns, inverse many-to-many indexes, relationships in collection-table
-   embeddables); null collection elements currently omitted by the shared assembler
-   (BUG-20261015-09).
-5. Deferred Data/JPA integration and generation mutualisation with Mansart.
+   embeddables). Null basic collection elements were fixed by D13 (BUG-20261015-09).
+4. Deferred Data/JPA integration and generation mutualisation with Mansart.

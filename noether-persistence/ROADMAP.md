@@ -1059,26 +1059,72 @@ entity aliases and set operands), not another metadata/path traversal.
 SQL-counting regression evidence and the full reactor/TCK verification are in `TCK.md`.
 P0–P12 and D5/D9–D11 remain historical deliveries; the earlier D11 date is not rewritten.
 
+### D13 — Null collection rows and bounded lazy read batching ✅ (2026-10-15)
+
+Two ordered changes: first fix BUG-20261015-09 in the shared assembler, then batch lazy
+first-access reads. Three null regressions failed before production edits; the initial
+batch gate then had five assertion failures before batch implementation. Earlier D9–D12
+limitations/evidence above describe their original deliveries, not this follow-up.
+
+The factory property `io.vidocq.noether.jpa.fetch.batch-size` defaults to **16**,
+accepts integers **1–256** and rejects invalid input at bootstrap; **1** disables grouping.
+This is independent of `io.vidocq.noether.jpa.jdbc.batch-size` (write batching).
+The requested pending identity is first, followed by compatible managed entries in context
+registration order, up to the configured bound. Groups also have a **512-key-parameter**
+ceiling, reducing composite-key owner batches by their key width. Simple keys use SQL `IN`;
+composite owners use ORs of complete tuples, never independent per-column `IN` lists.
+All statements go through the existing dialect query AST, binders and generated accesses.
+
+Supported:
+
+- Basic/embedded element collections of single-table, non-polymorphic owners, including
+  composite owner identifiers, positional lists, duplicate bags, basic/embedded map keys,
+  null basic values and empty owners. SQL row presence is independent of element nullness.
+- Owning join-table and target-FK entity collections, plus inverse collections mapped by
+  a target foreign key, with single-table, non-polymorphic owners and targets. One
+  collection-row statement groups owners; bounded full-state target statements register
+  and hydrate missing elements through the D12 pipeline, not per-element `find`.
+  Managed dirty targets are never overwritten; existing unloaded references retain identity.
+- D10-eligible lazy owning to-one references with one-table targets: one full-state statement
+  per pending group, references hydrated **in place**, duplicate foreign keys share one instance,
+  identifier and owning association getters need no SQL. Group scans do not initialize unrelated
+  owner references. Missing requested rows throw `EntityNotFoundException`; absent incidental
+  references remain unloaded and fail on their own access.
+
+Complete ordinary-loader fallbacks: secondary-table or polymorphic/inherited owners/targets,
+inverse join-table collections, entity-valued map keys, unsupported mapping shapes, and replaced
+snapshot wrappers whose old elements flush/orphan removal must read. D10's eager-only shapes
+are unchanged. No entity graph rewrite, broadened SQL fetch eligibility or universal batch claim.
+
+Batches use the current transaction's connection, otherwise an ordinary read connection;
+no implicit flush or extra transaction is introduced. Collection snapshots update only the
+unloaded baseline; initialized/dirty collections and managed entity state survive. Callbacks
+and entity snapshots reuse D12's staged full-state hydration. The existing lazy database-read
+policy is retained (no shared-cache lookup per pending identity, no forced cache publication);
+normal transaction/cache publication still applies, and unloaded to-one graphs remain excluded
+from shared-cache storage. Detach/clear/close disconnect pending objects as before; failed reads
+do not silently publish empty or partial collections.
+
 ## Remaining work
 
-Prioritized backlog after D12, 2026-10-15. Each item needs its own approved, bounded lot; until then
+Prioritized backlog after D13, 2026-10-15. Each item needs its own approved, bounded lot; until then
 the documented fallback (follow-up selects, eager loading, or an explicit refusal naming the
 milestone) stays in place.
 
-1. **Batch loading** — initializing lazy collections and lazy to-one references (and the per-element
-   `find` after a collection select) in batches instead of one select per owner/element.
-2. **Broader SQL fetch eligibility** — multiple/nested collections, same-query owner pagination,
+1. **Broader SQL fetch eligibility** — multiple/nested collections, same-query owner pagination,
    entity/embeddable map keys; polymorphic, `JOINED` and `TABLE_PER_CLASS` targets
    (type resolution from the row), `DISTINCT` and locking queries, `TREAT`/embedded paths, and entity
    graph hints on queries and `find(..., graph)` (a `find` rewrite through the query pipeline).
-3. **Broader lazy to-one support** — targets and owners currently kept eager by D10: field access,
+2. **Broader lazy to-one support and batch eligibility** — targets and owners currently kept eager by D10: field access,
    final forms, inverse one-to-one, join tables, embedded paths, inheritance, composite/derived and
    XML-only/remapped identifiers; shared-cache storage of graphs holding unloaded references.
-4. **Missing relational mapping shapes** ("Left after P5"; refused explicitly today) — relationships
+   Extend D13 beyond one-table/non-polymorphic mappings, inverse target-FK collections and
+   non-entity map keys only with a separate proven eligibility contract.
+3. **Missing relational mapping shapes** ("Left after P5"; refused explicitly today) — relationships
    to an entity with a derived identity, join columns referencing non-key columns, indexes on the
    inverse side of a many-to-many, relationships inside collection-table embeddable elements.
-   Null collection elements are tracked separately by BUG-20261015-09.
-5. **Deferred outside Persistence** (see Out of Scope / root roadmap) — Data/JPA integration and
+   Null basic collection elements were fixed separately by D13 (BUG-20261015-09).
+4. **Deferred outside Persistence** (see Out of Scope / root roadmap) — Data/JPA integration and
    generation mutualisation with Mansart.
 
 ## Decisions
@@ -1096,6 +1142,7 @@ Recorded before implementation; each entry: date, decision, reason.
 | D10 | 2026-10-15 | Approved next step: lazy owning to-one foreign-key properties through getter-interceptable Class-File API subclasses, generated at build time for closed modules. Keep one managed instance per identity and safely eager fallbacks for unsupported access forms. Final entity classes are accepted only as a non-portable eager-only extension. Inheritance/composite identifiers, inverse one-to-one and join-table targets stay eager; no instrumentation, reflection-based entity access, batching or SQL fetch-join optimization. | Actioned |
 | D11 | 2026-10-16 | SQL to-one fetch joins: eligible JPQL/Criteria to-one fetch targets are selected with their owner and hydrated from the same row through the existing `EntityLoader` (no second mapping engine, dialect SQL AST, no new module/package/dependency). Ineligible shapes (distinct, grouped, locked, nested queries, polymorphic or joined/table-per-class targets, collection fetches, entity graph hints, `find`) keep the follow-up selects. Collection fetch hydration and batching stay out. | Actioned |
 | D12 | 2026-10-15 | SQL hydration of one complete collection fetch per query, JPQL/Criteria inner/left and distinct, through D11 statement columns and the existing loader/collection assembler. Register all identities before relationships, complete collections before snapshots/callbacks/cache publication, preserve managed dirty state and unloaded wrapper identity. Complex/multiple/polymorphic shapes retain complete secondary loading. Collection-fetch pagination uses SQL distinct-owner paging followed by complete secondary loading for single-root/scalar-order queries; unsupported pagination throws before SQL. No partial or silently in-memory-paginated collections. Batching remains next. | Actioned |
+| D13 | 2026-10-15 | Fix null basic collection rows in the common assembler, then batch pending compatible lazy collections and D10 references through the existing dialect SQL AST/full-state hydration. Factory fetch batch size 16 by default, 1–256 (1 disables), at most 512 key parameters including composite owner tuples. Single-table non-polymorphic element/owning join-table/target-FK/inverse target-FK collections and eligible references only; bounded full entity hydration, no per-element find. Preserve dirty state, identity, wrappers/snapshots/callbacks, transaction/cache and detach semantics. Secondary tables, inheritance, inverse join tables, entity map keys and replaced snapshot wrappers retain complete ordinary loading. Graph and SQL fetch eligibility unchanged. | Actioned |
 | D6 | 2026-10-07 | Bean Validation is not available, so a Vidocq implementation (Jakarta Validation 3.1) will be created as a new building block **inside Noether** (Noether is the data character of the ecosystem; no new repository, no new `mani.yaml` / `GestionProjet` entry). It is put on the persistence TCK classpath. `noether-persistence` depends only on `jakarta.validation-api`. Its own TCK runs both **out of the Vidocq reactor** (standalone runner, authoritative for the building block) and **inside it** (`vidocq-runtime-integration-tests`, `tck` profile, certifying the assembled runtime). Named `noether-validation`; it is a stopgap that only has to run for this TCK (not polished, not published, to be replaced by the implementation another team member is writing); roadmap in [`../noether-validation/ROADMAP.md`](../noether-validation/ROADMAP.md). | Decided |
 | D8 | 2026-10-09 | The query engine — JPQL lexer, parser, translation to the SQL AST, and the Criteria API of P8 — lives in `noether-jpa-core` (internal packages `io.vidocq.noether.jpa.core.query.*`), not in a `noether-jpa-query` module: `EntityManager.createQuery` belongs to the core, and the engine needs the core's mapping, persistence context, loader and flush. A separate module would need a query SPI found with `ServiceLoader` and qualified exports of most core packages, for one artifact more and no layering gained. The SQL AST of queries extends `noether-jpa-dialect-spi` (D4). | Decided |
 | D7 | 2026-10-08 | Connection pooling in Java SE (the spec defines none: §8.2.1.9 only lists the `jakarta.persistence.jdbc.*` properties, and leaves Java SE data sources "to the requirements of the provider"). A unit configured by `jakarta.persistence.jdbc.*`, without a `DataSource`, gets a **`mansart-pool` pool by default** (virtual-thread-native, zero-dep), closed with its factory; `io.vidocq.noether.jpa.pool=false` turns it off (one `DriverManager` connection per transaction), `io.vidocq.noether.jpa.pool.max-size` / `.min-idle` / `.acquire-timeout` size it. A `DataSource` given by the application is used as is; in the Vidocq runtime the container passes its own (`vidocq-runtime-mansart-pool-extension`, P9). A driver named by `jakarta.persistence.jdbc.driver` that `DriverManager` cannot see is used unpooled, with a warning. | Decided |

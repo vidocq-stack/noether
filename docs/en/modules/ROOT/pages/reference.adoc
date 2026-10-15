@@ -21,3 +21,31 @@ Java module names retain their suffixes under `io.vidocq.noether.jpa.*` and
 `io.vidocq.mansart` and `io.vidocq.vauban`. `mansart.version` pins the independent
 Mansart version. Integration vehicles and all provisional Validation artifacts
 are excluded from release publishing.
+
+== Lazy read batching
+
+[cols="3,1,4"]
+|===
+| Factory property | Default | Values
+| `io.vidocq.noether.jpa.fetch.batch-size` | `16`
+| Integer `1`–`256`; `1` disables grouping. Invalid/blank values fail factory creation.
+|===
+
+Independent of JDBC _write_ batching (`io.vidocq.noether.jpa.jdbc.batch-size`).
+Read groups have at most 512 key parameters; composite owner keys reduce the group
+size. The requested pending identity is first, followed by compatible context entries
+in registration order. No detached, removed, already initialized or dirty initialized
+objects are enrolled.
+
+Eligible: single-table, non-polymorphic collection owners and entity targets; element
+collections, owning join-table/target-FK collections and inverse target-FK collections;
+to-one references satisfying the existing D10 generated-subclass eligibility.
+Entity-valued map keys, inverse join tables, inheritance/secondary tables and replaced
+snapshot wrappers retain complete ordinary loading. Unsupported lazy to-one shapes
+remain eager. This setting does not widen SQL fetch or entity-graph eligibility.
+
+Batches use the active transaction connection or an ordinary read connection, without
+auto-flush. Like the ordinary lazy loader they read the database, do not consult L2
+per pending identity and do not force cache publication. Normal transaction publication
+still applies; graphs containing unloaded to-one references remain excluded from L2.
+Detach/clear/close behavior is unchanged. See xref:internals.adoc[] for hydration details.

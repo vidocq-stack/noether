@@ -55,8 +55,9 @@ grouping or locking, concrete owner/target statement mappings, basic/embeddable 
 stored list positions, basic map keys or derived `@MapKey`. Multiple/nested/embedded fetches,
 extra joins, restricted collection aliases, polymorphism, entity/embeddable map keys and
 complex query shapes keep complete secondary loading. Eager relationships outside the
-fetched collection may require additional statements. The existing null-element assembler
-limitation is traced in BUG-20261015-09.
+fetched collection may require additional statements. D13 fixes the common assembler's
+null-element omission (BUG-20261015-09): real element rows retain null values, while an
+absent LEFT row is filtered by its separate owner-FK presence marker.
 
 Explicit pagination takes a separate safe path: a single-root entity selection with no
 grouping/lock and scalar root ordering pages *distinct owner identities in SQL*, then runs
@@ -66,6 +67,38 @@ distinct-ordering rule but are not user result items. Other pagination shapes th
 Unbounded single-result calls read every collection row.
 The pagination check uses the translator's actual collection-join metadata, including
 entity-join aliases and set operands, rather than a second mapping/path interpreter.
+
+== Lazy read batches (D13, 2026-10-15)
+
+`EntityLoader` groups pending compatible persistence-context entries on first access.
+The requested identity is always included before other entries; initialized state,
+removed/detached entries and unloaded collection-owner references are not inspected or
+overwritten. Simple keys use dialect-AST `IN`; composite owners use ORs of whole tuples.
+The factory setting defaults to 16, permits 1–256 (1 disables) and each statement has
+at most 512 key parameters. No new mapping engine, raw SQL or runtime dependency is used.
+
+Collection reads select owner keys plus existing mapped element/index columns and
+distribute them to complete groups, including empty owners and persisted null basic
+elements. Entity-valued elements then use bounded full statement-column reads through
+the D12 staged registration/hydration path; there is no `find` loop. Known dirty managed
+targets are retained, and existing references hydrate in place. Wrapper identity and
+snapshot baselines are preserved. Replaced snapshot wrappers use the ordinary loader,
+which is needed by flush/orphan removal without replacing the new collection.
+
+To-one groups use the same full-state read/hydration path and existing generated
+subclasses. Duplicate referenced identifiers share one managed object. A missing requested
+target throws `EntityNotFoundException`; missing incidental references remain unloaded.
+No row-count limit can truncate a collection. Each owner group is bounded; large entity
+collections can require multiple bounded target groups.
+
+Eligibility is intentionally conservative: single-table/non-polymorphic owners/targets,
+element collections, owning join-table/target-FK collections and inverse target-FK
+collections; non-entity map keys. Secondary tables, inheritance, inverse join tables and
+entity map keys retain the complete ordinary loader. D10 reference eligibility and
+EAGER/fetch/graph contracts are unchanged. Batches run on the existing transaction/read
+connection, with no auto-flush, per-identity L2 lookup or forced publication. Normal
+cache publication and unloaded-reference exclusions remain; detach/clear/close still
+disconnect pending state. SQL-count regressions are correctness tests, not benchmarks.
 
 Java module descriptors expose minimal public contracts and qualified
 processor access. Dialects, generated entity accesses, CDI extensions and

@@ -18,3 +18,27 @@ open their entity packages to `io.vidocq.noether.jpa.core`.
 CDI/JTA integration uses `noether-jpa-cdi` and the external Mansart transaction
 manager. The core does not import CDI, JTA or Vauban. See
 xref:modules/noether-persistence.adoc[the detailed Persistence guide].
+
+== Bounded lazy reads
+
+First access batches pending compatible lazy collections or to-one references in the
+same persistence context. The default group size is 16. For a different factory-wide
+bound, set:
+
+[source,xml]
+----
+<property name="io.vidocq.noether.jpa.fetch.batch-size" value="32"/>
+----
+
+Values must be integers from 1 to 256; 1 disables grouping. Composite collection-owner
+keys also respect a 512-key-parameter budget. This is separate from JDBC write batching.
+Entity collections can require one collection-row statement plus several bounded
+full-state target statements. They do not issue one `find` per element.
+Lists, duplicate bags and maps preserve persisted null basic values, and empty owners
+remain empty. To-one references hydrate in place; reading their identifier needs no SQL.
+
+The optimization is bounded to single-table/non-polymorphic mappings and eligible D10
+references. Complex mappings keep complete ordinary loading, not partial collections.
+The current transaction connection is reused; pending writes are not auto-flushed.
+Detached/cleared/closed contexts still reject unloaded access. For exact eligibility and
+cache behavior, see xref:reference.adoc#_lazy_read_batching[].

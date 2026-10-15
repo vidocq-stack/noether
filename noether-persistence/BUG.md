@@ -702,7 +702,7 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
 ## BUG-20261015-09 — Null collection elements are omitted by the existing assembler
 
 - **Date**: 2026-10-15
-- **Status**: OPEN (outside the SQL collection-fetch delivery)
+- **Status**: FIXED (working tree, D13)
 - **Module**: `noether-jpa-core/flush/EntityLoader`
 - **Symptom**: an ordered basic element collection containing `["z", "a", "z", null]`
   reloads as `["z", "a", "z"]`, through both ordinary loading and fetch joins.
@@ -714,6 +714,11 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
   - 2026-10-15: reproduced before production changes in the collection-fetch red gate.
     Fetch hydration retains SQL row presence separately, but intentionally reuses the existing
     assembler's null-element semantics. Null-element support is not claimed in D12.
+  - 2026-10-15: D13 first added three failing ordinary-lazy, graph/eager and SQL LEFT-fetch
+    regressions. The common assembler now retains null element-collection rows; entity
+    associations still discard nonexistent targets. SQL fetch row presence remains determined
+    by the owner foreign key, not the element value, so empty LEFT joins create no phantom
+    element. Ordered lists, duplicate bags and basic maps retain persisted null values.
 
 ## BUG-20261015-10 — SQL collection DISTINCT used application equality instead of identity
 
@@ -778,3 +783,51 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
   - 2026-10-15: reproduced red. Resolve all staged entity relationships first (skipping only
     the fetched collection itself), then assemble complete collections, snapshots and callbacks.
     This preserves the shared assembler's existing ordering contract and complete lifecycle state.
+
+## BUG-20261015-14 — Batch candidate inspection initialized unrelated owner references
+
+- **Date**: 2026-10-15
+- **Status**: FIXED (working tree, D13)
+- **Module**: `noether-jpa-core/flush/EntityLoader`
+- **Symptom**: during batch development, scanning compatible collection owners called a generated
+  getter on an unloaded owner reference, issuing an extra entity SELECT and loading beyond the group.
+- **Minimal reproduction**: `LazyBatchTest#collectingCollectionCandidatesNeverInitializesUnloadedOwnerReferences`.
+- **Cause hypothesis**: confirmed — candidate selection inspected attributes before checking the
+  candidate entity's unloaded reference state.
+- **Investigations**:
+  - 2026-10-15: reproduced red with an owner pointing lazily to another collection owner.
+    Candidate selection now excludes unloaded owner references without invoking their accessors.
+    The original reference remains unloaded after the collection batch.
+
+## BUG-20261015-15 — Batch initialization ignored a replaced snapshot wrapper
+
+- **Date**: 2026-10-15
+- **Status**: FIXED (working tree, D13)
+- **Module**: `noether-jpa-core/flush/EntityLoader`
+- **Symptom**: the first batch implementation failed existing replacement, merge and shared-cache
+  flush regressions with "The lazy collection ... was not loaded".
+- **Minimal reproduction**: `LazyCollectionTest#replacingAnUnloadedCollectionWritesTheNewOneAndOrphansTheOldChildren`.
+- **Cause hypothesis**: confirmed — flush loads the old snapshot wrapper, whereas the batch
+  completion path intentionally preserves the already replaced current collection.
+- **Investigations**:
+  - 2026-10-15: three existing regressions failed in the first combined green gate.
+    A replaced snapshot wrapper now uses ordinary initialization; only the current unloaded
+    wrapper participates in collection batching. New collection state and orphan baselines survive.
+
+## BUG-20261015-16 — Batch readers erased primitive SQL NULL binder defaults
+
+- **Date**: 2026-10-15
+- **Status**: FIXED (working tree, D13)
+- **Module**: `noether-jpa-core/flush/EntityLoader`
+- **Symptom**: a nullable external-schema primitive column caused null-unboxing errors
+  when hydrating a batched entity or a partially non-null embedded collection element.
+  Ordinary loading keeps the primitive binder's default value and a separate SQL-null flag.
+- **Minimal reproduction**: the `LazyBatchTest#sqlNullPrimitive*` regressions relax the
+  H2 fixture's generated NOT NULL constraint, write SQL NULL and load via a two-owner batch.
+- **Cause hypothesis**: confirmed — the initial generic batch reader normalized every
+  SQL NULL to Java null, unlike the ordinary entity/element state readers.
+- **Investigations**:
+  - 2026-10-15: both regressions failed with null-unboxing errors before the fix.
+    Batch state payloads now preserve binder values plus null flags. Foreign keys and
+    collection indexes are normalized separately, matching the existing ordinary loader.
+    The combined D10–D13 focused gate passes 104 tests, including both regressions.

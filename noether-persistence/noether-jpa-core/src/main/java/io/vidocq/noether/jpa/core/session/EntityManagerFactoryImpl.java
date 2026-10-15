@@ -69,6 +69,7 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     private final AtomicReference<FlushEngine> flushEngine = new AtomicReference<>();
     private final AtomicReference<IdGenerators> idGenerators = new AtomicReference<>();
     private final int batchSize;
+    private final int fetchBatchSize;
     private final SecondLevelCache cache;
     private final AtomicBoolean open = new AtomicBoolean(true);
     private final Set<ResourceLocalTransaction> activeTransactions = ConcurrentHashMap.newKeySet();
@@ -120,6 +121,7 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
             mapping.loader());
         this.entityGraphs = new EntityGraphs(metamodel, mapping.source(), mapping.loader());
         this.batchSize = batchSize(settings);
+        this.fetchBatchSize = fetchBatchSize(settings);
         schemaGeneration = new io.vidocq.noether.jpa.core.bootstrap.SchemaGeneration(settings, connections, mapping, this::checkOpen);
         OPEN.add(this);
     }
@@ -144,6 +146,21 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     /** The batch size of the flush, {@value #DEFAULT_BATCH_SIZE} unless the unit sets {@value #BATCH_SIZE}. */
     public static final String BATCH_SIZE = "io.vidocq.noether.jpa.jdbc.batch-size";
     private static final int DEFAULT_BATCH_SIZE = 50;
+
+    /** Bounded read batching, independent of JDBC write batching; one disables grouping. */
+    public static final String FETCH_BATCH_SIZE = "io.vidocq.noether.jpa.fetch.batch-size";
+
+    private static int fetchBatchSize(UnitSettings settings) {
+        String value = settings.string(FETCH_BATCH_SIZE);
+        if (value == null) return 16;
+        try {
+            int size = Integer.parseInt(value.strip());
+            if (size >= 1 && size <= 256) return size;
+        } catch (NumberFormatException ignored) {
+            // Report the provider property rather than an implementation parsing exception.
+        }
+        throw new PersistenceException("The property " + FETCH_BATCH_SIZE + " must be an integer from 1 to 256, not '" + value + "'");
+    }
 
     /**
      * The flush engine of the factory, created at first use with the dialect of the database behind
@@ -184,7 +201,7 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
 
     /** Builds managed instances from rows, with the dialect and SQL of the flush engine. */
     EntityLoader loader(Connection connection) {
-        return new EntityLoader(flushEngine(connection), mapping());
+        return new EntityLoader(flushEngine(connection), mapping(), fetchBatchSize);
     }
 
     /** The mapped persistence unit: entity model, generated access and binders. */

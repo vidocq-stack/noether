@@ -117,9 +117,30 @@ opaque archives use bootstrap generation and need the same documented package `o
 as their accessors and a read edge to the provider SPI (`requires io.vidocq.noether.jpa.core`).
 An opened module without that read edge stays eager; no module reads are injected into it.
 No instrumentation, dynamic proxy or reflective entity access is used.
-Cache graphs containing unloaded to-one references are not stored (no forced load);
-batching remains outside this feature. See the detailed Persistence
+Cache graphs containing unloaded to-one references are not stored (no forced load).
+Batching was added separately by D13 below. See the detailed Persistence
 roadmap and `docs/en` for the exact boundaries.
+
+Lazy first access now batches compatible pending collections or eligible D10 to-one
+references in the same persistence context (D13, 2026-10-15). Configure
+`io.vidocq.noether.jpa.fetch.batch-size` on the factory: **16** by default,
+an integer **1–256**, with **1** disabling grouping. A batch never exceeds **512
+key parameters**; composite collection-owner keys reduce its group size accordingly.
+Collection rows preserve null basic values, list positions, duplicate bags, map keys
+and empty owners (BUG-20261015-09 fixed). Association collections read rows and then
+bounded full-state target batches, not one `find` per element; already managed dirty
+targets are preserved and unloaded references hydrate in place.
+
+Read batching is intentionally limited to single-table, non-polymorphic owners/targets:
+element collections, owning join-table/foreign-key collections, and inverse collections
+mapped by a target foreign key. Entity-valued map keys, inverse join tables, secondary
+tables, inheritance and unsupported mapping shapes keep the complete ordinary loader.
+D10's narrow lazy-reference eligibility is unchanged. Replaced snapshot wrappers use
+ordinary loading for flush/orphan baselines. Batches use the active transaction's
+connection (otherwise a read connection), do not auto-flush, and retain the existing
+lazy-loader cache policy: database reads, no forced cache publication, no overwrite of
+managed state. Detached/cleared/closed contexts still fail explicitly. EAGER/fetch/graph
+contracts and SQL fetch eligibility are unchanged; batching is not a graph-query rewrite.
 
 JPQL `JOIN FETCH` / `LEFT JOIN FETCH` and Criteria `fetch` of single-valued relationships
 read the owner and its fetched to-one targets from the same SQL row (decision D11), with no
