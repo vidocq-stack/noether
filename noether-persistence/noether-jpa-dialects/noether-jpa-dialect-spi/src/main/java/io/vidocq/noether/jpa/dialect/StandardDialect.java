@@ -208,10 +208,10 @@ public abstract class StandardDialect implements Dialect {
         sql.append(" FROM ");
         for (int f = 0; f < query.from().size(); f++) {
             Query.From from = query.from().get(f);
-            sql.append(f == 0 ? "" : ", ").append(table(from.table())).append(' ').append(from.alias());
+            sql.append(f == 0 ? "" : ", ").append(source(from.table(), from.alias(), parameters));
             for (Query.Join join : from.joins()) {
-                sql.append(join.kind() == Query.Join.Kind.LEFT ? " LEFT JOIN " : " INNER JOIN ").append(table(join.table())).append(' ')
-                    .append(join.alias()).append(" ON ").append(expression(join.on(), 0, parameters));
+                sql.append(join.kind() == Query.Join.Kind.LEFT ? " LEFT JOIN " : " INNER JOIN ")
+                    .append(source(join.table(), join.alias(), parameters)).append(" ON ").append(expression(join.on(), 0, parameters));
             }
         }
         if (query.where() != null) {
@@ -417,7 +417,15 @@ public abstract class StandardDialect implements Dialect {
         return sql.toString();
     }
 
+    private String source(Table table, String alias, List<Expression.Parameter> parameters) {
+        if (table.query() == null) return table(table) + " " + alias;
+        String query = table.query() instanceof Query single ? query(single, parameters)
+            : setQuery((SetQuery) table.query(), parameters);
+        return "(" + query + ") " + alias + "(" + list(table.columns()) + ")";
+    }
+
     protected String table(Table table) {
+        if (table.query() != null) throw new IllegalArgumentException("A derived table is a query source, not a mutation target");
         StringBuilder sql = new StringBuilder();
         if (table.catalog() != null) {
             sql.append(name(table.catalog())).append('.');

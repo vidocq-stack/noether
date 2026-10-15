@@ -63,6 +63,11 @@ public interface QueryRuntime {
     /** Records that the managed {@code entity}, which a query returned, holds the lock {@code mode} (§3.5). */
     void locked(Object entity, LockModeType mode);
 
+    /** Locks a concrete result row when a derived range cannot take a database query lock. */
+    default void lockResult(Object entity, LockModeType mode, Integer timeout, Connection connection) {
+        throw new UnsupportedOperationException("Follow-on entity locking is not available");
+    }
+
     /** The dialect of the database behind {@code connection}. */
     Dialect dialect(Connection connection);
 

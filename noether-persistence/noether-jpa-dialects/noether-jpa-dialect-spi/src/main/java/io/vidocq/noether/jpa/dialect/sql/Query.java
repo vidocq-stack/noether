@@ -90,7 +90,11 @@ public record Query(boolean distinct, List<Expression> select, List<From> from, 
         List<Expression.Parameter> parameters = new ArrayList<>();
         select.forEach(e -> collect(e, parameters));
         for (From source : from) {
-            source.joins().forEach(j -> collect(j.on(), parameters));
+            if (source.table().query() != null) parameters.addAll(source.table().query().parameters());
+            source.joins().forEach(j -> {
+                if (j.table().query() != null) parameters.addAll(j.table().query().parameters());
+                collect(j.on(), parameters);
+            });
         }
         collect(where, parameters);
         groupBy.forEach(e -> collect(e, parameters));

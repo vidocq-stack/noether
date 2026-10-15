@@ -77,6 +77,18 @@ Use the commands above and the current runner/benchmark READMEs for the renamed
 project. See [ROADMAP.md](ROADMAP.md), [Persistence roadmap](noether-persistence/ROADMAP.md)
 and [Validation roadmap](noether-validation/ROADMAP.md) for scope and limitations.
 
+Persistence supports `SINGLE_TABLE`, `JOINED` and, since decision D5 on 2026-10-15,
+`TABLE_PER_CLASS` (annotations and ORM XML). Concrete tables contain inherited state;
+polymorphic JPQL/Criteria execute against SQL `UNION ALL` ranges with SQL filtering,
+aggregation, ordering and pagination. Hierarchy identities, relationships, versions,
+secondary tables and bulk mutations use the existing generated-access paths.
+`TABLE_PER_CLASS` requires hierarchy-wide unique identifiers: assigned keys or shared
+`AUTO`/`SEQUENCE`/`TABLE`/`UUID` generation, not `IDENTITY` (rejected at bootstrap).
+Polymorphic foreign keys cannot have a single database referential constraint.
+Pessimistic entity queries lock concrete result rows after selection; purely scalar
+pessimistic queries over these ranges are explicitly refused. This is a bounded mapping
+extension, not broader lazy-loading work or a new certification claim.
+
 The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;
 the bundled Jakarta ORM schema retains its original upstream licence.

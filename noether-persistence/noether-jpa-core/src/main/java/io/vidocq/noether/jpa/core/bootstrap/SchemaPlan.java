@@ -25,6 +25,8 @@ final class SchemaPlan {
         for (EntityModel semantic : unit.model().entities()) {
             MappedEntity entity = unit.entity(semantic.javaType()).orElseThrow();
             EntityModel model = entity.model();
+            var hierarchy = unit.inheritance(model.javaType());
+            if (hierarchy.tablePerClass() && hierarchy.abstractEntity(model)) continue;
             EntityStatements statements = entity.statements();
             List<EntityStatements.Column> columns = statements.columns();
             List<EntityStatements.TableStatements> mappedTables = statements.tables();
@@ -88,20 +90,26 @@ final class SchemaPlan {
                         }
                     }
                 } else if (collection instanceof CollectionMapping.ForeignKey foreign) {
-                    var columnsByName = tables.computeIfAbsent(foreign.table(), _ -> new LinkedHashMap<>());
-                    addKeys(columnsByName, foreign.ownerColumns(), entity);
-                    for (int k = 0; k < foreign.ownerColumns().size(); k++) {
-                        Identifier name = foreign.ownerColumns().get(k);
-                        var definition = columnsByName.get(name);
-                        columnsByName.put(name, new SchemaStatement.Column(name, definition.type(), definition.length(),
-                            definition.precision(), definition.scale(), foreign.joins().get(k).nullable(), false, false, null));
+                    var target = unit.entity(foreign.association().targetEntity()).orElseThrow();
+                    for (Table table : unit.collectionTables(target, foreign.table())) {
+                        var columnsByName = tables.computeIfAbsent(table, _ -> new LinkedHashMap<>());
+                        addKeys(columnsByName, foreign.ownerColumns(), entity);
+                        for (int k = 0; k < foreign.ownerColumns().size(); k++) {
+                            Identifier name = foreign.ownerColumns().get(k);
+                            var definition = columnsByName.get(name);
+                            columnsByName.put(name, new SchemaStatement.Column(name, definition.type(), definition.length(),
+                                definition.precision(), definition.scale(), foreign.joins().get(k).nullable(), false, false, null));
+                        }
+                        addIndex(columnsByName, foreign.index());
+                        AnnotationInfo annotation = attributeAnnotation(model, foreign.association(), "jakarta.persistence.JoinColumn");
+                        foreignKey(table, foreign.ownerColumns(), entity,
+                            annotation == null ? null : annotation.annotation("foreignKey"));
                     }
-                    addIndex(columnsByName, foreign.index());
-                    AnnotationInfo annotation = attributeAnnotation(model, foreign.association(), "jakarta.persistence.JoinColumn");
-                    foreignKey(foreign.table(), foreign.ownerColumns(), entity,
-                        annotation == null ? null : annotation.annotation("foreignKey"));
                 } else if (collection instanceof CollectionMapping.MappedBy inverse && inverse.indexUpdate() != null) {
-                    addIndex(tables.computeIfAbsent(inverse.indexUpdate().table(), _ -> new LinkedHashMap<>()), inverse.index());
+                    var target = unit.entity(inverse.association().targetEntity()).orElseThrow();
+                    for (Table table : unit.collectionTables(target, inverse.indexUpdate().table())) {
+                        addIndex(tables.computeIfAbsent(table, _ -> new LinkedHashMap<>()), inverse.index());
+                    }
                 }
             }
             for (var reference : statements.references()) {
@@ -435,6 +443,11 @@ final class SchemaPlan {
     }
 
     private void foreignKey(Table table, List<Identifier> columns, MappedEntity target, AnnotationInfo annotation) {
+        var inheritance = unit.inheritance(target.model().javaType());
+        // There is no single referenced table for a polymorphic table-per-class key.
+        if (inheritance.tablePerClass() && (inheritance.abstractEntity(target.model())
+                || inheritance.hierarchy().stream().anyMatch(e -> e.javaType() != target.model().javaType()
+                    && target.model().javaType().isAssignableFrom(e.javaType())))) return;
         if (annotation != null && "NO_CONSTRAINT".equals(annotation.enumConstant("value"))) return;
         String name = annotation == null ? null : annotation.string("name");
         Identifier constraint = identifier(name != null && !name.isBlank() ? name : table.name().name() + "_fk_" + foreignKeys.size());

@@ -9,7 +9,8 @@ Mansart Data remains a direct JDBC repository implementation. Pool and
 Transactions are independent Mansart building blocks reused by Noether.
 Data/JPA integration and processor mutualisation remain deferred.
 
-`SINGLE_TABLE` and `JOINED` are within the delivered engineering scope;
-`TABLE_PER_CLASS` remains explicitly refused. Validation is an optional bridge;
+`SINGLE_TABLE`, `JOINED` and `TABLE_PER_CLASS` are within the delivered engineering scope.
+Table-per-class polymorphic ranges use SQL unions of concrete tables and hierarchy-wide
+unique identifiers; `IDENTITY` generation is explicitly refused. Validation is an optional bridge;
 the included provider remains provisional. See the module roadmaps for precise
 scope and remaining limitations.

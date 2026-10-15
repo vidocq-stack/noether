@@ -302,7 +302,12 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         Dialect dialect = runtime.dialect(connection);
         boolean pessimistic = io.vidocq.noether.jpa.core.flush.Locks.pessimistic(lockMode);
         io.vidocq.noether.jpa.dialect.sql.Statement sql = compiled.sql();
-        if (pessimistic && sql instanceof io.vidocq.noether.jpa.dialect.sql.Query query) { // §3.5.6: the rows it reads
+        boolean followOn = pessimistic && sql instanceof io.vidocq.noether.jpa.dialect.sql.Query query
+            && query.from().stream().anyMatch(f -> f.table().query() != null || f.joins().stream().anyMatch(j -> j.table().query() != null));
+        if (followOn && compiled.items().stream().noneMatch(JpqlQuery::entityItem)) {
+            throw new PersistenceException("A pessimistic TABLE_PER_CLASS query must select an entity for follow-on row locking");
+        }
+        if (pessimistic && !followOn && sql instanceof io.vidocq.noether.jpa.dialect.sql.Query query) { // §3.5.6: the rows it reads
             sql = query.locked(io.vidocq.noether.jpa.core.flush.Locks.rowLock(lockMode), lockTimeout != null && lockTimeout == 0);
         }
         Dialect.Rendered rendered = dialect.renderQuery(sql);
@@ -338,7 +343,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         // entities found, and results constructed, once the rows are read: the loader runs statements of its own
         List<Object> resultList = new ArrayList<>(rows.size());
         for (Object row : rows) {
-            Object resolved = resolve(row, connection);
+            Object resolved = resolve(row, connection, followOn);
             if (!tupleElements.isEmpty()) {
                 if (resolved instanceof Object[] array && array.length == tupleElements.size()) {
                     for (int i = 0; i < array.length; i++) array[i] = convert(array[i], boxed(tupleElements.get(i).getJavaType()));
@@ -384,23 +389,36 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     private record EmbeddedBuilt(Compiled.EmbeddedItem item, Object[] components) {
     }
 
-    private Object resolve(Object read, Connection connection) {
+    private static boolean entityItem(Compiled.Item item) {
+        return switch (item) {
+            case Compiled.EntityItem _ -> true;
+            case Compiled.ConstructorItem constructor -> constructor.arguments().stream().anyMatch(JpqlQuery::entityItem);
+            case Compiled.MapEntryItem entry -> entityItem(entry.key()) || entityItem(entry.value());
+            default -> false;
+        };
+    }
+
+    private Object resolve(Object read, Connection connection, boolean followOn) {
         return switch (read) {
-            case EntityKey(MappedEntity type, Object id) -> runtime.find(type, id, connection);
+            case EntityKey(MappedEntity type, Object id) -> {
+                Object entity = runtime.find(type, id, connection);
+                if (followOn && entity != null) runtime.lockResult(entity, lockMode, lockTimeout, connection);
+                yield entity;
+            }
             case Built built -> {
                 Object[] arguments = new Object[built.arguments().length];
                 for (int i = 0; i < arguments.length; i++) {
-                    arguments[i] = resolve(built.arguments()[i], connection);
+                    arguments[i] = resolve(built.arguments()[i], connection, followOn);
                 }
                 yield construct(built.type(), arguments);
             }
-            case EntryBuilt entry -> new java.util.AbstractMap.SimpleImmutableEntry<>(resolve(entry.key(), connection),
-                resolve(entry.value(), connection));
+            case EntryBuilt entry -> new java.util.AbstractMap.SimpleImmutableEntry<>(resolve(entry.key(), connection, followOn),
+                resolve(entry.value(), connection, followOn));
             case EmbeddedBuilt embedded -> embedded(embedded, connection);
             case Object[] row -> {
                 Object[] resolved = new Object[row.length];
                 for (int i = 0; i < row.length; i++) {
-                    resolved[i] = resolve(row[i], connection);
+                    resolved[i] = resolve(row[i], connection, followOn);
                 }
                 yield resolved;
             }
@@ -454,7 +472,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         Object[] components = new Object[built.components().length];
         boolean empty = true;
         for (int i = 0; i < components.length; i++) {
-            components[i] = resolve(built.components()[i], connection);
+            components[i] = resolve(built.components()[i], connection, false);
             empty &= components[i] == null;
         }
         if (empty) {

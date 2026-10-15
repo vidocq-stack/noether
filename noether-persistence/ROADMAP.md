@@ -472,8 +472,8 @@ Spec: ch. 2.13–2.14, ch. 11 (`@Inheritance`, `@DiscriminatorColumn`, `@Discrim
 
 - [x] Required `SINGLE_TABLE` (including the default strategy) and `JOINED`, discriminator metadata and defaults
       (`STRING`, `CHAR`, `INTEGER`), explicit discriminator values, primary-key joins and inherited secondary tables.
-      `TABLE_PER_CLASS` remains explicitly refused; its optional implementation is not part of this delivery,
-      and decision D5 remains open.
+      The initial P6 delivery excluded the optional `TABLE_PER_CLASS` strategy; the D5 follow-up below
+      implements it without changing the retained historical P6 evidence.
 - [x] `@MappedSuperclass`, abstract entities, nonentity gaps; polymorphic `find` and loading, shared base/subclass
       identity, relationship targets and inherited collection defaults, identifiers, versions, callbacks and flush integration.
 - [x] JPQL polymorphic selection and subclass attributes, `TYPE` selection and predicates with entity literals
@@ -481,6 +481,31 @@ Spec: ch. 2.13–2.14, ch. 11 (`@Inheritance`, `@DiscriminatorColumn`, `@Discrim
       descendant-first deletes for joined hierarchies.
 - [x] 18 dedicated H2 tests citing the specification, a closed-package APT module-path inheritance test,
       and the clean JPA reactor (433 tests, no failure/error/skip).
+
+**D5 follow-up (2026-10-15)**: optional `TABLE_PER_CLASS` is now supported through the same
+annotation/XML overlay and generated-access metadata. Concrete roots and leaves have their own
+primary tables, including inherited fields; abstract entities have no primary table and no
+stored discriminator is generated. Shared hierarchy identity applies to `find`, polymorphic
+relationships, callbacks, versions, composite identifiers and inherited secondary/collection tables.
+JPQL/Criteria ranges use derived `UNION ALL` queries; predicates, aggregates, `TYPE`/`TREAT`,
+ordering and pagination stay in SQL. Bulk updates capture assignment values before writing concrete
+tables; deletes remove secondary/collection rows as well as selected concrete entities.
+Target-side one-to-many foreign keys and stored indexes are expanded to concrete target tables.
+
+Identifiers must be unique across the hierarchy: assigned identifiers and shared existing
+`AUTO`/`SEQUENCE`/`TABLE`/`UUID` generators are supported; `IDENTITY` is rejected at bootstrap
+because independent concrete identity columns cannot guarantee this invariant. A polymorphic
+target has no single referenced table, so generated DDL omits its database foreign-key constraint.
+Entity pessimistic queries use follow-on concrete-row locking after SQL pagination; purely scalar
+pessimistic queries over union ranges are explicitly refused. Existing unsupported P5 mapping
+shapes and broader lazy loading remain unchanged.
+
+Validation: the full Noether reactor passes **795 tests**, zero failures/errors/skips
+(baseline 784). The full default patched Persistence TCK remains **2135 tests / 2131 passes /
+four official skips**, zero failures/errors; all 259 XML reports and fixture provenance were
+verified. Seven dedicated H2 tests, H2/PostgreSQL derived-range rendering tests and a
+closed-package APT/XML module-path smoke cover the optional strategy. See `TCK.md` for
+the 2026-10-15 run; no official fixture or exclusion was changed.
 
 **TCK gate** (2026-10-09, PostgreSQL 17): `core.inheritance.*`, `core.annotations.discriminatorValue`,
 `core.callback.inheritance`: **19 / 21 passed**. Only the two `mappedsc.descriptors` XML tests remain (P10),
@@ -828,7 +853,7 @@ Recorded before implementation; each entry: date, decision, reason.
 | D2 | 2026-10-07 | Certification database: PostgreSQL (official TCK DDL); H2 for unit tests only. | Actioned |
 | D3 | 2026-10-07 | No `ClassTransformer` / no instrumentation: lazy loading and dirty checking without enhancement. | Actioned |
 | D4 | 2026-10-08 | Noether JPA renders its SQL from its **own sealed SQL AST** (statements of the flush, then queries, locks, DDL), through **its own dialect SPI** in separate modules — `noether-jpa-dialect-spi`, `noether-jpa-dialect-h2`, `noether-jpa-dialect-postgresql`, found with `ServiceLoader` — rather than by extending `mansart-data-dialect-spi`: that SPI is model-centric (Jakarta Data `EntityModel`, single-attribute ids), `requires transitive jakarta.data`, and is delivered (Jakarta Data TCK 74/74). The SQL knowledge of the two SPIs is duplicated for now; converging them (Jakarta Data rendered through this AST) may be decided later. | Decided |
-| D5 | — | `TABLE_PER_CLASS` inheritance (optional in the spec). | Open |
+| D5 | 2026-10-15 | Implement optional `TABLE_PER_CLASS` inheritance as a bounded follow-up before broader lazy loading: concrete inherited tables, derived SQL `UNION ALL` polymorphic ranges, shared hierarchy identity and concrete-table mutations. Reuse the annotation/XML overlay and generated accesses. Reject `IDENTITY`; use shared generators or assigned hierarchy-wide keys. Polymorphic foreign keys have no single database constraint; pessimistic entity queries lock concrete rows after selection, and purely scalar pessimistic union queries are explicitly refused. | Actioned |
 | D6 | 2026-10-07 | Bean Validation is not available, so a Vidocq implementation (Jakarta Validation 3.1) will be created as a new building block **inside Noether** (Noether is the data character of the ecosystem; no new repository, no new `mani.yaml` / `GestionProjet` entry). It is put on the persistence TCK classpath. `noether-persistence` depends only on `jakarta.validation-api`. Its own TCK runs both **out of the Vidocq reactor** (standalone runner, authoritative for the building block) and **inside it** (`vidocq-runtime-integration-tests`, `tck` profile, certifying the assembled runtime). Named `noether-validation`; it is a stopgap that only has to run for this TCK (not polished, not published, to be replaced by the implementation another team member is writing); roadmap in [`../noether-validation/ROADMAP.md`](../noether-validation/ROADMAP.md). | Decided |
 | D8 | 2026-10-09 | The query engine — JPQL lexer, parser, translation to the SQL AST, and the Criteria API of P8 — lives in `noether-jpa-core` (internal packages `io.vidocq.noether.jpa.core.query.*`), not in a `noether-jpa-query` module: `EntityManager.createQuery` belongs to the core, and the engine needs the core's mapping, persistence context, loader and flush. A separate module would need a query SPI found with `ServiceLoader` and qualified exports of most core packages, for one artifact more and no layering gained. The SQL AST of queries extends `noether-jpa-dialect-spi` (D4). | Decided |
 | D7 | 2026-10-08 | Connection pooling in Java SE (the spec defines none: §8.2.1.9 only lists the `jakarta.persistence.jdbc.*` properties, and leaves Java SE data sources "to the requirements of the provider"). A unit configured by `jakarta.persistence.jdbc.*`, without a `DataSource`, gets a **`mansart-pool` pool by default** (virtual-thread-native, zero-dep), closed with its factory; `io.vidocq.noether.jpa.pool=false` turns it off (one `DriverManager` connection per transaction), `io.vidocq.noether.jpa.pool.max-size` / `.min-idle` / `.acquire-timeout` size it. A `DataSource` given by the application is used as is; in the Vidocq runtime the container passes its own (`vidocq-runtime-mansart-pool-extension`, P9). A driver named by `jakarta.persistence.jdbc.driver` that `DriverManager` cannot see is used unpooled, with a warning. | Decided |

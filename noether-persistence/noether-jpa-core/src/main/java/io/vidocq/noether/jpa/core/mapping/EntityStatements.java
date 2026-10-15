@@ -126,10 +126,12 @@ public final class EntityStatements {
     private final Integer version;
     private final Select versionSelect;
     private final Object discriminatorValue;
+    private final Function<Class<?>, InheritanceMapping> inheritances;
 
     private EntityStatements(String entity, String unsupported, Function<Class<?>, MappedEntity> entities, List<Reference> references,
             List<CollectionMapping> collections, List<ElementCollectionMapping> elementCollections, List<Column> columns,
-            List<TableStatements> tables, Integer version, Select versionSelect, Object discriminatorValue) {
+            List<TableStatements> tables, Integer version, Select versionSelect, Object discriminatorValue,
+            Function<Class<?>, InheritanceMapping> inheritances) {
         this.entity = entity;
         this.unsupported = unsupported;
         this.entities = entities;
@@ -141,6 +143,7 @@ public final class EntityStatements {
         this.version = version;
         this.versionSelect = versionSelect;
         this.discriminatorValue = discriminatorValue;
+        this.inheritances = inheritances;
     }
 
     /**
@@ -272,7 +275,7 @@ public final class EntityStatements {
             primary.select().conditions());
         return new EntityStatements(model.entityName(), null, entities, List.copyOf(references), List.copyOf(collections),
             List.copyOf(elementCollections), List.copyOf(columns), List.copyOf(tables), version, versionSelect,
-            inheritance == null ? null : inheritance.value());
+            inheritance == null ? null : inheritance.value(), inheritances);
     }
 
     /**
@@ -699,7 +702,7 @@ public final class EntityStatements {
      */
     private static TableModel primaryTable(EntityModel entity, Function<Class<?>, InheritanceMapping> inheritances) {
         InheritanceMapping mapping = inheritances.apply(entity.javaType());
-        return mapping == null || mapping.joined() ? entity.table() : mapping.root().table();
+        return mapping == null || mapping.joined() || mapping.tablePerClass() ? entity.table() : mapping.root().table();
     }
 
     private static List<KeyColumn> relationalKeys(EntityModel entity, Function<BasicAttribute, ValueBinder> binders,
@@ -851,7 +854,7 @@ public final class EntityStatements {
 
     private static EntityStatements unsupported(EntityModel model, String milestone, String feature) {
         return new EntityStatements(model.entityName(), milestone + ":" + feature, null, List.of(), List.of(), List.of(), List.of(),
-            List.of(), null, null, null);
+            List.of(), null, null, null, null);
     }
 
     private void check() {
@@ -932,6 +935,17 @@ public final class EntityStatements {
         }
         Object id = type.id(element);
         return id == null ? null : type.statements().keyValues(id);
+    }
+
+    /** Resolves a target-side mutation table without changing joined or secondary-table mappings. */
+    public Table targetTable(Object element, Class<?> target, Table table) {
+        var inheritance = inheritances == null ? null : inheritances.apply(target);
+        if (inheritance == null || !inheritance.tablePerClass()
+                || inheritance.chain().stream().noneMatch(e -> entities.apply(e.javaType()).statements().select().table().equals(table))) {
+            return table;
+        }
+        MappedEntity concrete = entities.apply(element.getClass());
+        return concrete == null ? entities.apply(target).statements().select().table() : concrete.statements().select().table();
     }
 
     /** The owned single-valued relationships, with their foreign key columns. */

@@ -248,10 +248,13 @@ public final class EntityLoader {
                         if (foreign.index() != null) readers.addAll(foreign.index().binders());
                         int width = foreign.targetBinders().size();
                         List<Indexed> found = new ArrayList<>();
-                        for (Object[] columns : keys(foreign.targets(), foreign.ownerBinders(), statements.keyValues(id),
-                                readers, describe(association), connection)) {
-                            Object element = find(target, target.statements().key(Arrays.copyOf(columns, width)), connection, context);
-                            found.add(new Indexed(element, index(foreign.index(), columns, width, connection, context)));
+                        for (var table : unit.collectionTables(target, foreign.table())) {
+                            var select = new Select(table, foreign.targets().columns(), foreign.targets().conditions());
+                            for (Object[] columns : keys(select, foreign.ownerBinders(), statements.keyValues(id),
+                                    readers, describe(association), connection)) {
+                                Object element = find(target, target.statements().key(Arrays.copyOf(columns, width)), connection, context);
+                                found.add(new Indexed(element, index(foreign.index(), columns, width, connection, context)));
+                            }
                         }
                         yield found;
                     }
@@ -292,6 +295,21 @@ public final class EntityLoader {
     private List<Indexed> inverse(AssociationAttribute inverse, IndexMapping index, Object id, EntityStatements statements,
             Connection connection, PersistenceContext context) {
         MappedEntity owner = entity(inverse.targetEntity());
+        var inheritance = unit.inheritance(owner.model().javaType());
+        if (inheritance.tablePerClass()) {
+            List<Indexed> result = new ArrayList<>();
+            for (var candidate : inheritance.hierarchy()) {
+                if (!inheritance.abstractEntity(candidate) && owner.model().javaType().isAssignableFrom(candidate.javaType())) {
+                    result.addAll(inverse(inverse, index, id, statements, connection, context, entity(candidate.javaType())));
+                }
+            }
+            return result;
+        }
+        return inverse(inverse, index, id, statements, connection, context, owner);
+    }
+
+    private List<Indexed> inverse(AssociationAttribute inverse, IndexMapping index, Object id, EntityStatements statements,
+            Connection connection, PersistenceContext context, MappedEntity owner) {
         int attribute = -1;
         List<AttributeModel> attributes = owner.model().attributes();
         for (int i = 0; i < attributes.size(); i++) {

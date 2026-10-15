@@ -161,8 +161,21 @@ with entity literals and class-valued parameters, including `IN`.
 Joined bulk updates capture qualifying keys and assignment values before modifying any table;
 bulk deletes remove subclass rows before superclass rows and return an entity count, not a table-row count.
 
-`TABLE_PER_CLASS` is optional in the specification and is explicitly refused at bootstrap.
-Decision D5 remains open: this milestone neither implements the strategy nor decides against its future implementation.
+Decision D5 (2026-10-15) adds the optional `TABLE_PER_CLASS` strategy, through annotations or ORM XML.
+Each concrete entity, including a concrete root, has a primary table containing inherited state.
+Abstract entities need no primary table, and no stored discriminator is generated.
+Polymorphic JPQL/Criteria ranges use derived `UNION ALL` queries; filtering, aggregates,
+`TYPE`/`TREAT`, ordering and pagination execute in SQL, not over merged in-memory results.
+Inherited relationships, composite identifiers, versions, callbacks and secondary/collection tables
+keep the existing generated-access paths; bulk mutations operate on the selected concrete tables.
+Target-side one-to-many foreign keys and stored indexes are mapped across concrete target tables.
+
+Identifiers must be unique across the hierarchy.
+Assigned identifiers and shared `AUTO`, `SEQUENCE`, `TABLE` or `UUID` generation are supported;
+`IDENTITY` is rejected at bootstrap because independent identity columns could collide.
+A polymorphic target has no single referenced table, so generated DDL omits its database foreign-key constraint.
+Pessimistic entity queries lock the concrete result rows after SQL selection and pagination.
+Purely scalar pessimistic queries over these union ranges are explicitly refused; select and lock entities instead.
 
 An application adds the dialect of its database at run time: `io.vidocq.noether:noether-jpa-dialect-postgresql` or `noether-jpa-dialect-h2`. The dialect is detected from the JDBC metadata; the property `io.vidocq.noether.jpa.dialect` names it explicitly.
 
@@ -236,7 +249,8 @@ deletes maintain the corresponding relationship rows; bulk operations do not cas
 Some mapping shapes remain explicitly refused: relationships to derived-identity targets,
 joins referencing non-key columns, inverse many-to-many indexes and associations inside
 collection-table embeddable elements.
-`TABLE_PER_CLASS` is optional and deferred. Eager relationship loading is supported; lazy exclusion is not guaranteed.
+All three inheritance strategies are supported within the boundaries described above.
+Eager relationship loading is supported; lazy exclusion is not guaranteed.
 Data/JPA bridging and generation mutualisation remain deferred, without modifying the delivered Data producer.
 
 For declarative repository needs, use `mansart-jakarta-data`. For persistence contexts, JPQL, Criteria,

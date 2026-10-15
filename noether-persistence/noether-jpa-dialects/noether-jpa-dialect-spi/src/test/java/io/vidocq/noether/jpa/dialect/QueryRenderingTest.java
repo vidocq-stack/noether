@@ -40,6 +40,25 @@ import org.junit.jupiter.api.Test;
 /** The ANSI rendering of queries; their parameters are listed in the order the SQL holds them. */
 class QueryRenderingTest {
 
+    @Test
+    void derivedUnionRangesKeepFilteringOrderingAndPagingOutsideTheUnion() {
+        Parameter first = new Parameter("first");
+        Parameter second = new Parameter("second");
+        Parameter predicate = new Parameter("predicate");
+        var union = new SetQuery(List.of(from("BOOK", "b").select(column("b", "ID"), first).build(),
+                from("FILM", "f").select(column("f", "ID"), second).build()),
+            List.of(new SetQuery.Operation(SetQuery.Operator.UNION, true)), List.of(), null, null);
+        var derived = Table.derived(union, List.of(Identifier.of("ID"), Identifier.of("KIND")));
+        var query = Query.from(new From(derived, "a", List.of())).select(column("a", "ID"))
+            .where(new Binary(column("a", "KIND"), Operator.EQ, predicate))
+            .orderBy(new Order(column("a", "ID"), false, null)).offset(1).limit(2).build();
+        assertThat(ansi.renderQuery(query).sql()).isEqualTo(
+            "SELECT a.ID FROM ((SELECT b.ID, ? FROM BOOK b) UNION ALL (SELECT f.ID, ? FROM FILM f)) a(ID, KIND)"
+                + " WHERE a.KIND = ? ORDER BY a.ID OFFSET 1 ROWS FETCH FIRST 2 ROWS ONLY");
+        assertThat(query.parameters()).containsExactly(first, second, predicate);
+        assertThat(ansi.renderQuery(query).parameters()).containsExactly(first, second, predicate);
+    }
+
     private final Dialect ansi = new StandardDialect() {
         @Override
         public String name() {

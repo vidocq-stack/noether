@@ -35,6 +35,30 @@ import org.junit.jupiter.api.Test;
 class GeneratedAccessModulePathTest {
 
     @Test
+    void xmlTablePerClassUsesClosedPackageGeneratedAccessAndMetamodel() { // §2.14.3, §12.2
+        var unit = new PersistenceConfiguration("processor-tpc")
+            .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
+            .managedClass(Account.class).managedClass(PremiumAccount.class)
+            .mappingFile("orm/table-per-class.xml")
+            .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:processor-tpc;DB_CLOSE_DELAY=-1")
+            .property(PersistenceConfiguration.JDBC_USER, "sa")
+            .property(PersistenceConfiguration.SCHEMAGEN_DATABASE_ACTION, "drop-and-create");
+        try (var emf = unit.createEntityManagerFactory(); var em = emf.createEntityManager()) {
+            assertThat(io.vidocq.noether.jpa.processorit.closed.Account_.id)
+                .isSameAs(emf.getMetamodel().entity(Account.class).getId(long.class));
+            em.getTransaction().begin(); em.persist(new PremiumAccount(1, "closed", 42)); em.getTransaction().commit(); em.clear();
+            Account loaded = em.find(Account.class, 1L);
+            assertThat(loaded).isInstanceOf(PremiumAccount.class).isSameAs(em.find(PremiumAccount.class, 1L));
+            assertThat(em.createQuery("select a from Account a where a.name = 'closed'", Account.class).getSingleResult())
+                .isSameAs(loaded);
+            assertThat(em.createQuery("select TYPE(a) from Account a").getSingleResult()).isEqualTo(PremiumAccount.class);
+            assertThat(em.createNativeQuery("select points from PremiumAccount where id = 1").getSingleResult()).isEqualTo(42);
+            assertThat(em.createNativeQuery("select count(*) from INFORMATION_SCHEMA.TABLES where TABLE_NAME = 'ACCOUNT'")
+                .getSingleResult()).isEqualTo(0L);
+        }
+    }
+
+    @Test
     void embeddableMapKeysUseGeneratedAccessWithoutOpeningThePackage() { // §2.7, §11.1.8
         var unit = new PersistenceConfiguration("processor-map-keys")
             .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider").managedClass(Ledger.class)

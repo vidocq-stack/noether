@@ -950,6 +950,12 @@ final class EntityManagerImpl implements EntityManager {
         }
 
         @Override
+        public void lockResult(Object entity, LockModeType mode, Integer timeout, Connection connection) {
+            context.entry(entity).ifPresent(entry ->
+                factory.locks(connection).lock(entry.type(), entry, mode, timeout, true, connection, context));
+        }
+
+        @Override
         public Dialect dialect(Connection connection) {
             return factory.flushEngine(connection).dialect();
         }

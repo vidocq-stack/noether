@@ -58,8 +58,11 @@
   decided by `AccessPlanner`, shared with the processor. Never duplicate that logic.
 - Inheritance is mapped by `mapping.InheritanceMapping`: default/explicit `SINGLE_TABLE` and required `JOINED`,
   polymorphic loads and one identity per hierarchy, JPQL `TYPE` and joined bulk mutations. Keep relationships,
-  versions and callbacks on the existing generated-access paths. `TABLE_PER_CLASS` is explicitly refused;
-  decision D5 remains open.
+  versions and callbacks on the existing generated-access paths. Decision D5 (2026-10-15) adds
+  `TABLE_PER_CLASS`: concrete inherited tables, SQL-union polymorphic queries and concrete-table
+  mutations, with hierarchy-wide identifiers (`IDENTITY` explicitly refused). Polymorphic foreign
+  keys have no single database referential constraint. Entity pessimistic queries use follow-on
+  concrete-row locking; purely scalar pessimistic union queries are explicitly refused.
 - Several abandoned JPA attempts live on remote branches (`feature/*noether*persistence*`). They
   are history, not a base: nothing is cherry-picked from them without a test that justifies it.
 

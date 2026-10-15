@@ -1,3 +1,43 @@
+## Noether TABLE_PER_CLASS verification — 2026-10-15
+
+Decision D5 adds the optional table-per-class strategy without changing official fixtures
+or the local TCK-BUG-001 patch. On Temurin 25.0.4, Maven 3.9.16 and PostgreSQL 17,
+the full patched Persistence 3.2.1 run reports **2135 tests, 2131 passed,
+zero failures, zero errors and four official skips** (unchanged).
+Execution 1: 2134 tests / 2130 passes / four skips; execution 2: one test / one pass.
+All 259 XML reports were inspected, including their derived-jar provenance.
+
+Commands from the Noether root:
+
+```bash
+export JAVA_HOME="$HOME/.sdkman/candidates/java/25.0.4-tem"
+export PATH="$JAVA_HOME/bin:$PATH"
+./mvnw -ntp install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+The unit reactor passes **795 tests, zero failures/errors/skips** (previous baseline: 784).
+Seven dedicated H2 table-per-class tests cover concrete/abstract roots, intermediate entities,
+inherited state and secondary/collection tables, composite keys, shared generated identifiers,
+polymorphic identity and relationships, target-side foreign keys, JPQL/Criteria filtering,
+ordering/pagination, aggregates, `TYPE`/`TREAT`, bulk mutations and concrete-row follow-on locks.
+The former rejection test now exercises a concrete table-per-class root.
+Three SQL-rendering tests cover derived ranges and parameter ordering, including H2/PostgreSQL;
+the closed-package APT module-path test exercises XML strategy overlays without `opens`.
+This optional strategy is driven by these regressions, not new official TCK scenarios.
+
+The four unchanged official skips are listed in the historical baseline below; there are no
+additional exclusions. Official jar SHA-256 remains
+`a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`;
+derived jar SHA-256 remains
+`1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+Reports remain in `noether-jpa-tck/target/failsafe-reports/`; validation logs and counters are
+in `noether-jpa-core/target/table-per-class-validation/`.
+This is a **local patched result, not an untouched official result or a certification claim**.
+
+---
+
 ## Noether alternate relationship mappings verification — 2026-10-14
 
 After adding to-one join tables and unidirectional one-to-many target-table foreign keys,

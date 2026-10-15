@@ -144,6 +144,7 @@ final class Translator {
         String bulkEntity = statement instanceof Ast.Update update ? update.entity()
             : statement instanceof Ast.Delete delete ? delete.entity() : null;
         if (bulkEntity != null && (unit.inheritance(translator.entityNamed(bulkEntity).model().javaType()).joined()
+                || unit.inheritance(translator.entityNamed(bulkEntity).model().javaType()).tablePerClass()
                 || translator.entityNamed(bulkEntity).statements().tables().size() > 1
                 || translator.entityNamed(bulkEntity).statements().collections().stream()
                     .anyMatch(m -> m instanceof CollectionMapping.ForeignKey || m.association().singleValued()))) {
@@ -276,7 +277,7 @@ final class Translator {
                         : attribute instanceof BasicAttribute basic ? basicValue(variable, index, basic) : null);
                     Expression.Column name = (Expression.Column) lhs.sql();
                     columns = List.of(type.statements().columns().stream().filter(c -> c.attribute() == index
-                        && c.name().equals(name.name()) && tableAlias(variable, c.table()).equals(name.alias())).findFirst().orElseThrow());
+                        && unit.queryColumn(type, c).equals(name.name()) && tableAlias(variable, c.table()).equals(name.alias())).findFirst().orElseThrow());
                     values = List.of(bound(assignment.value(), lhs).sql());
                 }
                 for (int c = 0; c < columns.size(); c++) {
@@ -309,14 +310,30 @@ final class Translator {
                 mutations.add(new Compiled.Mutation(table.insert(), List.copyOf(values), List.copyOf(binders), entry.getValue()));
             }
             for (int t : assigned.keySet()) {
-                var table = type.statements().tables().get(t).select();
                 List<Integer> values = new ArrayList<>(assigned.get(t));
                 values.addAll(keyIndexes);
-                mutations.add(new Compiled.Mutation(new io.vidocq.noether.jpa.dialect.sql.Update(table.table(),
-                    setColumns.get(t), table.conditions()), List.copyOf(values), values.stream().map(readers::get).toList()));
+                var inheritance = unit.inheritance(type.model().javaType());
+                var targets = inheritance.tablePerClass() ? inheritance.hierarchy().stream()
+                    .filter(e -> !inheritance.abstractEntity(e) && type.model().javaType().isAssignableFrom(e.javaType()))
+                    .map(e -> entity(e.javaType())).toList() : List.of(type);
+                var updated = new java.util.HashSet<Table>();
+                for (var target : targets) {
+                    var sourceTable = type.statements().tables().get(t).select().table();
+                    var table = t == 0 ? target.statements().tables().getFirst().select()
+                        : target.statements().tables().stream().map(EntityStatements.TableStatements::select)
+                            .filter(s -> s.table().equals(sourceTable)).findFirst().orElseThrow();
+                    if (!updated.add(table.table())) continue;
+                    mutations.add(new Compiled.Mutation(new io.vidocq.noether.jpa.dialect.sql.Update(table.table(),
+                        setColumns.get(t), table.conditions()), List.copyOf(values), values.stream().map(readers::get).toList()));
+                }
             }
         } else {
-            for (CollectionMapping mapping : type.statements().collections()) {
+            var inheritance = unit.inheritance(type.model().javaType());
+            var collections = inheritance.tablePerClass() ? inheritance.hierarchy().stream()
+                .filter(e -> !inheritance.abstractEntity(e) && type.model().javaType().isAssignableFrom(e.javaType()))
+                .flatMap(e -> entity(e.javaType()).statements().collections().stream()).distinct().toList()
+                : type.statements().collections();
+            for (CollectionMapping mapping : collections) {
                 if (mapping instanceof CollectionMapping.JoinTable table && table.association().singleValued()) {
                     mutations.add(new Compiled.Mutation(table.deleteOwner(), keyIndexes, table.ownerBinders()));
                 } else if (mapping instanceof CollectionMapping.ForeignKey foreign) {
@@ -330,13 +347,35 @@ final class Translator {
                     values.addAll(keyIndexes);
                     List<ValueBinder> binders = new ArrayList<>(foreign.ownerBinders());
                     binders.addAll(foreign.ownerBinders());
-                    mutations.add(new Compiled.Mutation(new io.vidocq.noether.jpa.dialect.sql.Update(foreign.table(),
-                        foreign.ownerColumns(), foreign.ownerColumns()), List.copyOf(values), List.copyOf(binders)));
+                    for (Table table : unit.collectionTables(entity(foreign.association().targetEntity()), foreign.table())) {
+                        mutations.add(new Compiled.Mutation(new io.vidocq.noether.jpa.dialect.sql.Update(table,
+                            foreign.ownerColumns(), foreign.ownerColumns()), List.copyOf(values), List.copyOf(binders)));
+                    }
                 }
+            }
+            if (inheritance.tablePerClass()) {
+                Map<Table, Compiled.Mutation> cleanup = new java.util.LinkedHashMap<>();
+                for (var candidate : inheritance.hierarchy()) {
+                    if (inheritance.abstractEntity(candidate) || !type.model().javaType().isAssignableFrom(candidate.javaType())) continue;
+                    var statements = entity(candidate.javaType()).statements();
+                    for (var collection : statements.collections()) {
+                        if (collection instanceof CollectionMapping.JoinTable table) {
+                            cleanup.putIfAbsent(table.table(), new Compiled.Mutation(table.deleteOwner(), keyIndexes, table.ownerBinders()));
+                        }
+                    }
+                    for (var collection : statements.elementCollections()) {
+                        cleanup.putIfAbsent(collection.table(), new Compiled.Mutation(collection.deleteOwner(),
+                            keyIndexes, collection.ownerBinders()));
+                    }
+                }
+                cleanup.forEach((table, mutation) -> {
+                    if (mutations.stream().noneMatch(m -> m.sql().table().equals(table))) mutations.add(mutation);
+                });
             }
             Map<Table, List<Identifier>> tables = new java.util.LinkedHashMap<>();
             unit.inheritance(type.model().javaType()).hierarchy().stream()
                 .filter(e -> type.model().javaType().isAssignableFrom(e.javaType()))
+                .filter(e -> !unit.inheritance(e.javaType()).tablePerClass() || !unit.inheritance(e.javaType()).abstractEntity(e))
                 .sorted(java.util.Comparator.comparingInt(e -> unit.inheritance(e.javaType()).chain().size()))
                 .forEach(e -> entity(e.javaType()).statements().tables().forEach(t ->
                     tables.putIfAbsent(t.select().table(), t.select().conditions())));
@@ -609,7 +648,7 @@ final class Translator {
         if (variable.type().model().javaType() == inheritance.root().javaType()) {
             return null;
         }
-        if (inheritance.discriminator() == null) {
+        if (inheritance.typeColumn() == null) {
             if (!inheritance.joined()) {
                 return null;
             }
@@ -625,14 +664,14 @@ final class Translator {
             .filter(e -> variable.type().model().javaType().isAssignableFrom(e.javaType()))
             .filter(e -> !inheritance.abstractEntity(e))
             .<Expression>map(e -> new Expression.Literal(inheritance.discriminatorValue(e))).toList();
-        return new Expression.In(new Expression.Column(variable.alias(), unit.identifier(inheritance.discriminator())), values, false);
+        return new Expression.In(new Expression.Column(variable.alias(), unit.identifier(inheritance.typeColumn())), values, false);
     }
 
     private String tableAlias(Variable variable, int table) {
         if (variable.owner() != this) {
             return variable.owner().tableAlias(variable, table);
         }
-        if (table == 0) {
+        if (table == 0 || unit.inheritance(variable.type().model().javaType()).tablePerClass()) {
             return variable.alias();
         }
         String key = variable.alias() + "#" + table;
@@ -844,6 +883,10 @@ final class Translator {
 
     private Expression foreignKeyPredicate(String targetAlias, MappedEntity target, int[] indexes, List<Expression> ownerKey) {
         EntityStatements statements = target.statements();
+        if (unit.inheritance(target.model().javaType()).tablePerClass()) {
+            return equal(Arrays.stream(indexes).<Expression>mapToObj(i -> new Expression.Column(targetAlias,
+                unit.queryColumn(target, statements.columns().get(i)))).toList(), ownerKey);
+        }
         int tableIndex = statements.columns().get(indexes[0]).table();
         if (tableIndex == 0) {
             return equal(columns(targetAlias, statements, indexes), ownerKey);
@@ -863,6 +906,10 @@ final class Translator {
 
     private Expression collectionKeyPredicate(String targetAlias, MappedEntity target, Link.ByColumns link,
             List<Expression> ownerKey) {
+        if (unit.inheritance(target.model().javaType()).tablePerClass()
+                && !unit.collectionTables(target, link.table()).equals(List.of(link.table()))) {
+            return equal(names(targetAlias, link.columns()), ownerKey);
+        }
         if (link.table().equals(table(target))) return equal(names(targetAlias, link.columns()), ownerKey);
         String row = alias();
         Expression where = new Binary(equal(names(row, link.keys()), key(targetAlias, target)), Operator.AND,
@@ -1382,7 +1429,7 @@ final class Translator {
                 return null;
             }
             EntityStatements.Column column = variable.type().statements().columns().get(reference.get().columns()[part]);
-            return new Scalar(new Expression.Column(tableAlias(variable, column.table()), column.name()), column.binder(), null);
+            return new Scalar(new Expression.Column(tableAlias(variable, column.table()), unit.queryColumn(variable.type(), column)), column.binder(), null);
         }
         return null;
     }
@@ -1411,7 +1458,7 @@ final class Translator {
     private Scalar column(Variable variable, int attribute, int[] path, Class<?> type) {
         for (EntityStatements.Column column : variable.type().statements().columns()) {
             if (column.attribute() == attribute && column.foreignKey() == null && Arrays.equals(column.path(), path)) {
-                return new Scalar(new Expression.Column(tableAlias(variable, column.table()), column.name()), column.binder(), type);
+                return new Scalar(new Expression.Column(tableAlias(variable, column.table()), unit.queryColumn(variable.type(), column)), column.binder(), type);
             }
         }
         throw new IllegalArgumentException("The attribute " + variable.type().model().attributes().get(attribute).name() + " of "
@@ -1577,8 +1624,8 @@ final class Translator {
                 }
                 var inheritance = unit.inheritance(variable.type().model().javaType());
                 Expression sql;
-                if (inheritance.discriminator() != null) {
-                    sql = new Expression.Column(variable.alias(), unit.identifier(inheritance.discriminator()));
+                if (inheritance.typeColumn() != null) {
+                    sql = new Expression.Column(variable.alias(), unit.identifier(inheritance.typeColumn()));
                 } else if (!inheritance.joined()) {
                     sql = new Expression.Literal(variable.type().model().entityName());
                 } else {
@@ -2082,17 +2129,17 @@ final class Translator {
         return unit.entity(type).orElseThrow(() -> new IllegalArgumentException(type.getName() + " is not an entity of the unit"));
     }
 
-    private static Table table(MappedEntity type) {
-        return type.statements().tables().getFirst().select().table();
+    private Table table(MappedEntity type) {
+        return unit.queryTable(type);
     }
 
-    private static Entity entityValue(String alias, MappedEntity type) {
+    private Entity entityValue(String alias, MappedEntity type) {
         List<EntityStatements.Column> keyColumns = type.statements().keyColumns();
         return new Entity(type, key(alias, type), keyColumns.stream().map(EntityStatements.Column::binder).toList());
     }
 
-    private static List<Expression> key(String alias, MappedEntity type) {
-        return type.statements().keyColumns().stream().<Expression>map(c -> new Expression.Column(alias, c.name())).toList();
+    private List<Expression> key(String alias, MappedEntity type) {
+        return type.statements().keyColumns().stream().<Expression>map(c -> new Expression.Column(alias, unit.queryColumn(type, c))).toList();
     }
 
     private static List<Expression> columns(String alias, EntityStatements statements, int[] indexes) {
@@ -2107,7 +2154,7 @@ final class Translator {
         List<Expression> columns = new ArrayList<>();
         for (int index : indexes) {
             EntityStatements.Column column = variable.type().statements().columns().get(index);
-            columns.add(new Expression.Column(tableAlias(variable, column.table()), column.name()));
+            columns.add(new Expression.Column(tableAlias(variable, column.table()), unit.queryColumn(variable.type(), column)));
         }
         return columns;
     }

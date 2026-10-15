@@ -20,6 +20,7 @@
 package io.vidocq.noether.jpa.dialect.sql;
 
 import java.util.Objects;
+import java.util.List;
 
 /**
  * A table, qualified by its schema and catalog when they are mapped.
@@ -27,10 +28,21 @@ import java.util.Objects;
  * @param schema the schema, or {@code null}
  * @param catalog the catalog, or {@code null}
  */
-public record Table(Identifier name, Identifier schema, Identifier catalog) {
+public record Table(Identifier name, Identifier schema, Identifier catalog, SelectStatement query, List<Identifier> columns) {
 
     public Table {
         Objects.requireNonNull(name, "name");
+        columns = List.copyOf(columns);
+        if (query != null && columns.isEmpty()) throw new IllegalArgumentException("A derived table needs column names");
+    }
+
+    public Table(Identifier name, Identifier schema, Identifier catalog) {
+        this(name, schema, catalog, null, List.of());
+    }
+
+    /** A derived query with explicit column names, assigned after its range alias. */
+    public static Table derived(SelectStatement query, List<Identifier> columns) {
+        return new Table(Identifier.of("derived"), null, null, Objects.requireNonNull(query), columns);
     }
 
     public static Table of(String name) {

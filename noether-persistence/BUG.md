@@ -550,3 +550,31 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     zero failures/errors and four official skips each, all identities/outcomes unchanged against the preserved
     pre-correction P11 baseline. Both second executions pass without the validation API/provider jars.
     Reports: `mansart-jpa-tck/target/p11-correctness-neutrality/{off,on}/`.
+
+## BUG-20261015-01 — Target-side collection inserts can reference an owner still pending in a cyclic hierarchy
+
+- **Date**: 2026-10-15
+- **Status**: FIXED (working tree; no commit requested)
+- **Module**: `noether-jpa-core` / `FlushEngine.insertWithCollectionKeys`
+- **Symptom**: while implementing table-per-class target-side foreign keys, a class-level
+  association cycle caused `Book` to be inserted before `Shelf`, with `selected_shelf = 1`.
+  H2 rejected the insert with a foreign-key integrity violation, even though the owner
+  foreign key was nullable and both instances were present in the same transaction.
+- **Minimal reproduction**:
+  ```bash
+  ./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test \
+    -Dtest=TablePerClassTest#polymorphicTargetForeignKeysAreWrittenAndQueriedInEachConcreteTable \
+    -Dsurefire.failIfNoSpecifiedTests=false
+  ```
+- **Cause hypothesis**: the target-side collection insert path injected the owner key
+  without checking the existing pending-insert set. Ordinary owned references already
+  defer nullable keys when the owner row will only be inserted later.
+- **Investigations**:
+  - 2026-10-15: the extended table-per-class regression failed with H2 error 23506.
+    Defer nullable collection owner keys while their owners remain pending; the existing
+    post-insert collection phase writes them once both rows exist. Concrete table selection
+    and insertable/updatable policies are retained.
+  - 2026-10-15: table-per-class, existing alternate relationship mappings, inheritance,
+    dialect rendering and closed APT-module regressions pass. Full reactor: 795 tests,
+    zero failures/errors/skips. Full patched PostgreSQL TCK: 2135 tests, 2131 passes,
+    zero failures/errors and four unchanged official skips.

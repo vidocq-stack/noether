@@ -22,6 +22,12 @@ package io.vidocq.noether.jpa.core.mapping;
 import io.vidocq.noether.jpa.core.access.Accesses;
 import io.vidocq.noether.jpa.core.jdbc.type.ValueBinder;
 import io.vidocq.noether.jpa.core.jdbc.type.ValueBinders;
+import io.vidocq.noether.jpa.dialect.sql.Expression;
+import io.vidocq.noether.jpa.dialect.sql.Identifier;
+import io.vidocq.noether.jpa.dialect.sql.Query;
+import io.vidocq.noether.jpa.dialect.sql.SelectStatement;
+import io.vidocq.noether.jpa.dialect.sql.SetQuery;
+import io.vidocq.noether.jpa.dialect.sql.Table;
 import io.vidocq.noether.jpa.core.model.AccessKind;
 import io.vidocq.noether.jpa.core.model.AssociationAttribute;
 import io.vidocq.noether.jpa.core.model.AttributeModel;
@@ -160,6 +166,122 @@ public final class MappedUnit {
 
     public InheritanceMapping inheritance(Class<?> type) {
         return inheritance.get(type);
+    }
+
+    /** A table-per-class range is a UNION ALL of concrete tables, filtered by SQL outside the union. */
+    public Table queryTable(MappedEntity requested) {
+        var mapping = inheritance(requested.model().javaType());
+        if (!mapping.tablePerClass()) return requested.statements().select().table();
+        var hierarchy = mapping.hierarchy().stream().filter(e -> !mapping.abstractEntity(e))
+            .map(e -> entity(e.javaType()).orElseThrow()).toList();
+        var definitions = new java.util.LinkedHashMap<Identifier, Map.Entry<MappedEntity, RangeColumn>>();
+        for (var entity : hierarchy) {
+            rangeColumns(entity).forEach((name, column) -> definitions.putIfAbsent(name, Map.entry(entity, column)));
+        }
+        var names = new ArrayList<>(definitions.keySet());
+        var typeColumn = identifier(mapping.typeColumn());
+        if (names.contains(typeColumn)) throw new PersistenceException("Reserved table-per-class column " + typeColumn);
+        names.add(typeColumn);
+        List<Query> operands = new ArrayList<>();
+        for (var entity : hierarchy) {
+            if (!requested.model().javaType().isAssignableFrom(entity.model().javaType())) continue;
+            var columns = rangeColumns(entity);
+            List<Expression> selected = new ArrayList<>();
+            for (var definition : definitions.entrySet()) {
+                var column = columns.get(definition.getKey());
+                if (column != null) {
+                    selected.add(new Expression.Column("n" + column.table(), column.name()));
+                } else {
+                    // An empty scalar subquery supplies an exactly typed NULL, including converters, binary and temporal values.
+                    var declared = definition.getValue();
+                    var table = declared.getKey().statements().tables().get(declared.getValue().table()).select().table();
+                    selected.add(new Expression.Subquery(Query.from(new Query.From(table, "z", List.of()))
+                        .select(new Expression.Column("z", declared.getValue().name()))
+                        .where(new Expression.Literal(false)).build()));
+                }
+            }
+            selected.add(new Expression.Literal(entity.model().entityName()));
+            var tables = entity.statements().tables();
+            List<Query.Join> joins = new ArrayList<>();
+            for (int t = 1; t < tables.size(); t++) {
+                Expression on = null;
+                for (int k = 0; k < tables.get(t).select().conditions().size(); k++) {
+                    var part = new Expression.Binary(
+                        new Expression.Column("n" + t, tables.get(t).select().conditions().get(k)), Expression.Operator.EQ,
+                        new Expression.Column("n0", tables.getFirst().select().conditions().get(k)));
+                    on = on == null ? part : new Expression.Binary(on, Expression.Operator.AND, part);
+                }
+                joins.add(new Query.Join(Query.Join.Kind.LEFT, tables.get(t).select().table(), "n" + t, on));
+            }
+            operands.add(new Query(false, selected,
+                List.of(new Query.From(tables.getFirst().select().table(), "n0", joins)),
+                null, List.of(), null, List.of(), null, null));
+        }
+        if (operands.isEmpty()) throw new PersistenceException("TABLE_PER_CLASS query has no concrete managed subtype: "
+            + requested.model().entityName());
+        SelectStatement query = operands.size() == 1 ? operands.getFirst()
+            : new SetQuery(operands, java.util.Collections.nCopies(operands.size() - 1,
+                new SetQuery.Operation(SetQuery.Operator.UNION, true)), List.of(), null, null);
+        return Table.derived(query, names);
+    }
+
+    public Identifier queryColumn(MappedEntity entity, EntityStatements.Column column) {
+        var inheritance = inheritance(entity.model().javaType());
+        if (!inheritance.tablePerClass()) return column.name();
+        if (column.table() == 0) {
+            var root = mapped.get(inheritance.root().javaType());
+            String attribute = entity.model().attributes().get(column.attribute()).name();
+            var inherited = root.statements().columns().stream()
+                .filter(c -> root.model().attributes().get(c.attribute()).name().equals(attribute)
+                    && java.util.Arrays.equals(c.path(), column.path()) && java.util.Objects.equals(c.foreignKey(), column.foreignKey()))
+                .findFirst();
+            if (inherited.isPresent()) return inherited.get().name();
+            var declaring = inheritance.declaringEntity(entity.model().attributes().get(column.attribute()).declaringClass());
+            return Identifier.quoted("_n_" + declaring.entityName() + "_" + column.name().name());
+        }
+        String table = entity.statements().tables().get(column.table()).select().table().name().name();
+        return Identifier.quoted("_n_" + table + "_" + column.name().name());
+    }
+
+    private record RangeColumn(int table, Identifier name) {}
+
+    private Map<Identifier, RangeColumn> rangeColumns(MappedEntity entity) {
+        Map<Identifier, RangeColumn> columns = new java.util.LinkedHashMap<>();
+        entity.statements().columns().forEach(c -> columns.put(queryColumn(entity, c), new RangeColumn(c.table(), c.name())));
+        for (var owner : mapped.values()) {
+            for (var collection : owner.statements().collections()) {
+                if (!collection.association().targetEntity().isAssignableFrom(entity.model().javaType())) continue;
+                Table table;
+                List<Identifier> names = new ArrayList<>();
+                if (collection instanceof CollectionMapping.ForeignKey foreign) {
+                    table = foreign.table();
+                    names.addAll(foreign.ownerColumns());
+                    if (foreign.index() != null) names.addAll(foreign.index().columns());
+                } else if (collection instanceof CollectionMapping.MappedBy inverse && inverse.indexUpdate() != null) {
+                    table = inverse.indexUpdate().table();
+                    names.addAll(inverse.index().columns());
+                } else continue;
+                var target = mapped.get(collection.association().targetEntity());
+                var tables = collectionTables(target, table);
+                for (int t = 0; t < entity.statements().tables().size(); t++) {
+                    if (tables.contains(entity.statements().tables().get(t).select().table())) {
+                        int index = t;
+                        names.forEach(name -> columns.putIfAbsent(name, new RangeColumn(index, name)));
+                    }
+                }
+            }
+        }
+        return columns;
+    }
+
+    /** The physical tables that contain a collection's target-side foreign key or index. */
+    public List<Table> collectionTables(MappedEntity target, Table table) {
+        var mapping = inheritance(target.model().javaType());
+        if (!mapping.tablePerClass() || mapping.chain().stream()
+                .noneMatch(e -> mapped.get(e.javaType()).statements().select().table().equals(table))) return List.of(table);
+        return mapping.hierarchy().stream()
+            .filter(e -> target.model().javaType().isAssignableFrom(e.javaType()) && !mapping.abstractEntity(e))
+            .map(e -> mapped.get(e.javaType()).statements().select().table()).toList();
     }
 
     /** The identifier policy shared by generated DDL and every provider-generated SQL statement. */

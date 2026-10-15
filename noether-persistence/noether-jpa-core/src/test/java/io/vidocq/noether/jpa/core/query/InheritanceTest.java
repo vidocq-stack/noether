@@ -234,9 +234,17 @@ class InheritanceTest {
     }
 
     @Test
-    void optionalTablePerClassIsExplicitlyRejected() throws Exception { // §2.14: optional strategy, decision D5 open
-        assertThatThrownBy(() -> factory("create table Unsupported (id bigint)", Unsupported.class))
-            .isInstanceOf(PersistenceException.class).hasMessageContaining("TABLE_PER_CLASS");
+    void tablePerClassConcreteRootHasItsOwnTable() throws Exception { // §2.14.3
+        try (var emf = factory("create table Unsupported (id bigint primary key)", Unsupported.class);
+                var em = emf.createEntityManager()) {
+            Unsupported entity = new Unsupported();
+            entity.id = 1;
+            em.getTransaction().begin();
+            em.persist(entity);
+            em.getTransaction().commit();
+            em.clear();
+            assertThat(em.find(Unsupported.class, 1L)).isNotNull();
+        }
     }
 
     @Test

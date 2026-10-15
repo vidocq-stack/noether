@@ -43,6 +43,7 @@ public final class InheritanceMapping {
     private final List<EntityModel> chain;
     private final List<EntityModel> hierarchy;
     private final boolean joined;
+    private final boolean tablePerClass;
     private final String discriminator;
     private final String discriminatorType;
     private final Object value;
@@ -62,15 +63,17 @@ public final class InheritanceMapping {
         EntityModel root = chain.getFirst();
         ClassInfo info = info(root);
         String strategy = info.annotation(JPA + "Inheritance").map(a -> a.enumConstant("strategy")).orElse("SINGLE_TABLE");
-        if ("TABLE_PER_CLASS".equals(strategy)) {
-            throw new PersistenceException("TABLE_PER_CLASS is optional and not supported (decision D5 remains open): "
+        tablePerClass = "TABLE_PER_CLASS".equals(strategy);
+        if (tablePerClass && root.id() instanceof io.vidocq.noether.jpa.core.model.IdModel.Single single
+                && single.generation().map(g -> g.strategy() == jakarta.persistence.GenerationType.IDENTITY).orElse(false)) {
+            throw new PersistenceException("TABLE_PER_CLASS cannot use IDENTITY: concrete tables cannot allocate shared hierarchy keys: "
                 + root.javaType().getName());
         }
         joined = "JOINED".equals(strategy);
         hierarchy = unit.entities().stream().filter(e -> root.javaType().isAssignableFrom(e.javaType())).toList();
         var column = info.annotation(JPA + "DiscriminatorColumn");
         boolean inherited = hierarchy.size() > 1 || info.isAnnotated(JPA + "Inheritance") || column.isPresent();
-        discriminator = inherited && (!joined || column.isPresent())
+        discriminator = !tablePerClass && inherited && (!joined || column.isPresent())
             ? column.map(a -> a.string("name")).orElse("DTYPE") : null;
         discriminatorType = column.map(a -> a.enumConstant("discriminatorType")).orElse("STRING");
         discriminatorValues = values();
@@ -91,6 +94,8 @@ public final class InheritanceMapping {
 
     public EntityModel root() { return chain.getFirst(); }
     public boolean joined() { return joined; }
+    public boolean tablePerClass() { return tablePerClass; }
+    public String typeColumn() { return tablePerClass ? "_noether_type" : discriminator; }
     public String discriminator() { return discriminator; }
     public Object value() { return value; }
     public List<EntityModel> hierarchy() { return hierarchy; }
@@ -170,7 +175,7 @@ public final class InheritanceMapping {
     public List<SecondaryTableModel> tables() {
         List<SecondaryTableModel> tables = new ArrayList<>();
         for (EntityModel entity : chain) {
-            if (entity == root() || joined) {
+            if (tablePerClass ? entity == chain.getLast() : entity == root() || joined) {
                 List<String> keys = new ArrayList<>();
                 ClassInfo info = info(entity);
                 info.annotation(JPA + "PrimaryKeyJoinColumn").ifPresent(a -> keys.add(a.string("name")));
@@ -226,6 +231,7 @@ public final class InheritanceMapping {
     }
 
     public List<Identifier> secondaryKeys(SecondaryTableModel secondary, List<Identifier> rootKeys) {
+        if (tablePerClass) return rootKeys;
         for (int t = 0; t < chain.size(); t++) {
             if (chain.get(t).secondaryTables().contains(secondary)) {
                 return keyNames(t, rootKeys);

@@ -25,10 +25,27 @@ import io.vidocq.noether.jpa.dialect.DialectFactory;
 import io.vidocq.noether.jpa.dialect.sql.Delete;
 import io.vidocq.noether.jpa.dialect.sql.Identifier;
 import io.vidocq.noether.jpa.dialect.sql.Table;
+import io.vidocq.noether.jpa.dialect.sql.Expression;
+import io.vidocq.noether.jpa.dialect.sql.Query;
+import io.vidocq.noether.jpa.dialect.sql.SetQuery;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class H2DialectFactoryTest {
+
+    @Test
+    void derivedUnionRangesRenderWithOuterAggregationAndPaging() {
+        var column = new Expression.Column("e", Identifier.of("id"));
+        var book = Query.from(new Query.From(Table.of("Book"), "e", List.of())).select(column).build();
+        var film = Query.from(new Query.From(Table.of("Film"), "e", List.of())).select(column).build();
+        var union = new SetQuery(List.of(book, film), List.of(new SetQuery.Operation(SetQuery.Operator.UNION, true)),
+            List.of(), null, null);
+        var query = Query.from(new Query.From(Table.derived(union, List.of(Identifier.of("id"))), "a", List.of()))
+            .select(new Expression.Aggregate("COUNT", false, null)).offset(1).limit(1).build();
+        assertThat(new H2DialectFactory().create(2, 3).render(query)).isEqualTo(
+            "SELECT COUNT(*) FROM ((SELECT e.id FROM Book e) UNION ALL (SELECT e.id FROM Film e)) a(id)"
+                + " OFFSET 1 ROWS FETCH FIRST 1 ROWS ONLY");
+    }
 
     @Test
     void theModuleProvidesTheFactory() {

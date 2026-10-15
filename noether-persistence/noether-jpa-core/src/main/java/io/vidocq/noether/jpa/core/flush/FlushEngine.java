@@ -330,11 +330,14 @@ public final class FlushEngine {
             }
             for (CollectionKeyWrite write : writes) {
                 var foreign = write.mapping();
-                if (!foreign.table().equals(table.insert().table())) continue;
+                if (!write.owner().type().statements().targetTable(work.entry().instance(),
+                        foreign.association().targetEntity(), foreign.table()).equals(table.insert().table())) continue;
+                boolean deferred = pending.contains(write.owner().entry().instance())
+                    && foreign.joins().stream().allMatch(j -> j.nullable());
                 Object[] owner = write.owner().type().statements().keyValues(
                     write.owner().type().id(write.owner().entry().instance()));
                 for (int k = 0; k < foreign.joins().size(); k++) {
-                    if (!foreign.joins().get(k).insertable() || columns.contains(foreign.ownerColumns().get(k))) continue;
+                    if (deferred || !foreign.joins().get(k).insertable() || columns.contains(foreign.ownerColumns().get(k))) continue;
                     columns.add(foreign.ownerColumns().get(k));
                     binders.add(foreign.ownerBinders().get(k));
                     parameters.add(owner[k]);
@@ -590,33 +593,45 @@ public final class FlushEngine {
         if (update == null || elements.isEmpty()) return;
         EntityStatements statements = work.type().statements();
         Object[] owner = statements.keyValues(work.type().id(work.entry().instance()));
-        try (PreparedStatement statement = connection.prepareStatement(render(update))) {
-            for (int e = 0; e < elements.size(); e++) {
-                int parameter = 1;
-                for (int k = 0; k < foreign.joins().size(); k++) {
-                    var join = foreign.joins().get(k);
-                    if (inserted ? join.insertable() : join.updatable()) {
-                        foreign.ownerBinders().get(k).bind(dialect, statement, parameter++, clear ? null : owner[k]);
+        for (var group : targetTables(statements, elements, foreign.association().targetEntity(), update.table()).entrySet()) {
+            var concrete = new io.vidocq.noether.jpa.dialect.sql.Update(group.getKey(), update.assignments(), update.conditions());
+            try (PreparedStatement statement = connection.prepareStatement(render(concrete))) {
+                for (int e : group.getValue()) {
+                    int parameter = 1;
+                    for (int k = 0; k < foreign.joins().size(); k++) {
+                        var join = foreign.joins().get(k);
+                        if (inserted ? join.insertable() : join.updatable()) {
+                            foreign.ownerBinders().get(k).bind(dialect, statement, parameter++, clear ? null : owner[k]);
+                        }
                     }
-                }
-                if (foreign.index() != null && (inserted ? foreign.index().insertable() : foreign.index().updatable())) {
-                    if (clear) {
-                        for (var binder : foreign.index().binders()) binder.bind(dialect, statement, parameter++, null);
-                    } else {
-                        parameter = bindIndex(statement, parameter, foreign.index(), keys.get(e), statements);
+                    if (foreign.index() != null && (inserted ? foreign.index().insertable() : foreign.index().updatable())) {
+                        if (clear) {
+                            for (var binder : foreign.index().binders()) binder.bind(dialect, statement, parameter++, null);
+                        } else {
+                            parameter = bindIndex(statement, parameter, foreign.index(), keys.get(e), statements);
+                        }
                     }
+                    Object[] target = statements.targetKey(elements.get(e), foreign.association().targetEntity());
+                    if (target == null) throw new PersistenceException("An element of " + foreign.association().name() + " has no identifier");
+                    for (int k = 0; k < target.length; k++) {
+                        foreign.targetBinders().get(k).bind(dialect, statement, parameter++, target[k]);
+                    }
+                    statement.addBatch();
                 }
-                Object[] target = statements.targetKey(elements.get(e), foreign.association().targetEntity());
-                if (target == null) throw new PersistenceException("An element of " + foreign.association().name() + " has no identifier");
-                for (int k = 0; k < target.length; k++) {
-                    foreign.targetBinders().get(k).bind(dialect, statement, parameter++, target[k]);
-                }
-                statement.addBatch();
+                statement.executeBatch();
+            } catch (SQLException e) {
+                throw failure("write of the collection foreign key of " + foreign.association().name() + " of", work.type(), e);
             }
-            statement.executeBatch();
-        } catch (SQLException e) {
-            throw failure("write of the collection foreign key of " + foreign.association().name() + " of", work.type(), e);
         }
+    }
+
+    private static Map<io.vidocq.noether.jpa.dialect.sql.Table, List<Integer>> targetTables(EntityStatements statements,
+            List<Object> elements, Class<?> target, io.vidocq.noether.jpa.dialect.sql.Table table) {
+        Map<io.vidocq.noether.jpa.dialect.sql.Table, List<Integer>> groups = new java.util.LinkedHashMap<>();
+        for (int e = 0; e < elements.size(); e++) {
+            groups.computeIfAbsent(statements.targetTable(elements.get(e), target, table), _ -> new ArrayList<>()).add(e);
+        }
+        return groups;
     }
 
     /**
@@ -690,18 +705,22 @@ public final class FlushEngine {
             }
             List<Object> keys = CollectionMapping.keys(current);
             Class<?> target = inverse.association().targetEntity();
-            try (PreparedStatement statement = connection.prepareStatement(render(inverse.indexUpdate()))) {
-                for (int e = 0; e < elements.size(); e++) {
-                    int index = bindIndex(statement, 1, inverse.index(), keys.get(e), type.statements());
-                    Object[] key = type.statements().targetKey(elements.get(e), target);
-                    for (int k = 0; k < key.length; k++) {
-                        inverse.targetBinders().get(k).bind(dialect, statement, index++, key[k]);
+            for (var group : targetTables(type.statements(), elements, target, inverse.indexUpdate().table()).entrySet()) {
+                var update = new io.vidocq.noether.jpa.dialect.sql.Update(group.getKey(),
+                    inverse.indexUpdate().assignments(), inverse.indexUpdate().conditions());
+                try (PreparedStatement statement = connection.prepareStatement(render(update))) {
+                    for (int e : group.getValue()) {
+                        int index = bindIndex(statement, 1, inverse.index(), keys.get(e), type.statements());
+                        Object[] key = type.statements().targetKey(elements.get(e), target);
+                        for (int k = 0; k < key.length; k++) {
+                            inverse.targetBinders().get(k).bind(dialect, statement, index++, key[k]);
+                        }
+                        statement.addBatch();
                     }
-                    statement.addBatch();
+                    statement.executeBatch();
+                } catch (SQLException e) {
+                    throw failure("write of the index of " + inverse.association().name() + " of", type, e);
                 }
-                statement.executeBatch();
-            } catch (SQLException e) {
-                throw failure("write of the index of " + inverse.association().name() + " of", type, e);
             }
             written = true;
         }
