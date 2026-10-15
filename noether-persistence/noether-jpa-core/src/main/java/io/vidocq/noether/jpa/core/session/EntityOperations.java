@@ -25,8 +25,10 @@ import io.vidocq.noether.jpa.core.context.PersistenceContext;
 import io.vidocq.noether.jpa.core.generation.IdGenerators;
 import io.vidocq.noether.jpa.core.mapping.CollectionMapping;
 import io.vidocq.noether.jpa.core.mapping.IndexMapping;
+import io.vidocq.noether.jpa.core.mapping.LazyCollection;
 import io.vidocq.noether.jpa.core.mapping.MappedEntity;
 import io.vidocq.noether.jpa.core.mapping.MappedUnit;
+import io.vidocq.noether.jpa.core.mapping.StatePolicy;
 import io.vidocq.noether.jpa.core.model.AssociationAttribute;
 import io.vidocq.noether.jpa.core.model.AttributeModel;
 import io.vidocq.noether.jpa.core.model.CollectionIndex;
@@ -216,6 +218,9 @@ final class EntityOperations {
         for (int i = 0; i < attributes.size(); i++) {
             if (attributes.get(i) instanceof AssociationAttribute association && association.cascades(CascadeType.MERGE)) {
                 Object value = type.access().get(entity, i);
+                if (LazyCollection.unloaded(value)) {
+                    continue; // §3.2.7.1: not loaded, nothing of it was changed to merge
+                }
                 if (value instanceof Collection<?> collection) {
                     Collection<Object> elements = mapped(association, collection, target -> merge(target, merged));
                     if (managed != entity) {
@@ -250,6 +255,11 @@ final class EntityOperations {
         List<AttributeModel> attributes = type.model().attributes();
         for (int i = 0; i < state.length; i++) {
             if (state[i] == null) {
+                continue;
+            }
+            if (LazyCollection.unloaded(state[i])) {
+                // §3.2.7.1: a LAZY collection that was not loaded is not merged, the managed instance keeps its own
+                state[i] = type.access().get(to, i);
                 continue;
             }
             if (attributes.get(i) instanceof EmbeddedAttribute embedded) {
@@ -438,7 +448,8 @@ final class EntityOperations {
             List<AttributeModel> attributes = type.model().attributes();
             for (int i = 0; i < attributes.size(); i++) {
                 // any relationship from X, the inverse side as well as the owning one
-                if (attributes.get(i) instanceof AssociationAttribute association && !association.cascades(CascadeType.PERSIST)) {
+                if (attributes.get(i) instanceof AssociationAttribute association && !association.cascades(CascadeType.PERSIST)
+                        && !LazyCollection.unloaded(type.access().get(entity, i))) {
                     targets(type.access().get(entity, i), target -> requireNotNew(entity, association, target));
                 }
             }
@@ -468,9 +479,12 @@ final class EntityOperations {
                         remove(previous, visited);
                     }
                 } else {
+                    if (LazyCollection.unloaded(current) && current == entry.snapshot()[i]) {
+                        continue; // not loaded, hence not changed
+                    }
                     Set<Object> kept = visited();
                     kept.addAll(CollectionMapping.elements(current));
-                    for (Object previous : CollectionMapping.elements(entry.snapshot()[i])) {
+                    for (Object previous : CollectionMapping.elements(StatePolicy.snapshotValue(entry.snapshot()[i]))) {
                         if (previous != null && !kept.contains(previous) && context.contains(previous)) {
                             remove(previous, visited);
                         }
@@ -500,7 +514,12 @@ final class EntityOperations {
         List<AttributeModel> attributes = type.model().attributes();
         for (int i = 0; i < attributes.size(); i++) {
             if (attributes.get(i) instanceof AssociationAttribute association && association.cascades(operation)) {
-                targets(type.access().get(entity, i), apply);
+                Object value = type.access().get(entity, i);
+                if (operation != CascadeType.REMOVE && LazyCollection.unloaded(value)) {
+                    // its elements were not loaded: none of them is new, nor managed through it (§3.2.2, §3.2.5, §3.2.7)
+                    continue;
+                }
+                targets(value, apply);
             }
         }
     }

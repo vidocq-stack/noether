@@ -27,6 +27,7 @@ import io.vidocq.noether.jpa.core.flush.EntityLoader;
 import io.vidocq.noether.jpa.core.flush.FlushEngine;
 import io.vidocq.noether.jpa.core.flush.Locks;
 import io.vidocq.noether.jpa.core.generation.IdGenerators;
+import io.vidocq.noether.jpa.core.mapping.MappedEntity;
 import io.vidocq.noether.jpa.core.mapping.MappedUnit;
 import io.vidocq.noether.jpa.core.query.NamedQueries;
 import io.vidocq.noether.jpa.dialect.Dialect;
@@ -45,7 +46,9 @@ import jakarta.persistence.TypedQueryReference;
 import jakarta.persistence.criteria.CriteriaBuilder;
 import jakarta.persistence.metamodel.Metamodel;
 import java.sql.Connection;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -74,6 +77,36 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     private final EntityGraphs entityGraphs;
     private final io.vidocq.noether.jpa.core.bootstrap.SchemaGeneration schemaGeneration;
 
+    /**
+     * The open factories, for {@code PersistenceUtil} (§7.12), which asks the providers without a unit; weakly held, a
+     * factory never closed does not stay for it.
+     */
+    private static final Set<EntityManagerFactoryImpl> OPEN = java.util.Collections.synchronizedSet(
+        java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>()));
+
+    /**
+     * §7.12: the load state of the attribute {@code attributeName} of {@code entity}, an instance of an entity of an open
+     * factory: {@code NOT_LOADED} for a LAZY collection not loaded yet, else {@code LOADED}; {@code UNKNOWN} for an
+     * object no open factory maps. Reads no row.
+     */
+    public static jakarta.persistence.spi.LoadState loadState(Object entity, String attributeName) {
+        if (entity == null) return jakarta.persistence.spi.LoadState.UNKNOWN;
+        List<EntityManagerFactoryImpl> open;
+        synchronized (OPEN) {
+            open = List.copyOf(OPEN);
+        }
+        for (EntityManagerFactoryImpl factory : open) {
+            Optional<MappedEntity> type = factory.isOpen() ? factory.mapping.entity(entity.getClass()) : Optional.empty();
+            if (type.isEmpty()) continue;
+            if (attributeName == null) return jakarta.persistence.spi.LoadState.LOADED;
+            int index = UnitUtil.index(type.get(), attributeName);
+            if (index < 0) continue;
+            return io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(type.get().access().get(entity, index))
+                ? jakarta.persistence.spi.LoadState.NOT_LOADED : jakarta.persistence.spi.LoadState.LOADED;
+        }
+        return jakarta.persistence.spi.LoadState.UNKNOWN;
+    }
+
     public EntityManagerFactoryImpl(UnitSettings settings, ConnectionSource connections, MappedUnit mapping,
             BeanValidation.Validator validator) {
         this.settings = settings;
@@ -87,6 +120,7 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
         this.entityGraphs = new EntityGraphs(metamodel, mapping.source(), mapping.loader());
         this.batchSize = batchSize(settings);
         schemaGeneration = new io.vidocq.noether.jpa.core.bootstrap.SchemaGeneration(settings, connections, mapping, this::checkOpen);
+        OPEN.add(this);
     }
 
     /** The batch size the unit sets, checked when the factory is created rather than at the first flush. */
@@ -243,6 +277,7 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
         if (!open.compareAndSet(true, false)) {
             throw new IllegalStateException("The EntityManagerFactory of persistence unit " + settings.unitName() + " is already closed");
         }
+        OPEN.remove(this);
         for (ResourceLocalTransaction transaction : activeTransactions) {
             try {
                 transaction.abandon();

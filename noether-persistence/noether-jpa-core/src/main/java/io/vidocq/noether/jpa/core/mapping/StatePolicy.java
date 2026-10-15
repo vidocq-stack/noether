@@ -258,7 +258,56 @@ public final class StatePolicy {
         return false;
     }
 
+    /**
+     * The copy of the value {@code value} of the attribute {@code index} that a snapshot keeps; an unloaded LAZY
+     * collection is kept as it is.
+     */
+    public Object copy(int index, Object value) {
+        return copiers[index].copy(value);
+    }
+
+    /**
+     * The value a snapshot slot stands for: a LAZY collection, loaded first if it is not, stands for the snapshot of
+     * the elements it loaded.
+     */
+    public static Object snapshotValue(Object slot) {
+        return slot instanceof LazyCollection lazy ? lazy.baseline() : slot;
+    }
+
+    /**
+     * A collection attribute's copier that knows LAZY collections: an unloaded one is its own snapshot and is the same
+     * as long as it is still the current value — nothing loads it; a snapshot slot that holds a lazy collection stands
+     * for the elements it loaded.
+     */
+    private static Copier lazyAware(Copier copier) {
+        return new Copier() {
+            @Override
+            public Object copy(Object value) {
+                return LazyCollection.unloaded(value) ? value : copier.copy(value);
+            }
+
+            @Override
+            public boolean same(Object snapshot, Object current) {
+                if (snapshot == current && LazyCollection.unloaded(current)) return true;
+                return copier.same(snapshotValue(snapshot), current);
+            }
+
+            @Override
+            public boolean changed(Object snapshot, Object current) {
+                if (snapshot == current && LazyCollection.unloaded(current)) return false;
+                return copier.changed(snapshotValue(snapshot), current);
+            }
+        };
+    }
+
     private static Copier copier(AttributeModel attribute, Function<EmbeddableModel, ManagedAccess> embeddables,
+            ValueBinders converters) {
+        Copier copier = plainCopier(attribute, embeddables, converters);
+        return attribute instanceof ElementCollectionAttribute
+            || attribute instanceof AssociationAttribute association && !association.singleValued() ? lazyAware(copier) : copier;
+    }
+
+    private static Copier plainCopier(AttributeModel attribute, Function<EmbeddableModel, ManagedAccess> embeddables,
             ValueBinders converters) {
         return switch (attribute) {
             case BasicAttribute basic -> basic.conversion() instanceof ValueConversion.Converted(Class<?> converter, Class<?> column)

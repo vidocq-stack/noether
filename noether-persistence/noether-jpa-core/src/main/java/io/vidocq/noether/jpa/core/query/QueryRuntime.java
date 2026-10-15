@@ -30,6 +30,18 @@ import java.util.function.Function;
 /** What a query needs from the entity manager that created it. */
 public interface QueryRuntime {
 
+    /**
+     * Initializes on the managed {@code entity} the LAZY collections {@code plan} names, and theirs on their targets, in
+     * the transaction and on the connection of the query that returned it.
+     */
+    default void fetch(Object entity, FetchPlan plan, Connection connection) {
+    }
+
+    /** The attributes the entity graph {@code graph}, a fetch or load graph hint, initializes. */
+    default FetchPlan plan(Object graph) {
+        return new FetchPlan();
+    }
+
     /** Whether the entity manager is open: the methods of its queries need it (§3.11). */
     boolean isOpen();
 

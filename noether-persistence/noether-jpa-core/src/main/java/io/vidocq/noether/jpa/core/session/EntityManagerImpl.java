@@ -24,8 +24,11 @@ import io.vidocq.noether.jpa.core.context.EntityKey;
 import io.vidocq.noether.jpa.core.context.ManagedEntity;
 import io.vidocq.noether.jpa.core.context.PersistenceContext;
 import io.vidocq.noether.jpa.core.flush.Locks;
+import io.vidocq.noether.jpa.core.mapping.CollectionMapping;
+import io.vidocq.noether.jpa.core.mapping.LazyCollection;
 import io.vidocq.noether.jpa.core.mapping.MappedEntity;
 import io.vidocq.noether.jpa.core.mapping.MappedUnit;
+import io.vidocq.noether.jpa.core.query.FetchPlan;
 import io.vidocq.noether.jpa.core.query.JpqlQuery;
 import io.vidocq.noether.jpa.core.query.NativeQuery;
 import io.vidocq.noether.jpa.core.query.QueryRuntime;
@@ -64,6 +67,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.HashMap;
@@ -115,6 +119,7 @@ final class EntityManagerImpl implements EntityManager {
                 return onConnection(work);
             }
         });
+        context.lazyLoader(this::loadLazy);
         TransactionListener listener = new TransactionListener() {
             @Override
             public void beforeCommit(Connection connection) {
@@ -151,6 +156,9 @@ final class EntityManagerImpl implements EntityManager {
                 cacheInvalidationPending = false;
                 cachePublication = null;
                 context.releaseLocks();
+                if (closed) {
+                    context.disconnectAll(); // §7.7: the transaction of a closed entity manager is over
+                }
             }
         };
         if (factory.getTransactionType() == jakarta.persistence.PersistenceUnitTransactionType.JTA) {
@@ -208,6 +216,58 @@ final class EntityManagerImpl implements EntityManager {
     public void close() {
         checkOpen();
         closed = true;
+        if (!transaction.isActive()) {
+            context.disconnectAll(); // §3.2.7: its instances are detached, their unloaded collections cannot load
+        }
+    }
+
+    /**
+     * Loads a LAZY collection of an instance of this persistence context on its first access (§2.10, §3.2.7), on the
+     * connection of the active transaction, else on a connection of its own; {@link PersistenceException} once the
+     * owner is detached or the entity manager closed.
+     */
+    private void loadLazy(LazyCollection lazy) {
+        String what = lazy.owner().getClass().getSimpleName() + "." + lazy.attributeName();
+        if (closed && !transaction.isActive() || !factory.isOpen()) {
+            throw failed(new PersistenceException("The LAZY collection " + what
+                + " cannot be loaded: its entity manager is closed"));
+        }
+        ManagedEntity entry = context.entry(lazy.owner()).orElseThrow(() -> failed(new PersistenceException(
+            "The LAZY collection " + what + " cannot be loaded: its owner is detached")));
+        try {
+            onConnection(connection -> {
+                factory.loader(connection).initialize(entry, lazy, connection, context);
+                return null;
+            });
+        } catch (PersistenceException e) {
+            throw failed(e);
+        } catch (RuntimeException e) {
+            throw failed(new PersistenceException("The LAZY collection " + what + " cannot be loaded: " + e.getMessage(), e));
+        }
+    }
+
+    /**
+     * Loads, before a flush, the LAZY collections that were replaced or whose owner is removed: their previous elements
+     * are the rows to unlink, and loading them during the flush would change the persistence context it walks.
+     */
+    private void loadReplacedCollections() {
+        List<LazyCollection> replaced = new ArrayList<>();
+        for (ManagedEntity entry : context.entries()) {
+            Object[] snapshot = entry.snapshot();
+            if (snapshot == null) continue;
+            Object[] state = null;
+            for (Object slot : snapshot) {
+                if (!LazyCollection.unloaded(slot)) continue;
+                if (state == null) state = readState(entry);
+                int attribute = ((LazyCollection) slot).attribute();
+                // the rows of a removed owner are deleted by its key, but the foreign keys of its targets one by one
+                if (entry.status() == ManagedEntity.Status.REMOVED ? entry.type().statements().collection(attribute)
+                        .filter(CollectionMapping.ForeignKey.class::isInstance).isPresent() : state[attribute] != slot) {
+                    replaced.add((LazyCollection) slot);
+                }
+            }
+        }
+        replaced.forEach(LazyCollection::initialize);
     }
 
     /** Allowed once closed (§7.7). */
@@ -399,6 +459,7 @@ final class EntityManagerImpl implements EntityManager {
     /** An empty persistence context has nothing to write: no flush engine, hence no dialect, is needed for it. */
     private void flush(Connection connection) {
         if (context.size() > 0) {
+            loadReplacedCollections();
             Set<Object> newInstances = Collections.newSetFromMap(new java.util.IdentityHashMap<>());
             for (ManagedEntity entry : context.entries()) {
                 if (!entry.inserted()) {
@@ -652,9 +713,13 @@ final class EntityManagerImpl implements EntityManager {
     public <T> T find(Class<T> entityClass, Object primaryKey, LockModeType lockMode, Map<String, Object> properties) {
         checkOpen();
         try {
+            FetchPlan plan = new FetchPlan();
             if (properties != null) {
                 for (String name : List.of("jakarta.persistence.fetchgraph", "jakarta.persistence.loadgraph")) {
-                    if (properties.containsKey(name)) EntityGraphs.validateHint(properties.get(name), entityClass, factory.getMetamodel());
+                    if (properties.containsKey(name)) {
+                        EntityGraphs.validateHint(properties.get(name), entityClass, factory.getMetamodel());
+                        plan.merge(EntityGraphs.plan(properties.get(name)));
+                    }
                 }
             }
             boolean locking = lockMode != null && lockMode != LockModeType.NONE;
@@ -673,6 +738,7 @@ final class EntityManagerImpl implements EntityManager {
                 if (locking) {
                     lock(instance, lockMode, properties);
                 }
+                fetch(instance, plan, null);
                 return entityClass.cast(instance);
             }
             CacheRetrieveMode retrieve = retrieveMode(properties);
@@ -683,6 +749,7 @@ final class EntityManagerImpl implements EntityManager {
                     && store != CacheStoreMode.REFRESH) {
                 Optional<Object> cached = factory.cache().restore(type, id, context);
                 if (cached.isPresent()) {
+                    fetch(cached.get(), plan, null);
                     return entityClass.cast(cached.get());
                 }
             }
@@ -700,6 +767,7 @@ final class EntityManagerImpl implements EntityManager {
                         false, connection, context);
                     context.lock(entry, lockMode);
                 }
+                fetch(found, plan, connection);
                 return found;
             });
             if (result != null) {
@@ -722,8 +790,11 @@ final class EntityManagerImpl implements EntityManager {
     /** 3.2: the options of a find; the cache modes and the timeout have no effect without a second-level cache (P11). */
     @Override
     public <T> T find(Class<T> entityClass, Object primaryKey, FindOption... options) {
+        return find(entityClass, primaryKey, new HashMap<>(), options);
+    }
+
+    private <T> T find(Class<T> entityClass, Object primaryKey, Map<String, Object> properties, FindOption... options) {
         LockModeType lockMode = LockModeType.NONE;
-        Map<String, Object> properties = new HashMap<>();
         for (FindOption option : options) {
             if (option instanceof LockModeType mode) {
                 lockMode = mode;
@@ -741,7 +812,47 @@ final class EntityManagerImpl implements EntityManager {
         if (!(entityGraph instanceof EntityGraphs.Root<T> graph)) {
             throw new IllegalArgumentException("Entity graph belongs to another provider");
         }
-        return find(graph.type, primaryKey, options);
+        // 3.2: the graph is applied as a fetch graph, its attribute nodes loaded with the instance
+        Map<String, Object> properties = new HashMap<>();
+        properties.put("jakarta.persistence.fetchgraph", graph);
+        return find(graph.type, primaryKey, properties, options);
+    }
+
+    /**
+     * Initializes on the managed {@code instance} the LAZY collections {@code plan} names (§4.4.5.3 fetch joins, §3.7.4
+     * entity graphs), and theirs on their targets: on {@code connection}, the one of the query or find that returned it,
+     * else as on a first access. An instance this persistence context does not manage is left as it is.
+     */
+    private void fetch(Object instance, FetchPlan plan, Connection connection) {
+        if (instance == null || plan.isEmpty()) return;
+        Optional<MappedEntity> type = factory.mapping().entity(instance.getClass());
+        if (type.isEmpty()) return;
+        for (Map.Entry<String, FetchPlan> attribute : plan.attributes().entrySet()) {
+            int index = UnitUtil.index(type.get(), attribute.getKey());
+            if (index < 0) continue; // an attribute of another subtype of a graph
+            Object value = type.get().access().get(instance, index);
+            if (value instanceof LazyCollection lazy && !lazy.initialized()) {
+                Optional<ManagedEntity> entry = lazy.owner() == instance ? context.entry(instance) : Optional.empty();
+                if (entry.isEmpty()) continue;
+                if (connection == null) {
+                    lazy.initialize();
+                } else {
+                    factory.loader(connection).initialize(entry.get(), lazy, connection, context);
+                }
+            }
+            FetchPlan targets = attribute.getValue();
+            if (targets.isEmpty() || LazyCollection.unloaded(value)) continue;
+            if (value instanceof Map<?, ?> map) {
+                for (Map.Entry<?, ?> element : map.entrySet()) {
+                    fetch(element.getKey(), targets, connection);
+                    fetch(element.getValue(), targets, connection);
+                }
+            } else if (value instanceof java.util.Collection<?> elements) {
+                for (Object element : elements) fetch(element, targets, connection);
+            } else {
+                fetch(value, targets, connection);
+            }
+        }
     }
 
     @Override
@@ -891,6 +1002,16 @@ final class EntityManagerImpl implements EntityManager {
         @Override
         public MappedUnit mapping() {
             return factory.mapping();
+        }
+
+        @Override
+        public void fetch(Object entity, FetchPlan plan, Connection connection) {
+            EntityManagerImpl.this.fetch(entity, plan, connection);
+        }
+
+        @Override
+        public FetchPlan plan(Object graph) {
+            return EntityGraphs.plan(graph);
         }
 
         @Override

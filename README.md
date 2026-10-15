@@ -89,6 +89,14 @@ Pessimistic entity queries lock concrete result rows after selection; purely sca
 pessimistic queries over these ranges are explicitly refused. This is a bounded mapping
 extension, not broader lazy-loading work or a new certification claim.
 
+LAZY collections (`@OneToMany`, `@ManyToMany`, `@ElementCollection` declared as
+`Collection`, `List`, `Set`, `SortedSet`/`NavigableSet` or `Map`/`SortedMap`/`NavigableMap`)
+load on first access inside their persistence context; unloaded collections of detached
+or closed-context instances throw `PersistenceException`, and `PersistenceUnitUtil.isLoaded`
+reports their state. EAGER mappings, JOIN FETCH and fetch/load graphs initialize them.
+Concrete collection field types and collections inside embeddables stay eager; lazy
+to-one relationships are not implemented yet (loaded with their owner).
+
 The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;
 the bundled Jakarta ORM schema retains its original upstream licence.

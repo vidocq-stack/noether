@@ -110,21 +110,21 @@ public final class NoetherPersistenceProvider implements PersistenceProvider {
     }
 
     /**
-     * {@code Persistence.getPersistenceUtil()} asks every provider, without a unit: an object that is not known as an
-     * entity of an open unit has an unknown load state. An entity Noether loads is loaded whole (relationships
-     * included), so UNKNOWN never hides an unloaded attribute: {@code PersistenceUtil} then answers true.
+     * {@code Persistence.getPersistenceUtil()} asks every provider, without a unit (§7.12): an object that is not known
+     * as an entity of an open unit has an unknown load state. An entity Noether loads is loaded but for its LAZY
+     * collections, which are {@code NOT_LOADED} until their first access; nothing is read to answer.
      */
     @Override
     public ProviderUtil getProviderUtil() {
         return new ProviderUtil() {
             @Override
             public LoadState isLoadedWithoutReference(Object entity, String attributeName) {
-                return LoadState.UNKNOWN;
+                return EntityManagerFactoryImpl.loadState(entity, attributeName);
             }
 
             @Override
             public LoadState isLoadedWithReference(Object entity, String attributeName) {
-                return LoadState.UNKNOWN;
+                return EntityManagerFactoryImpl.loadState(entity, attributeName);
             }
 
             @Override

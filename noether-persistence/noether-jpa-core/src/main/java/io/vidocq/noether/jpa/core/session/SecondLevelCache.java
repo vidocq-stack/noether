@@ -12,6 +12,9 @@ package io.vidocq.noether.jpa.core.session;
 import io.vidocq.noether.jpa.core.context.EntityKey;
 import io.vidocq.noether.jpa.core.context.ManagedEntity;
 import io.vidocq.noether.jpa.core.context.PersistenceContext;
+import io.vidocq.noether.jpa.core.mapping.CollectionMapping;
+import io.vidocq.noether.jpa.core.mapping.IndexMapping;
+import io.vidocq.noether.jpa.core.mapping.LazyCollection;
 import io.vidocq.noether.jpa.core.mapping.MappedEntity;
 import io.vidocq.noether.jpa.core.mapping.MappedUnit;
 import io.vidocq.noether.jpa.core.model.AssociationAttribute;
@@ -35,6 +38,7 @@ import java.math.BigInteger;
 import java.time.temporal.Temporal;
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
 import java.util.LinkedHashMap;
@@ -57,6 +61,11 @@ final class SecondLevelCache implements Cache {
     }
 
     private record CollectionState(boolean map, boolean set, List<Object> keys, List<Object> values) {
+    }
+
+    /** A LAZY collection that was not loaded: it is restored unloaded, its elements are not in the cache. */
+    private enum Unloaded {
+        COLLECTION
     }
 
     private record Node(Class<?> type, List<Object> attributes) {
@@ -121,15 +130,29 @@ final class SecondLevelCache implements Cache {
                     created.add(entry.getKey());
                 }
             }
-            for (Map.Entry<EntityKey, Node> entry : graph.nodes().entrySet()) {
-                if (!created.contains(entry.getKey())) {
-                    continue;
-                }
-                MappedEntity type = types.get(entry.getKey());
-                Object instance = instances.get(entry.getKey());
-                List<AttributeModel> attributes = type.model().attributes();
-                for (int i = 0; i < attributes.size(); i++) {
-                    type.access().set(instance, i, decode(attributes.get(i), entry.getValue().attributes().get(i), instances));
+            // the collections last: a sorted one compares elements whose state is restored
+            for (boolean collections : new boolean[] {false, true}) {
+                for (Map.Entry<EntityKey, Node> entry : graph.nodes().entrySet()) {
+                    if (!created.contains(entry.getKey())) {
+                        continue;
+                    }
+                    MappedEntity type = types.get(entry.getKey());
+                    Object instance = instances.get(entry.getKey());
+                    List<AttributeModel> attributes = type.model().attributes();
+                    for (int i = 0; i < attributes.size(); i++) {
+                        Object encoded = entry.getValue().attributes().get(i);
+                        if (collections != (encoded instanceof CollectionState || encoded instanceof Unloaded)) {
+                            continue;
+                        }
+                        Object value = encoded instanceof Unloaded
+                            ? LazyCollection.of(attributes.get(i).javaType(), instance, i, attributes.get(i).name(),
+                                context.lazyLoader())
+                            : decode(attributes.get(i), encoded, instances);
+                        if (encoded instanceof Unloaded && value == null) {
+                            throw new UnsupportedState();
+                        }
+                        type.access().set(instance, i, value);
+                    }
                 }
             }
             for (Map.Entry<EntityKey, Node> entry : graph.nodes().entrySet()) {
@@ -319,6 +342,9 @@ final class SecondLevelCache implements Cache {
         if (value == null) {
             return null;
         }
+        if (LazyCollection.unloaded(value)) {
+            return Unloaded.COLLECTION; // neither loaded nor its persistence context kept: restored unloaded
+        }
         return switch (attribute) {
             case AssociationAttribute association -> encodeAssociation(association, value, nodes);
             case EmbeddedAttribute embedded -> encodeEmbeddable(embedded.embeddable(), value, nodes);
@@ -417,19 +443,20 @@ final class SecondLevelCache implements Cache {
         if (association.singleValued()) {
             return instances.get(((EntityReference) encoded).key());
         }
-        return collection((CollectionState) encoded, item -> instances.get(((EntityReference) item).key()),
-            key -> decodeKey(key, instances));
+        return collection(association.javaType(), (CollectionState) encoded,
+            item -> instances.get(((EntityReference) item).key()), key -> decodeKey(key, instances));
     }
 
     private Object decodeCollection(ElementCollectionAttribute collection, Object encoded, Map<EntityKey, Object> instances) {
-        return collection((CollectionState) encoded, item -> decode(collection.element(), item, instances),
-            key -> decodeKey(key, instances));
+        return collection(collection.javaType(), (CollectionState) encoded,
+            item -> decode(collection.element(), item, instances), key -> decodeKey(key, instances));
     }
 
-    private Object collection(CollectionState state, java.util.function.Function<Object, Object> values,
+    /** A collection of the declared {@code type} of its attribute: a sorted one sorts again (BUG-20261015-02). */
+    private Object collection(Class<?> type, CollectionState state, java.util.function.Function<Object, Object> values,
             java.util.function.Function<Object, Object> keys) {
         if (state.map()) {
-            Map<Object, Object> map = new LinkedHashMap<>();
+            Map<Object, Object> map = IndexMapping.newMap(type);
             for (int i = 0; i < state.keys().size(); i++) {
                 map.put(keys.apply(state.keys().get(i)), values.apply(state.values().get(i)));
             }
@@ -437,7 +464,15 @@ final class SecondLevelCache implements Cache {
         }
         List<Object> items = new ArrayList<>(state.values().size());
         state.values().forEach(item -> items.add(values.apply(item)));
-        return state.set() ? new LinkedHashSet<>(items) : items;
+        if (state.set() && type.isAssignableFrom(LinkedHashSet.class)) {
+            return new LinkedHashSet<>(items);
+        }
+        if (type.isInstance(items) || !Collection.class.isAssignableFrom(type)) {
+            return items;
+        }
+        Collection<Object> collection = CollectionMapping.newCollection(type);
+        collection.addAll(items);
+        return collection;
     }
 
     private Object copyKey(Object key) {

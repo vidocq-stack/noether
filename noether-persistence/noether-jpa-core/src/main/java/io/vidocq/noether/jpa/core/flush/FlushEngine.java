@@ -26,7 +26,9 @@ import io.vidocq.noether.jpa.core.mapping.CollectionMapping;
 import io.vidocq.noether.jpa.core.mapping.ElementCollectionMapping;
 import io.vidocq.noether.jpa.core.mapping.IndexMapping;
 import io.vidocq.noether.jpa.core.mapping.EntityStatements;
+import io.vidocq.noether.jpa.core.mapping.LazyCollection;
 import io.vidocq.noether.jpa.core.mapping.MappedEntity;
+import io.vidocq.noether.jpa.core.mapping.StatePolicy;
 import io.vidocq.noether.jpa.dialect.Dialect;
 import io.vidocq.noether.jpa.dialect.sql.Statement;
 import io.vidocq.noether.jpa.dialect.sql.Insert;
@@ -171,6 +173,7 @@ public final class FlushEngine {
             for (CollectionMapping mapping : owner.type().statements().collections()) {
                 if (!(mapping instanceof CollectionMapping.ForeignKey foreign)) continue;
                 Object current = owner.state()[foreign.attribute()];
+                if (LazyCollection.unloaded(current)) continue; // not loaded: no new member to find in it
                 List<Object> members = CollectionMapping.elements(current);
                 List<Object> keys = CollectionMapping.keys(current);
                 for (int e = 0; e < members.size(); e++) {
@@ -478,7 +481,11 @@ public final class FlushEngine {
                         statements, connection);
                     continue;
                 }
-                List<Object> before = CollectionMapping.elements(snapshot == null ? null : snapshot[table.attribute()]);
+                if (snapshot != null && !type.state().collectionChanged(table.attribute(), snapshot[table.attribute()], current)) {
+                    continue; // unchanged, an unloaded LAZY collection among them
+                }
+                List<Object> before = CollectionMapping.elements(
+                    snapshot == null ? null : StatePolicy.snapshotValue(snapshot[table.attribute()]));
                 List<Object> now = CollectionMapping.elements(current);
                 joinRows(render(table.deleteRow()), table, owner, minus(before, now), null, statements, connection);
                 joinRows(render(table.insert()), table, owner, minus(now, before), null, statements, connection);
@@ -566,7 +573,8 @@ public final class FlushEngine {
             if (snapshot != null && !work.type().state().collectionChanged(foreign.attribute(),
                     snapshot[foreign.attribute()], current)) continue;
             List<Object> now = CollectionMapping.elements(current);
-            List<Object> before = CollectionMapping.elements(snapshot == null ? null : snapshot[foreign.attribute()]);
+            List<Object> before = CollectionMapping.elements(
+                snapshot == null ? null : StatePolicy.snapshotValue(snapshot[foreign.attribute()]));
             if (clearPhase) {
                 collectionKeys(work, foreign, minus(before, now).stream().filter(e -> !removed.contains(e)).toList(),
                     null, false, true, connection);
@@ -580,7 +588,9 @@ public final class FlushEngine {
     private void clearCollectionKeys(Work work, Connection connection, Set<Object> removed) {
         for (CollectionMapping mapping : work.type().statements().collections()) {
             if (mapping instanceof CollectionMapping.ForeignKey foreign) {
-                collectionKeys(work, foreign, CollectionMapping.elements(work.entry().snapshot()[foreign.attribute()]).stream()
+                // a LAZY collection not loaded is loaded here: its members are the rows whose key is cleared
+                collectionKeys(work, foreign, CollectionMapping.elements(
+                        StatePolicy.snapshotValue(work.entry().snapshot()[foreign.attribute()])).stream()
                         .filter(e -> !removed.contains(e)).toList(),
                     null, false, true, connection);
             }
@@ -699,8 +709,11 @@ public final class FlushEngine {
             Object current = work.state()[inverse.attribute()];
             boolean write = snapshot == null ? inverse.index().insertable()
                 : inverse.index().updatable() && type.state().collectionChanged(inverse.attribute(), snapshot[inverse.attribute()], current);
+            if (!write) {
+                continue;
+            }
             List<Object> elements = CollectionMapping.elements(current);
-            if (!write || elements.isEmpty()) {
+            if (elements.isEmpty()) {
                 continue;
             }
             List<Object> keys = CollectionMapping.keys(current);

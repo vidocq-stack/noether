@@ -1,6 +1,16 @@
 = What's new
 :description: Noether extraction and compatibility changes.
 
+== 2026-10-15 — Lazy collections
+
+`@OneToMany`, `@ManyToMany` and `@ElementCollection` attributes that are `LAZY` (the default)
+are no longer read with their owner: the first access loads them once in the owner's
+persistence context. `PersistenceUnitUtil.isLoaded` reports their state without SQL.
+Accessing an unloaded collection after `clear`, `detach`, `close` or serialization now throws
+`PersistenceException`; touch the collection, use `JOIN FETCH`, a fetch/load graph or
+`FetchType.EAGER` before detaching. Lazy to-one relationships remain loaded with their owner.
+The full patched Persistence TCK result is unchanged (2135 tests, 2131 passed, four official skips).
+
 == 2026-10-11 — Independent Noether repository
 
 Persistence and the provisional Validation implementation moved from Mansart

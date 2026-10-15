@@ -578,3 +578,27 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     dialect rendering and closed APT-module regressions pass. Full reactor: 795 tests,
     zero failures/errors/skips. Full patched PostgreSQL TCK: 2135 tests, 2131 passes,
     zero failures/errors and four unchanged official skips.
+
+## BUG-20261015-02 — Second-level cache restore of a `SortedSet` collection throws `ClassCastException`
+
+- **Date**: 2026-10-15
+- **Status**: FIXED (working tree; no commit requested)
+- **Module**: `noether-jpa-core` / `SecondLevelCache.restore` (collection rebuild)
+- **Symptom**: an entity with a `SortedSet` (or `NavigableSet`) collection attribute stored in
+  the shared cache could not be restored: the cached set state was rebuilt as a
+  `LinkedHashSet` and assigned through the generated access to the `SortedSet` field,
+  failing with `ClassCastException` instead of a cache hit.
+- **Minimal reproduction**:
+  ```bash
+  ./mvnw -ntp -pl noether-persistence/noether-jpa-core test \
+    -Dtest=LazyCollectionTest#sharedCacheRestoresUnloadedCollectionsWithoutLoadingThem \
+    -Dsurefire.failIfNoSpecifiedTests=false
+  ```
+  (red before the fix with an `ERROR`, the cached `sorted` `SortedSet<Tag>` attribute.)
+- **Cause hypothesis**: confirmed — the restore chose the collection implementation from the
+  cached shape (set/list/map) only, ignoring the declared attribute type.
+- **Investigations**:
+  - 2026-10-15: found by the red lazy-collection regression suite. Restore now builds the
+    collection from the declared type (`CollectionMapping.newCollection` / `IndexMapping.newMap`),
+    so sorted sets and maps come back as `TreeSet`/`TreeMap`. `LazyCollectionTest` (19) and the
+    full `noether-jpa-core` suite (528) pass.

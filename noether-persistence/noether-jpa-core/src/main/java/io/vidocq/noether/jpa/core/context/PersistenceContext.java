@@ -19,6 +19,7 @@
  */
 package io.vidocq.noether.jpa.core.context;
 
+import io.vidocq.noether.jpa.core.mapping.LazyCollection;
 import io.vidocq.noether.jpa.core.mapping.MappedEntity;
 import jakarta.persistence.EntityExistsException;
 import jakarta.persistence.LockModeType;
@@ -40,6 +41,19 @@ public final class PersistenceContext {
     /** By instance, compared by identity, in the order the context met them: the flush follows it without sorting. */
     private final Map<Instance, ManagedEntity> byInstance = new LinkedHashMap<>();
     private long sequence;
+    private LazyCollection.Loader lazyLoader;
+
+    /**
+     * The loader of the LAZY collections of the instances of this context (§2.10); {@code null}: the collections are
+     * loaded with their owner.
+     */
+    public LazyCollection.Loader lazyLoader() {
+        return lazyLoader;
+    }
+
+    public void lazyLoader(LazyCollection.Loader loader) {
+        this.lazyLoader = loader;
+    }
 
     /**
      * Makes {@code instance} managed (§3.2.2): a new instance awaits its insert, a removed one becomes managed again, a
@@ -156,8 +170,17 @@ public final class PersistenceContext {
 
     /** §3.2.7: detaches every instance. */
     public void clear() {
+        disconnectAll();
         byKey.clear();
         byInstance.clear();
+    }
+
+    /**
+     * Disconnects the unloaded LAZY collections of every instance from this context, which keeps them: they fail on
+     * their next access instead of loading (§3.2.7, a closed entity manager), and do not retain it.
+     */
+    public void disconnectAll() {
+        byInstance.values().forEach(PersistenceContext::disconnect);
     }
 
     /** The entries, in the order the context met their instances. */
@@ -179,9 +202,21 @@ public final class PersistenceContext {
     }
 
     private void forget(ManagedEntity entry) {
+        disconnect(entry);
         byInstance.remove(new Instance(entry.instance()));
         if (entry.key() != null) {
             byKey.remove(entry.key(), entry);
+        }
+    }
+
+    /** An unloaded collection stays in the snapshot of its owner until it is loaded or the attribute replaced. */
+    private static void disconnect(ManagedEntity entry) {
+        Object[] snapshot = entry.snapshot();
+        if (snapshot == null) return;
+        for (Object value : snapshot) {
+            if (value instanceof LazyCollection lazy && lazy.owner() == entry.instance()) {
+                lazy.disconnect();
+            }
         }
     }
 

@@ -14,3 +14,11 @@ Table-per-class polymorphic ranges use SQL unions of concrete tables and hierarc
 unique identifiers; `IDENTITY` generation is explicitly refused. Validation is an optional bridge;
 the included provider remains provisional. See the module roadmaps for precise
 scope and remaining limitations.
+
+LAZY collections — one-to-many, many-to-many and element collections declared through a
+collection or map interface — load on first access within their persistence context, using
+typed wrappers assigned by the generated access. Once the owner is detached or its entity
+manager closed, an unloaded collection throws `PersistenceException`; initialized ones stay
+usable. EAGER mappings, fetch joins and fetch/load graphs initialize them. Concrete collection
+field types and collections inside embeddables stay eager; lazy to-one relationships are not
+implemented yet.

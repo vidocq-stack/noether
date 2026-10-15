@@ -27,6 +27,7 @@ import io.vidocq.noether.jpa.core.mapping.CollectionMapping;
 import io.vidocq.noether.jpa.core.mapping.CompositeId;
 import io.vidocq.noether.jpa.core.mapping.ElementCollectionMapping;
 import io.vidocq.noether.jpa.core.mapping.IndexMapping;
+import io.vidocq.noether.jpa.core.mapping.LazyCollection;
 import io.vidocq.noether.jpa.core.mapping.EntityStatements;
 import io.vidocq.noether.jpa.core.mapping.MappedEntity;
 import io.vidocq.noether.jpa.core.mapping.MappedUnit;
@@ -60,9 +61,12 @@ import java.util.function.Function;
  * their binders, the state rebuilt (embeddables included) and written through the access, then the instance made
  * managed with its snapshot. Shares the SQL the flush engine rendered.
  *
- * <p>Relationships are loaded with their owner (§2.10; {@code FetchType.LAZY} is a hint, §11.1.26): the owning side of a
- * single-valued one from its foreign key, a collection from its join table, an inverse side from the owning side of its
- * target. The instance is managed before its relationships are resolved, so that a cycle closes on it.
+ * <p>Single-valued relationships are loaded with their owner (§2.10; {@code FetchType.LAZY} is a hint for them,
+ * §11.1.26): the owning side from its foreign key, an inverse side from the owning side of its target. A LAZY collection
+ * (a to-many relationship or an element collection) is a {@link LazyCollection} that {@link #initialize loads} its
+ * elements on its first access; an EAGER one is loaded with its owner, from its join table, the foreign keys of its
+ * targets or its collection table. The instance is managed before its relationships are resolved, so that a cycle
+ * closes on it.
  */
 public final class EntityLoader {
 
@@ -174,8 +178,10 @@ public final class EntityLoader {
         if (row == null) {
             return null;
         }
+        Object[] previous = new Object[type.model().attributes().size()];
+        type.access().read(instance, previous);
         Object[] state = state(type, instance, row);
-        relationships(type, id, instance, state, row, connection, context);
+        relationships(type, id, instance, state, row, connection, context, previous);
         type.access().read(instance, state);
         Object[] snapshot = type.state().snapshot(state);
         type.callback("PostLoad", instance); // §3.6.3: after a refresh too
@@ -195,19 +201,20 @@ public final class EntityLoader {
      */
     private void relationships(MappedEntity type, Object id, Object instance, Object[] state, Row row, Connection connection,
             PersistenceContext context) {
+        relationships(type, id, instance, state, row, connection, context, null);
+    }
+
+    /**
+     * Like {@link #relationships(MappedEntity, Object, Object, Object[], Row, Connection, PersistenceContext)};
+     * {@code previous}, the state of a refreshed instance, keeps a LAZY collection that was not loaded unloaded.
+     */
+    private void relationships(MappedEntity type, Object id, Object instance, Object[] state, Row row, Connection connection,
+            PersistenceContext context, Object[] previous) {
         EntityStatements statements = type.statements();
         List<AttributeModel> attributes = type.model().attributes();
         for (int i = 0; i < attributes.size(); i++) {
             Object value;
-            if (attributes.get(i) instanceof ElementCollectionAttribute elements) {
-                Optional<ElementCollectionMapping> mapping = statements.elementCollection(i);
-                if (mapping.isEmpty()) {
-                    continue; // a shape not mapped yet: the collection keeps what the instance holds
-                }
-                value = elements(mapping.get(), statements.keyValues(id), connection, context);
-            } else if (!(attributes.get(i) instanceof AssociationAttribute association)) {
-                continue;
-            } else if (association.singleValued()) {
+            if (attributes.get(i) instanceof AssociationAttribute association && association.singleValued()) {
                 Optional<EntityStatements.Reference> owned = statements.reference(i);
                 if (owned.isPresent()) {
                     Object key = statements.referencedKey(owned.get(), row.values());
@@ -224,51 +231,125 @@ public final class EntityLoader {
                         ? null : find(entity(association.targetEntity()),
                         entity(association.targetEntity()).statements().key(found.getFirst()), connection, context);
                 }
-            } else {
-                MappedEntity target = entity(association.targetEntity());
-                CollectionMapping mapping = statements.collection(i).orElseThrow();
-                List<Indexed> elements = switch (mapping) {
-                    case CollectionMapping.JoinTable table -> {
-                        List<ValueBinder> readers = new ArrayList<>(table.targetBinders());
-                        if (table.index() != null) {
-                            readers.addAll(table.index().binders());
-                        }
-                        int width = table.targetBinders().size();
-                        List<Indexed> found = new ArrayList<>();
-                        for (Object[] columns : keys(table.targets(), table.ownerBinders(), statements.keyValues(id), readers,
-                                describe(association), connection)) {
-                            Object element = find(target, target.statements().key(Arrays.copyOf(columns, width)), connection, context);
-                            found.add(new Indexed(element, index(table.index(), columns, width, connection, context)));
-                        }
-                        yield found;
+            } else if (attributes.get(i) instanceof AssociationAttribute || attributes.get(i) instanceof ElementCollectionAttribute) {
+                if (previous != null && LazyCollection.unloaded(previous[i])
+                        && ((LazyCollection) previous[i]).owner() == instance && lazy(type, i, context)) {
+                    value = previous[i]; // §3.2.5: still not loaded, it will read the refreshed rows on its first access
+                } else if (lazy(type, i, context) && (previous == null || !cascadesRefresh(attributes.get(i)))) {
+                    value = LazyCollection.of(attributes.get(i).javaType(), instance, i, attributes.get(i).name(),
+                        context.lazyLoader());
+                } else {
+                    value = collection(type, i, id, connection, context);
+                    if (value == NOT_MAPPED) {
+                        continue; // a shape not mapped yet: the collection keeps what the instance holds
                     }
-                    case CollectionMapping.MappedBy inverse -> inverse(association, inverse.index(), id, statements, connection, context);
-                    case CollectionMapping.ForeignKey foreign -> {
-                        List<ValueBinder> readers = new ArrayList<>(foreign.targetBinders());
-                        if (foreign.index() != null) readers.addAll(foreign.index().binders());
-                        int width = foreign.targetBinders().size();
-                        List<Indexed> found = new ArrayList<>();
-                        for (var table : unit.collectionTables(target, foreign.table())) {
-                            var select = new Select(table, foreign.targets().columns(), foreign.targets().conditions());
-                            for (Object[] columns : keys(select, foreign.ownerBinders(), statements.keyValues(id),
-                                    readers, describe(association), connection)) {
-                                Object element = find(target, target.statements().key(Arrays.copyOf(columns, width)), connection, context);
-                                found.add(new Indexed(element, index(foreign.index(), columns, width, connection, context)));
-                            }
-                        }
-                        yield found;
-                    }
-                    case CollectionMapping.Unsupported _ -> null;
-                };
-                if (elements == null) {
-                    continue; // a shape not mapped yet: the collection keeps what the instance holds
                 }
-                value = assemble(association.javaType(), indexOf(mapping), elements, target, association.orderBy(),
-                    target.model().attributes(), target.access(), target::id, describe(association));
+            } else {
+                continue;
             }
             state[i] = value;
             type.access().set(instance, i, value);
         }
+    }
+
+    /** No value: a collection whose shape is not mapped yet keeps what the instance holds. */
+    private static final Object NOT_MAPPED = new Object();
+
+    /**
+     * Whether the collection attribute {@code i} of {@code type} is left unloaded with its owner: declared LAZY (the
+     * default of §11.1.26 for collections), mapped, of a declared interface a wrapper can be assigned to, not reached
+     * through an embeddable, and the context can load it later.
+     */
+    private static boolean lazy(MappedEntity type, int i, PersistenceContext context) {
+        if (context.lazyLoader() == null) return false;
+        AttributeModel attribute = type.model().attributes().get(i);
+        if (attribute.name().indexOf('.') >= 0 || !LazyCollection.supports(attribute.javaType())) return false;
+        return switch (attribute) {
+            case AssociationAttribute association -> !association.singleValued()
+                && association.fetch() == jakarta.persistence.FetchType.LAZY
+                && type.statements().collection(i).filter(m -> !(m instanceof CollectionMapping.Unsupported)).isPresent();
+            case ElementCollectionAttribute elements -> elements.fetch() == jakarta.persistence.FetchType.LAZY
+                && type.statements().elementCollection(i).isPresent();
+            default -> false;
+        };
+    }
+
+    private static boolean cascadesRefresh(AttributeModel attribute) {
+        return attribute instanceof AssociationAttribute association
+            && (association.cascade().contains(jakarta.persistence.CascadeType.REFRESH)
+                || association.cascade().contains(jakarta.persistence.CascadeType.ALL));
+    }
+
+    /**
+     * Loads the LAZY collection {@code lazy} of the managed {@code entry} through {@code connection} (§2.10): its elements
+     * become those of the collection, and their snapshot the one of the owner where it still holds the unloaded
+     * collection, so that the next flush compares them.
+     */
+    public void initialize(ManagedEntity entry, LazyCollection lazy, Connection connection, PersistenceContext context) {
+        MappedEntity type = entry.type();
+        int i = lazy.attribute();
+        Object value = collection(type, i, entry.key().id(), connection, context);
+        if (value == NOT_MAPPED) {
+            throw new PersistenceException("The collection " + lazy.attributeName() + " of " + type.model().entityName()
+                + " is not mapped");
+        }
+        Object baseline = type.state().copy(i, value);
+        Object[] snapshot = entry.snapshot();
+        if (snapshot != null && snapshot[i] == lazy) {
+            snapshot[i] = baseline;
+        }
+        lazy.complete(value, baseline);
+    }
+
+    /** The elements of the collection attribute {@code i} of the instance {@code id}, read from the database. */
+    private Object collection(MappedEntity type, int i, Object id, Connection connection, PersistenceContext context) {
+        EntityStatements statements = type.statements();
+        AttributeModel attribute = type.model().attributes().get(i);
+        if (attribute instanceof ElementCollectionAttribute) {
+            Optional<ElementCollectionMapping> mapping = statements.elementCollection(i);
+            return mapping.isEmpty() ? NOT_MAPPED : elements(mapping.get(), statements.keyValues(id), connection, context);
+        }
+        AssociationAttribute association = (AssociationAttribute) attribute;
+        MappedEntity target = entity(association.targetEntity());
+        CollectionMapping mapping = statements.collection(i).orElseThrow();
+        List<Indexed> elements = switch (mapping) {
+            case CollectionMapping.JoinTable table -> {
+                List<ValueBinder> readers = new ArrayList<>(table.targetBinders());
+                if (table.index() != null) {
+                    readers.addAll(table.index().binders());
+                }
+                int width = table.targetBinders().size();
+                List<Indexed> found = new ArrayList<>();
+                for (Object[] columns : keys(table.targets(), table.ownerBinders(), statements.keyValues(id), readers,
+                        describe(association), connection)) {
+                    Object element = find(target, target.statements().key(Arrays.copyOf(columns, width)), connection, context);
+                    found.add(new Indexed(element, index(table.index(), columns, width, connection, context)));
+                }
+                yield found;
+            }
+            case CollectionMapping.MappedBy inverse -> inverse(association, inverse.index(), id, statements, connection, context);
+            case CollectionMapping.ForeignKey foreign -> {
+                List<ValueBinder> readers = new ArrayList<>(foreign.targetBinders());
+                if (foreign.index() != null) readers.addAll(foreign.index().binders());
+                int width = foreign.targetBinders().size();
+                List<Indexed> found = new ArrayList<>();
+                for (var table : unit.collectionTables(target, foreign.table())) {
+                    var select = new Select(table, foreign.targets().columns(), foreign.targets().conditions());
+                    for (Object[] columns : keys(select, foreign.ownerBinders(), statements.keyValues(id),
+                            readers, describe(association), connection)) {
+                        Object element = find(target, target.statements().key(Arrays.copyOf(columns, width)), connection, context);
+                        found.add(new Indexed(element, index(foreign.index(), columns, width, connection, context)));
+                    }
+                }
+                yield found;
+            }
+            case CollectionMapping.Unsupported _ -> null;
+        };
+        if (elements == null) {
+            return NOT_MAPPED;
+        }
+        return assemble(association.javaType(), indexOf(mapping), elements, target, association.orderBy(),
+            target.model().attributes(), target.access(), target::id, describe(association));
     }
 
     private static IndexMapping indexOf(CollectionMapping mapping) {

@@ -441,6 +441,9 @@ refused or left as the instance holds it, naming P5, never mapped wrongly):
   loading everything with its owner: a performance concern, measured with P12 (`BENCH.md`), not a conformance one;
 - joins instead of secondary selects, with the SQL AST of P7.
 
+**Follow-up (2026-10-15)**: lazy loading of collections (wrappers) is delivered — see the lazy
+collections follow-up (2026-10-15) below; lazy to-one subclasses and fetch joins remain open.
+
 **Follow-up (2026-10-14)**: `@ManyToOne` / `@OneToOne` through `@JoinTable`, including inverse
 one-to-one lookup, and unidirectional `@OneToMany` through target-table foreign keys now execute.
 Annotation and XML mappings share the relational planners, generated accesses, schema generation,
@@ -506,6 +509,43 @@ four official skips**, zero failures/errors; all 259 XML reports and fixture pro
 verified. Seven dedicated H2 tests, H2/PostgreSQL derived-range rendering tests and a
 closed-package APT/XML module-path smoke cover the optional strategy. See `TCK.md` for
 the 2026-10-15 run; no official fixture or exclusion was changed.
+
+**Lazy collections follow-up (2026-10-15)**: `@OneToMany`, `@ManyToMany` and `@ElementCollection`
+declared or defaulted `LAZY` (annotations or ORM XML `fetch`, one shared model) are no longer
+loaded with their owner. The loader installs a typed wrapper of the declared interface
+(`mapping.LazyCollection`: bag, list, set, sorted/navigable set, map, sorted/navigable map),
+assigned through the generated access — no proxy, reflection or bytecode library. The first data
+access loads it once, in the persistence context of its owner, on the transaction connection or a
+connection of its own taken through the existing virtual-thread JDBC path; elements resolve to the
+managed instances of the context. Snapshots, dirty checking, flush, `isLoaded`, merge cascades and
+second-level cache encoding never load an untouched wrapper; any mutation loads it first, then is
+written (join rows, collection tables, target foreign keys, orphan removal). Replacing an unloaded
+collection, or removing an owner whose children reference it, loads the previous elements before the
+flush. `PersistenceUnitUtil`/`PersistenceUtil.isLoaded` report the exact state without SQL, and
+`load` initializes. After `clear`, `detach`, `close` (outside a transaction), rollback or
+deserialization an unloaded collection throws `PersistenceException`; loaded ones stay usable
+detached. Merging a detached graph keeps the managed collection when the detached one was never
+loaded. The shared cache stores an unloaded marker, never the wrapper or its entity manager, and
+restores a new unloaded wrapper; restoring sorted collections now keeps their declared type
+(BUG-20261015-02). `EAGER`, JPQL and Criteria fetch joins (nested, and empty collections) and
+fetch/load graph hints on queries and `find` — including `find(EntityGraph, ...)`, instances already
+managed and cache hits — initialize the named collections, with subgraphs, before returning.
+
+Boundaries: only attributes declared exactly `Collection`, `List`, `Set`, `SortedSet`,
+`NavigableSet`, `Map`, `SortedMap` or `NavigableMap` get a wrapper; a concrete declared type
+(for example `ArrayList`) and collections inside embeddables stay loaded with their owner.
+Loading uses one collection select followed by the existing per-element `find` (no batching,
+no SQL fetch join: JOIN FETCH and graphs initialize through the same secondary selects before
+results are returned). `DETACH` and `REFRESH` cascades skip unloaded collections; `refresh`
+discards a loaded LAZY collection that does not cascade `REFRESH`, which loads again on access;
+`toString()` of an unloaded wrapper does not load. Lazy to-one relationships (`@ManyToOne`,
+`@OneToOne`) remain loaded with their owner and are the next lazy-loading step.
+
+Validation: 19 SQL-counting H2 regressions (`LazyCollectionTest`, annotation and XML) cover these
+paths, including table-per-class subclasses. The full reactor passes **814 tests** (795 + 19), zero
+failures/errors/skips; the full patched Persistence TCK remains **2135 tests / 2131 passes / four
+official skips**, zero failures/errors (see `TCK.md`). SQL statement counts are correctness
+assertions, not performance figures.
 
 **TCK gate** (2026-10-09, PostgreSQL 17): `core.inheritance.*`, `core.annotations.discriminatorValue`,
 `core.callback.inheritance`: **19 / 21 passed**. Only the two `mappedsc.descriptors` XML tests remain (P10),
@@ -854,6 +894,7 @@ Recorded before implementation; each entry: date, decision, reason.
 | D3 | 2026-10-07 | No `ClassTransformer` / no instrumentation: lazy loading and dirty checking without enhancement. | Actioned |
 | D4 | 2026-10-08 | Noether JPA renders its SQL from its **own sealed SQL AST** (statements of the flush, then queries, locks, DDL), through **its own dialect SPI** in separate modules — `noether-jpa-dialect-spi`, `noether-jpa-dialect-h2`, `noether-jpa-dialect-postgresql`, found with `ServiceLoader` — rather than by extending `mansart-data-dialect-spi`: that SPI is model-centric (Jakarta Data `EntityModel`, single-attribute ids), `requires transitive jakarta.data`, and is delivered (Jakarta Data TCK 74/74). The SQL knowledge of the two SPIs is duplicated for now; converging them (Jakarta Data rendered through this AST) may be decided later. | Decided |
 | D5 | 2026-10-15 | Implement optional `TABLE_PER_CLASS` inheritance as a bounded follow-up before broader lazy loading: concrete inherited tables, derived SQL `UNION ALL` polymorphic ranges, shared hierarchy identity and concrete-table mutations. Reuse the annotation/XML overlay and generated accesses. Reject `IDENTITY`; use shared generators or assigned hierarchy-wide keys. Polymorphic foreign keys have no single database constraint; pessimistic entity queries lock concrete rows after selection, and purely scalar pessimistic union queries are explicitly refused. | Actioned |
+| D9 | 2026-10-15 | Deliver lazy loading for collections first (`@OneToMany`, `@ManyToMany`, `@ElementCollection`) through typed wrappers of the declared collection interface assigned by generated access; explicit `PersistenceException` once detached/closed; EAGER, fetch joins and fetch/load graphs initialize. Lazy to-one, batching and SQL fetch joins are out of this step. | Actioned |
 | D6 | 2026-10-07 | Bean Validation is not available, so a Vidocq implementation (Jakarta Validation 3.1) will be created as a new building block **inside Noether** (Noether is the data character of the ecosystem; no new repository, no new `mani.yaml` / `GestionProjet` entry). It is put on the persistence TCK classpath. `noether-persistence` depends only on `jakarta.validation-api`. Its own TCK runs both **out of the Vidocq reactor** (standalone runner, authoritative for the building block) and **inside it** (`vidocq-runtime-integration-tests`, `tck` profile, certifying the assembled runtime). Named `noether-validation`; it is a stopgap that only has to run for this TCK (not polished, not published, to be replaced by the implementation another team member is writing); roadmap in [`../noether-validation/ROADMAP.md`](../noether-validation/ROADMAP.md). | Decided |
 | D8 | 2026-10-09 | The query engine — JPQL lexer, parser, translation to the SQL AST, and the Criteria API of P8 — lives in `noether-jpa-core` (internal packages `io.vidocq.noether.jpa.core.query.*`), not in a `noether-jpa-query` module: `EntityManager.createQuery` belongs to the core, and the engine needs the core's mapping, persistence context, loader and flush. A separate module would need a query SPI found with `ServiceLoader` and qualified exports of most core packages, for one artifact more and no layering gained. The SQL AST of queries extends `noether-jpa-dialect-spi` (D4). | Decided |
 | D7 | 2026-10-08 | Connection pooling in Java SE (the spec defines none: §8.2.1.9 only lists the `jakarta.persistence.jdbc.*` properties, and leaves Java SE data sources "to the requirements of the provider"). A unit configured by `jakarta.persistence.jdbc.*`, without a `DataSource`, gets a **`mansart-pool` pool by default** (virtual-thread-native, zero-dep), closed with its factory; `io.vidocq.noether.jpa.pool=false` turns it off (one `DriverManager` connection per transaction), `io.vidocq.noether.jpa.pool.max-size` / `.min-idle` / `.acquire-timeout` size it. A `DataSource` given by the application is used as is; in the Vidocq runtime the container passes its own (`vidocq-runtime-mansart-pool-extension`, P9). A driver named by `jakarta.persistence.jdbc.driver` that `DriverManager` cannot see is used unpooled, with a warning. | Decided |

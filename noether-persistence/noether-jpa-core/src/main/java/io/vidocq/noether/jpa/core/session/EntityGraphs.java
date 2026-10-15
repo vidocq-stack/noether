@@ -4,9 +4,11 @@
  */
 package io.vidocq.noether.jpa.core.session;
 
+
 import io.vidocq.noether.jpa.core.model.build.Types;
 import io.vidocq.noether.jpa.core.model.source.AnnotationInfo;
 import io.vidocq.noether.jpa.core.model.source.ClassInfos;
+import io.vidocq.noether.jpa.core.query.FetchPlan;
 import jakarta.persistence.*;
 import jakarta.persistence.metamodel.*;
 import java.util.*;
@@ -85,6 +87,25 @@ final class EntityGraphs {
     static void validateHint(Object value,Class<?> root,Metamodel model) {
         if (!(value instanceof Root<?> graph) || graph.model!=model || root!=null && !graph.type.isAssignableFrom(root))
             throw new IllegalArgumentException("Graph hint must belong to this persistence unit and match the entity type");
+    }
+    /**
+     * The attributes a fetch or load graph hint initializes (§3.7.4): its attribute nodes, with those of their subgraphs,
+     * key subgraphs and treated subgraphs merged, an attribute a given instance lacks being ignored when it is applied.
+     */
+    static FetchPlan plan(Object value) {
+        FetchPlan plan = new FetchPlan();
+        if (value instanceof Base<?> graph) {
+            into(graph, plan);
+            if (graph instanceof Root<?> root) root.treated.values().forEach(sub -> into(sub, plan));
+        }
+        return plan;
+    }
+    private static void into(Base<?> graph, FetchPlan plan) {
+        graph.nodes.forEach((name, node) -> {
+            FetchPlan attribute = plan.attribute(name);
+            node.subgraphs.values().forEach(sub -> into(sub, attribute));
+            node.keys.values().forEach(sub -> into(sub, attribute));
+        });
     }
     static abstract class Base<T> implements Graph<T> {
         final Metamodel model;

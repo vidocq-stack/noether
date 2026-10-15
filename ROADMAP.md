@@ -24,3 +24,11 @@ to the existing metadata, generated access, schema, loading, JPQL/Criteria and b
 mutation paths. Shared identifiers exclude `IDENTITY`; scalar pessimistic union queries
 are refused, while entity queries use concrete-row follow-on locking. Existing
 unsupported mapping shapes and broader lazy loading remain outside this follow-up.
+
+Also on 2026-10-15 (decision D9), LAZY collections are delivered: `@OneToMany`,
+`@ManyToMany` and `@ElementCollection` load on first access through typed wrappers
+assigned by the generated access, keep persistence-context, flush, orphan-removal,
+merge and cache semantics, report exact `isLoaded` state and fail with
+`PersistenceException` once detached or closed. EAGER, fetch joins and entity graphs
+initialize them. Lazy to-one relationships, batching and SQL fetch joins remain open;
+see the detailed roadmap.

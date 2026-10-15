@@ -19,6 +19,7 @@
  */
 package io.vidocq.noether.jpa.core.session;
 
+import io.vidocq.noether.jpa.core.mapping.LazyCollection;
 import io.vidocq.noether.jpa.core.mapping.MappedEntity;
 import io.vidocq.noether.jpa.core.mapping.MappedUnit;
 import jakarta.persistence.PersistenceUnitUtil;
@@ -47,18 +48,25 @@ final class UnitUtil implements PersistenceUnitUtil {
             entity.getClass().getName() + " is not an entity class of the persistence unit"));
     }
 
-    /** Checks that {@code attributeName} is a persistent attribute of {@code entity}. */
-    private void attribute(Object entity, String attributeName) {
-        MappedEntity type = entity(entity);
-        if (type.model().attribute(attributeName).isEmpty()) {
-            throw new IllegalArgumentException(type.model().entityName() + " has no persistent attribute " + attributeName);
-        }
+    /** The index of the persistent attribute {@code attributeName} of {@code type}, else -1. */
+    static int index(MappedEntity type, String attributeName) {
+        return type.model().attribute(attributeName).map(type.model().attributes()::indexOf).orElse(-1);
     }
 
+    /** The value of the persistent attribute {@code attributeName} of {@code entity}; checks that it is one. */
+    private Object attribute(Object entity, String attributeName) {
+        MappedEntity type = entity(entity);
+        int index = index(type, attributeName);
+        if (index < 0) {
+            throw new IllegalArgumentException(type.model().entityName() + " has no persistent attribute " + attributeName);
+        }
+        return type.access().get(entity, index);
+    }
+
+    /** §7.11: false only for a LAZY collection not loaded yet; reads no row. */
     @Override
     public boolean isLoaded(Object entity, String attributeName) {
-        attribute(entity, attributeName);
-        return true;
+        return !LazyCollection.unloaded(attribute(entity, attributeName));
     }
 
     @Override
@@ -74,7 +82,10 @@ final class UnitUtil implements PersistenceUnitUtil {
 
     @Override
     public void load(Object entity, String attributeName) {
-        attribute(entity, attributeName); // loaded with its entity already
+        // §7.11: a LAZY collection loads through its persistence context, a PersistenceException once it is detached
+        if (attribute(entity, attributeName) instanceof LazyCollection lazy) {
+            lazy.initialize();
+        }
     }
 
     @Override

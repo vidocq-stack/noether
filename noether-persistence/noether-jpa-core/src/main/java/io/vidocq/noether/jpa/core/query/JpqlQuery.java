@@ -271,6 +271,72 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         return captured.size();
     }
 
+    /**
+     * What each select item initializes on the instances it returns: the fetch joins from its identification variable
+     * (§4.4.5.3, a Criteria fetch included), chained through the variables of fetch joins, and the attributes of a fetch
+     * or load graph hint (§3.7.4) for an entity of the {@code FROM} clause; {@code null} for nothing.
+     */
+    private FetchPlan[] fetchPlans() {
+        if (!(statement instanceof Ast.Select select)) {
+            return new FetchPlan[0];
+        }
+        Map<String, FetchPlan> variables = new HashMap<>();
+        for (Ast.Range range : select.from()) {
+            if (range.entity() == null) continue;
+            variables.put(key(range.variable()), new FetchPlan());
+            for (Ast.Join join : range.joins()) {
+                List<String> segments = join.path().segments();
+                FetchPlan plan = join.fetch() && segments.size() > 1 ? variables.get(key(segments.getFirst())) : null;
+                if (plan == null) continue; // not a fetch join, or from a variable that is not fetched
+                for (String attribute : segments.subList(1, segments.size())) {
+                    plan = plan.attribute(attribute);
+                }
+                if (join.variable() != null) variables.put(key(join.variable()), plan);
+            }
+        }
+        Object graph = getHints().containsKey(FETCH_GRAPH) ? getHints().get(FETCH_GRAPH) : getHints().get(LOAD_GRAPH);
+        FetchPlan graphPlan = graph == null ? null : runtime.plan(graph);
+        FetchPlan[] plans = new FetchPlan[select.items().size()];
+        for (int i = 0; i < plans.length; i++) {
+            if (!(select.items().get(i).expression() instanceof Ast.Path path) || path.segments().size() != 1
+                    || path.treatEntity() != null) continue;
+            String variable = key(path.segments().getFirst());
+            boolean root = select.from().stream().anyMatch(r -> r.entity() != null && key(r.variable()).equals(variable));
+            FetchPlan plan = root ? variables.get(variable) : null;
+            if (plan == null) continue;
+            if (graphPlan != null) {
+                plan = merged(plan, graphPlan);
+            }
+            plans[i] = plan.isEmpty() ? null : plan;
+        }
+        return plans;
+    }
+
+    private static final String FETCH_GRAPH = "jakarta.persistence.fetchgraph";
+    private static final String LOAD_GRAPH = "jakarta.persistence.loadgraph";
+
+    private static String key(String variable) {
+        return variable.toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private static FetchPlan merged(FetchPlan first, FetchPlan second) {
+        FetchPlan plan = new FetchPlan();
+        plan.merge(first);
+        plan.merge(second);
+        return plan;
+    }
+
+    /** Initializes on a result what its select items fetch; a row of several items, item by item. */
+    private void fetch(Object resolved, FetchPlan[] plans, Connection connection) {
+        if (plans.length == 1) {
+            if (plans[0] != null && resolved != null) runtime.fetch(resolved, plans[0], connection);
+        } else if (resolved instanceof Object[] array && array.length == plans.length) {
+            for (int i = 0; i < array.length; i++) {
+                if (plans[i] != null && array[i] != null) runtime.fetch(array[i], plans[i], connection);
+            }
+        }
+    }
+
     private void checkBound() {
         for (Map.Entry<Object, QueryParameter<?>> parameter : parameters.entrySet()) {
             if (!values.containsKey(parameter.getKey())) {
@@ -342,8 +408,10 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         }
         // entities found, and results constructed, once the rows are read: the loader runs statements of its own
         List<Object> resultList = new ArrayList<>(rows.size());
+        FetchPlan[] plans = fetchPlans();
         for (Object row : rows) {
             Object resolved = resolve(row, connection, followOn);
+            fetch(resolved, plans, connection);
             if (!tupleElements.isEmpty()) {
                 if (resolved instanceof Object[] array && array.length == tupleElements.size()) {
                     for (int i = 0; i < array.length; i++) array[i] = convert(array[i], boxed(tupleElements.get(i).getJavaType()));

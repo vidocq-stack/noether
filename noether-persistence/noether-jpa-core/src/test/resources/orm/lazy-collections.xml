@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entity-mappings xmlns="https://jakarta.ee/xml/ns/persistence/orm" version="3.2">
+  <entity class="io.vidocq.noether.jpa.core.session.LazyCollectionTest$XmlFetch" name="LazyXmlFetch" access="FIELD">
+    <attributes>
+      <id name="id"/>
+      <element-collection name="eager" fetch="EAGER">
+        <collection-table name="LAZY_XML_EAGER"/>
+      </element-collection>
+      <element-collection name="lazy">
+        <collection-table name="LAZY_XML_LAZY"/>
+      </element-collection>
+    </attributes>
+  </entity>
+</entity-mappings>

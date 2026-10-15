@@ -1,3 +1,34 @@
+## Noether lazy collections verification — 2026-10-15
+
+Decision D9 makes `LAZY` collections load on first access, without changing official fixtures,
+exclusions or the local TCK-BUG-001 patch. On Temurin 25.0.4, Maven 3.9.16 and PostgreSQL 17,
+the full patched Persistence 3.2.1 run reports **2135 tests, 2131 passed, zero failures,
+zero errors and four official skips** (unchanged). Execution 1: 2134 tests / 2130 passes /
+four skips; execution 2: one test / one pass. All 259 XML reports were parsed (the script exits 0
+even on failures) and verified against the derived spec-tests jar.
+
+Commands from the Noether root:
+
+```bash
+export JAVA_HOME="$HOME/.sdkman/candidates/java/25.0.4-tem"
+export PATH="$JAVA_HOME/bin:$PATH"
+./mvnw -ntp install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+The unit reactor passes **814 tests, zero failures/errors/skips** (previous baseline: 795):
+19 new SQL-counting H2 regressions in `LazyCollectionTest` cover owner-only selects, one load per
+collection on first access, `isLoaded` without SQL, untouched flushes, mutations and orphan removal,
+detach/clear/close/rollback/serialization failures, merge, refresh, JPQL/Criteria fetch joins
+(including empty collections and nested paths), fetch/load graphs, EAGER and concrete types, ORM XML
+overrides, the shared cache and table-per-class subclasses. Official jar SHA-256 remains
+`a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`; derived jar SHA-256 remains
+`1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+This is a **local patched result, not an untouched official result or a certification claim**.
+
+---
+
 ## Noether TABLE_PER_CLASS verification — 2026-10-15
 
 Decision D5 adds the optional table-per-class strategy without changing official fixtures
