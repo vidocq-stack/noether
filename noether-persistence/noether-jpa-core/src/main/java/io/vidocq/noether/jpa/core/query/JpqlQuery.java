@@ -157,7 +157,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         for (int stage = 0; stage < stages.size(); stage++) {
             List<EntityLoader.FetchedEntity> owners = List.copyOf(entities);
             for (Compiled template : stages.get(stage)) {
-                MappedEntity owner = template.collection().owner();
+                MappedEntity owner = ((Compiled.EntityItem) template.items().getFirst()).type();
                 List<Object> ids = stage == 0 ? rootIds : owners.stream().filter(row -> row.type() == owner)
                     .map(EntityLoader.FetchedEntity::id).distinct().toList();
                 int bound = batchBound.applyAsInt(owner);
@@ -178,14 +178,16 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
                                     if (fetched != null) entities.add(new EntityLoader.FetchedEntity(
                                         fetched.type(), fetched.id(), fetched.values(), fetched.nulls()));
                                 }
-                                if (row[0] != null) elements.add(fetchedElement(compiled.collection(), row[0].id(), row, results, column));
+                                if (compiled.collection() != null && row[0] != null) {
+                                    elements.add(fetchedElement(compiled.collection(), row[0].id(), row, results, column));
+                                }
                             }
                         }
                     } catch (SQLException failure) {
                         throw new PersistenceException("The split graph read failed: " + failure.getMessage(), failure);
                     }
                 }
-                collections.add(new EntityLoader.FetchedCollection(
+                if (template.collection() != null) collections.add(new EntityLoader.FetchedCollection(
                     template.collection().owner(), template.collection().attribute(), elements));
             }
         }

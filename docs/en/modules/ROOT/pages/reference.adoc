@@ -205,6 +205,40 @@ changes and omitted unsupported lazy mappings. Explicit fetch joins and unnested
 single-collection graphs keep their existing collectors. Deeper graphs and broader
 fetch/lazy/batch/mapping eligibility remain separate backlog items.
 
+== Root to-one collection graphs (D21, 2026-10-16)
+
+D21 supersedes D20's root-to-one-collection fallback for finite, acyclic root
+to-one paths to hydratable collection owners, for example `customer.addresses`
+or `customer.favorite.tags`. The D19/D20 eligible JPQL/Criteria query shapes
+(one concrete root, optional DISTINCT, no explicit joins/grouping/having/set/
+additional selections or locking) and non-locking find retain their boundaries.
+FETCH and LOAD graphs, independent root collections, element to-one subgraphs
+and at most *two collection edges per graph path* are supported.
+
+A bounded collection-free LEFT to-one seed discovers intermediate owners before
+the existing collectors run. Compatible requests shared between collection
+depths merge at the later depth. IDs are deduplicated across roots/branches;
+null to-ones create no owner IDs, and empty owner sets issue no collection SELECT.
+For each seed/collector, `B = min(fetch.batch-size, floor(512 / owner-key-width))`.
+An eligible query uses
+`1 + ceil(Nroot / Broot) + sum(ceil(Nc / Bc))` SELECTs; a database find
+omits the first root-identity SELECT. The seed is not a third collection edge.
+Counts exclude ordinary completion of dirty reassigned relationships and unsupported
+lazy mappings. Root-only SQL pagination precedes complete seed/collection reads.
+
+All branches complete before snapshots/cache publication and once-per-new-identity
+callbacks. Dirty entities/collections, in-place wrappers/references, ordered/null/
+duplicate/list/map contents, flush and no find auto-flush are retained.
+Complete managed/cache finds need neither SELECT nor a new JDBC connection.
+Mutable graphs and hint replacement are planned per execution.
+
+Explicit cyclic/type-revisiting paths, a third collection edge, unsupported mapped
+eager closures, polymorphic/non-hydratable owners or targets, unsupported keys and
+embedded paths and the earlier complex/locking query/find shapes retain complete
+fallback or explicit refusal. Existing pagination guards, explicit fetch joins and
+earlier graph eligibility are unchanged. Deeper/cyclic graph optimization, broader
+fetch/lazy/batch eligibility and missing mappings remain separate priorities.
+
 == Lazy read batching
 
 [cols="3,1,4"]

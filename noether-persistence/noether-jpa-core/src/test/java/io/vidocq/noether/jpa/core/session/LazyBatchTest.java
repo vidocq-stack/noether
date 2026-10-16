@@ -40,6 +40,7 @@ class LazyBatchTest {
             .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
             .managedClass(Owner.class).managedClass(Target.class).managedClass(Child.class).managedClass(Part.class)
             .managedClass(CompositeOwner.class).managedClass(CompositeKey.class)
+            .managedClass(CompositeRoot.class)
             .managedClass(BaseOwner.class).managedClass(SpecialOwner.class)
             .managedClass(EagerOwner.class)
             .sharedCacheMode(SharedCacheMode.ALL)
@@ -84,6 +85,67 @@ class LazyBatchTest {
     }
 
     @AfterEach void close() { if (factory != null && factory.isOpen()) factory.close(); }
+
+    /** §3.7.4: intermediate composite IDs, not result count, determine each collection's parameter bound. */
+    @Test void rootToOneGraphsGroupCompositeOwnersWithinTheParameterCeiling() {
+        open(256);
+        em.getTransaction().begin();
+        for (int i = 1; i <= 181; i++) {
+            var owner = new CompositeOwner();
+            owner.id = new CompositeKey(9, i);
+            if (i != 2) owner.items.addAll(Arrays.asList("first", null, "first"));
+            owner.labels.put("nil", null);
+            owner.labels.put("id", Integer.toString(i));
+            em.persist(owner);
+            for (int copy = 0; copy < 2; copy++) {
+                var root = new CompositeRoot();
+                root.id = 2L * i + copy;
+                root.owner = owner;
+                em.persist(root);
+            }
+        }
+        var absent = new CompositeRoot();
+        absent.id = 1;
+        em.persist(absent);
+        em.getTransaction().commit();
+        em.clear();
+        factory.getCache().evictAll();
+        for (String hint : List.of("jakarta.persistence.fetchgraph", "jakarta.persistence.loadgraph")) {
+            em.clear();
+            factory.getCache().evictAll();
+            sql.clear();
+            var graph = em.createEntityGraph(CompositeRoot.class);
+            graph.addSubgraph("owner").addAttributeNodes("items", "labels");
+            var found = em.createQuery("select r from BatchCompositeRoot r order by r.id", CompositeRoot.class)
+                .setHint(hint, graph).getResultList();
+            assertThat(found).hasSize(363);
+            assertThat(found.getFirst().owner).isNull();
+            for (int i = 1; i <= 181; i++) {
+                var owner = found.get(2 * i - 1).owner;
+                assertThat(owner).isSameAs(found.get(2 * i).owner);
+                if (i == 2) assertThat(owner.items).isEmpty();
+                else assertThat(owner.items).containsExactly("first", null, "first");
+                assertThat(owner.labels).containsEntry("nil", null).containsEntry("id", Integer.toString(i));
+            }
+            assertThat(selects()).as(sql.toString()).isEqualTo(7); // root IDs, two seed batches, two batches per collection
+            assertThat(sql).allMatch(s -> s.chars().filter(c -> c == '?').count() <= 512);
+        }
+        sql.clear();
+        em.getTransaction().begin();
+        var graph = em.createEntityGraph(CompositeRoot.class);
+        graph.addSubgraph("owner").addAttributeNodes("items", "labels");
+        var first = em.find(CompositeRoot.class, 2L, Map.of("jakarta.persistence.fetchgraph", graph));
+        first.owner.items.remove(0);
+        first.owner.labels.put("new", "value");
+        em.getTransaction().commit();
+        em.clear();
+        factory.getCache().evictAll();
+        sql.clear();
+        first = em.find(CompositeRoot.class, 2L, Map.of("jakarta.persistence.loadgraph", graph));
+        assertThat(first.owner.items).containsExactly(null, "first");
+        assertThat(first.owner.labels).containsEntry("new", "value").containsEntry("nil", null);
+        assertThat(selects()).isEqualTo(3);
+    }
 
     @Test void defaultBatchCompletesAllCompatibleOwnersIncludingEmptyAndNullRows() {
         open(null); var owners = seed();
@@ -538,6 +600,13 @@ class LazyBatchTest {
         @ElementCollection @OrderColumn List<String> items = new ArrayList<>();
         @ElementCollection @MapKeyColumn(name = "label_key") Map<String, String> labels = new LinkedHashMap<>();
         public CompositeOwner() {}
+    }
+
+    @Entity(name = "BatchCompositeRoot")
+    public static class CompositeRoot {
+        @Id long id;
+        @ManyToOne(fetch = FetchType.LAZY) CompositeOwner owner;
+        public CompositeRoot() {}
     }
 
     @Entity(name = "BatchEagerOwner")

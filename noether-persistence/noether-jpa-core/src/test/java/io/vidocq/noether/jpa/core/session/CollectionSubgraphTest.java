@@ -64,6 +64,8 @@ class CollectionSubgraphTest {
         hammer.getTags().addAll(List.of("steel", "wood"));
         Customer alice = new Customer(500, "alice");
         alice.setFavorite(hammer);
+        alice.getRecommendations().addAll(List.of(hammer, hammer, saw));
+        hammer.getFacts().put("material", "steel");
         Item plain = new Item(600, "plain");
         SpecialItem special = new SpecialItem(601, "special", "gold");
         Order first = new Order(1, "first", alice), empty = new Order(2, "empty", null), third = new Order(3, "third", null);
@@ -96,6 +98,7 @@ class CollectionSubgraphTest {
     }
 
     @AfterEach void close() {
+        Order.inspectRootBranch = Order.inspectRecommendations = false;
         Order.inspectNested = Line.inspectNested = false;
         Order.requireComplete = Payment.inspect = Order.inspectAll = Order.inspect = Order.inspectMixed = Line.inspectAll = Line.inspect = Product.fail = Product.mutate = false;
         if (factory != null) factory.close();
@@ -109,7 +112,7 @@ class CollectionSubgraphTest {
         em.clear();
         factory.getCache().evictAll();
         sql.clear();
-        for (AtomicInteger counter : List.of(Order.LOADS, Line.LOADS, Product.LOADS, Supplier.LOADS, Category.LOADS)) counter.set(0);
+        for (AtomicInteger counter : List.of(Order.LOADS, Line.LOADS, Product.LOADS, Supplier.LOADS, Category.LOADS, Customer.LOADS)) counter.set(0);
     }
 
     /** {@code collection{product{nested...}}}. */
@@ -145,6 +148,293 @@ class CollectionSubgraphTest {
         lines.addSubgraph("discounts").addAttributeNodes("supplier", "category");
         lines.addAttributeNodes("notes", "codes");
         return graph;
+    }
+
+    private EntityGraph<Order> rootBranchGraph() {
+        var graph = em.createEntityGraph(Order.class);
+        graph.addSubgraph("customer").addSubgraph("favorite").addAttributeNodes("tags", "facts", "supplier");
+        graph.addSubgraph("featured").addAttributeNodes("tags", "facts", "supplier");
+        return graph;
+    }
+
+    /** §3.7.4: root to-one paths share distinct collection owners, before any lifecycle callback. */
+    @Test void rootToOneCollectionsUseGroupedReadsForJpqlCriteriaAndFind() {
+        for (String hint : List.of(FETCH, LOAD)) {
+            for (String operation : List.of("jpql", "criteria", "find")) {
+                cold();
+                Order.inspectRootBranch = true;
+                List<Order> found;
+                if (operation.equals("find")) found = List.of(em.find(Order.class, 1L, Map.of(hint, rootBranchGraph())));
+                else if (operation.equals("criteria")) {
+                    var cb = em.getCriteriaBuilder();
+                    var query = cb.createQuery(Order.class);
+                    var root = query.from(Order.class);
+                    query.select(root).distinct(true).orderBy(cb.asc(root.get("id")));
+                    found = em.createQuery(query).setHint(hint, rootBranchGraph()).getResultList();
+                } else found = orders(hint, rootBranchGraph());
+                assertThat(selects()).as(operation + "/" + hint + sql).isEqualTo(operation.equals("find") ? 3 : 4);
+                Order first = found.getFirst();
+                assertThat(first.getCustomer().getFavorite()).isSameAs(first.getFeatured());
+                assertThat(first.getFeatured().getTags()).containsExactlyInAnyOrder("steel", "wood");
+                assertThat(first.getFeatured().getFacts()).containsOnlyKeys("material").containsEntry("material", "steel");
+                assertThat(first.rootBranchSeen).isEqualTo("2:1");
+                assertThat(Order.LOADS.get()).isEqualTo(found.size());
+                assertThat(Product.LOADS.get()).isEqualTo(operation.equals("find") ? 1 : 2);
+                assertThat(Customer.LOADS.get()).isEqualTo(1);
+                if (!operation.equals("find")) {
+                    assertThat(found.get(1).getCustomer()).isNull();
+                    assertThat(found.get(1).getFeatured()).isNull();
+                    assertThat(found.getLast().getFeatured().getTags()).isEmpty();
+                }
+                assertThat(selects()).isEqualTo(operation.equals("find") ? 3 : 4);
+            }
+        }
+    }
+
+    @Test void directRootToOneEntityCollectionsKeepEmptyOwnersBagsAndElementToOneSubgraphs() {
+        em.getTransaction().begin();
+        Customer empty = new Customer(501, "empty-customer");
+        em.persist(empty);
+        em.find(Order.class, 3L).setCustomer(empty);
+        em.getTransaction().commit();
+        for (String hint : List.of(FETCH, LOAD)) {
+            for (boolean find : List.of(false, true)) {
+                cold();
+                var graph = em.createEntityGraph(Order.class);
+                graph.addSubgraph("customer").addSubgraph("recommendations").addAttributeNodes("supplier", "category");
+                var found = find ? List.of(em.find(Order.class, 1L, Map.of(hint, graph))) : orders(hint, graph);
+                Collection<Product> recommendations = found.getFirst().getCustomer().getRecommendations();
+                assertThat(recommendations).extracting(Product::getId).containsExactlyInAnyOrder(200L, 200L, 201L);
+                assertThat(recommendations).filteredOn(p -> p.getId() == 200)
+                    .allSatisfy(p -> assertThat(p).isSameAs(found.getFirst().getCustomer().getFavorite()));
+                assertThat(recommendations).extracting(p -> p.getSupplier().getName())
+                    .containsExactlyInAnyOrder("acme", "acme", "globex");
+                if (!find) {
+                    assertThat(found.get(1).getCustomer()).isNull();
+                    assertThat(found.getLast().getCustomer().getRecommendations()).isEmpty();
+                    assertThat(found.getLast().getCustomer().getFavorite()).isNull();
+                }
+                assertThat(selects()).as(sql.toString()).isEqualTo(find ? 2 : 3);
+            }
+        }
+    }
+
+    @Test void rootToOneSharedOwnersScaleByDistinctTargetBatchesAndSqlRootPages() {
+        em.getTransaction().begin();
+        Customer shared = em.find(Customer.class, 500L);
+        for (int i = 4; i <= 40; i++) em.persist(new Order(i, "shared", shared));
+        em.getTransaction().commit();
+        cold();
+        var found = orders(FETCH, rootBranchGraph());
+        assertThat(found).hasSize(40);
+        assertThat(found.subList(3, 40)).allSatisfy(o -> {
+            assertThat(o.getCustomer()).isSameAs(found.getFirst().getCustomer());
+            assertThat(o.getCustomer().getFavorite().getTags()).containsExactlyInAnyOrder("steel", "wood");
+        });
+        assertThat(selects()).as(sql.toString()).isEqualTo(6); // root IDs + three seed batches + two product collections
+        assertThat(sql.stream().filter(s -> s.toLowerCase(Locale.ROOT).contains("join cs_product_tag"))).hasSize(1);
+        cold();
+        var page = em.createQuery("select o from CsOrder o order by o.id", Order.class)
+            .setHint(LOAD, rootBranchGraph()).setFirstResult(1).setMaxResults(3).getResultList();
+        assertThat(page).extracting(Order::getId).containsExactly(2L, 3L, 4L);
+        assertThat(page.getFirst().getCustomer()).isNull();
+        assertThat(page.get(1).getFeatured().getTags()).isEmpty();
+        assertThat(page.getLast().getCustomer().getFavorite().getTags()).containsExactlyInAnyOrder("steel", "wood");
+        assertThat(selects()).isEqualTo(4);
+        assertThat(sql.getFirst()).containsIgnoringCase("offset").containsIgnoringCase("fetch first")
+            .doesNotContainIgnoringCase("join");
+        cold();
+        assertThat(em.find(Order.class, 999L, Map.of(FETCH, rootBranchGraph()))).isNull();
+        assertThat(selects()).isEqualTo(1);
+        cold();
+        assertThat(em.find(Order.class, 2L, Map.of(FETCH, rootBranchGraph())).getCustomer()).isNull();
+        assertThat(selects()).isEqualTo(1);
+    }
+
+    @Test void rootToOneTargetBatchCrossingAndDisabledBatchingKeepCompleteCollections() {
+        for (int batch : List.of(16, 1)) {
+            if (batch == 1) { factory.close(); open(1); }
+            em.getTransaction().begin();
+            for (int i = 4; i <= 37; i++) {
+                Product product = new Product(1000 + i, "p" + i, null, em.find(Category.class, 400L));
+                product.getTags().add("tag" + i);
+                Order order = new Order(i, "o" + i, null);
+                order.setFeatured(product);
+                em.persist(product);
+                em.persist(order);
+            }
+            em.getTransaction().commit();
+            cold();
+            var graph = em.createEntityGraph(Order.class);
+            graph.addSubgraph("featured").addAttributeNodes("tags");
+            var found = orders(FETCH, graph);
+            assertThat(found).hasSize(37);
+            assertThat(found.getLast().getFeatured().getTags()).containsExactly("tag37");
+            assertThat(selects()).as("batch=" + batch + sql).isEqualTo(batch == 16 ? 7 : 74);
+        }
+    }
+
+    @Test void rootToOneCollectionsPreserveDirtyStateReferencesWrappersAndFindFastHits() {
+        Order first = em.find(Order.class, 1L);
+        Product reference = first.getFeatured();
+        assertThat(loaded(reference)).isFalse();
+        Product product = em.find(Product.class, 200L);
+        List<String> tags = product.getTags();
+        assertThat(loaded(product, "tags")).isFalse();
+        em.getTransaction().begin();
+        first.setLabel("dirty-order");
+        product.setName("dirty-product");
+        sql.clear();
+        assertThat(em.find(Order.class, 1L, Map.of(FETCH, rootBranchGraph()))).isSameAs(first);
+        assertThat(first.getFeatured()).isSameAs(reference).isSameAs(product);
+        assertThat(product.getName()).isEqualTo("dirty-product");
+        assertThat(product.getTags()).isSameAs(tags).containsExactlyInAnyOrder("steel", "wood");
+        assertThat(selects()).isEqualTo(3);
+        assertThat(sql).allSatisfy(s -> assertThat(s).startsWithIgnoringCase("select"));
+        tags.add("dirty-tag");
+        product.getFacts().put("dirty", "yes");
+        sql.clear();
+        int acquired = connections;
+        assertThat(em.find(Order.class, 1L, Map.of(LOAD, rootBranchGraph()))).isSameAs(first);
+        assertThat(selects()).isZero();
+        assertThat(connections).isEqualTo(acquired);
+        em.getTransaction().commit();
+        cold();
+        first = em.find(Order.class, 1L, Map.of(LOAD, rootBranchGraph()));
+        assertThat(first.getLabel()).isEqualTo("dirty-order");
+        assertThat(first.getFeatured().getName()).isEqualTo("dirty-product");
+        assertThat(first.getFeatured().getTags()).containsExactlyInAnyOrder("steel", "wood", "dirty-tag");
+        assertThat(first.getFeatured().getFacts()).containsEntry("dirty", "yes");
+    }
+
+    @Test void rootToOneCollectionsCompletePartialCacheBeforeCallbacksAndReuseCompleteCache() {
+        em.find(Order.class, 1L);
+        em.clear();
+        sql.clear();
+        Order.inspectRootBranch = true;
+        Order.LOADS.set(0);
+        Order first = em.find(Order.class, 1L, Map.of(LOAD, rootBranchGraph()));
+        assertThat(first.rootBranchSeen).isEqualTo("2:1");
+        assertThat(Order.LOADS.get()).isEqualTo(1);
+        assertThat(selects()).isEqualTo(3);
+        em.clear();
+        sql.clear();
+        int acquired = connections;
+        first = em.find(Order.class, 1L, Map.of(FETCH, rootBranchGraph()));
+        assertThat(first.rootBranchSeen).isEqualTo("2:1");
+        assertThat(selects()).isZero();
+        assertThat(connections).isEqualTo(acquired);
+    }
+
+    @Test void rootToOneCompletionKeepsAlreadyDirtyCollectionsAndReassignedManagedBranches() {
+        Order first = em.find(Order.class, 1L);
+        Product favorite = first.getCustomer().getFavorite();
+        List<String> tags = favorite.getTags();
+        tags.add("local");
+        assertThat(loaded(favorite, "facts")).isFalse();
+        Product changed = em.find(Product.class, 201L);
+        em.getTransaction().begin();
+        first.setFeatured(changed);
+        sql.clear();
+        Order found = em.find(Order.class, 1L, Map.of(FETCH, rootBranchGraph()));
+        assertThat(found).isSameAs(first);
+        assertThat(found.getFeatured()).isSameAs(changed);
+        assertThat(found.getCustomer().getFavorite()).isSameAs(favorite);
+        assertThat(favorite.getTags()).isSameAs(tags).containsExactlyInAnyOrder("steel", "wood", "local");
+        assertThat(favorite.getFacts()).containsEntry("material", "steel");
+        assertThat(changed.getTags()).isEmpty();
+        assertThat(changed.getFacts()).isEmpty();
+        assertThat(sql).allSatisfy(s -> assertThat(s).startsWithIgnoringCase("select"));
+        em.getTransaction().commit();
+        cold();
+        found = em.find(Order.class, 1L, Map.of(LOAD, rootBranchGraph()));
+        assertThat(found.getFeatured().getId()).isEqualTo(201);
+        assertThat(found.getCustomer().getFavorite().getTags()).containsExactlyInAnyOrder("steel", "wood", "local");
+    }
+
+    @Test void rootToOneCollectionsKeepTwoEdgesAndIndependentRootBranches() {
+        var graph = rootBranchGraph();
+        graph.addSubgraph("customer").addSubgraph("recommendations").addAttributeNodes("tags", "facts", "supplier");
+        graph.addSubgraph("lines").addSubgraph("discounts").addAttributeNodes("supplier", "category");
+        Order.inspectRootBranch = Order.inspectRecommendations = true;
+        var found = orders(LOAD, graph);
+        assertThat(found.getFirst().getCustomer().getRecommendations()).extracting(Product::getId)
+            .containsExactlyInAnyOrder(200L, 200L, 201L);
+        assertThat(found.getFirst().getCustomer().getRecommendations()).filteredOn(p -> p.getId() == 200)
+            .allSatisfy(p -> assertThat(p).isSameAs(found.getFirst().getFeatured()));
+        assertThat(found.getFirst().getLines().get(1).getDiscounts()).hasSize(3);
+        assertThat(found.getFirst().rootBranchSeen).isEqualTo("2:1");
+        assertThat(selects()).as(sql.toString()).isEqualTo(7);
+    }
+
+    @Test void rootToOnePlansRebuildMutableGraphsAndKeepCallbackChangesAndFailures() {
+        var graph = em.createEntityGraph(Order.class);
+        graph.addSubgraph("featured").addAttributeNodes("supplier", "category");
+        var query = em.createQuery("select o from CsOrder o order by o.id", Order.class).setHint(FETCH, graph);
+        assertThat(query.getResultList().getFirst().getFeatured().getName()).isEqualTo("hammer");
+        assertThat(selects()).isEqualTo(1);
+        cold();
+        graph.addSubgraph("featured").addAttributeNodes("tags", "facts");
+        em.getTransaction().begin();
+        Product.mutate = true;
+        var first = query.getResultList().getFirst();
+        assertThat(first.getFeatured().getName()).isEqualTo("hammer!");
+        assertThat(first.getFeatured().getTags()).containsExactlyInAnyOrder("steel", "wood");
+        assertThat(Product.LOADS.get()).isEqualTo(2);
+        assertThat(selects()).isEqualTo(4);
+        Product.mutate = false;
+        em.getTransaction().commit();
+        cold();
+        assertThat(em.find(Product.class, 200L).getName()).isEqualTo("hammer!");
+        cold();
+        var replacement = rootBranchGraph();
+        replacement.addSubgraph("customer").addSubgraph("recommendations").addAttributeNodes("tags");
+        em.getTransaction().begin();
+        Product.fail = true;
+        assertThatThrownBy(() -> query.setHint(FETCH, replacement).getResultList())
+            .hasStackTraceContaining("product callback failed");
+        assertThat(em.getTransaction().getRollbackOnly()).isTrue();
+        em.getTransaction().rollback();
+    }
+
+    @Test void rootToOneThirdCollectionEdgesPolymorphicAndComplexShapesKeepCompleteFallbacks() {
+        var graph = rootBranchGraph();
+        graph.addSubgraph("lines").addSubgraph("discounts").addAttributeNodes("tags");
+        var first = em.find(Order.class, 1L, Map.of(LOAD, graph));
+        assertThat(first.getCustomer().getFavorite().getTags()).containsExactlyInAnyOrder("steel", "wood");
+        assertThat(first.getLines().get(1).getDiscounts()).filteredOn(p -> p.getId() == 200)
+            .allSatisfy(p -> assertThat(p.getTags()).containsExactlyInAnyOrder("steel", "wood"));
+        assertThat(sql.getFirst()).doesNotContainIgnoringCase("CS_LINE");
+        cold();
+        var cyclic = rootBranchGraph();
+        cyclic.addSubgraph("lines").addSubgraph("order").addSubgraph("lines")
+            .addSubgraph("order").addAttributeNodes("lines");
+        first = em.find(Order.class, 1L, Map.of(FETCH, cyclic));
+        final Order identity = first;
+        assertThat(first.getLines()).hasSize(4).allSatisfy(l -> assertThat(l.getOrder()).isSameAs(identity));
+        cold();
+        var polymorphic = rootBranchGraph();
+        polymorphic.addSubgraph("lines").addSubgraph("item").addAttributeNodes("name");
+        first = em.find(Order.class, 1L, Map.of(FETCH, polymorphic));
+        assertThat(first.getCustomer().getFavorite().getTags()).containsExactlyInAnyOrder("steel", "wood");
+        assertThat(first.getLines()).hasSize(4);
+        cold();
+        first = em.createQuery("select o from CsOrder o left join o.lines l where o.id = 1", Order.class)
+            .setHint(FETCH, rootBranchGraph()).getResultList().getFirst();
+        assertThat(first.getFeatured().getTags()).containsExactlyInAnyOrder("steel", "wood");
+        assertThat(first.getFeatured().getFacts()).containsEntry("material", "steel");
+    }
+
+    @Test void rootToOneCyclicCollectionOwnerPathsKeepCompleteFallbackRatherThanRescheduleAncestors() {
+        var graph = rootBranchGraph();
+        graph.addSubgraph("lines").addSubgraph("order").addSubgraph("customer")
+            .addSubgraph("favorite").addAttributeNodes("tags", "facts");
+        Order first = em.find(Order.class, 1L, Map.of(LOAD, graph));
+        assertThat(first.getLines()).hasSize(4).allSatisfy(line -> {
+            assertThat(line.getOrder()).isSameAs(first);
+            assertThat(line.getOrder().getCustomer().getFavorite().getTags()).containsExactlyInAnyOrder("steel", "wood");
+        });
+        assertThat(sql).noneMatch(s -> s.toLowerCase(Locale.ROOT).contains("join cs_line"));
     }
 
     /** §3.7.4: each collection edge is a separate complete, bounded read, never a multiplying join. */
@@ -1232,7 +1522,7 @@ class CollectionSubgraphTest {
     @Entity(name = "CsOrder") @Table(name = "CS_ORDER")
     public static class Order {
         static final AtomicInteger LOADS = new AtomicInteger();
-        static boolean inspect, inspectMixed, inspectAll, requireComplete, inspectNested;
+        static boolean inspect, inspectMixed, inspectAll, requireComplete, inspectNested, inspectRootBranch, inspectRecommendations;
         private long id;
         private String label;
         private Customer customer;
@@ -1244,6 +1534,7 @@ class CollectionSubgraphTest {
         List<String> seen;
         String rootSeen;
         String allSeen;
+        String rootBranchSeen;
         int nestedSeen;
         public Order() {}
         Order(long id, String label, Customer customer) { this.id = id; this.label = label; this.customer = customer; }
@@ -1271,6 +1562,19 @@ class CollectionSubgraphTest {
         public void setPayments(List<Payment> payments) { this.payments = payments; }
         @PostLoad void loaded() {
             LOADS.incrementAndGet();
+            if (inspectRootBranch && customer != null) {
+                Product favorite = customer.getFavorite();
+                assertThat(io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(favorite.getTags())).isFalse();
+                assertThat(io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(favorite.getFacts())).isFalse();
+                rootBranchSeen = favorite.getTags().size() + ":" + favorite.getFacts().size();
+                if (inspectRecommendations) {
+                    assertThat(io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(customer.getRecommendations())).isFalse();
+                    customer.getRecommendations().forEach(p -> {
+                        assertThat(io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(p.getTags())).isFalse();
+                        assertThat(io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(p.getFacts())).isFalse();
+                    });
+                }
+            }
             if (inspectNested) {
                 assertThat(io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(lines)).isFalse();
                 nestedSeen = lines.stream().mapToInt(l -> {
@@ -1433,9 +1737,11 @@ class CollectionSubgraphTest {
 
     @Entity(name = "CsCustomer") @Table(name = "CS_CUSTOMER")
     public static class Customer {
+        static final AtomicInteger LOADS = new AtomicInteger();
         private long id;
         private String name;
         private Product favorite;
+        private Collection<Product> recommendations = new ArrayList<>();
         public Customer() {}
         Customer(long id, String name) { this.id = id; this.name = name; }
         @Id public long getId() { return id; }
@@ -1445,6 +1751,16 @@ class CollectionSubgraphTest {
         @ManyToOne @JoinColumn(name = "favorite_id")
         public Product getFavorite() { return favorite; }
         public void setFavorite(Product favorite) { this.favorite = favorite; }
+        @ManyToMany @JoinTable(name = "CS_RECOMMENDATIONS")
+        public Collection<Product> getRecommendations() { return recommendations; }
+        public void setRecommendations(Collection<Product> recommendations) { this.recommendations = recommendations; }
+        @PostLoad void loaded() {
+            LOADS.incrementAndGet();
+            if (Order.inspectRootBranch && favorite != null) {
+                assertThat(io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(favorite.getTags())).isFalse();
+                assertThat(io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(favorite.getFacts())).isFalse();
+            }
+        }
     }
 
     @Entity(name = "CsItem") @Table(name = "CS_ITEM")

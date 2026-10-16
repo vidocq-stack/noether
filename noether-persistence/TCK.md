@@ -1,3 +1,91 @@
+## Noether root-to-one collection graph verification (D21) — 2026-10-16
+
+Baseline: `7a4f527` (986 reactor tests). D21 adds bounded graph-requested collections
+reached through finite root to-one chains, reusing D14–D18 LEFT hydration and
+D19/D20 collection collectors. The limit stays **two collection edges per graph
+path**; the collection-free seed is not another edge. Exact eligibility, fallback
+boundaries and SELECT-count qualifications are in `ROADMAP.md` (D21).
+
+Mandatory pre-production red: **7 tests / 6 failures / 0 errors / 0 skips**.
+The SQL-count failures include **6 instead of 4** SELECTs for root-to-one collection
+graphs, **38 instead of 7** for 36 distinct intermediate owners crossing size 16,
+and **17 instead of 8** for independent root and two-edge intermediate branches
+(the final merged-owner plan needs only 7).
+An additional explicit cyclic-owner boundary test was red before the type-revisit
+guard and is green with complete ordinary fallback. These are deterministic
+statement-count checks, not timing benchmarks.
+
+Final focused gate: **189 tests / 189 passed / 0 failures / 0 errors / 0 skips**:
+`CollectionSubgraphTest` 47, `LazyBatchTest` 22, `FetchJoinTest` 40,
+`CollectionFetchJoinTest` 35, `PostLoadCollectionCycleTest` 20, `FindTest` 9,
+`SecondLevelCacheTest` 16. Twelve new tests cover JPQL/Criteria/non-locking find,
+FETCH/LOAD, direct and chained intermediate owners, independent root branches and
+element to-ones, shared owner deduplication, absent/empty owners, bag duplicates,
+ordered/null lists and map keys/values, dirty entities and already-dirty collections,
+reassigned branches, in-place wrappers/references, partial/full cache completion
+and JDBC-free fast hits, complete once-per-identity callbacks, persisted callback
+mutation and failure/rollback, mutable graphs/hints, SQL root-only pagination
+and deeper/cyclic/polymorphic/complex complete fallbacks.
+
+The composite-key regression uses **363 roots and 181 distinct three-column
+intermediate owners** at configured size 256: seed batches **256 + 107**,
+each collection **170 + 11**, no statement above **512 key parameters**.
+Actual list/map contents and subsequent flush/reload are asserted, not only
+`isLoaded`. The size-one regression verifies disabled grouping. BUG01–BUG03
+regressions and D14–D20's earlier contracts remain green.
+
+Full clean reactor finished **16:01:52 CEST**:
+**998 tests / 998 passed / 0 failures / 0 errors / 0 skips**, independently
+aggregated from **87 XML reports** (986 baseline plus twelve).
+The full **locally patched** Persistence 3.2.1 TCK finished **16:03:20 CEST**:
+**2135 tests / 2131 passed / 0 failures / 0 errors / 4 unchanged official skips**,
+on isolated Docker **PostgreSQL 17-alpine**, Temurin **25.0.4**, Maven **3.9.16**.
+The runner-owned container was removed; no shared service was restarted.
+
+Exact commands, from the repository root:
+
+```sh
+export JAVA_HOME=$HOME/.sdkman/candidates/java/25.0.4-tem
+export PATH="$JAVA_HOME/bin:$PATH"
+# Red before production edits:
+./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test \
+  '-Dtest=CollectionSubgraphTest#rootToOne*' -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test \
+  -Dtest=CollectionSubgraphTest,LazyBatchTest,FetchJoinTest,CollectionFetchJoinTest,PostLoadCollectionCycleTest,FindTest,SecondLevelCacheTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw -ntp clean install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+Independent verification aggregates **259 TCK XML reports**, checks **2135 unique
+execution/class/method identities and unchanged outcomes against D20**, and verifies
+both effective classpath properties per report (**518 checks**) contain the derived
+jar alone. The full **85 original cache/installed input files**, **two runner
+tools** and **derived jar** retain their file set and SHA-256 (**88 files**).
+Installed metadata/tool hashes also match the preserved D20 pre-run snapshot.
+Official jar:
+`a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`;
+derived jar:
+`1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+All **1126 entries** were compared: only the two authorized TCK-BUG-001 ORM
+resources differ, with unchanged provenance hashes. Built and installed core jars
+match, including the changed production classes.
+
+The unchanged official `@Disabled` skips (execution 1) are:
+
+- `core.metamodelapi.identifiabletype.Client#getDeclaredSingularAttributes`
+- `core.query.language.Client6#resultContainsFetchReference`
+- `se.entityManagerFactory.Client2#createEntityManagerFactoryStringMapTest`
+- `se.schemaGeneration.annotations.tableGenerator.Client#tableGeneratorTest`
+
+Logs, before/after snapshots and the independent verifier use the session-artifact
+prefix `root-to-one-collections-`; `root-to-one-collections-verification.json`
+records the exact scope, bounds, fallbacks, changed files and raw testcase outcomes.
+No official fixture, patch tool, dependency or Java module descriptor changed.
+This is **local patched evidence, not an official TCK result or certification**.
+D5/D9–D20 and all BUG records below remain historical.
+
 ## Noether two-collection-edge graph verification (D20) — 2026-10-16
 
 Baseline: `0b48695` (977 reactor tests). D20 extends D19's existing split collectors

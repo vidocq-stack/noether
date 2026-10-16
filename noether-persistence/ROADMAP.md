@@ -1498,14 +1498,77 @@ Verification, exact commands, independently aggregated reactor/TCK results and
 immutable fixture provenance are recorded in `TCK.md`. D5/D9–D19 and BUG01
 above remain historical deliveries.
 
+### D21 — Collections through finite root to-one chains use grouped staged reads ✅ (2026-10-16)
+
+Approved after D20 (`7a4f527`), without expanding the existing two-collection-edge
+bound. Examples include `Order.customer.addresses`,
+`Order.customer.favorite.tags` and
+`Order.customer.recommendations.tags`, alongside independent root collections
+and their element to-one subgraphs.
+
+**Eligibility and execution**
+
+- FETCH/LOAD JPQL and Criteria select one concrete, hydratable entity root,
+  optionally DISTINCT, without explicit joins, grouping/having, set operations,
+  additional roots/selections or locking. Existing predicates and root ordering
+  remain on the original root-selection query. Non-locking database `find` and
+  incomplete managed/cache graph completion reuse the same planner; ordinary
+  managed/cache-complete finds remain JDBC-free.
+- A collection-free seed template joins the root's finite to-one branches using
+  D14–D18 LEFT hydration. The root identities are batched with D13's bound.
+  To-one traversal retains nullable roots without inventing absent owners.
+  The seed is not a collection edge.
+- D19/D20's existing single-collection collectors execute at the two permitted
+  collection depths. To-one chains may intervene before either edge.
+  Requests are merged by mapped owner type/attribute. When an owner type is
+  requested at both depths its compatible requests move to the later stage;
+  the distinct identity union includes seed and preceding collection rows.
+  A customer/product shared by many orders is not read once per order.
+- Each collector uses its **own** key width:
+  `B = min(fetch.batch-size, floor(512 / owner-key-width))`. Default 16,
+  range 1–256, size 1 disables grouping. An eligible query uses
+  `1 + ceil(Nroot / Broot) + sum(ceil(Nc / Bc))` SELECTs: root identities,
+  seed batches, then complete collection batches over distinct intermediate
+  owners. A database find omits the initial identity SELECT. Missing roots
+  cost only the seed SELECT; empty intermediate owner sets issue no SELECT.
+  Counts exclude ordinary completion of dirty reassigned relationships and
+  omitted unsupported lazy mappings.
+- Every stage finishes before the existing loader registers/resolves the whole
+  graph, fills wrappers, snapshots, publishes cache state or dispatches callbacks.
+  One managed identity and one callback per newly loaded identity, loaded dirty
+  entities/collections, in-place unloaded references/wrappers, callback mutation/
+  failure, subsequent flush and no find auto-flush keep the established behavior.
+  Both graph/hint replacement and mutation are planned per execution.
+- Ordered lists, duplicate bags, basic null elements, supported maps and entity
+  element to-one subgraphs use the existing assembler. Root pagination selects
+  distinct owner identities in SQL, then completes the selected page's seed and
+  collections. No partial collections or in-memory pagination is introduced.
+
+**Complete fallback/refusal boundaries:** a third collection edge; explicit type-
+revisiting cyclic graph paths in the new staged route; mapped eager closures
+outside the two-edge bound; polymorphic/inherited/non-hydratable owners or
+targets; unsupported map keys/embedded subgraphs; explicit joins, grouped/having/
+multi-root/multi-selection/set/locking queries and locking finds. Existing owner
+pagination guards still refuse unsupported ordering/projection shapes. Automatic
+eager to-one expansion remains path-cycle guarded. Earlier D14–D20 graph
+eligibility and explicit fetch joins are unchanged; no raw SQL, reflection,
+proxies, dependencies, packages, modules or executors were added.
+
+Mandatory SQL-count red precedes production edits. The deterministic gate covers
+root-to-one entity/basic collections, JPQL/Criteria/find FETCH/LOAD, shared/null/
+empty owners, independent collection depths, composite owner bounds, dirty/
+in-place/cache/callback/flush state, mutable graphs/hints and SQL-only pagination.
+Exact independently aggregated build/TCK evidence is recorded in `TCK.md`.
+D5/D9–D20 and BUG01–BUG03 above remain historical records.
+
 ## Remaining work
 
-Prioritized backlog after D20, 2026-10-16. Each item needs its own approved, bounded lot; until then
+Prioritized backlog after D21, 2026-10-16. Each item needs its own approved, bounded lot; until then
 the documented fallback (follow-up selects, eager loading, or an explicit refusal naming the
 milestone) stays in place.
 
 1. **Deeper collection-valued graph subgraphs and broader SQL fetch eligibility** —
-   more than two collection edges and collections under root to-one branches;
+   more than two collection edges and broader cyclic graph optimization;
    same-query owner pagination,
    entity/embeddable map keys; polymorphic, `JOINED` and `TABLE_PER_CLASS` targets
    (type resolution from the row), broader to-one `DISTINCT` and locking queries, `TREAT`/embedded paths, and entity
@@ -1528,6 +1591,7 @@ Recorded before implementation; each entry: date, decision, reason.
 
 | # | Date | Decision | Status |
 |---|---|---|---|
+| D21 | 2026-10-16 | Extend D19/D20 to graph-requested collections reached through finite root to-one chains. Seed intermediate owners through D14–D18 LEFT hydration, then group distinct compatible owner identities with D13 key/parameter bounds and the existing collection collectors; merge shared owner-type requests at their latest collection depth. Preserve the two-collection-edge limit, independent branches, lifecycle/dirty/in-place/cache/flush/no-auto-flush contracts and SQL root-only pagination. Explicit cyclic paths, third edges and unsupported eager/mapping/query closures retain complete fallback/refusal; earlier graph eligibility and explicit fetch joins remain unchanged. | Actioned |
 | D20 | 2026-10-16 | Extend D19 to at most two collection edges beginning at a root collection, including second owners reached through element to-ones. Merge nested owner-type/collection requests, deduplicate identities from stage-one rows and apply each owner's D13 key/parameter bound. Reuse D16–D18 collectors and staged lifecycle/cache/dirty/in-place completion; SQL root-only pagination and no find auto-flush remain intact. Third collection edges, root-to-one collections and unsupported eager/query/mapping closures retain complete fallback/refusal. Fix duplicate bag occurrence deletion (BUG-20261016-02) exposed by the nested dirty-state gate. | Actioned |
 | D19 | 2026-10-16 | Load multiple graph-requested root collections through independent D16–D18 collectors constrained to SQL-selected owner batches, using D13's configured/512-parameter key bound. Stage all identities and collection branches before relationships/snapshots/BUG01-scoped callbacks; preserve root/element to-one joins, identity, dirty/in-place/cache/flush semantics and SQL owner pagination. Nested collection subgraphs and unsupported query/mapping shapes retain complete fallbacks; explicit fetch and single-collection paths remain unchanged. | Actioned |
 | D18 | 2026-10-16 | Combine D14–D17 for one root collection and finite direct/nested root to-one branches, retaining element to-one subgraphs. Share graph aliases across branches and validate graph-only LEFT to-one hydration from owner or element; retain identity/dirty/lazy/lifecycle/cache contracts, SQL distinct-owner pagination with complete secondary loading and no find auto-flush. Multiple/nested collections and broader unsupported query/mapping shapes retain complete fallback/refusal; no new loading architecture. | Actioned |

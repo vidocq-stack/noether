@@ -4,7 +4,7 @@ Noether owns the implementations extracted from Mansart on 2026-10-11.
 
 | Building block | Status | Detailed roadmap |
 | --- | --- | --- |
-| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D20); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
+| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D21); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
 | Jakarta Validation 3.1 | V0–V2 provisional local test/TCK stopgap; not published | [Validation](noether-validation/ROADMAP.md) |
 
 The extraction changes repository, artifact, package and provider names, not
@@ -183,14 +183,33 @@ Third collection edges, collections reached only through root to-ones, unsupport
 eager closures and the established complex/polymorphic/query/map-key boundaries
 retain complete fallback or explicit refusal. D5/D9–D19 and BUG01 remain historical.
 
+Decision D21 (2026-10-16) extends the same bounded collectors to **collections
+reached through finite root to-one chains**, for example `Order.customer.addresses`
+and `Order.customer.favorite.tags`. A separate D14/D18 LEFT to-one seed read
+discovers intermediate owner identities; grouped D19/D20 collection reads use
+distinct identities, not one collection read per order. Independent root branches,
+element to-one subgraphs and at most **two collection edges per graph path** remain
+supported. A seed read is not another collection edge. Compatible owner requests
+shared between depths are merged at the later stage before callbacks.
+
+Eligible JPQL/Criteria and non-locking find, FETCH/LOAD, preserve dirty state,
+in-place wrappers/references, complete managed/cache fast hits and no find
+auto-flush. Null to-ones retain roots without inventing collection owners. Queries
+still page root identities only in SQL and complete every requested collection.
+Explicit cyclic paths, a third collection edge, unsupported eager closures,
+polymorphic/complex mappings and broader query shapes retain complete fallback
+or established refusal. Existing explicit fetch joins and D14–D20 eligibility
+remain unchanged. Exact count bounds and independently verified evidence are in
+the detailed roadmap and `noether-persistence/TCK.md`; D5/D9–D20 and BUG records
+above remain historical.
+
 ## Remaining Persistence work
 
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
-1. Deeper collection-valued graph subgraphs and collections under root to-one
-   branches remain separate bounded lots; D20 supports two collection edges
-   beginning at a root collection.
+1. More than two collection edges and broader cyclic graph optimization remain
+   separate bounded lots; D21 includes collections under finite root to-one branches.
    Broader SQL fetch eligibility: same-query owner pagination,
    entity/embeddable map keys; polymorphic/`JOINED`/`TABLE_PER_CLASS` targets,
    broader to-one `DISTINCT` and locking queries, embedded/treated graph paths and complex graph queries.

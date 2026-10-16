@@ -219,6 +219,30 @@ snapshots now reuse whole-owner rewriting; unique unindexed bags retain diff wri
 No new mapping representation, SQL renderer, dependency or entity access mechanism
 is introduced. D19 above remains the historical root-collection delivery.
 
+== Root to-one collection stages (D21, 2026-10-16)
+
+The split planner first prunes requested collection edges from finite root to-one
+paths. A collection-free seed reuses the D14–D18 LEFT joins and generated-access
+hydration. SQL-selected root IDs constrain each seed batch. The seed's intermediate
+owner identities then feed the same D19/D20 single-collection templates, at no
+more than two collection depths. Requests are grouped by mapped owner type and
+attribute; compatible owner-type requests occurring at both depths move to the
+later stage, after all preceding rows have contributed their distinct identities.
+
+Each template uses its owner's key width and existing 512-parameter bound.
+Absent to-ones contribute no owner ID. Seed rows and both collection stages
+are captured before the unchanged multi-collection loader completes identities,
+relationships, wrappers, snapshots, cache and lifecycle callbacks. Collection-free
+seed templates use the same dialect AST/key binder path as collection templates.
+No new SQL renderer, reflection, proxy, dependency, module or thread facility is
+introduced. Find keeps no-auto-flush and complete managed/cache JDBC-free hits.
+
+An explicit cyclic/type-revisiting path, third collection edge or unsupported
+eager/mapping closure rejects this new split plan before SQL execution and leaves
+complete fallback/refusal to the established loader. Automatic eager expansion
+is still cycle guarded. D14–D20's earlier eligible paths and explicit fetch joins
+are unchanged; the preceding sections remain their historical records.
+
 == Lazy read batches (D13, 2026-10-15)
 
 `EntityLoader` groups pending compatible persistence-context entries on first access.

@@ -240,6 +240,13 @@ final class Translator {
         Translator planner = new Translator(unit, null, null);
         MappedEntity root = planner.entityNamed(select.from().getFirst().entity());
         if (!planner.hydratable(root) || root.statements().keyColumns().size() > 512) return List.of();
+        for (var node : graph.attributes().entrySet()) {
+            if (root.model().attribute(node.getKey()).orElse(null) instanceof AssociationAttribute association
+                    && association.singleValued()
+                    && !planner.toOneSubgraph(unit.entity(association.targetEntity()).orElse(null), node.getValue())) {
+                return planner.rootToOneCollections(root, graph);
+            }
+        }
         Map<String, FetchPlan> collections = new java.util.LinkedHashMap<>();
         FetchPlan branches = new FetchPlan();
         for (var node : graph.attributes().entrySet()) {
@@ -287,6 +294,93 @@ final class Translator {
             second.addAll(compiled);
         }
         return second.isEmpty() ? List.of(result) : List.of(result, List.copyOf(second));
+    }
+
+    /**
+     * D21: seed finite root to-one paths, then reuse the collection collectors at each of the two
+     * collection depths. A collection requested at both depths is read once, after all its owners are known.
+     */
+    private List<List<Compiled>> rootToOneCollections(MappedEntity root, FetchPlan graph) {
+        List<Map<MappedEntity, FetchPlan>> owners = List.of(new java.util.LinkedHashMap<>(), new java.util.LinkedHashMap<>());
+        FetchPlan seed = new FetchPlan();
+        if (!stagedCollections(root, graph, seed, owners, 0, new java.util.HashSet<>())) return List.of();
+        if (owners.stream().allMatch(Map::isEmpty)) return List.of();
+        for (var later : owners.get(1).entrySet()) {
+            FetchPlan earlier = owners.get(0).get(later.getKey());
+            if (earlier == null) continue;
+            // Move compatible requests together; no shared owner/collection is read once per root branch.
+            later.getValue().merge(earlier);
+            owners.get(0).remove(later.getKey());
+        }
+        Map<MappedEntity, FetchPlan> scheduled = new java.util.LinkedHashMap<>();
+        owners.forEach(stage -> stage.forEach((type, plan) -> scheduled.computeIfAbsent(type, _ -> new FetchPlan()).merge(plan)));
+        Compiled initial = translate(graphSelect(graphRoot(root), unit, seed, true), unit, null, null, null, true, true);
+        if (initial.hydrations().isEmpty()) return List.of();
+        List<List<Compiled>> stages = new ArrayList<>();
+        stages.add(List.of(initial));
+        for (var stage : owners) {
+            List<Compiled> collectors = new ArrayList<>();
+            for (var owner : stage.entrySet()) {
+                Map<String, FetchPlan> collections = new java.util.LinkedHashMap<>();
+                FetchPlan branches = new FetchPlan();
+                for (var node : owner.getValue().attributes().entrySet()) {
+                    var attribute = owner.getKey().model().attribute(node.getKey()).orElse(null);
+                    if (attribute instanceof ElementCollectionAttribute
+                            || attribute instanceof AssociationAttribute a && !a.singleValued()) {
+                        collections.put(node.getKey(), node.getValue());
+                    } else branches.attribute(node.getKey()).merge(node.getValue());
+                }
+                List<Compiled> compiled = collectionCollectors(owner.getKey(), collections, branches, scheduled);
+                if (compiled.isEmpty()) return List.of();
+                collectors.addAll(compiled);
+            }
+            if (!collectors.isEmpty()) stages.add(List.copyOf(collectors));
+        }
+        return List.copyOf(stages);
+    }
+
+    /** Separates collection edges from their finite LEFT to-one paths without changing the caller's graph. */
+    private boolean stagedCollections(MappedEntity source, FetchPlan requested, FetchPlan pruned,
+            List<Map<MappedEntity, FetchPlan>> owners, int depth, java.util.Set<Class<?>> eagerPath) {
+        if (!hydratable(source) || source.statements().keyColumns().size() > 512) return false;
+        if (!requested.isEmpty() && eagerPath.contains(source.model().javaType())) return false;
+        FetchPlan expanded = new FetchPlan();
+        expanded.merge(requested);
+        boolean expand = eagerPath.add(source.model().javaType());
+        if (expand) {
+            for (var attribute : source.model().attributes()) {
+                if (attribute instanceof ElementCollectionAttribute e && e.fetch() == jakarta.persistence.FetchType.EAGER
+                        || attribute instanceof AssociationAttribute a && a.fetch() == jakarta.persistence.FetchType.EAGER) {
+                    expanded.attribute(attribute.name());
+                }
+            }
+        }
+        FetchPlan collections = new FetchPlan();
+        for (var node : expanded.attributes().entrySet()) {
+            var attribute = source.model().attribute(node.getKey()).orElse(null);
+            if (attribute instanceof ElementCollectionAttribute
+                    || attribute instanceof AssociationAttribute a && !a.singleValued()) {
+                if (depth == owners.size()) return false;
+                FetchPlan elements = collections.attribute(node.getKey());
+                if (attribute instanceof AssociationAttribute a) {
+                    if (!stagedCollections(unit.entity(a.targetEntity()).orElse(null), node.getValue(), elements,
+                            owners, depth + 1, eagerPath)) return false;
+                } else if (!node.getValue().isEmpty()) return false;
+            } else if (attribute instanceof AssociationAttribute a) {
+                if (!stagedCollections(unit.entity(a.targetEntity()).orElse(null), node.getValue(),
+                        pruned.attribute(node.getKey()), owners, depth, eagerPath)) return false;
+            } else {
+                if (attribute == null || !node.getValue().isEmpty()) return false;
+                pruned.attribute(node.getKey());
+            }
+        }
+        if (!collections.isEmpty()) {
+            FetchPlan merged = owners.get(depth).computeIfAbsent(source, _ -> new FetchPlan());
+            merged.merge(collections);
+            merged.merge(pruned);
+        }
+        if (expand) eagerPath.remove(source.model().javaType());
+        return true;
     }
 
     /** Cuts the second collection edge out of the first collector while retaining its joined to-one owners. */
@@ -368,7 +462,7 @@ final class Translator {
     static Compiled graphOwners(Compiled compiled, List<Object> ids) {
         Query query = (Query) compiled.sql();
         Compiled.EntityItem root = (Compiled.EntityItem) compiled.items().getFirst();
-        MappedEntity type = compiled.collection().owner();
+        MappedEntity type = root.type();
         Expression predicate = null;
         if (root.keyBinders().size() == 1) {
             List<Expression> keys = ids.stream().map(id -> (Expression) new Expression.Parameter(

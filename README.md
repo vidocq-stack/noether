@@ -341,6 +341,37 @@ The remaining priorities are deeper collection graphs, broader fetch/lazy/batch
 eligibility and missing mappings. Verification is in
 [`noether-persistence/TCK.md`](noether-persistence/TCK.md).
 
+Decision **D21 (2026-10-16)** supersedes D20's root-to-one-collection fallback:
+eligible JPQL/Criteria and non-locking `find` FETCH/LOAD graphs now group collections
+reached through finite root to-one chains, such as `Order.customer.addresses` or
+`Order.customer.favorite.tags`. An initial bounded LEFT to-one seed reuses D14–D18
+hydration, then D19/D20 collectors read distinct intermediate owners. Shared
+customers/products are not loaded once per order; compatible owner-type requests
+shared across collection depths are merged at the later stage.
+
+The bound remains **two collection edges per graph path**, not three. Independent
+root collections and element to-one subgraphs can coexist. Null to-ones retain
+their roots, empty collections stay complete, and the existing duplicate/null/
+list/map semantics remain unchanged. All graph branches precede callbacks;
+dirty managed state, lazy wrappers/references, snapshots, flush, L2 cache and
+JDBC-free complete find hits retain their existing contracts. Find never auto-flushes.
+
+For this new path, a query uses `1 + ceil(Nroot / Broot) + sum(ceil(Nc / Bc))`
+SELECTs: root identities, root seed batches, then each distinct-owner collection
+batch. A database find omits the root-identity query. Each
+`B = min(fetch.batch-size, floor(512 / owner-key-width))`; zero owner IDs cause no
+collection SELECT. Counts exclude ordinary completion of dirty reassigned
+relationships and unsupported lazy mappings. Root pagination remains SQL-only,
+followed by complete collection reads, never collection-row limits or in-memory paging.
+
+Explicit cyclic paths, third collection edges, unsupported mapped eager closures,
+polymorphic/non-hydratable targets, unsupported keys/embedded paths and the existing
+complex/joined/grouped/set/locking query boundaries keep complete ordinary loading
+or explicit refusal. Explicit fetch joins and earlier graph eligibility are unchanged.
+The remaining priorities are deeper/cyclic graphs, broader fetch/lazy/batch
+eligibility and missing mappings. D5/D9–D20 and BUG records above are historical;
+the exact D21 contract and verification are in the detailed roadmap and `TCK.md`.
+
 The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;
 the bundled Jakarta ORM schema retains its original upstream licence.

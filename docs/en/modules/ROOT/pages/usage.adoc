@@ -88,9 +88,27 @@ var order = em.find(Order.class, id, Map.of("jakarta.persistence.loadgraph", gra
 ----
 
 Finite element-to-one chains may lead to the second collection's owners, for example
-`lines.product.tags`. Third collection edges, collections under root to-one branches
-and unsupported polymorphic/complex targets retain complete ordinary loading.
+`lines.product.tags`. D21 also groups collections reached through finite root to-one
+chains, without adding a third collection edge:
+
+[source,java]
+----
+var customerGraph = em.createEntityGraph(Order.class);
+customerGraph.addSubgraph("customer").addSubgraph("addresses").addAttributeNodes("country");
+var orders = em.createQuery("select o from Order o order by o.id", Order.class)
+    .setHint("jakarta.persistence.loadgraph", customerGraph).setMaxResults(20).getResultList();
+var orderWithAddresses = em.find(Order.class, id,
+    Map.of("jakarta.persistence.fetchgraph", customerGraph));
+----
+
+Shared customers are grouped by distinct identity, not read once per order.
+Null customers retain their orders; empty address collections remain complete.
+Independent root collection branches and element to-one subgraphs may coexist.
+The owner seed and every required collection stage complete before callbacks.
+Third collection edges, explicit cyclic paths and unsupported polymorphic/complex
+targets retain complete ordinary loading or established explicit refusal.
 See xref:reference.adoc#_two_collection_graph_edges_d20_2026_10_16[].
+See xref:reference.adoc#_root_to_one_collection_graphs_d21_2026_10_16[].
 See xref:internals.adoc#_query_graph_sql_loading_d14_2026_10_15[].
 
 == Find entity graphs

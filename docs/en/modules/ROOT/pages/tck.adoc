@@ -15,6 +15,36 @@ The official artifact checksums and TCK-BUG-001 byte-exact derived-jar fixture
 patch are unchanged; original artifacts are never edited. `TCK_FIXTURES=official`
 selects the untouched Persistence fixture. See the runner README for setup.
 
+== Root to-one collection graph verification (D21, 2026-10-16)
+
+D21 groups collections reached through finite root to-one chains, retaining the
+two-collection-edge bound. Mandatory pre-production red: *7 tests / 6 failures /
+0 errors*, including *6 instead of 4*, *38 instead of 7* and *17 instead of 8*
+SELECTs (the final merged-owner plan needs only 7). The focused
+D14–D21/cache/BUG01 regression gate passes *189/189*.
+Twelve new tests assert actual graph contents and SQL scaling for JPQL/Criteria/
+find FETCH/LOAD, shared/null/empty owners, independent branches, dirty/in-place/
+cache/callback/flush behavior, mutable plans, SQL-only owner pagination and
+deeper/cyclic/polymorphic/complex fallback boundaries.
+
+The composite intermediate-owner test uses *363 roots / 181 distinct three-column
+owners*, seed batches *256 + 107* and collection batches *170 + 11*, with no
+statement exceeding *512 key parameters*. Ordered/null lists, supported maps and
+flush/reload are checked; size-one disabled grouping is covered separately.
+
+The clean reactor finished *16:01:52 CEST*: *998/998 tests*, *87 XML reports*
+(986 baseline plus twelve). The full locally patched Persistence 3.2.1 TCK
+finished *16:03:20 CEST*: *2135 tests / 2131 passed / 0 failures / 0 errors /
+4 unchanged official skips*, on runner-owned Docker PostgreSQL 17-alpine,
+Temurin 25.0.4 and Maven 3.9.16. Independent verification checks *259 XML reports*,
+*2135 unchanged identities/outcomes against D20*, *518 effective classpath
+properties*, *85 original input files*, *two runner tools* and the derived jar.
+All *1126 jar entries* match the unchanged two-resource TCK-BUG-001 provenance.
+No shared service restart; the runner removed its own database container.
+Exact commands, hashes and skip identities are in `noether-persistence/TCK.md`.
+Historical D5/D9–D20 and BUG records are preserved. This is *local patched
+evidence, not certification*.
+
 == Two collection graph edges verification (D20, 2026-10-16)
 
 D20 supports two collection edges beginning at a root collection, including nested
