@@ -1,3 +1,70 @@
+## Noether find graph SQL to-one verification — 2026-10-16
+
+Decision D15 extends D14's graph planner and D11's statement-column hydration to
+eligible non-locking database finds, without executing an EntityManager query or
+introducing auto-flush. Initial TDD ran **37 FetchJoinTest scenarios / 9 SQL-count
+failures / 0 errors** before production edits: direct FETCH and LOAD eager state
+2 instead of 1 SELECT, nested converted secondary-table state and in-place target
+references/cache misses/REFRESH 4 instead of 1, and mixed collection follow-up 4
+instead of 3. That gate then passed **37/37**. An additional unloaded-root-reference
+test failed **3 instead of 1 SELECT**, then passed after in-place graph hydration.
+The completed graph suite passes **40/40** (14 new find regressions).
+
+Coverage verifies actual values and SELECT totals for direct/nested FETCH/LOAD,
+null targets/missing roots, composite root key parts, converted secondary-table
+state, root/target unloaded references, identity/callbacks/snapshots and clean flush,
+repeated find, dirty managed root/target preservation without auto-flush, mutable/
+merged/invalid hints, L2 hit/miss/BYPASS/REFRESH, the typed 3.2 graph overload,
+pessimistic lock fallback and complete mixed collection/polymorphic fallbacks.
+Existing D14 JPQL/Criteria regressions remain green. LOAD includes eligible eager
+to-ones; FETCH may retain extra eager state. Plain/locking finds, unsupported D11
+types/paths and collections retain ordinary complete loading. Cache, timeout and
+refresh semantics are unchanged; this is not a collection SQL graph rewrite.
+
+On macOS aarch64, Temurin **25.0.4+7-LTS**, Maven **3.9.16**, from the Noether root:
+
+```bash
+export JAVA_HOME="$HOME/.sdkman/candidates/java/25.0.4-tem"
+export PATH="$JAVA_HOME/bin:$PATH"
+./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test \
+  -Dtest=LazyBatchTest,CollectionFetchJoinTest,FetchJoinTest,LazyCollectionTest,LazyToOneTest,SecondLevelCacheTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw -ntp clean install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+The focused gate passes **130/130**, zero failures/errors/skips. The clean reactor
+passes **911/911** (897 baseline + 14 find tests), independently counted from
+**85 Surefire XML reports**. The complete PostgreSQL **17-alpine** patched TCK run,
+finished **2026-10-16 08:42:48 CEST**, reports **2135 tests / 2131 passed /
+0 failures / 0 errors / 4 unchanged official skips**:
+
+- execution 1: 2134 tests, 2130 passed, 4 skipped;
+- execution 2: 1 test, 1 passed;
+- skips: `core.query.language.Client6#resultContainsFetchReference`,
+  `core.metamodelapi.identifiabletype.Client#getDeclaredSingularAttributes`,
+  `se.entityManagerFactory.Client2#createEntityManagerFactoryStringMapTest`,
+  `se.schemaGeneration.annotations.tableGenerator.Client#tableGeneratorTest`.
+
+Independent aggregation checks **259 XML reports**, **2135 unique execution/class/
+method identities**, no duplicates, no failures/errors, and both test classpath
+properties in every report (**518 checks**) containing exactly the derived fixture
+jar, never the official jar. The script's exit status alone is not evidence.
+All **49 original cache/installed fixture files** snapshotted before this run retain
+their SHA-256 checksums (the larger manifest additionally includes installed metadata):
+
+- official spec-tests jar:
+  `a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`;
+- derived TCK-BUG-001 jar:
+  `1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+
+Reports remain in `**/target/surefire-reports/TEST-*.xml` and
+`noether-jpa-tck/target/failsafe-reports/execution-{1,2}/TEST-*.xml`, with fixture
+provenance at `noether-jpa-tck/target/tck-fixtures/fixture-provenance.json`.
+This is a locally patched result, **not an untouched official result or certification**.
+All earlier D5/D9–D14 delivery evidence below is preserved.
+
 ## Noether query graph SQL to-one verification — 2026-10-15
 
 Decision D14 lowers eligible JPQL/Criteria graph to-ones to the existing D11 fetch-join

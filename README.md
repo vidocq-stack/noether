@@ -187,7 +187,23 @@ Hints and mutable graphs are reread on each execution. Identity, dirty managed s
 in-place lazy-reference initialization, callbacks, snapshots and cache safeguards are
 unchanged. Collection nodes still use complete follow-up loading; complex queries,
 embedded/treated nodes and unsupported polymorphic/inherited types retain existing
-fallbacks. Graph-aware `find` and nested collection SQL fetching are the next separate lots.
+fallbacks. Nested/multiple collection SQL fetching remains a separate lot.
+
+Graph-aware `find` now uses the same SQL to-one graph planner (D15, 2026-10-16).
+On an eligible cache miss, `find(EntityClass, id, hints)` and the 3.2
+`find(EntityGraph, id, options)` read direct/nested to-ones with the root, using LEFT
+joins and mapped key binders, including composite root identifiers. LOAD also includes
+eligible mapped eager to-ones; FETCH may still overfetch omitted eager state.
+Normal managed roots and shared-cache hits retain their existing no-reread fast paths,
+then initialize requested graph state. Unloaded root/target references hydrate in place,
+and dirty managed state is never overwritten. Unlike a query, find does not auto-flush.
+Hints/graphs are validated and reread per call; when both graph hints are present,
+find retains its existing merged plan (query FETCH precedence is unchanged).
+Plain find, locking finds, unsupported polymorphic/inherited mappings and unsupported
+graph paths retain their original loader. Collections still initialize completely
+through follow-up reads. Cache retrieve/store/REFRESH policy, lock/timeout hints,
+callbacks and snapshots keep the existing find contract; no new timeout semantics
+or SQL collection fetching are introduced.
 
 The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;

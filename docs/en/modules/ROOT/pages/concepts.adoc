@@ -52,5 +52,8 @@ entity selection. Graph nodes and nested to-one subgraphs contribute LEFT fetch 
 LOAD additionally includes mapped eager to-ones. FETCH may still overfetch eager state
 through the ordinary loader, so omitted eager attributes are not guaranteed unloaded.
 Collection graph nodes, unsupported types and complex query shapes keep complete
-follow-up loading; graph-aware `find` and nested collection SQL remain future work.
+follow-up loading. Graph-aware non-locking finds (D15, 2026-10-16) reuse this planner,
+key binders and staged hydration on eligible database reads, without query auto-flush
+or overwriting managed dirty state. Cache/managed hits retain their fast paths and
+graph completion. Nested/multiple collection SQL remains future work.
 See xref:reference.adoc[] for exact eligibility.

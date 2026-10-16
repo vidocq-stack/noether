@@ -739,6 +739,9 @@ final class EntityManagerImpl implements EntityManager {
                     }
                 }
             }
+            boolean graph = properties != null && (properties.containsKey("jakarta.persistence.fetchgraph")
+                || properties.containsKey("jakarta.persistence.loadgraph"));
+            boolean loadGraph = properties != null && properties.containsKey("jakarta.persistence.loadgraph");
             boolean locking = lockMode != null && lockMode != LockModeType.NONE;
             if (locking) {
                 requireTransaction("find with a lock mode");
@@ -751,6 +754,10 @@ final class EntityManagerImpl implements EntityManager {
                 Object instance = known.get().instance();
                 if (known.get().status() != ManagedEntity.Status.MANAGED || !entityClass.isInstance(instance)) {
                     return null;
+                }
+                if (!locking && graph && io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(instance)) {
+                    onConnection(connection -> JpqlQuery.findGraph(factory.mapping(), type, id, plan, loadGraph,
+                        factory.flushEngine(connection).dialect(), connection, factory.loader(connection), context));
                 }
                 io.vidocq.noether.jpa.core.spi.LazyReference.initialize(instance);
                 if (locking) {
@@ -777,7 +784,11 @@ final class EntityManagerImpl implements EntityManager {
                 captureCacheGeneration(cacheGeneration);
             }
             Object result = onConnection(connection -> {
-                Object found = factory.loader(connection).load(type, id, connection, context, lockMode, timeout);
+                var loader = factory.loader(connection);
+                Object found = !locking && graph && JpqlQuery.findGraph(factory.mapping(), type, id, plan, loadGraph,
+                    factory.flushEngine(connection).dialect(), connection, loader, context)
+                    ? context.find(lookupKey).map(ManagedEntity::instance).orElse(null)
+                    : loader.load(type, id, connection, context, lockMode, timeout);
                 if (found != null && locking) {
                     // the row is locked by the select already for a pessimistic mode: record the mode, check nothing
                     ManagedEntity entry = context.entry(found).orElseThrow();

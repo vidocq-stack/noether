@@ -65,7 +65,7 @@ class FetchJoinTest {
             .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
             .managedClass(Order.class).managedClass(Customer.class).managedClass(Address.class).managedClass(Part.class)
             .managedClass(PartKey.class).managedClass(Vehicle.class).managedClass(Car.class).managedClass(Line.class).managedClass(Shipment.class)
-            .managedClass(CityConverter.class).sharedCacheMode(cache)
+            .managedClass(CityConverter.class).managedClass(CompositeOrder.class).sharedCacheMode(cache)
             .property("jakarta.persistence.nonJtaDataSource", source)
             .property("jakarta.persistence.schema-generation.database.action", "create");
         if (mapping != null) configuration.mappingFile(mapping);
@@ -76,6 +76,10 @@ class FetchJoinTest {
         em.persist(address);
         Customer alice = new Customer(10, "alice", address);
         em.persist(alice);
+        CompositeOrder composite = new CompositeOrder();
+        composite.key = new PartKey("C", 2);
+        composite.customer = alice;
+        em.persist(composite);
         Customer bob = new Customer(11, "bob", null);
         em.persist(bob);
         Part part = new Part(new PartKey("A", 1), "bolt");
@@ -116,6 +120,257 @@ class FetchJoinTest {
 
     private boolean loaded(Object entity, String attribute) {
         return factory.getPersistenceUnitUtil().isLoaded(entity, attribute);
+    }
+
+    @Test
+    void findFetchGraphLoadsDirectToOneInOneSelect() {
+        // §3.8.1: find applies the graph without acquiring query auto-flush semantics.
+        open();
+        var graph = em.createEntityGraph(Order.class);
+        graph.addAttributeNodes("customer");
+        Order order = em.find(Order.class, 1L, java.util.Map.of("jakarta.persistence.fetchgraph", graph));
+        assertThat(order.getCustomer().getName()).isEqualTo("alice");
+        assertThat(loaded(order.getCustomer(), "address")).isFalse();
+        assertThat(selects()).isEqualTo(1);
+        assertThat(Customer.POST_LOADS.get()).isEqualTo(1);
+        assertThat(em.find(Order.class, 1L, java.util.Map.of("jakarta.persistence.fetchgraph", graph))).isSameAs(order);
+        assertThat(selects()).isEqualTo(1);
+    }
+
+    @Test
+    void findLoadGraphLoadsNestedConvertedSecondaryStateInOneSelect() {
+        open();
+        var graph = em.createEntityGraph(Order.class);
+        graph.addSubgraph("customer").addAttributeNodes("address");
+        Order order = em.find(Order.class, 1L, java.util.Map.of("jakarta.persistence.loadgraph", graph));
+        assertThat(order.getCustomer().getAddress().getCity()).isEqualTo("paris");
+        assertThat(order.getCustomer().getAddress().getZip()).isEqualTo("75001");
+        assertThat(selects()).isEqualTo(1);
+        em.getTransaction().begin();
+        em.getTransaction().commit();
+        assertThat(updates()).isZero();
+    }
+
+    @Test
+    void findGraphPreservesNullTargetsAndMissingRoots() {
+        open();
+        var graph = em.createEntityGraph(Order.class);
+        graph.addSubgraph("customer").addAttributeNodes("address");
+        assertThat(em.find(graph, 3L).getCustomer()).isNull();
+        assertThat(selects()).isEqualTo(1);
+        sql.clear();
+        assertThat(em.find(graph, 4L).getCustomer().getAddress()).isNull();
+        assertThat(selects()).isEqualTo(1);
+        sql.clear();
+        assertThat(em.find(graph, 999L)).isNull();
+        assertThat(selects()).isEqualTo(1);
+    }
+
+    @Test
+    void findLoadGraphIncludesOmittedEagerToOne() {
+        open();
+        var graph = em.createEntityGraph(Line.class);
+        assertThat(em.find(Line.class, 1000L, java.util.Map.of("jakarta.persistence.loadgraph", graph))
+            .order.getLabel()).isEqualTo("o1");
+        assertThat(selects()).isEqualTo(1);
+        em.clear();
+        sql.clear();
+        assertThat(em.find(Line.class, 1000L, java.util.Map.of("jakarta.persistence.fetchgraph", graph))
+            .order.getLabel()).isEqualTo("o1");
+        assertThat(selects()).isGreaterThanOrEqualTo(1);
+    }
+
+    @Test
+    void findGraphHydratesExistingTargetReferenceInPlace() {
+        open();
+        Customer reference = em.find(Order.class, 2L).getCustomer();
+        var graph = em.createEntityGraph(Order.class);
+        graph.addSubgraph("customer").addAttributeNodes("address");
+        sql.clear();
+        Order order = em.find(graph, 1L);
+        assertThat(order.getCustomer()).isSameAs(reference);
+        assertThat(reference.getName()).isEqualTo("alice");
+        assertThat(reference.getAddress().getCity()).isEqualTo("paris");
+        assertThat(selects()).isEqualTo(1);
+        assertThat(Customer.POST_LOADS.get()).isEqualTo(1);
+    }
+
+    @Test
+    void findGraphInitializesAnUnloadedRootReferenceInPlace() {
+        open();
+        Customer reference = em.find(Order.class, 2L).getCustomer();
+        var graph = em.createEntityGraph(Customer.class);
+        graph.addAttributeNodes("address");
+        sql.clear();
+        assertThat(em.find(graph, 10L)).isSameAs(reference);
+        assertThat(reference.getAddress().getCity()).isEqualTo("paris");
+        assertThat(reference.getName()).isEqualTo("alice");
+        assertThat(selects()).isEqualTo(1);
+        assertThat(Customer.POST_LOADS.get()).isEqualTo(1);
+    }
+
+    @Test
+    void findGraphBindsEveryCompositeRootKeyPartThroughMappedBinders() {
+        open();
+        var graph = em.createEntityGraph(CompositeOrder.class);
+        graph.addSubgraph("customer").addAttributeNodes("address");
+        CompositeOrder order = em.find(graph, new PartKey("C", 2));
+        assertThat(order.key).isEqualTo(new PartKey("C", 2));
+        assertThat(order.customer.getAddress().getZip()).isEqualTo("75001");
+        assertThat(selects()).isEqualTo(1);
+        em.clear();
+        sql.clear();
+        assertThat(em.find(graph, new PartKey("C", 3))).isNull();
+        assertThat(selects()).isEqualTo(1);
+    }
+
+    @Test
+    void findGraphOnCachedRootStillInitializesRequestedUncachedReference() {
+        open(null, SharedCacheMode.ALL);
+        var graph = em.createEntityGraph(Order.class);
+        graph.addSubgraph("customer").addAttributeNodes("address");
+        em.find(Order.class, 2L); // keeps an unloaded customer reference in this context
+        sql.clear();
+        Order order = em.find(graph, 1L);
+        assertThat(order.getCustomer().getAddress().getCity()).isEqualTo("paris");
+        assertThat(em.find(Customer.class, 10L)).isSameAs(order.getCustomer());
+        assertThat(loaded(order, "customer")).isTrue();
+        em.clear();
+        sql.clear();
+        assertThat(em.find(graph, 1L).getCustomer().getAddress().getZip()).isEqualTo("75001");
+        assertThat(selects()).isZero();
+    }
+
+    @Test
+    void findGraphKeepsManagedDirtyRootAndTargetWithoutAutoFlush() {
+        open();
+        Customer customer = em.find(Customer.class, 10L);
+        Order managed = em.find(Order.class, 1L);
+        em.getTransaction().begin();
+        customer.setName("dirty");
+        managed.setLabel("dirty-root");
+        var graph = em.createEntityGraph(Order.class);
+        graph.addAttributeNodes("customer");
+        sql.clear();
+        assertThat(em.find(graph, 2L).getCustomer()).isSameAs(customer);
+        assertThat(selects()).isEqualTo(1);
+        assertThat(customer.getName()).isEqualTo("dirty");
+        assertThat(em.find(graph, 1L)).isSameAs(managed);
+        assertThat(managed.getLabel()).isEqualTo("dirty-root");
+        assertThat(selects()).isEqualTo(1);
+        assertThat(updates()).isZero();
+        em.getTransaction().commit();
+        assertThat(updates()).isEqualTo(2);
+        em.clear();
+        assertThat(em.find(Order.class, 1L).getLabel()).isEqualTo("dirty-root");
+        assertThat(em.find(Customer.class, 10L).getName()).isEqualTo("dirty");
+    }
+
+    @Test
+    void findGraphMutationAndBothValidatedHintsAreAppliedPerInvocation() {
+        open();
+        var graph = em.createEntityGraph(Order.class);
+        graph.addAttributeNodes("customer");
+        assertThat(em.find(graph, 1L).getCustomer().getName()).isEqualTo("alice");
+        assertThat(selects()).isEqualTo(1);
+        em.clear();
+        sql.clear();
+        graph.addSubgraph("customer").addAttributeNodes("address");
+        assertThat(em.find(graph, 1L).getCustomer().getAddress().getZip()).isEqualTo("75001");
+        assertThat(selects()).isEqualTo(1);
+        em.clear();
+        sql.clear();
+        assertThat(em.find(Order.class, 1L, java.util.Map.of(
+            "jakarta.persistence.fetchgraph", em.createEntityGraph(Order.class),
+            "jakarta.persistence.loadgraph", graph)).getCustomer().getAddress().getCity()).isEqualTo("paris");
+        assertThat(selects()).isEqualTo(1);
+        assertThatIllegalArgumentException().isThrownBy(() ->
+            em.find(Order.class, 1L, java.util.Map.of("jakarta.persistence.fetchgraph", "bad")));
+        assertThatIllegalArgumentException().isThrownBy(() ->
+            em.find(Order.class, 1L, java.util.Map.of("jakarta.persistence.loadgraph", em.createEntityGraph(Customer.class))));
+    }
+
+    @Test
+    void findGraphCacheMissPublishesCompleteGraphAndCacheHitNeedsNoSelect() {
+        open(null, SharedCacheMode.ALL);
+        factory.getCache().evictAll();
+        var graph = em.createEntityGraph(Order.class);
+        graph.addSubgraph("customer").addAttributeNodes("address");
+        assertThat(em.find(graph, 1L).getCustomer().getAddress().getCity()).isEqualTo("paris");
+        assertThat(selects()).isEqualTo(1);
+        em.clear();
+        sql.clear();
+        assertThat(em.find(graph, 1L).getCustomer().getAddress().getZip()).isEqualTo("75001");
+        assertThat(selects()).isZero();
+        em.clear();
+        sql.clear();
+        assertThat(em.find(Order.class, 1L, java.util.Map.of("jakarta.persistence.fetchgraph", graph,
+            "jakarta.persistence.cache.retrieveMode", CacheRetrieveMode.BYPASS,
+            "jakarta.persistence.cache.storeMode", CacheStoreMode.BYPASS))
+            .getCustomer().getAddress().getCity()).isEqualTo("paris");
+        assertThat(selects()).isEqualTo(1);
+    }
+
+    @Test
+    void findGraphRefreshHintBypassesSharedCacheButNotManagedDirtyState() {
+        open(null, SharedCacheMode.ALL);
+        var graph = em.createEntityGraph(Order.class);
+        graph.addSubgraph("customer").addAttributeNodes("address");
+        em.find(graph, 1L);
+        em.clear();
+        sql.clear();
+        Order order = em.find(Order.class, 1L, java.util.Map.of("jakarta.persistence.fetchgraph", graph,
+            "jakarta.persistence.cache.storeMode", CacheStoreMode.REFRESH));
+        assertThat(order.getCustomer().getAddress().getCity()).isEqualTo("paris");
+        assertThat(selects()).isEqualTo(1);
+        order.setLabel("local");
+        sql.clear();
+        assertThat(em.find(Order.class, 1L, java.util.Map.of("jakarta.persistence.fetchgraph", graph,
+            "jakarta.persistence.cache.storeMode", CacheStoreMode.REFRESH))).isSameAs(order);
+        assertThat(order.getLabel()).isEqualTo("local");
+        assertThat(selects()).isZero();
+    }
+
+    @Test
+    void findGraphLockAndPolymorphicFallbacksStillLoadCompleteState() {
+        open();
+        var graph = em.createEntityGraph(Order.class);
+        graph.addAttributeNodes("customer");
+        assertThatThrownBy(() -> em.find(graph, 1L, LockModeType.PESSIMISTIC_WRITE))
+            .isInstanceOf(TransactionRequiredException.class);
+        em.getTransaction().begin();
+        Order order = em.find(graph, 1L, LockModeType.PESSIMISTIC_WRITE, Timeout.seconds(2));
+        assertThat(order.getCustomer().getName()).isEqualTo("alice");
+        assertThat(em.getLockMode(order)).isEqualTo(LockModeType.PESSIMISTIC_WRITE);
+        assertThat(selects()).isGreaterThan(1);
+        em.getTransaction().commit();
+        em.clear();
+        sql.clear();
+        var shipmentGraph = em.createEntityGraph(Shipment.class);
+        shipmentGraph.addAttributeNodes("vehicle", "part");
+        Shipment shipment = em.find(shipmentGraph, 1L);
+        assertThat(((Car) shipment.getVehicle()).brand).isEqualTo("fiat");
+        assertThat(shipment.getPart().name).isEqualTo("bolt");
+        assertThat(selects()).isGreaterThan(1);
+    }
+
+    @Test
+    void findMixedGraphKeepsCompleteCollectionFollowUpAndPlainFindUnchanged() {
+        open();
+        Order plain = em.find(Order.class, 1L);
+        assertThat(plain.getLabel()).isEqualTo("o1");
+        assertThat(loaded(plain, "customer")).isFalse();
+        assertThat(loaded(plain, "lines")).isFalse();
+        assertThat(selects()).isEqualTo(1);
+        em.clear();
+        sql.clear();
+        var graph = em.createEntityGraph(Order.class);
+        graph.addAttributeNodes("customer", "lines");
+        Order order = em.find(graph, 1L);
+        assertThat(order.getCustomer().getName()).isEqualTo("alice");
+        assertThat(order.getLines()).extracting(line -> line.id).containsExactly(1000L);
+        assertThat(order.getLines().getFirst().order).isSameAs(order);
+        assertThat(selects()).isEqualTo(3);
     }
 
     @Test
@@ -600,6 +855,14 @@ class FetchJoinTest {
         @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "vehicle_id")
         public Vehicle getVehicle() { return vehicle; }
         public void setVehicle(Vehicle vehicle) { this.vehicle = vehicle; }
+    }
+
+    @Entity(name = "FjCompositeOrder")
+    @Table(name = "FJ_COMPOSITE_ORDER")
+    public static class CompositeOrder {
+        @EmbeddedId PartKey key;
+        @ManyToOne(fetch = FetchType.LAZY) Customer customer;
+        public CompositeOrder() {}
     }
 
     @Entity(name = "FjCustomer")

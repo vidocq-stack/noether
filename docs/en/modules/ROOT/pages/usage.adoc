@@ -40,8 +40,29 @@ Graph/hint changes are honored on query reuse.
 
 This is bounded to one concrete-root entity selection without distinct/grouping/locking,
 set operations, explicit collection fetches or conditional/treated joins. Collections and
-unsupported graph nodes retain complete follow-up reads; `find` is unchanged.
+unsupported graph nodes retain complete follow-up reads.
 See xref:internals.adoc#_query_graph_sql_loading_d14_2026_10_15[].
+
+== Find entity graphs
+
+[source,java]
+----
+var graph = em.createEntityGraph(Order.class);
+graph.addSubgraph("customer").addAttributeNodes("address");
+var order = em.find(Order.class, id, Map.of("jakarta.persistence.loadgraph", graph));
+// The 3.2 typed overload applies the graph as a fetch graph:
+var sameOrder = em.find(graph, id);
+----
+
+Eligible non-locking cache misses read direct/nested to-ones with the root through
+LEFT joins (D15, 2026-10-16), including mapped composite root keys and converted
+secondary-table state. LOAD adds mapped eager to-ones; FETCH may overfetch omitted
+eager state. Managed/cache hits are not unnecessarily reread; graph state is completed
+without overwriting dirty entities. Unloaded references hydrate in place.
+Find never auto-flushes like a query. Mutable graphs are reread per call. If both hints
+are supplied, find retains its existing merged plan, unlike query FETCH precedence.
+Plain/locking finds, unsupported types/paths and collections retain complete ordinary
+loading. Existing cache/lock/timeout/refresh contracts are unchanged.
 
 == Bounded lazy reads
 

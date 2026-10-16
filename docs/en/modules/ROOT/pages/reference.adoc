@@ -42,8 +42,24 @@ SQL scope: one concrete-root entity selection, no distinct/grouping/locking/set 
 explicit collection fetch or conditional/treated joins. Unsupported target types,
 embedded/treated graph nodes and collection nodes use complete existing follow-up
 loading. Mixed graphs may combine same-row to-ones with complete collection reads.
-`find` is unchanged. No eager requirement is suppressed; D10 lazy eligibility and D13
+No eager requirement is suppressed; D10 lazy eligibility and D13
 batch bounds remain unchanged. See xref:internals.adoc[] for the shared hydration path.
+
+== Find entity graph hints (D15, 2026-10-16)
+
+The same standard hints drive eligible direct/nested to-one SQL for non-locking
+database finds. Composite root keys, mapped converters and secondary-table columns
+use existing binders/hydration. The 3.2 `find(EntityGraph, id, options)` overload is
+equivalent to FETCH. Unlike queries, find retains its existing merged plan when both
+validated graph hints are supplied. Mutable graph nodes are reread per invocation.
+LOAD includes eligible eager to-ones; FETCH may overfetch omitted eager state.
+
+Managed-instance and L2 cache hits retain their fast paths and graph initialization;
+unloaded references hydrate in place, dirty state is not overwritten and find never
+auto-flushes. Existing retrieve/store/BYPASS/REFRESH, lock/timeout and refresh semantics
+are unchanged. Plain/locking finds, unsupported polymorphic/inherited types and
+unsupported graph paths retain ordinary loading. Collection graph nodes still use
+complete follow-up loading, not SQL collection graph joins.
 
 == Lazy read batching
 

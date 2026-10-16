@@ -64,6 +64,39 @@ import java.util.stream.Stream;
  */
 public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
 
+    /**
+     * Executes only an eligible graph-aware primary-key read. Returns false without SQL for ordinary-find
+     * fallbacks. The caller retains find's cache, locks, graph completion and no-auto-flush semantics.
+     */
+    public static boolean findGraph(io.vidocq.noether.jpa.core.mapping.MappedUnit unit, MappedEntity type, Object id,
+            FetchPlan graph, boolean load, Dialect dialect, Connection connection,
+            io.vidocq.noether.jpa.core.flush.EntityLoader loader,
+            io.vidocq.noether.jpa.core.context.PersistenceContext context) {
+        Compiled compiled = Translator.graphFind(unit, type, id, graph, load);
+        if (compiled == null) return false;
+        Dialect.Rendered rendered = dialect.renderQuery(compiled.sql());
+        List<io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedEntity> entities = new ArrayList<>();
+        try (PreparedStatement statement = connection.prepareStatement(rendered.sql())) {
+            for (int i = 0; i < rendered.parameters().size(); i++) {
+                Compiled.Slot slot = (Compiled.Slot) rendered.parameters().get(i).slot();
+                slot.binder().bind(dialect, statement, i + 1, slot.constant());
+            }
+            try (ResultSet results = statement.executeQuery()) {
+                while (results.next()) {
+                    int[] column = {compiled.items().getFirst().width() + 1};
+                    for (Fetched fetched : fetched(compiled.hydrations(), results, column)) {
+                        if (fetched != null) entities.add(new io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedEntity(
+                            fetched.type(), fetched.id(), fetched.values(), fetched.nulls()));
+                    }
+                }
+            }
+        } catch (SQLException failure) {
+            throw new PersistenceException("The graph find failed: " + failure.getMessage(), failure);
+        }
+        loader.loadCollection(entities, null, -1, List.of(), connection, context);
+        return true;
+    }
+
     /** A parameter of the query: {@code :name}, or {@code ?position}, and the Java type it is compared with if known. */
     private record QueryParameter<T>(String name, Integer position, Class<T> type) implements Parameter<T> {
         @Override

@@ -175,6 +175,31 @@ final class Translator {
             select.where(), select.groupBy(), select.having(), select.orderBy());
     }
 
+    /**
+     * Reuses graph selection/hydration for a primary-key lookup, not a query execution. The key expressions and
+     * binders are the translated root's own (including composite keys); existing discriminator restrictions remain.
+     * No hydration means ordinary find must handle this shape.
+     */
+    static Compiled graphFind(MappedUnit unit, MappedEntity type, Object id, FetchPlan graph, boolean load) {
+        Ast.Select select = new Ast.Select(false, List.of(new Ast.Item(new Ast.Path(List.of("this")), null)),
+            List.of(new Ast.Range(type.model().entityName(), null, "this", List.of())), null, List.of(), null, List.of());
+        Ast.Statement execution = graphSelect(select, unit, graph, load);
+        if (execution == select) return null;
+        Compiled compiled = translate(execution, unit, null, null, null, true);
+        if (compiled.hydrations().isEmpty() || !(compiled.sql() instanceof Query query)) return null;
+        Compiled.EntityItem root = (Compiled.EntityItem) compiled.items().getFirst();
+        Object[] keys = type.statements().keyValues(id);
+        Expression where = query.where();
+        for (int i = 0; i < keys.length; i++) {
+            Expression equal = new Binary(query.select().get(i), Operator.EQ,
+                new Expression.Parameter(Compiled.Slot.constant(keys[i], root.keyBinders().get(i), null)));
+            where = where == null ? equal : new Binary(where, Operator.AND, equal);
+        }
+        return new Compiled(new Query(false, query.select(), query.from(), where, query.groupBy(),
+            query.having(), query.orderBy(), null, null), compiled.items(), compiled.resultType(),
+            compiled.slots(), compiled.mutations(), compiled.hydrations());
+    }
+
     private void graphJoins(MappedEntity source, String variable, FetchPlan requested, boolean load,
             java.util.Set<Class<?>> eagerPath, List<Ast.Join> joins, String occupied, int[] next) {
         FetchPlan plan = new FetchPlan();

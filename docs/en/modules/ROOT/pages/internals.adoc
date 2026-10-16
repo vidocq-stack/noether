@@ -84,7 +84,26 @@ embedded/treated nodes and all collection nodes retain complete follow-up loadin
 FETCH contributes explicit nodes; LOAD additionally expands mapped eager to-ones,
 guarded against eager type cycles. The ordinary loader may overfetch FETCH's omitted
 eager state, as permitted by the specification: no eager requirement is suppressed.
-Graph-aware `find` and nested collection SQL fetching are separate future lots.
+Nested/multiple collection SQL fetching remains a separate future lot.
+
+== Find graph SQL loading (D15, 2026-10-16)
+
+`EntityManagerImpl.find` keeps managed-instance and shared-cache checks before SQL.
+Eligible non-locking database reads use `Translator.graphFind`, which shares D14's
+`graphSelect` planner and adds predicates using the translated root key expressions
+and existing key binders, including normalized composite identifiers. Discriminator
+restrictions are preserved. `JpqlQuery.findGraph` shares the fetched-column reader but
+does not execute an EntityManager query or invoke query auto-flush. The existing staged
+loader registers identities before relationships, snapshots and callbacks; unloaded
+root/target references hydrate in place and known dirty state is preserved.
+
+The 3.2 typed graph overload uses the same route. Graphs are validated and reread per
+call; find retains its existing merged plan when both hints are supplied. LOAD eager
+expansion and FETCH overfetch rules are unchanged. Initialized managed roots and L2
+hits retain normal graph completion without an unnecessary root query. Cache policy,
+generation fences, lock/timeout/refresh behavior and connection ownership stay in find.
+Plain/locked finds, unsupported D11 root/target types and graph paths keep ordinary
+loading; collections still initialize fully through follow-up statements.
 
 == Lazy read batches (D13, 2026-10-15)
 

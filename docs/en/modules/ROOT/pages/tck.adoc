@@ -15,6 +15,35 @@ The official artifact checksums and TCK-BUG-001 byte-exact derived-jar fixture
 patch are unchanged; original artifacts are never edited. `TCK_FIXTURES=official`
 selects the untouched Persistence fixture. See the runner README for setup.
 
+== Find entity graph SQL verification (2026-10-16)
+
+Decision D15 reuses D14 graph planning and existing statement-column/staged hydration
+for eligible non-locking finds. Before production changes, the 37-test graph suite
+had *9 SQL-count failures, 0 errors*, then passed 37/37. An additional unloaded-root
+reference regression failed 3 versus 1 SELECT before its implementation. The completed
+`FetchJoinTest` passes *40/40*, adding 14 find scenarios. Actual values and SELECT totals
+cover direct/nested FETCH/LOAD, null/missing roots, composite key parts, converted
+secondary-table state, in-place root/target references, repeated/dirty managed state
+without auto-flush, callbacks/snapshots/flush, cache hit/miss/BYPASS/REFRESH, mutable/
+merged/invalid hints, typed graph options and locking/collection/polymorphic fallbacks.
+Existing JPQL/Criteria graph tests remain green. Exact support/fallbacks are documented
+in xref:reference.adoc[] and `noether-persistence/ROADMAP.md` (D15).
+
+The focused graph/cache/lazy/collection gate passes *130/130*; the full
+`./mvnw -ntp clean install` passes *911/911* (85 XML reports), zero failures/errors/skips.
+The full patched Persistence 3.2.1 TCK on PostgreSQL *17-alpine*, Temurin *25.0.4+7-LTS*
+and Maven *3.9.16*, finished *2026-10-16 08:42:48 CEST*, reports *2135 tests /
+2131 passed / 0 failures / 0 errors / 4 unchanged official skips*. Independent
+aggregation checks all *259 reports*, *2135 unique execution/class/method identities*,
+no duplicates, both test classpaths in every report (518 checks), and unchanged SHA-256
+hashes for *49 original cache/installed fixture files*, including installed metadata.
+The script exit status alone is not used as proof. Official/derived jar checksums
+are unchanged from the D14 evidence below.
+
+Exact commands, the four skip identities and fixture provenance are recorded in
+`noether-persistence/TCK.md`. This remains a locally patched result, not an untouched
+official result or certification. Earlier D5/D9–D14 evidence remains historical.
+
 == Query entity graph SQL verification (2026-10-15)
 
 Decision D14 reuses D11 for direct/nested query graph to-ones. Six SQL-count

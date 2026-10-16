@@ -131,7 +131,12 @@ fetch-join hydration (D14). LOAD includes mapped eager to-ones; FETCH contribute
 explicit nodes to SQL but may legally overfetch other eager state through the loader.
 These hints do not guarantee lazy exclusion of omitted eager attributes. Collection
 graph nodes, unsupported mappings and complex query shapes keep complete follow-up
-loading, and `find` is unchanged. See xref:reference.adoc[] for exact boundaries.
+loading. Graph-aware non-locking finds now reuse that planner on eligible database reads
+(D15, 2026-10-16), including composite root keys. Managed/cache hits retain graph
+completion without unnecessary root reads; unloaded references hydrate in place and
+dirty state is preserved. Find does not acquire query auto-flush. Plain/locking finds,
+unsupported paths/types and collections retain complete ordinary loading.
+See xref:reference.adoc[] for exact boundaries and retained cache/hint contracts.
 
 [IMPORTANT]
 ====
