@@ -1199,6 +1199,7 @@ final class Translator {
     private boolean hydratable(MappedEntity type) {
         if (type == null || !type.statements().supported()) return false;
         if (type.statements().references().stream().anyMatch(EntityStatements.Reference::businessKey)) return false;
+        if (type.statements().elementCollections().stream().anyMatch(ElementCollectionMapping::hasReferences)) return false;
         var inheritance = unit.inheritance(type.model().javaType());
         return !inheritance.joined() && !inheritance.tablePerClass() && !inheritance.abstractEntity(type.model())
             && inheritance.hierarchy().stream().noneMatch(e -> e.javaType() != type.model().javaType() && type.model().javaType().isAssignableFrom(e.javaType()));
@@ -1574,7 +1575,9 @@ final class Translator {
         String alias = alias();
         joins.get(from.root()).add(new Query.Join(kind, mapping.table(), alias,
             equal(names(alias, mapping.ownerColumns()), key(from.alias(), from.type()))));
-        return new Variable(null, alias, from.root(), this, mapping, null, mapping.index(), alias);
+        Expression position = mapping.index() != null && mapping.index().positional()
+            ? new Expression.Column(alias, mapping.index().columns().getFirst()) : null;
+        return new Variable(null, alias, from.root(), this, mapping, position, mapping.index(), alias);
     }
 
     private Expression foreignKeyPredicate(String targetAlias, MappedEntity target, int[] indexes, List<Expression> ownerKey) {
@@ -2063,6 +2066,9 @@ final class Translator {
     }
 
     private Embedded embeddedElement(Variable variable, ElementCollectionMapping mapping, EmbeddableModel model, int[] prefix) {
+        if (mapping.hasReferences()) {
+            throw new IllegalArgumentException("Selecting an embeddable collection element containing relationships is not supported");
+        }
         List<Scalar> fields = new ArrayList<>();
         List<int[]> paths = new ArrayList<>();
         flatten(model, new int[0], (basic, path) -> {

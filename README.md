@@ -467,6 +467,39 @@ the dependent INSERT. The already-covered P5 flat composite-parent examples rema
 supported; this lot does **not** claim arbitrary composite/nested/partial mappings.
 See D23 in the detailed roadmap and `noether-persistence/TCK.md` for evidence.
 
+### To-one relationships in element collections (D24, 2026-10-16)
+
+Embeddable `@ElementCollection` values may contain owning `@ManyToOne` and
+`@OneToOne` relationships to non-polymorphic, single-table, simple-ID entities.
+Annotations and metadata-complete ORM XML share the existing mapping/access
+pipeline; collection-member association overrides include `value.target` on maps.
+Nested embeddables and records use generated accesses too.
+
+The **collection-table row owns the target FK**, not the target or the owner's
+entity row. Its columns use the target ID's JDBC type and a database FK; owning
+one-to-one columns are unique. List positions and stored map keys remain separate
+columns. Elements have no entity identity: changed collections are deleted by
+their owner's complete key and rewritten with every occurrence, position and key.
+No update/delete matches an embeddable by `equals`/`hashCode`; duplicate bag/list
+values and null rows are retained. The new verified map contract uses stored
+basic keys; this lot does not extend entity/embeddable-key mapping support.
+
+Collection loading remains LAZY/EAGER as mapped. On initialization, element
+references resolve eagerly to actual managed identities, including shared targets.
+Persist/flush, generated target IDs, merge, refresh/detach/remove cascades,
+reference reassignment, snapshots, owner versions and shared-cache restoration
+are covered. Removing an element is not orphan removal.
+
+Basic JPQL/Criteria collection-join attributes, `KEY` and `INDEX` are covered.
+Association navigation and selecting whole relationship-bearing embeddable values
+are explicitly refused. Fetch joins and graphs use complete ordinary loading;
+these owners are not added to optimized row hydration or lazy batching.
+Inverse relationships, orphan removal, to-many/nested collections, business/composite/
+derived target joins, MapsId inside values, join tables, read-only/shared FK columns
+and polymorphic/`JOINED`/`TABLE_PER_CLASS` targets remain bootstrap errors.
+Unsupported owner keys/indexes are refused rather than silently dropping state.
+The detailed D24 roadmap and `TCK.md` record the exact tests and remaining backlog.
+
 The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;
 the bundled Jakarta ORM schema retains its original upstream licence.

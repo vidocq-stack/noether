@@ -15,6 +15,33 @@ The official artifact checksums and TCK-BUG-001 byte-exact derived-jar fixture
 patch are unchanged; original artifacts are never edited. `TCK_FIXTURES=official`
 selects the untouched Persistence fixture. See the runner README for setup.
 
+== Element-collection to-one verification (D24, 2026-10-16)
+
+Owning many-to-one/one-to-one references in embeddable collection values target
+eligible simple-ID entities through collection-row FKs. Annotation and
+metadata-complete XML, nested records, map overrides, duplicate occurrences,
+positions/keys, nulls, identity, cascades, updates, owner versions and caches
+are covered. Association query navigation/projections remain refused;
+fetch/graph/lazy-batch optimization is not expanded.
+
+Mandatory initial red: *7 tests / 1 failure / 6 errors*. Follow-up reds expose
+reference-only hydration, element-list INDEX and unsupported owner/index state.
+The unloaded REFRESH cascade has its own failing-first regression.
+Final focused gate: *303/303*. Full `clean install`: *1082/1082* across
+*90 XML reports*, including *24* new provider-owned tests. A separate isolated
+PostgreSQL *17* annotation/XML probe passes *2 scenarios / 40 checks*, including
+actual BIGINT FKs and collection ownership/identity/lifecycle behavior.
+
+The full locally *PATCHED* official TCK remains *2135 tests / 2131 passed /
+0 failures / 0 errors / 4 unchanged official skips* across *259 XML reports*.
+Independent aggregation checks all *2135* execution/class/method identities,
+unchanged outcomes, *518* effective-classpath checks and *49* unchanged
+official/cache/derived input hashes and file sets. No official fixture or
+exclusion changes. Logs, copied reports and `element-collection-relations-verification.json`
+are session artifacts; details and commands are in `noether-persistence/TCK.md`.
+This is not an untouched official result or a certification claim.
+D5/D9–D23 evidence below remains historical.
+
 == Simple-parent MapsId verification (D23, 2026-10-16)
 
 D23 strengthens existing P5 derived identity: unnamed whole shared simple ID

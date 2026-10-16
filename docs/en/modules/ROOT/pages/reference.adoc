@@ -205,6 +205,45 @@ changes and omitted unsupported lazy mappings. Explicit fetch joins and unnested
 single-collection graphs keep their existing collectors. Deeper graphs and broader
 fetch/lazy/batch/mapping eligibility remain separate backlog items.
 
+== To-one relationships in element-collection values (D24, 2026-10-16)
+
+Embeddable `@ElementCollection` values support owning `@ManyToOne` and
+`@OneToOne` to non-polymorphic, single-table, simple-ID targets. Annotation and
+metadata-complete ORM XML share the existing builder, binders and generated
+accesses, including nested/record values and map association overrides named
+`value.target`.
+
+The collection-table row owns the target FK. The target's ID type is retained,
+nullability/optionality is honored and one-to-one FK columns are unique.
+Schema generation creates target tables before adding these FKs. Owner key,
+list position and stored map key are separate columns.
+The new verified map contract uses stored basic keys; entity/embeddable-key
+mapping support is not extended by this lot.
+
+Embeddables have no entity identity. A changed collection is deleted by its
+owner's complete key and rewritten with all occurrences and positions/keys.
+No selective deletion matches a bag row by embeddable equality; equal duplicate
+values, repeated targets and null rows are retained. Collection changes version
+the owner, whereas edits solely to target state do not.
+
+The collection remains LAZY/EAGER as mapped; once initialized, its references
+resolve eagerly to actual managed target identities. Persist/flush cascades
+including generated target IDs, merge copying/identity resolution, refresh,
+detach/remove cascades and shared-cache restoration use the existing lifecycle
+machinery. Removing a collection value is not orphan removal.
+
+Tested query support covers JPQL/Criteria basic collection-join attributes and
+JPQL `KEY`/`INDEX`. Association navigation and whole relationship-bearing value
+projections are explicitly refused. Collection fetch joins and fetch graphs use
+complete ordinary loading; owners with these values are not eligible for
+optimized row hydration or lazy batching.
+
+Inverse `mappedBy`, orphan removal, to-many/nested collections, composite/
+business/derived target joins, MapsId inside values, join-table relationships,
+read-only/shared/other-table FK columns, polymorphic/JOINED/TABLE_PER_CLASS
+targets and unsupported owner keys/indexes remain explicit bootstrap errors.
+Broader query and mapping support requires a separate bounded lot.
+
 == Simple-parent MapsId derived identity (D23, 2026-10-16)
 
 The existing P5 mappings now have a strengthened bounded contract:

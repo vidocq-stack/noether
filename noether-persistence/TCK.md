@@ -1,3 +1,73 @@
+## Noether element-collection to-one verification (D24) — 2026-10-16
+
+Baseline: merged PR18, `fbd1263` (1058 reactor tests). Owning ManyToOne/OneToOne
+inside embeddable collection values now use collection-row FKs to eligible
+simple-ID targets, annotation and metadata-complete ORM XML. Nested/record
+values and map `value.target` overrides share generated access and existing
+value snapshots. Whole-owner collection rewrites preserve duplicates, nulls,
+positions and keys without inventing embeddable identity. References resolve
+to actual managed identities; collection LAZY/EAGER behavior is preserved,
+but element to-ones use safe eager resolution after collection initialization.
+Inverse/orphan/composite/business/derived/join-table/read-only/unsupported
+owner-index shapes fail explicitly. Association query navigation and whole
+relationship-bearing value projections are refused; basic joined attributes,
+map keys and list indexes are covered. Fetch/graph loading keeps the complete
+ordinary fallback and does not extend optimized hydration or batching.
+
+Mandatory red before production changes: **7 tests / 1 failure / 6 errors**.
+The first failure exposed unstripped map association-override `value.` prefixes.
+After that correction, all feature scenarios still failed on the explicit
+missing collection-FK mapping. Follow-up red: **22 tests / 20 passed /
+0 failures / 2 errors**, exposing reference-only embeddable hydration and list
+INDEX translation; final owner/index safety red: **1 test / 1 failure**.
+A further **1 test / 1 failure** red proves REFRESH must reach previously managed
+targets through unloaded values. These are provider bugs, not official fixture
+failures (BUG-20261016-07).
+
+Commands, repository root, Temurin **25.0.4**:
+
+```sh
+export JAVA_HOME=$HOME/.sdkman/candidates/java/25.0.4-tem
+export PATH="$JAVA_HOME/bin:$PATH"
+./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test \
+  -Dtest=ElementCollectionRelationsTest,ElementCollectionTest,OrmXmlTest,LazyCollectionTest,LazyToOneTest,LazyBatchTest,FetchJoinTest,CollectionFetchJoinTest,CollectionSubgraphTest,MapsIdToOneTest,BusinessKeyToOneTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw -ntp clean install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+- Focused annotation/XML/schema/lifecycle/cache/identity/lazy/batch/fetch/graph
+  gate: **303/303**, zero failures/errors/skips.
+- Clean reactor: **1082/1082**, **90 XML reports**, zero failures/errors/skips;
+  **24 new provider-owned tests**, existing ordinary-embedded refusal updated to
+  recognize the newly executable owning record-element shape.
+- Independent PostgreSQL **17** probe: **2 annotation/XML scenarios / 40 checks**
+  on an isolated `postgres:17-alpine` container, stopped after verification.
+  Actual JDBC metadata confirms BIGINT collection FKs to target/owner tables and
+  map override names; persist/load/identity/duplicates/positions/reassignment/
+  versioning/cascade-remove contracts are exercised against PostgreSQL.
+- Full locally **PATCHED** TCK: **2135 tests / 2131 passed / 0 failures /
+  0 errors / 4 official skips**, **259 failsafe XML reports**. Execution 1:
+  2134 / 2130 passed / 4 skips; execution 2: 1 / 1 passed.
+- Independent aggregation checks all **2135 unique execution/class/method
+  identities**, with unchanged outcomes and the same four official skips as D23;
+  the script's zero exit status alone is not the gate.
+- **49** official/cache/derived inputs retain their file sets and SHA-256 hashes;
+  both effective classpaths in each XML report are checked (**518 checks**).
+  Original spec-tests SHA-256 remains
+  `a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`;
+  derived TCK-BUG-001 jar remains
+  `1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+  Only the two approved resources differ; the other **1124** jar entries are
+  byte-identical. No official source, DDL, fixture or exclusion was changed.
+
+Session artifacts use `element-collection-relations-`: red/focused/clean/TCK/
+PostgreSQL logs, the PostgreSQL probe source and classpath, copied reactor/TCK XML,
+input hashes, test identities, fixture provenance and `verification.json`.
+Earlier D5/D9–D23 results and BUG records below remain historical. This remains a
+local patched result, not an untouched official result or certification claim.
+
 ## Noether simple-parent MapsId verification (D23) — 2026-10-16
 
 Baseline: `0633dad` (1019 reactor tests). D23 strengthens existing P5 derived

@@ -709,7 +709,11 @@ public final class EntityModelBuilder {
         member.element().annotation(JPA + "AssociationOverride").ifPresent(associationOverrides::add);
         member.element().annotation(JPA + "AssociationOverrides").ifPresent(a -> associationOverrides.addAll(a.annotations("value")));
         Map<String, AnnotationInfo> effective = new LinkedHashMap<>();
-        associationOverrides.forEach(a -> effective.put(a.string("name"), a));
+        associationOverrides.forEach(a -> {
+            String name = a.string("name");
+            effective.put(!overridePrefix.isEmpty() && name.startsWith(overridePrefix)
+                ? name.substring(overridePrefix.length()) : name, a);
+        });
         embeddable = associationOverrides(embeddable, effective);
         Map<String, ColumnModel> columns = new LinkedHashMap<>();
         flatten(embeddable, "", columns);

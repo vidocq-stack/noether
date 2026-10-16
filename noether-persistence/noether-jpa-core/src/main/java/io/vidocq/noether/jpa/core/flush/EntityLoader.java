@@ -588,6 +588,7 @@ public final class EntityLoader {
     private boolean batchable(MappedEntity type) {
         return type.statements().tables().size() == 1
             && type.statements().references().stream().noneMatch(EntityStatements.Reference::businessKey)
+            && type.statements().elementCollections().stream().noneMatch(ElementCollectionMapping::hasReferences)
             && unit.inheritance(type.model().javaType()).hierarchy().size() == 1
             && type.statements().keyColumns().size() <= 512;
     }
@@ -671,7 +672,8 @@ public final class EntityLoader {
             if (elements != null) {
                 int indexWidth = elements.indexColumns().size();
                 value = elements.element(Arrays.copyOfRange(row.values(), width + indexWidth, width + indexWidth + elementWidth),
-                    Arrays.copyOfRange(row.nulls(), width + indexWidth, width + indexWidth + elementWidth));
+                    Arrays.copyOfRange(row.nulls(), width + indexWidth, width + indexWidth + elementWidth),
+                    (targetType, targetId) -> load(unit.entity(targetType).orElseThrow(), targetId, connection, context));
                 indexes = nullableValues(row, width, width + indexWidth);
             } else {
                 Object[] id = nullableValues(row, width, width + elementWidth);
@@ -1035,7 +1037,9 @@ public final class EntityLoader {
                         values[c] = columns.get(c).binder().read(rows, width + c + 1);
                         nulls[c] = rows.wasNull();
                     }
-                    elements.add(new Indexed(mapping.element(values, nulls), index(index, indexValues, 0, connection, context)));
+                    elements.add(new Indexed(mapping.element(values, nulls,
+                        (targetType, targetId) -> load(unit.entity(targetType).orElseThrow(), targetId, connection, context)),
+                        index(index, indexValues, 0, connection, context)));
                 }
             }
         } catch (SQLException e) {

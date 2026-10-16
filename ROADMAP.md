@@ -4,7 +4,7 @@ Noether owns the implementations extracted from Mansart on 2026-10-11.
 
 | Building block | Status | Detailed roadmap |
 | --- | --- | --- |
-| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D23); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
+| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D24); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
 | Jakarta Validation 3.1 | V0–V2 provisional local test/TCK stopgap; not published | [Validation](noether-validation/ROADMAP.md) |
 
 The extraction changes repository, artifact, package and provider names, not
@@ -228,14 +228,29 @@ overlapping mappings and unsupported partial shapes fail explicitly. Existing P5
 flat composite-parent examples remain supported, without a broader composite claim.
 See the detailed roadmap and `TCK.md` for independently aggregated evidence.
 
+Decision D24 (2026-10-16) delivers owning many-to-one/one-to-one relationships
+inside embeddable element-collection values, annotation and metadata-complete XML,
+including map value overrides, nested values and records. Collection rows own FKs
+to eligible simple-ID targets; owner-key deletion and complete collection rewrites
+preserve duplicate occurrences, list positions and stored map keys without
+inventing embeddable identity. Managed target resolution, cascades, reassignment,
+snapshots, owner versions and caches share the existing machinery. Basic joined
+attributes, map keys and list indexes are tested; association query paths and
+whole relationship-bearing value projections are refused. Graph/fetch/lazy-batch
+optimization is not widened; complete ordinary loading remains the fallback.
+Inverse/orphan/composite/business/derived/join-table and unsupported owner/index
+shapes remain explicit bootstrap errors. D5/D9–D23 and prior BUG/TCK records stay
+historical; D24 evidence is in the detailed roadmap and `TCK.md`.
+
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
-1. Remaining relational mapping shapes beyond D23's simple MapsId contract:
+1. Remaining relational mapping shapes beyond D23/D24's bounded contracts:
    broader derived/composite/nested identity targets, business joins
    through join/secondary tables or inheritance, inverse business collections,
    embedded business association paths and safely mutable referenced keys;
-   inverse many-to-many indexes and collection-table embeddable relationships.
+   inverse many-to-many indexes and broader collection-table embeddable relationships
+   (inverse/orphan/composite/business/derived/join-table mappings and association query paths).
    Null basic collection elements were fixed by D13 (BUG-20261015-09).
 2. More than two collection edges and broader cyclic graph optimization remain
    separate bounded lots; D21 includes collections under finite root to-one branches.

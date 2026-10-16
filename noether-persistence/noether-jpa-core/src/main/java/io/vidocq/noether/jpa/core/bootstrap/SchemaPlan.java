@@ -124,9 +124,23 @@ final class SchemaPlan {
                 addKeys(columnsByName, collection.ownerColumns(), entity);
                 addIndex(columnsByName, collection.index());
                 for (var column : collection.columns()) {
-                    columnsByName.put(column.name(), definition(column.name(),
-                        basic(collection.model().element(), column.path()), false, false));
+                    if (column.foreignKey() == null) {
+                        columnsByName.put(column.name(), definition(column.name(),
+                            basic(collection.model().element(), column.path()), false, false));
+                    } else {
+                        var association = collection.association(column);
+                        var target = unit.entity(column.foreignKey().target()).orElseThrow();
+                        var key = target.statements().keyColumns().getFirst();
+                        var definition = definition(column.name(), basic(target, key), false, false);
+                        boolean nullable = association.optional()
+                            && (association.joinColumns().isEmpty() || association.joinColumns().getFirst().nullable());
+                        columnsByName.put(column.name(), new SchemaStatement.Column(column.name(), definition.type(),
+                            definition.length(), definition.precision(), definition.scale(), nullable, false,
+                            association.kind() == AssociationAttribute.Kind.ONE_TO_ONE, null));
+                        foreignKey(collection.table(), List.of(column.name()), target, null);
+                    }
                 }
+                foreignKey(collection.table(), collection.ownerColumns(), entity, null);
             }
             generators(model);
             source.read(model.javaType().getName()).ifPresent(info -> {

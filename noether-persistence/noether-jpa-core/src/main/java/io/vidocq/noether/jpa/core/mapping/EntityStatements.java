@@ -722,14 +722,19 @@ public final class EntityStatements {
     private static Optional<ElementCollectionMapping> elementCollection(EntityModel owner, ElementCollectionAttribute elements,
             int attribute, Function<Class<?>, EntityModel> models, Function<BasicAttribute, ValueBinder> binders,
             Function<EmbeddableModel, ManagedAccess> embeddables, Function<Class<?>, InheritanceMapping> inheritances, boolean delimited) {
+        boolean relationships = elements.element() instanceof EmbeddedAttribute embedded && hasRelationships(embedded.embeddable());
+        String problem = "The element collection " + elements.name() + " of " + owner.javaType().getName()
+            + " contains relationships and requires ";
         List<KeyColumn> ownerKeys = relationalKeys(owner, models, binders, inheritances, delimited);
         if (ownerKeys == null) {
+            if (relationships) throw new PersistenceException(problem + "a mapped owner key");
             return Optional.empty();
         }
         CollectionTableModel written = elements.table();
         JoinColumnModel[] joins = byKeyPart("the collection table of " + elements.name() + " of " + elements.declaringClass().getName(),
             written.joinColumns(), ownerKeys, owner, delimited);
         if (joins == null) {
+            if (relationships) throw new PersistenceException(problem + "collection joins to the owner's key");
             return Optional.empty();
         }
         List<Identifier> ownerColumns = new ArrayList<>();
@@ -743,6 +748,7 @@ public final class EntityStatements {
         Indexing indexing = index(leaf(elements.name()), elements.index(), null, models, binders, embeddables,
             "the element collection " + elements.name() + " of " + elements.declaringClass().getName(), inheritances, delimited);
         if (indexing.problem() != null) {
+            if (relationships) throw new PersistenceException(problem + "a supported collection index: " + indexing.problem());
             return Optional.empty();
         }
         List<Column> columns = new ArrayList<>();
@@ -750,19 +756,71 @@ public final class EntityStatements {
             case BasicAttribute basic -> columns.add(new Column(Identifier.of(basic.column().name(), delimited), binders.apply(basic), 0, new int[0],
                 new ManagedAccess[0], false, false, basic.column().insertable(), basic.column().updatable(), 0, null));
             case EmbeddedAttribute embedded -> {
-                if (hasRelationships(embedded.embeddable())) {
-                    throw new PersistenceException("The element collection " + elements.name() + " of "
-                        + elements.declaringClass().getName() + " contains an embedded relationship whose collection-table "
-                        + "foreign-key mapping is not supported");
-                }
                 flatten(embedded, embedded.embeddable(), "", 0, new int[0], new ManagedAccess[0], false,
                     binders, embeddables, List.of(tableName), columns, Set.of(), delimited);
+                elementReferences(embedded.embeddable(), new int[0], new ManagedAccess[0], columns,
+                    models, binders, embeddables, inheritances, delimited, elements.name());
+                columns.sort((left, right) -> java.util.Arrays.compare(left.path(), right.path()));
             }
             default -> throw new IllegalStateException("An element is basic or embeddable: " + elements.element());
         }
         Table table = new Table(Identifier.of(tableName, delimited), written.schema() == null ? null : Identifier.of(written.schema(), delimited),
             written.catalog() == null ? null : Identifier.of(written.catalog(), delimited));
+        java.util.Set<Identifier> names = new java.util.HashSet<>(ownerColumns);
+        for (Identifier name : indexing.index() == null ? List.<Identifier>of() : indexing.index().columns()) {
+            if (!names.add(name)) throw new PersistenceException("Duplicate collection column " + name);
+        }
+        for (Column column : columns) {
+            if (!names.add(column.name())) throw new PersistenceException("Duplicate collection column " + column.name());
+        }
         return Optional.of(new ElementCollectionMapping(attribute, elements, table, ownerColumns, ownerBinders, indexing.index(), columns));
+    }
+
+    private static void elementReferences(EmbeddableModel model, int[] path, ManagedAccess[] accesses, List<Column> columns,
+            Function<Class<?>, EntityModel> models, Function<BasicAttribute, ValueBinder> binders,
+            Function<EmbeddableModel, ManagedAccess> embeddables, Function<Class<?>, InheritanceMapping> inheritances,
+            boolean delimited, String collection) {
+        for (int i = 0; i < model.attributes().size(); i++) {
+            int[] nested = Arrays.copyOf(path, path.length + 1);
+            nested[path.length] = i;
+            ManagedAccess[] along = Arrays.copyOf(accesses, accesses.length + 1);
+            along[accesses.length] = embeddables.apply(model);
+            AttributeModel attribute = model.attributes().get(i);
+            if (attribute instanceof EmbeddedAttribute embedded) {
+                elementReferences(embedded.embeddable(), nested, along, columns, models, binders,
+                    embeddables, inheritances, delimited, collection);
+            } else if (attribute instanceof ElementCollectionAttribute) {
+                throw new PersistenceException("The element collection " + collection + " cannot contain nested collections");
+            } else if (attribute instanceof AssociationAttribute association) {
+                String problem = "The element collection " + collection + " relationship " + association.name() + ": ";
+                if (!association.singleValued() || !association.owning() || association.joinTable() != null
+                        || association.mapsId() != null || association.orphanRemoval()) {
+                    throw new PersistenceException(problem
+                        + "requires an owning to-one FK without join table, MapsId or orphan removal");
+                }
+                EntityModel target = models.apply(association.targetEntity());
+                InheritanceMapping inheritance = target == null ? null : inheritances.apply(target.javaType());
+                if (target == null || !(target.id() instanceof IdModel.Single)
+                        || inheritance != null && (inheritance.joined() || inheritance.tablePerClass()
+                            || inheritance.hierarchy().size() != 1)
+                        || target.attributes().stream().anyMatch(a -> a instanceof AssociationAttribute r && r.mapsId() != null)) {
+                    throw new PersistenceException(problem + "requires an eligible simple-ID target");
+                }
+                List<KeyColumn> keys = relationalKeys(target, models, binders, inheritances, delimited);
+                JoinColumnModel[] joins = keys == null ? null
+                    : byKeyPart(problem, association.joinColumns(), keys, target, delimited);
+                if (joins == null || joins.length != 1) {
+                    throw new PersistenceException(problem + "requires a single primary-key join column");
+                }
+                JoinColumnModel join = joins[0];
+                if (!join.insertable() || !join.updatable() || join.table() != null && !join.table().isBlank()) {
+                    throw new PersistenceException(problem + "requires a writable collection-table join column");
+                }
+                String name = join.name() == null ? association.name() + "_" + keys.getFirst().name() : join.name();
+                columns.add(new Column(Identifier.of(name, delimited), keys.getFirst().binder(), 0, nested, along,
+                    false, false, true, true, 0, new ForeignKey(association.targetEntity(), 0)));
+            }
+        }
     }
 
     private static boolean hasRelationships(EmbeddableModel model) {
@@ -1183,10 +1241,15 @@ public final class EntityStatements {
 
     /** {@link #hydrate(Object[], boolean[], Object[])} for any list of columns: an entity's, or a collection table's. */
     static void hydrate(List<Column> columns, Object[] values, boolean[] nulls, Object[] state) {
+        hydrate(columns, values, nulls, state, false);
+    }
+
+    /** Collection FK values may already be resolved to managed instances before constructing their embeddable. */
+    static void hydrate(List<Column> columns, Object[] values, boolean[] nulls, Object[] state, boolean referencesResolved) {
         int c = 0;
         while (c < columns.size()) {
             Column column = columns.get(c);
-            if (column.foreignKey() != null || column.attribute() < 0) {
+            if (column.foreignKey() != null && !referencesResolved || column.attribute() < 0) {
                 c++; // the loader resolves the instance it references
                 continue;
             }

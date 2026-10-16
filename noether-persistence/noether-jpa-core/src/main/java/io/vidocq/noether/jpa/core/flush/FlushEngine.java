@@ -852,7 +852,7 @@ public final class FlushEngine {
                     if (elements.index() != null) {
                         index = bindIndex(statement, index, elements.index(), keys.get(v), type.statements());
                     }
-                    Object[] columns = elements.values(value);
+                    Object[] columns = elements.values(value, type.statements()::targetKey);
                     for (int c = 0; c < columns.length; c++) {
                         elements.columns().get(c).binder().bind(dialect, statement, index++, columns[c]);
                     }

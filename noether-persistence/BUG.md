@@ -1041,3 +1041,47 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     Independent aggregation verifies 259 XML reports, unchanged test identities/
     outcomes, 518 effective classpath checks and unchanged file sets/hashes for
     49 official/derived inputs. No fixture or exclusion was modified.
+
+## BUG-20261016-07 — Collection-element relationship bring-up exposes override, hydration and index gaps
+
+- **Date**: 2026-10-16
+- **Status**: FIXED (working tree; D24, not yet committed)
+- **Affected modules**: `EntityModelBuilder`, `EntityStatements`,
+  `ElementCollectionMapping`, `Translator`
+- **Symptoms**:
+  - Map `@AssociationOverride(name = "value.target")` is treated as an unknown
+    embeddable path instead of stripping the map-value prefix.
+  - A relationship-only embeddable element loads as null because entity hydration
+    skips leading FK columns even after they have been resolved to managed targets.
+  - `INDEX(v)` over an ordered element-collection join has no position expression.
+  - Unsupported owner keys/indexes silently omit a relationship-bearing
+    collection's executable mapping instead of refusing it at bootstrap.
+- **Minimal reproduction**:
+  ```sh
+  ./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test \
+    -Dtest=ElementCollectionRelationsTest -Dsurefire.failIfNoSpecifiedTests=false
+  ```
+- **Cause**: association overrides did not share attribute overrides' map-prefix
+  handling; entity FK hydration assumes references are resolved separately after
+  constructing entity state; element joins omitted the existing position slot;
+  historical unsupported collection mappings returned an empty optional.
+- **Investigations**:
+  - 2026-10-16: initial red before production edits: **7 tests, 1 failure,
+    6 errors**. After the map-prefix correction, missing collection-row FK
+    execution remains independently red.
+  - 2026-10-16: the extended safety gate produces **22 tests, 20 passed,
+    2 errors** for a reference-only value followed by flush and for `INDEX`.
+    Hydration now explicitly admits already-resolved collection FK values,
+    without changing ordinary entity FK hydration; ordered element joins carry
+    their existing index expression.
+  - 2026-10-16: owner/index safety red: **1 test, 1 failure**. Relationship-bearing
+    collections now reject unmapped owner keys or unsupported index shapes.
+  - 2026-10-16: unloaded REFRESH cascade red: **1 test, 1 failure**. Previously
+    managed targets kept dirty state when their only cascade path was an unloaded
+    value collection. Required REFRESH/REMOVE cascades now initialize the collection;
+    PERSIST/MERGE still skip unloaded state and unrelated lazy collections stay lazy.
+  - 2026-10-16: final focused **303/303**, clean reactor **1082/1082**,
+    PostgreSQL 17 annotation/XML probe **2 scenarios / 40 checks**, and full
+    locally patched TCK **2135 / 2131 passed / 0 failures / 0 errors / 4 skips**.
+    Independent verification retains all 259 reports, identities/outcomes,
+    518 effective classpaths and 49 official/derived input hashes.

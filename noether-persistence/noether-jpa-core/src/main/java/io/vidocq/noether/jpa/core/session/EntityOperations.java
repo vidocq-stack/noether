@@ -222,6 +222,7 @@ final class EntityOperations {
     }
 
     /** The relationships of {@code managed} cascading MERGE point to the merged targets of {@code entity}'s. */
+    @SuppressWarnings("unchecked")
     private void cascadeMerge(Object entity, Object managed, MappedEntity type, Map<Object, Object> merged) {
         List<AttributeModel> attributes = type.model().attributes();
         for (int i = 0; i < attributes.size(); i++) {
@@ -248,6 +249,19 @@ final class EntityOperations {
                 } else if (value != null) {
                     type.access().set(managed, i, merge(value, merged));
                 }
+            }
+        }
+        for (var elements : type.statements().elementCollections()) {
+            Object value = type.access().get(managed, elements.attribute());
+            if (value == null || LazyCollection.unloaded(value) || !elements.hasReferences()) continue;
+            Object mapped = elements.mapReferences(value, (association, target) ->
+                association.cascades(CascadeType.MERGE) ? merge(target, merged) : managedReference(target));
+            if (managed == entity && value instanceof Map<?, ?> map) {
+                replace(map, (Map<Object, Object>) mapped);
+            } else if (managed == entity && value instanceof Collection<?> collection) {
+                replace(collection, (Collection<Object>) mapped);
+            } else {
+                type.access().set(managed, elements.attribute(), mapped);
             }
         }
     }
@@ -490,6 +504,13 @@ final class EntityOperations {
                     targets(type.access().get(entity, i), target -> requireNotNew(entity, association, target));
                 }
             }
+            for (var elements : type.statements().elementCollections()) {
+                Object value = type.access().get(entity, elements.attribute());
+                if (LazyCollection.unloaded(value)) continue;
+                elements.references(value, (association, target) -> {
+                    if (!association.cascades(CascadeType.PERSIST)) requireNotNew(entity, association, target);
+                });
+            }
         }
     }
 
@@ -563,6 +584,16 @@ final class EntityOperations {
                 }
                 targets(value, apply);
             }
+        }
+        for (var elements : type.statements().elementCollections()) {
+            if (elements.columns().stream().noneMatch(c -> c.foreignKey() != null
+                    && elements.association(c).cascades(operation))) continue;
+            Object value = type.access().get(entity, elements.attribute());
+            if (!elements.hasReferences() || value == null) continue;
+            if (LazyCollection.unloaded(value) && operation != CascadeType.REMOVE && operation != CascadeType.REFRESH) continue;
+            elements.references(value, (association, target) -> {
+                if (association.cascades(operation)) apply.accept(target);
+            });
         }
     }
 

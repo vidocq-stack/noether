@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entity-mappings xmlns="https://jakarta.ee/xml/ns/persistence/orm" version="3.2">
+  <entity class="io.vidocq.noether.jpa.core.session.ElementCollectionRelationsTest$Owner" name="ElementRelationOwner" access="FIELD" metadata-complete="true">
+    <attributes>
+      <id name="id"/>
+      <version name="version"/>
+      <element-collection name="values">
+        <order-column name="position"/>
+        <collection-table name="element_relation_values"><join-column name="owner_id"/></collection-table>
+      </element-collection>
+      <element-collection name="bag" fetch="EAGER">
+        <collection-table name="element_relation_bag"><join-column name="owner_id"/></collection-table>
+      </element-collection>
+      <element-collection name="keyed">
+        <map-key-column name="entry_key"/>
+        <association-override name="value.target"><join-column name="xml_map_target"/></association-override>
+        <collection-table name="element_relation_map"><join-column name="owner_id"/></collection-table>
+      </element-collection>
+    </attributes>
+  </entity>
+  <embeddable class="io.vidocq.noether.jpa.core.session.ElementCollectionRelationsTest$Value" access="FIELD" metadata-complete="true">
+    <attributes>
+      <basic name="label"/>
+      <many-to-one name="target" fetch="LAZY">
+        <join-column name="xml_target_id"/>
+        <cascade><cascade-persist/><cascade-merge/><cascade-refresh/></cascade>
+      </many-to-one>
+      <many-to-one name="other"><join-column name="xml_other_id"/></many-to-one>
+      <one-to-one name="exclusive">
+        <join-column name="xml_exclusive_id"/><cascade><cascade-all/></cascade>
+      </one-to-one>
+    </attributes>
+  </embeddable>
+</entity-mappings>

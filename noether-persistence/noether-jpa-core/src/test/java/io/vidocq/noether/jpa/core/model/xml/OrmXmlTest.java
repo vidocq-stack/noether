@@ -285,12 +285,13 @@ class OrmXmlTest {
     }
 
     @Test
-    void unsupportedEmbeddedCollectionShapesFailAtBootstrapRatherThanOmittingTheirState() {
-        assertThatThrownBy(() -> new PersistenceConfiguration("unsupported-embedded-elements")
+    void owningToOneInRecordElementCollectionsIsNowExecutable() {
+        try (var factory = new PersistenceConfiguration("embedded-elements")
             .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
             .managedClass(EmbeddedLinks.UnsupportedElementHolder.class).managedClass(EmbeddedLinks.Holder.class)
-            .managedClass(EmbeddedLinks.Target.class).createEntityManagerFactory())
-            .isInstanceOf(PersistenceException.class).hasMessageContaining("element collection").hasMessageContaining("relationship");
+            .managedClass(EmbeddedLinks.Target.class).createEntityManagerFactory()) {
+            assertThat(factory.isOpen()).isTrue();
+        }
     }
 
     private static EntityManagerFactory embeddedFactory(String name, boolean xml) {

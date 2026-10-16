@@ -443,6 +443,9 @@ refused or left as the instance holds it, naming P5, never mapped wrongly):
   to-one fetch joins only (D11, see "Post-P12 follow-ups" below); collection fetches, entity graphs and `find`
   still use secondary selects — see "Remaining work".*
 
+**D24 follow-up (2026-10-16)**: the historical collection-table limitation above
+is superseded for owning simple-ID to-ones only; see the bounded D24 contract below.
+
 **Follow-up (2026-10-15)**: lazy loading of collections (wrappers) is delivered — see the lazy
 collections follow-up (2026-10-15) below. Bounded lazy to-one subclasses are delivered by
 the subsequent D10 follow-up below; eligible SQL to-one fetch joins by D11 ("Post-P12 follow-ups"
@@ -810,6 +813,8 @@ Spec: ch. 12 (`orm.xml`), §8.2.1.6.2 (`mapping-file` in `persistence.xml`, defa
       Remaining P5 unsupported shapes, including associations inside collection-table embeddable elements,
       are explicitly refused, never silently omitted. To-one join tables and target-table one-to-many
       foreign keys are covered by the 2026-10-14 follow-up above.
+      D24 (2026-10-16) subsequently delivers the owning simple-ID to-one subset
+      inside collection-table values, without rewriting this P10 delivery record.
 - [x] Callbacks: XML entity listeners and callback methods, default listeners first (§3.6.4),
       `exclude-default-listeners`, `exclude-superclass-listeners`; named JPQL/native queries, result-set mappings,
       stored procedures and entity graphs of mapping files, replacing annotated ones of the same name.
@@ -1691,9 +1696,75 @@ metadata, cyclic insert ordering and unsupported nested shapes. The dedicated
 lazy/fetch/graph/cache/context suites form the focused gate. Exact independently
 aggregated reactor/TCK counters and immutable-input checks are in `TCK.md`.
 
+### D24 — Owning to-one relationships in embeddable collection elements ✅ (2026-10-16)
+
+Approved after D23 / merged PR18 (`fbd1263`), before further graph optimization.
+Jakarta Persistence §2.7 permits owning many-to-one/one-to-one relationships in
+embeddable collection values; the embeddable itself has no entity identity.
+
+**Bounded mapping and ownership.** Owning `ManyToOne`/`OneToOne` relationships to
+non-polymorphic, single-table simple-ID targets use the existing collection columns,
+ID binders, generated accesses and `EntityStatements` embeddable hydration.
+Annotation and metadata-complete XML have parity, including nested/record values
+and `value.target` map association overrides. The collection row owns each FK:
+its target ID type, nullability/optionality and one-to-one uniqueness are preserved,
+and schema DDL creates referenced tables before adding collection-to-target FKs.
+The owner key, list position or stored map key remain independent columns.
+The new verified map contract uses stored basic keys; entity/embeddable-key
+mapping behavior is not broadened or newly claimed by D24.
+
+**No fictitious element identity.** The existing value-collection strategy deletes
+all rows of the exact owner key and rewrites the complete changed collection.
+Position/key columns describe each logical list/map tuple on reinsertion. A bag
+has no stable per-row identifier, so it is never selectively deleted by value.
+Repeated equal values, repeated targets, nulls, positions and keys survive; no
+matching uses embeddable equality. Other owners' rows and target entities are not
+changed by that rewrite. Collection changes version the owner; target-only edits
+do not. Deep value snapshots still compare reference slots by entity identity.
+
+**Loading and lifecycle.** Mapped collection LAZY/EAGER behavior is retained.
+After initialization, references resolve eagerly through ordinary entity loading
+to actual managed identities, even when the element to-one is declared LAZY.
+Persist and flush cascade through generated element paths; generated target IDs
+are assigned before collection rows are inserted. Merge copies values and resolves
+or merges targets according to cascade; refresh, detach and remove reach configured
+targets; REMOVE/REFRESH initialize a lazy collection when necessary for those
+cascades. Removed collection elements are values, not automatically removed target
+entities. Owning one-to-one orphan removal is explicitly refused. Shared-cache
+restoration preserves distinct value occurrences and shared target identity.
+
+**Query and optimization boundaries.** Tested JPQL/Criteria basic collection-join
+attributes, JPQL stored-map `KEY` and ordered-list `INDEX` remain executable.
+Association navigation and projections of whole relationship-bearing embeddable
+values are explicitly refused, not partially hydrated. Collection fetch joins and
+fetch graphs use complete ordinary loading. Owners containing these values are
+excluded from optimized row hydration and batch loading; D10–D21 eligibility is
+not widened. No query-count or lazy-to-one proxy claim is made for this new shape.
+
+**Explicit bootstrap refusals.** Inverse `mappedBy`, to-many or nested collections,
+orphan removal, target composite/derived/business keys, MapsId inside values,
+join-table relationships, read-only/shared/other-table FK columns, polymorphic/
+JOINED/TABLE_PER_CLASS targets, duplicate physical columns and unsupported owner
+keys/indexes are not accepted. Broader association query paths remain a separate lot.
+Ordinary entity-owned embedded relationship behavior stays on `EmbeddedPaths`.
+
+**Evidence.** Mandatory initial red: 7 tests, 1 failure and 6 errors before production
+changes; after fixing the map-prefix bug, the missing collection-FK execution was
+independently red. Follow-up reds expose reference-only element hydration,
+element-list INDEX translation and silently dropped unsupported owner/index state
+(BUG-20261016-07); a further red proves REFRESH must reach previously managed
+targets through unloaded values. Final focused gate: **303/303**; clean reactor: **1082/1082**
+across **90 XML reports**, including **24** new provider-owned tests. A separate
+PostgreSQL 17 annotation/XML probe passes **2 scenarios / 40 checks** for actual
+BIGINT FKs, owner/target constraints, identity, duplicates, reassignment and removal.
+The full locally patched official TCK remains **2135 tests / 2131 passed /
+0 failures / 0 errors / 4 unchanged official skips** across **259 reports**.
+Independent identities, outcomes, effective classpaths and fixture/input hashes
+are recorded in `TCK.md`; D5/D9–D23 and prior BUG/TCK records remain historical.
+
 ## Remaining work
 
-Prioritized backlog after D23, 2026-10-16. Each item needs its own approved, bounded lot; until then
+Prioritized backlog after D24, 2026-10-16. Each item needs its own approved, bounded lot; until then
 the documented fallback (follow-up selects, eager loading, or an explicit refusal naming the
 milestone) stays in place.
 
@@ -1701,7 +1772,9 @@ milestone) stays in place.
    targets beyond D23; business joins
    through join/secondary tables or inheritance, embedded business association paths,
    inverse collections and safely mutable referenced keys; inverse many-to-many
-   indexes and relationships inside collection-table embeddable elements.
+   indexes and broader relationships inside collection-table embeddable elements
+   beyond D24 (inverse/orphan/composite/business/derived/join-table support and
+   association query navigation/projections).
    Null basic collection elements were fixed by D13 (BUG-20261015-09).
 2. **Deeper collection-valued graph subgraphs and broader SQL fetch eligibility** —
    more than two collection edges and broader cyclic graph optimization;
@@ -1723,6 +1796,7 @@ Recorded before implementation; each entry: date, decision, reason.
 
 | # | Date | Decision | Status |
 |---|---|---|---|
+| D24 | 2026-10-16 | Deliver owning ManyToOne/OneToOne inside embeddable element-collection values to eligible simple-ID targets, annotation/XML, with collection-row FKs and managed target identity. Preserve owner-key whole-collection rewrites, duplicate occurrences, positions/keys, cascades, snapshots, versions and caches through existing generated access. Refuse inverse/orphan/composite/business/derived/join-table/read-only/unsupported owner-index shapes and association query navigation/projections; keep complete ordinary fetch/graph loading rather than widening optimization/batching. | Actioned |
 | D23 | 2026-10-16 | Strengthen existing P5 MapsId support for simple-parent owning to-ones: unnamed shared simple ID and a named direct BASIC embedded-ID component, annotation/XML. Derive cascaded/generated IDs at the correct lifecycle stage, register actual identity, order required FK edges, propagate physical key names/types and reject identity mutation and unsupported nested/chained/partial mappings. Preserve legacy flat composite examples and safe eager graph/lazy fallbacks without widening optimization or claiming arbitrary composite support. | Actioned |
 | D22 | 2026-10-16 | Pause graph optimization and deliver bounded owning to-one joins to immutable, non-null, unique non-ID BASIC columns (single/composite, annotation/XML). Separate referenced tuple access/binders from JPA identity; resolve actual IDs before ordinary loading, preserve lifecycle/cache/query semantics and generate FKs to real unique constraints. Explicitly refuse invalid/mutable/unsupported shapes and non-null cycles; keep business owners on safe eager/ordinary graph/fetch loading rather than ID-assuming lazy/batch/optimized hydration. | Actioned |
 | D21 | 2026-10-16 | Extend D19/D20 to graph-requested collections reached through finite root to-one chains. Seed intermediate owners through D14–D18 LEFT hydration, then group distinct compatible owner identities with D13 key/parameter bounds and the existing collection collectors; merge shared owner-type requests at their latest collection depth. Preserve the two-collection-edge limit, independent branches, lifecycle/dirty/in-place/cache/flush/no-auto-flush contracts and SQL root-only pagination. Explicit cyclic paths, third edges and unsupported eager/mapping/query closures retain complete fallback/refusal; earlier graph eligibility and explicit fetch joins remain unchanged. | Actioned |
