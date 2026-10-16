@@ -307,6 +307,40 @@ association changes. Existing explicit JOIN FETCH and single-collection SQL are 
 Remaining priorities are nested collection graphs, broader fetch eligibility, broader
 lazy/batch support and missing mappings. D5/D9–D18 and BUG-20261016-01 remain historical.
 
+Decision **D20 (2026-10-16)** extends D19 to **two collection edges per graph path**,
+for example `Order { lines { discounts { supplier }, notes } }`. The first edge
+must be a root collection; finite to-one chains may lead from its entity elements
+to the second collection's owners (`Order.lines.product.tags` also qualifies).
+Independent root branches and second-level entity/element collections reuse the
+same D16–D19 collectors, with no collection-to-collection join. Shared nested
+owners are deduplicated by mapped identity and requests for the same owner type
+and collection are merged before SQL. Basic null rows, duplicate bags, stored list
+positions and supported map keys retain their existing assembly.
+
+Queries first select/paginate roots in SQL, then read first-level collections,
+then second-level collections in independent owner batches. The count is
+`1 + sum(ceil(Nc / Bc))` over all collectors, where `Nc` is that collector's
+distinct owner count and `Bc = min(batch-size, floor(512 / owner-key-width))`;
+non-locking database finds omit the initial root-selection SELECT. Empty nested
+owner sets issue no SELECT. All stages finish before relationships, snapshots,
+cache publication or callbacks; loaded dirty state and lazy wrappers/references
+remain in place. Complete managed/cache finds need no SELECT, new JDBC connection
+or auto-flush (the connection-count regression is tracked as BUG-20261016-03).
+BUG-20261016-02, exposed by removing one duplicate from a nested managed bag, is
+fixed by reusing whole-owner join-row rewriting when a bag snapshot has duplicates.
+
+This is not arbitrary-depth graph SQL: third collection edges, collections under
+root to-one branches, unsupported eager closures, polymorphic/complex mappings,
+entity/embeddable map keys and broader joins/grouped/locked/set queries retain
+complete ordinary loading or established explicit refusal. Eager to-one expansion
+is cycle-guarded; deeper finite cyclic graphs fall back. Counts exclude ordinary
+completion for dirty in-memory relationship changes and omitted unsupported lazy
+mappings. Existing explicit fetch joins and unnested single-collection collectors
+are unchanged. D5/D9–D19 and BUG-20261016-01 above are historical delivery records.
+The remaining priorities are deeper collection graphs, broader fetch/lazy/batch
+eligibility and missing mappings. Verification is in
+[`noether-persistence/TCK.md`](noether-persistence/TCK.md).
+
 The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;
 the bundled Jakarta ORM schema retains its original upstream licence.

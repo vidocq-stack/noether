@@ -253,6 +253,69 @@ class LazyBatchTest {
         assertThat(sql).allMatch(s -> s.chars().filter(c -> c == '?').count() <= 512);
     }
 
+    /** §3.7.4: the second collection edge uses its own owner-key width, not the root's batch bound. */
+    @Test void nestedCompositeOwnersRespectParameterCeilingAndDeduplicateSharedOwners() {
+        open(256);
+        em.getTransaction().begin();
+        Owner root = new Owner(); root.setId(1);
+        for (long id = 1; id <= 173; id++) {
+            CompositeOwner owner = new CompositeOwner();
+            owner.id = new CompositeKey(id % 2, id);
+            owner.items.addAll(Arrays.asList("item-" + id, null, "item-" + id));
+            owner.labels.put("id", Long.toString(id));
+            root.getComposites().add(owner);
+            em.persist(owner);
+        }
+        root.getComposites().add(root.getComposites().getFirst());
+        em.persist(root);
+        em.getTransaction().commit();
+        for (boolean find : List.of(false, true)) {
+            em.clear(); factory.getCache().evictAll(); sql.clear();
+            var graph = em.createEntityGraph(Owner.class);
+            graph.addSubgraph("composites").addAttributeNodes("items", "labels");
+            Owner found = find ? em.find(Owner.class, 1L, Map.of("jakarta.persistence.loadgraph", graph))
+                : em.createQuery("select o from BatchOwner o", Owner.class)
+                    .setHint("jakarta.persistence.fetchgraph", graph).getSingleResult();
+            assertThat(found.getComposites()).hasSize(174);
+            assertThat(found.getComposites().getLast()).isSameAs(found.getComposites().getFirst());
+            for (CompositeOwner owner : found.getComposites()) {
+                assertThat(owner.items).containsExactly("item-" + owner.id.part, null, "item-" + owner.id.part);
+                assertThat(owner.labels).containsEntry("id", Long.toString(owner.id.part)).hasSize(1);
+            }
+            assertThat(selects()).isEqualTo(find ? 5 : 6);
+            assertThat(sql).allMatch(s -> s.chars().filter(c -> c == '?').count() <= 512);
+        }
+    }
+
+    @Test void nestedCollectorsIncludeMappedEagerCollectionsAndToOnesForFetchAndLoad() {
+        open(16);
+        em.getTransaction().begin();
+        Owner root = new Owner(); root.setId(1);
+        Target target = new Target(); target.setId(2); target.setName("shared"); em.persist(target);
+        for (long id = 1; id <= 3; id++) {
+            EagerOwner owner = new EagerOwner(); owner.id = id; owner.target = target;
+            if (id != 2) {
+                owner.first.add("first"); owner.second.add("second"); owner.eager.add("eager");
+            }
+            root.getEagerGroups().add(owner); em.persist(owner);
+        }
+        em.persist(root); em.getTransaction().commit();
+        for (String hint : List.of("jakarta.persistence.fetchgraph", "jakarta.persistence.loadgraph")) {
+            em.clear(); factory.getCache().evictAll(); sql.clear();
+            var graph = em.createEntityGraph(Owner.class);
+            graph.addSubgraph("eagerGroups").addAttributeNodes("first", "second");
+            var found = em.createQuery("select o from BatchOwner o", Owner.class).setHint(hint, graph).getSingleResult();
+            assertThat(found.getEagerGroups()).hasSize(3);
+            assertThat(found.getEagerGroups().get(1).eager).isEmpty();
+            assertThat(found.getEagerGroups().getFirst().eager).containsExactly("eager");
+            assertThat(found.getEagerGroups().getLast().first).containsExactly("first");
+            assertThat(found.getEagerGroups().getLast().second).containsExactly("second");
+            assertThat(found.getEagerGroups().getFirst().target.getName()).isEqualTo("shared");
+            assertThat(found.getEagerGroups().getLast().target).isSameAs(found.getEagerGroups().getFirst().target);
+            assertThat(selects()).isEqualTo(5);
+        }
+    }
+
     @Test void splitGraphsUseCompositeOwnerTuplesWithinTheSameParameterCeiling() {
         open(256);
         em.getTransaction().begin();
@@ -394,6 +457,8 @@ class LazyBatchTest {
         private List<Target> targets = new ArrayList<>();
         private List<Child> children = new ArrayList<>();
         private List<Part> parts = new ArrayList<>();
+        private List<CompositeOwner> composites = new ArrayList<>();
+        private List<EagerOwner> eagerGroups = new ArrayList<>();
         public Owner() {}
         @Id public long getId() { return id; }
         public void setId(long id) { this.id = id; }
@@ -417,6 +482,12 @@ class LazyBatchTest {
         @ElementCollection @CollectionTable(name = "batch_parts") @OrderColumn
         public List<Part> getParts() { return parts; }
         public void setParts(List<Part> parts) { this.parts = parts; }
+        @ManyToMany @JoinTable(name = "batch_composites") @OrderColumn(name = "position")
+        public List<CompositeOwner> getComposites() { return composites; }
+        public void setComposites(List<CompositeOwner> composites) { this.composites = composites; }
+        @OneToMany @JoinTable(name = "batch_eager_groups") @OrderColumn(name = "position")
+        public List<EagerOwner> getEagerGroups() { return eagerGroups; }
+        public void setEagerGroups(List<EagerOwner> eagerGroups) { this.eagerGroups = eagerGroups; }
     }
 
     @Entity(name = "BatchTarget")

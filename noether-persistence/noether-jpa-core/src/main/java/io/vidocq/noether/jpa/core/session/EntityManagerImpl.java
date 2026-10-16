@@ -896,18 +896,7 @@ final class EntityManagerImpl implements EntityManager {
     }
 
     private void completeGraph(Object instance, MappedEntity type, FetchPlan plan) {
-        long collections = plan.attributes().keySet().stream().filter(name -> {
-            int i = UnitUtil.index(type, name);
-            if (i < 0) return false;
-            var attribute = type.model().attributes().get(i);
-            return attribute instanceof io.vidocq.noether.jpa.core.model.ElementCollectionAttribute
-                || attribute instanceof io.vidocq.noether.jpa.core.model.AssociationAttribute a && !a.singleValued();
-        }).count();
-        boolean unloaded = plan.attributes().keySet().stream().anyMatch(name -> {
-            int i = UnitUtil.index(type, name);
-            return i >= 0 && LazyCollection.unloaded(type.access().get(instance, i));
-        });
-        if (collections < 2 || !unloaded) {
+        if (!JpqlQuery.unloadedGraph(type, instance, plan, factory.mapping())) {
             context.loading(() -> { fetch(instance, plan, null); return null; });
             return;
         }

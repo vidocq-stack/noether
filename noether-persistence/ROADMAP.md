@@ -1440,15 +1440,73 @@ Focused graph/batch/cache/BUG01 gate: **159/159**; clean reactor: **977/977** fr
 independently checked. Verification is recorded in `TCK.md`; D5/D9–D18 and BUG-20261016-01 above remain
 historical records, not rewritten deliveries.
 
+### D20 — Two collection graph edges through staged grouped collectors ✅ (2026-10-16)
+
+Approved after D19 (`0b48695`) for JPQL/Criteria and eligible non-locking find.
+Mandatory pre-production red: two SQL-count tests observed **14 instead of 5**
+SELECTs for nested bag/map branches, and **13 instead of 4** for 23 distinct nested
+owners crossing the default batch bound. No production code preceded those failures.
+
+- The first collection edge is a requested root collection. Its entity elements
+  may request direct second-level collections (`Order.lines.discounts`) or reach
+  their owners through finite to-one chains (`Order.lines.product.tags`).
+  Multiple independent root branches and multiple second-level branches are
+  supported. Root/element/leaf to-one chains reuse D14–D18 LEFT hydration.
+- `Translator.splitGraph` produces at most two collection stages, using the same
+  single-collection eligibility/SQL collectors as D19. Nested requests are merged
+  by mapped owner type and collection, so a shared owner is not read or assembled
+  twice for the same branch. Nested identities are deduplicated from the previous
+  stage's entity rows, including permitted eagerly fetched state.
+- Entity leaves and existing eligible basic/embeddable element-collection leaves
+  reuse the current assembler. Empty owners, null basic rows, bag multiplicities,
+  ordered lists, basic/derived map keys, managed identity and dirty state are
+  preserved; entity/embeddable map-key SQL eligibility is not broadened.
+- Every collector independently applies D13's setting (default 16, 1–256; 1
+  disables grouping) and **512-key-parameter ceiling**, including composite nested
+  keys. For collector `c`, `Bc = min(setting, floor(512 / keyWidth(c)))`; an eligible
+  query uses `1 + sum(ceil(distinctOwners(c) / Bc))` SELECTs. A database find omits
+  the initial owner-selection query. Empty nested owner sets issue no SQL.
+  Ordinary completion for omitted unsupported lazy mappings or dirty in-memory
+  association changes is outside that bounded count.
+- Root identities alone are paged in SQL before either collection stage.
+  No collection-row limit, Cartesian collection join, per-element find or hidden
+  in-memory pagination is added. All rows are captured before identity registration,
+  relationship resolution, whole collection assembly, snapshots, cache publication
+  and BUG01-scoped callbacks. Mutable graph/hints are replanned per execution.
+- Managed/cache completion uses the shared planner, including when root collections
+  are already loaded but nested wrappers are not. Loaded dirty collections/entities
+  are retained and unloaded wrappers/references complete in place. Complete graph
+  hits need zero SELECTs and no JDBC acquisition; find adds no auto-flush.
+  BUG-20261016-03 records and closes the connection-acquisition regression caught
+  during implementation, independently of SQL-count assertions.
+- This gate exposed **BUG-20261016-02**: removing one duplicate from an unindexed
+  join-table bag deleted all matching target rows. Duplicate-bearing snapshots now
+  reuse the indexed collection's whole-owner rewrite; unchanged/unloaded bags and
+  unique unindexed collections retain their existing behavior.
+
+Complete fallback/refusal boundaries: a **third collection edge**, collections
+under root to-one branches without a first root collection, unsupported mapped eager
+closures (notably collections beyond the second stage), polymorphic/inherited or
+otherwise non-hydratable targets, unsupported map keys/embedded graph paths, explicit
+joins, grouped/having/multiple-root/multiple-item/set/locking queries and locking
+finds. Existing SQL owner-pagination guards still explicitly refuse unsupported
+ordering/projection shapes. Explicit finite cyclic graphs exceeding two collection
+edges fall back; eager expansion has a path-local type guard. Existing explicit
+fetch joins and unnested single-collection graph collectors are unchanged.
+
+Verification, exact commands, independently aggregated reactor/TCK results and
+immutable fixture provenance are recorded in `TCK.md`. D5/D9–D19 and BUG01
+above remain historical deliveries.
+
 ## Remaining work
 
-Prioritized backlog after D19, 2026-10-16. Each item needs its own approved, bounded lot; until then
+Prioritized backlog after D20, 2026-10-16. Each item needs its own approved, bounded lot; until then
 the documented fallback (follow-up selects, eager loading, or an explicit refusal naming the
 milestone) stays in place.
 
-1. **Nested collection-valued graph subgraphs.** D19 covers independent root collections
-   with root/element to-one branches; nested collection SQL remains a separate bounded lot.
-   Broader SQL fetch eligibility — same-query owner pagination,
+1. **Deeper collection-valued graph subgraphs and broader SQL fetch eligibility** —
+   more than two collection edges and collections under root to-one branches;
+   same-query owner pagination,
    entity/embeddable map keys; polymorphic, `JOINED` and `TABLE_PER_CLASS` targets
    (type resolution from the row), broader to-one `DISTINCT` and locking queries, `TREAT`/embedded paths, and entity
    graph hints on complex query shapes beyond D14 and locking finds beyond D15.
@@ -1470,6 +1528,7 @@ Recorded before implementation; each entry: date, decision, reason.
 
 | # | Date | Decision | Status |
 |---|---|---|---|
+| D20 | 2026-10-16 | Extend D19 to at most two collection edges beginning at a root collection, including second owners reached through element to-ones. Merge nested owner-type/collection requests, deduplicate identities from stage-one rows and apply each owner's D13 key/parameter bound. Reuse D16–D18 collectors and staged lifecycle/cache/dirty/in-place completion; SQL root-only pagination and no find auto-flush remain intact. Third collection edges, root-to-one collections and unsupported eager/query/mapping closures retain complete fallback/refusal. Fix duplicate bag occurrence deletion (BUG-20261016-02) exposed by the nested dirty-state gate. | Actioned |
 | D19 | 2026-10-16 | Load multiple graph-requested root collections through independent D16–D18 collectors constrained to SQL-selected owner batches, using D13's configured/512-parameter key bound. Stage all identities and collection branches before relationships/snapshots/BUG01-scoped callbacks; preserve root/element to-one joins, identity, dirty/in-place/cache/flush semantics and SQL owner pagination. Nested collection subgraphs and unsupported query/mapping shapes retain complete fallbacks; explicit fetch and single-collection paths remain unchanged. | Actioned |
 | D18 | 2026-10-16 | Combine D14–D17 for one root collection and finite direct/nested root to-one branches, retaining element to-one subgraphs. Share graph aliases across branches and validate graph-only LEFT to-one hydration from owner or element; retain identity/dirty/lazy/lifecycle/cache contracts, SQL distinct-owner pagination with complete secondary loading and no find auto-flush. Multiple/nested collections and broader unsupported query/mapping shapes retain complete fallback/refusal; no new loading architecture. | Actioned |
 | D17 | 2026-10-16 | Extend D16 to one graph-requested root entity collection whose element subgraph holds direct/nested to-one chains to concrete hydratable targets: LEFT fetch joins from the collection alias, hydrated from the same rows by the D12 collector and D11 access, validated before use. Preserve D16 null/empty/bag/list/map/identity/dirty/in-place/callback/cache/no-auto-flush semantics; SQL owner pagination from the original statement then complete secondary loads. Multiple collections, nested collection subgraphs, root to-ones beside the collection and polymorphic/complex paths keep complete fallbacks; explicit fetch joins unchanged. | Actioned |

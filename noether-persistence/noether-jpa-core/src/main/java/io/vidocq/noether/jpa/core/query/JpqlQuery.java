@@ -73,9 +73,9 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
             FetchPlan graph, boolean load, Dialect dialect, Connection connection,
             io.vidocq.noether.jpa.core.flush.EntityLoader loader,
             io.vidocq.noether.jpa.core.context.PersistenceContext context) {
-        List<Compiled> split = Translator.splitGraph(Translator.graphRoot(type), unit, graph);
+        List<List<Compiled>> split = Translator.splitGraph(Translator.graphRoot(type), unit, graph);
         if (!split.isEmpty()) {
-            GraphRows rows = splitRows(split, List.of(id), loader.batchBound(type), dialect, connection);
+            GraphRows rows = splitRows(split, List.of(id), loader::batchBound, dialect, connection);
             loader.loadCollections(rows.entities(), rows.collections(), connection, context);
             return true;
         }
@@ -117,45 +117,77 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     public static void completeGraph(io.vidocq.noether.jpa.core.mapping.MappedUnit unit, MappedEntity type, Object instance,
             FetchPlan graph, Dialect dialect, Connection connection, EntityLoader loader,
             io.vidocq.noether.jpa.core.context.PersistenceContext context) {
-        List<Compiled> split = Translator.splitGraph(Translator.graphRoot(type), unit, graph);
-        if (split.isEmpty() || split.stream().noneMatch(c -> io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(
-                type.access().get(instance, c.collection().attribute())))) return;
-        GraphRows rows = splitRows(split, List.of(type.id(instance)), loader.batchBound(type), dialect, connection);
+        List<List<Compiled>> split = Translator.splitGraph(Translator.graphRoot(type), unit, graph);
+        if (split.isEmpty() || !unloadedGraph(type, instance, graph, unit)) return;
+        GraphRows rows = splitRows(split, List.of(type.id(instance)), loader::batchBound, dialect, connection);
         loader.loadCollections(rows.entities(), rows.collections(), connection, context);
     }
 
+    /** Checks graph completeness without initializing a wrapper/reference or acquiring a JDBC connection. */
+    public static boolean unloadedGraph(MappedEntity type, Object instance, FetchPlan graph,
+            io.vidocq.noether.jpa.core.mapping.MappedUnit unit) {
+        if (io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(instance)) return true;
+        for (var node : graph.attributes().entrySet()) {
+            int attribute = -1;
+            for (int i = 0; i < type.model().attributes().size(); i++) {
+                if (type.model().attributes().get(i).name().equals(node.getKey())) { attribute = i; break; }
+            }
+            if (attribute < 0) continue;
+            Object value = type.access().get(instance, attribute);
+            if (io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(value)) return true;
+            var model = type.model().attributes().get(attribute);
+            if (value != null && model instanceof io.vidocq.noether.jpa.core.model.AssociationAttribute association) {
+                MappedEntity target = unit.entity(association.targetEntity()).orElseThrow();
+                if (value instanceof Map<?, ?> map) {
+                    for (Object element : map.values()) if (element != null && unloadedGraph(target, element, node.getValue(), unit)) return true;
+                } else if (value instanceof Collection<?> collection) {
+                    for (Object element : collection) if (element != null && unloadedGraph(target, element, node.getValue(), unit)) return true;
+                } else if (unloadedGraph(target, value, node.getValue(), unit)) return true;
+            }
+        }
+        return false;
+    }
+
     /** Reads every branch before the loader registers identities, resolves relationships or dispatches callbacks. */
-    private static GraphRows splitRows(List<Compiled> templates, List<Object> ids, int bound, Dialect dialect,
+    private static GraphRows splitRows(List<List<Compiled>> stages, List<Object> rootIds,
+            java.util.function.ToIntFunction<MappedEntity> batchBound, Dialect dialect,
             Connection connection) {
         List<EntityLoader.FetchedEntity> entities = new ArrayList<>();
         List<EntityLoader.FetchedCollection> collections = new ArrayList<>();
-        for (Compiled template : templates) {
-            List<EntityLoader.FetchedElement> elements = new ArrayList<>();
-            for (int from = 0; from < ids.size(); from += bound) {
-                Compiled compiled = Translator.graphOwners(template, ids.subList(from, Math.min(ids.size(), from + bound)));
-                Dialect.Rendered rendered = dialect.renderQuery(compiled.sql());
-                try (PreparedStatement statement = connection.prepareStatement(rendered.sql())) {
-                    for (int i = 0; i < rendered.parameters().size(); i++) {
-                        Compiled.Slot slot = (Compiled.Slot) rendered.parameters().get(i).slot();
-                        slot.binder().bind(dialect, statement, i + 1, slot.constant());
-                    }
-                    try (ResultSet results = statement.executeQuery()) {
-                        while (results.next()) {
-                            int[] column = {compiled.items().getFirst().width() + 1};
-                            Fetched[] row = fetched(compiled.hydrations(), results, column);
-                            for (Fetched fetched : row) {
-                                if (fetched != null) entities.add(new EntityLoader.FetchedEntity(
-                                    fetched.type(), fetched.id(), fetched.values(), fetched.nulls()));
-                            }
-                            if (row[0] != null) elements.add(fetchedElement(compiled.collection(), row[0].id(), row, results, column));
+        for (int stage = 0; stage < stages.size(); stage++) {
+            List<EntityLoader.FetchedEntity> owners = List.copyOf(entities);
+            for (Compiled template : stages.get(stage)) {
+                MappedEntity owner = template.collection().owner();
+                List<Object> ids = stage == 0 ? rootIds : owners.stream().filter(row -> row.type() == owner)
+                    .map(EntityLoader.FetchedEntity::id).distinct().toList();
+                int bound = batchBound.applyAsInt(owner);
+                List<EntityLoader.FetchedElement> elements = new ArrayList<>();
+                for (int from = 0; from < ids.size(); from += bound) {
+                    Compiled compiled = Translator.graphOwners(template, ids.subList(from, Math.min(ids.size(), from + bound)));
+                    Dialect.Rendered rendered = dialect.renderQuery(compiled.sql());
+                    try (PreparedStatement statement = connection.prepareStatement(rendered.sql())) {
+                        for (int i = 0; i < rendered.parameters().size(); i++) {
+                            Compiled.Slot slot = (Compiled.Slot) rendered.parameters().get(i).slot();
+                            slot.binder().bind(dialect, statement, i + 1, slot.constant());
                         }
+                        try (ResultSet results = statement.executeQuery()) {
+                            while (results.next()) {
+                                int[] column = {compiled.items().getFirst().width() + 1};
+                                Fetched[] row = fetched(compiled.hydrations(), results, column);
+                                for (Fetched fetched : row) {
+                                    if (fetched != null) entities.add(new EntityLoader.FetchedEntity(
+                                        fetched.type(), fetched.id(), fetched.values(), fetched.nulls()));
+                                }
+                                if (row[0] != null) elements.add(fetchedElement(compiled.collection(), row[0].id(), row, results, column));
+                            }
+                        }
+                    } catch (SQLException failure) {
+                        throw new PersistenceException("The split graph read failed: " + failure.getMessage(), failure);
                     }
-                } catch (SQLException failure) {
-                    throw new PersistenceException("The split graph read failed: " + failure.getMessage(), failure);
                 }
+                collections.add(new EntityLoader.FetchedCollection(
+                    template.collection().owner(), template.collection().attribute(), elements));
             }
-            collections.add(new EntityLoader.FetchedCollection(
-                template.collection().owner(), template.collection().attribute(), elements));
         }
         return new GraphRows(entities, collections);
     }
@@ -463,7 +495,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
             return new ArrayList<>();
         }
         Object graph = getHints().containsKey(FETCH_GRAPH) ? getHints().get(FETCH_GRAPH) : getHints().get(LOAD_GRAPH);
-        List<Compiled> split = graph != null && lockMode == LockModeType.NONE && !collectionFetch
+        List<List<Compiled>> split = graph != null && lockMode == LockModeType.NONE && !collectionFetch
             ? Translator.splitGraph(statement, runtime.mapping(), runtime.plan(graph))
             : List.of();
         Ast.Statement execution = split.isEmpty() && graph != null && lockMode == LockModeType.NONE && !collectionFetch
@@ -500,7 +532,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         return unique;
     }
 
-    private List<Object> execute(Compiled compiled, List<Compiled> split, Connection connection) {
+    private List<Object> execute(Compiled compiled, List<List<Compiled>> split, Connection connection) {
         Dialect dialect = runtime.dialect(connection);
         boolean pessimistic = io.vidocq.noether.jpa.core.flush.Locks.pessimistic(lockMode);
         io.vidocq.noether.jpa.dialect.sql.Statement sql = compiled.sql();
@@ -556,8 +588,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         FetchPlan[] plans = fetchPlans();
         if (!split.isEmpty() && !rows.isEmpty()) {
             List<Object> ids = rows.stream().map(r -> ((EntityKey) r).id()).distinct().toList();
-            MappedEntity owner = split.getFirst().collection().owner();
-            GraphRows collected = splitRows(split, ids, runtime.graphBatchBound(owner, connection), dialect, connection);
+            GraphRows collected = splitRows(split, ids, owner -> runtime.graphBatchBound(owner, connection), dialect, connection);
             runtime.hydrateCollections(collected.entities(), collected.collections(), connection);
         }
         if (compiled.collection() != null) {

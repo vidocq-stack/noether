@@ -194,6 +194,31 @@ collections, non-root eager collections, polymorphic/complex mappings and broade
 query shapes retain complete fallback. Explicit fetch joins and single-collection
 graphs retain their existing collectors.
 
+== Two collection stages (D20, 2026-10-16)
+
+The shared split planner now returns at most two collector stages. First-stage
+templates retain root and element to-one LEFT joins but cut second-level collection
+nodes into plans merged by mapped owner type and collection. This also handles
+second collection owners reached through element to-ones. Second-stage templates
+pass the same single-collection checks; a third collection edge rejects the split
+plan and retains ordinary complete loading. Eager to-one expansion is path-cycle
+guarded; unsupported eager collection closures retain fallback.
+
+Execution captures the full first-stage rows, deduplicates nested owner identities,
+then reads each second-stage collection with that owner's key-width batch bound.
+No nested read is issued for an empty owner set. Only after both stages have been
+captured does the unchanged multi-collection loader register identities and resolve
+relationships, complete wrappers, snapshot and queue callbacks. Managed/cache
+completion uses the same planner even if only nested collections remain unloaded.
+Fully complete graph hits need no SELECT or new JDBC connection; the completeness
+check runs before connection acquisition (BUG-20261016-03). Find does not auto-flush.
+
+BUG-20261016-02 was exposed by the nested managed-bag gate: deleting one occurrence
+with an owner/target predicate deletes all duplicate join rows. Duplicate-bearing
+snapshots now reuse whole-owner rewriting; unique unindexed bags retain diff writes.
+No new mapping representation, SQL renderer, dependency or entity access mechanism
+is introduced. D19 above remains the historical root-collection delivery.
+
 == Lazy read batches (D13, 2026-10-15)
 
 `EntityLoader` groups pending compatible persistence-context entries on first access.

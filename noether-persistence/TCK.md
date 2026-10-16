@@ -1,3 +1,77 @@
+## Noether two-collection-edge graph verification (D20) — 2026-10-16
+
+Baseline: `0b48695` (977 reactor tests). D20 extends D19's existing split collectors
+to two collection edges beginning at a root collection, with finite intervening
+element-to-one chains. Exact support/fallbacks and count qualifications are in
+`ROADMAP.md` (D20); this is not arbitrary-depth or polymorphic graph fetching.
+
+Mandatory pre-production red: **2 tests / 2 SQL-count failures / 0 errors**.
+Nested bag/map graph reads used **14 instead of 5** SELECTs; 23 distinct nested
+owners crossing the default size 16 used **13 instead of 4**. A subsequent
+persisted-content regression exposed **BUG-20261016-02**: removing one occurrence
+from a duplicate bag reloaded one element instead of two. The owner/target DELETE
+removed both identical rows; duplicate-bearing snapshots now reuse whole-owner
+rewriting. The red audit and the full verification remain separate from timing
+benchmarks; no benchmark was run.
+A further connection-count red during D20 implementation exposed BUG-20261016-03:
+a complete managed graph hit outside a transaction acquired a fifth connection
+instead of retaining four. The shared completeness check now precedes JDBC
+acquisition; complete managed and cache graph hits assert zero new connections.
+
+Final focused gate: **168 tests / 168 passed / 0 failures / 0 errors / 0 skips**
+(`CollectionSubgraphTest` 36, `CollectionFetchJoinTest` 35, `FetchJoinTest` 40,
+`PostLoadCollectionCycleTest` 20, `LazyBatchTest` 21, `SecondLevelCacheTest` 16).
+Nine new tests cover JPQL/Criteria/find FETCH/LOAD, two collection edges, root/element/
+leaf to-ones, shared/repeated nested owners and merged independent root branches,
+null rows/empty collections, bag multiplicities/list positions/map keys, independently
+bounded nested owners, batch size 1, and 173 three-column nested owner keys grouped
+as 170 + 3 at the maximum configured size 256 (no statement exceeds 512 key
+parameters). Additional coverage includes mapped eager nested collections/to-ones,
+dirty managed entities/collections and persisted mutation, in-place wrappers/references,
+partial/full cache completion, no find auto-flush, complete once-per-identity callbacks,
+persisted callback mutation and rollback-marking callback failure, mutable graphs/hints,
+SQL root-only pagination, deeper/cyclic complete fallback and prior D14–D19/BUG01 gates.
+
+The final full clean reactor finished **15:43:09 CEST**:
+**986 tests / 986 passed / 0 failures / 0 errors / 0 skips**, independently
+aggregated from **87 XML reports** (977 baseline plus nine).
+The full **locally patched** Persistence 3.2.1 TCK finished **15:44:28 CEST**:
+**2135 tests / 2131 passed / 0 failures / 0 errors / 4 unchanged official skips**,
+on isolated Docker **PostgreSQL 17-alpine**, Temurin **25.0.4**, Maven **3.9.16**.
+
+Exact commands, from the repository root:
+
+```sh
+export JAVA_HOME=$HOME/.sdkman/candidates/java/25.0.4-tem
+export PATH="$JAVA_HOME/bin:$PATH"
+# Red before production edits:
+./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test \
+  -Dtest=CollectionSubgraphTest#nestedCollectionsPreserveBagsMapsSharedOwnersAndRootOnlyPagination+nestedOwnerCountsAreIndependentlyBoundedAndSettingOneDisablesGrouping \
+  -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test \
+  -Dtest=CollectionSubgraphTest,CollectionFetchJoinTest,FetchJoinTest,LazyBatchTest,PostLoadCollectionCycleTest,SecondLevelCacheTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw -ntp clean install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+Independent verification aggregates **259 TCK XML reports**, verifies **2135 unique
+execution/class/method identities and unchanged outcomes against D19**, and checks
+both effective classpath properties in each report (**518 checks**). All **85 original
+cache/installed TCK input files** and **both runner tools** retain their exact file
+set and SHA-256. Official jar:
+`a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`;
+derived jar:
+`1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+All **1126 entries** were compared; only the two authorized TCK-BUG-001 ORM resources
+differ, with hashes matching fixture provenance. The four skips match the D18 list
+below. Logs, before/after snapshots and independent verifier use the
+`nested-collection-graphs-` session-artifact prefix (`verification.json` is the summary).
+No official input, patch tool, dependency, Java module descriptor or shared service
+was changed/restarted. This is local patched evidence, **not an official result or
+certification**. D5/D9–D19 and BUG01 historical records below are preserved.
+
 ## Noether split root collection graph verification (D19) — 2026-10-16
 
 Decision D19 reads multiple graph-requested root collections independently for bounded

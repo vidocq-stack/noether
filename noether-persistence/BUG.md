@@ -909,3 +909,53 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     4 unchanged official skips**. All identities/outcomes and immutable fixture/input
     hashes independently verified; the previously recorded direct-cache callback edge
     is now covered and closed.
+
+## BUG-20261016-02 — Removing one duplicate bag occurrence deletes every equal join row
+
+- **Date**: 2026-10-16
+- **Status**: FIXED in the working tree, full verification complete, pending commit
+- **Module**: `noether-jpa-core/flush/FlushEngine.writeJoinRows`
+- **Symptom**: a managed many-to-many bag `[hammer, hammer, saw]` loses both hammer
+  join rows when one occurrence is removed; a reload returns `[saw]` instead of
+  `[hammer, saw]`.
+- **Minimal reproduction**: run `CollectionSubgraphTest#nestedFindCompletesExistingWrappersAndReferencesWithoutOverwritingDirtyStateOrFlushing`;
+  load the nested discounts bag, remove its first occurrence, commit, clear/evict
+  and reload. The final size assertion expected 2 but observed 1.
+- **Cause hypothesis**: confirmed — the collection diff counts occurrences, but the
+  join-row DELETE identifies only owner and target, deleting all duplicate rows.
+- **Investigations**:
+  - 2026-10-16: discovered during D20 dirty nested-collection verification. The
+    pre-fix focused gate reproduced the persisted-content loss. Duplicate-bearing
+    snapshots now reuse the existing complete owner-row rewrite used for indexed
+    collections, preserving the remaining multiplicities. Unchanged/unloaded
+    collections still write nothing; unique unindexed collections retain diff writes.
+  - 2026-10-16: verified by the **168/168** focused graph/lazy/cache/callback gate,
+    full clean reactor **986/986**, and full locally patched PostgreSQL 17 TCK
+    **2135 / 2131 passed / 0 failures / 0 errors / 4 unchanged official skips**.
+    Nested graph reads preserve dirty wrappers and bag multiplicities before and
+    after commit/clear/eviction; immutable fixture hashes and all TCK identities/
+    outcomes remain unchanged (`TCK.md`).
+
+## BUG-20261016-03 — Initial nested completion routing acquired a connection for complete graph hits
+
+- **Date**: 2026-10-16
+- **Status**: FIXED in the D20 working tree, full verification complete, pending commit
+- **Module**: `noether-jpa-core/session/EntityManagerImpl.completeGraph`
+- **Symptom**: the initial D20 routing preserved zero SELECTs but acquired a new
+  JDBC connection on a fully complete managed graph hit outside a transaction.
+- **Minimal reproduction**: `CollectionSubgraphTest#nestedFindCompletesPartiallyCachedGraphsBeforeCallbacksAndPreservesFastHits`;
+  after completing the nested graph, repeat the managed find and assert that the
+  counting data source's connection count is unchanged. The red test expected
+  4 acquisitions but observed 5.
+- **Cause hypothesis**: confirmed — replacing D19's root-only completeness shortcut
+  with unconditional connection routing bypassed the existing JDBC-free fast path.
+- **Investigations**:
+  - 2026-10-16: added connection-count assertions in addition to existing SQL counts.
+    The shared graph-completeness traversal now runs before connection acquisition,
+    without initializing lazy wrappers/references. Unloaded nested state still
+    reaches the shared split planner; complete managed/cache hits remain JDBC-free.
+  - 2026-10-16: final focused gate **168/168**, clean reactor **986/986** and full
+    locally patched TCK **2135 / 2131 passed / 0 failures / 0 errors / 4 unchanged
+    skips**. Both managed and fully cached nested graph finds assert no new JDBC
+    acquisition. Fixture bytes, input file sets and TCK identities/outcomes are
+    independently verified unchanged.

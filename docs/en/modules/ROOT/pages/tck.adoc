@@ -15,6 +15,35 @@ The official artifact checksums and TCK-BUG-001 byte-exact derived-jar fixture
 patch are unchanged; original artifacts are never edited. `TCK_FIXTURES=official`
 selects the untouched Persistence fixture. See the runner README for setup.
 
+== Two collection graph edges verification (D20, 2026-10-16)
+
+D20 supports two collection edges beginning at a root collection, including nested
+owners reached through element to-ones. Mandatory pre-production red: *two actual
+SQL-count failures*, 14 instead of 5 SELECTs and 13 instead of 4 for a nested owner
+group crossing size 16. A persisted duplicate-bag removal regression exposed
+BUG-20261016-02, now fixed through existing whole-owner join-row rewriting.
+A connection-count red (BUG-20261016-03, five acquisitions instead of four)
+also guards JDBC-free complete managed/cache hits, beyond zero SELECT assertions.
+
+The focused D14–D20/cache/BUG01 gate passes *168/168*. Nine new tests cover nested
+JPQL/Criteria/find FETCH/LOAD, root/element/leaf to-ones, shared owners, null/empty/
+duplicate/list/map state, dirty/in-place/cache/callback behavior, mutable plans,
+SQL root-only pagination, deeper/cyclic fallback, eager expansion and independent
+nested batching. A 173-owner, three-column-key scenario verifies 170 + 3 groups
+and the 512-key-parameter ceiling at configured size 256; size 1 is also covered.
+
+The clean reactor finished *15:43:09 CEST*: *986/986 tests*, *87 XML reports*
+(977 baseline plus nine). The full locally patched Persistence 3.2.1 TCK finished
+*15:44:28 CEST*: *2135 tests / 2131 passed / 0 failures / 0 errors / 4 unchanged
+official skips*, using isolated Docker PostgreSQL 17-alpine, Temurin 25.0.4 and
+Maven 3.9.16. Independent verification checks *259 XML reports*, *2135 unique
+identities/outcomes unchanged against D19*, *518 effective classpath properties*,
+*85 immutable inputs* plus both runner tools. The official/derived SHA-256 and
+1126 jar entries are unchanged except the two authorized TCK-BUG-001 resources.
+No shared service restart. Exact commands/provenance are in
+`noether-persistence/TCK.md`. Historical D5/D9–D19 and BUG01 records below are
+preserved. This is *local patched evidence, not certification*.
+
 == Multiple root collection split SQL verification (D19, 2026-10-16)
 
 D19 groups independent root-collection reads by owner identity rather than joining

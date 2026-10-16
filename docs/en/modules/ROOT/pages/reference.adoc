@@ -172,6 +172,39 @@ bound does not cover those extra fallback reads. Single-collection and explicit
 JOIN FETCH SQL remain unchanged. Nested collection graphs, broader fetch/lazy/batch
 eligibility and missing mappings are the remaining prioritized lots.
 
+== Two collection graph edges (D20, 2026-10-16)
+
+D20 supersedes D19's nested-collection fallback for *two collection edges beginning
+at a root collection*: `Order.lines.discounts`, or `Order.lines.product.tags`.
+Multiple independent root and second-level branches are supported; finite root,
+element and leaf to-one chains retain LEFT hydration. Second-level entity collections
+and existing eligible element-collection leaves use the same collectors/assembler,
+preserving null rows, bag multiplicities, stored positions and supported map keys.
+
+Queries select and paginate root identities in SQL, then read first-level collections
+and grouped second-level collections separately. Shared nested identities are
+deduplicated, and requests for the same mapped owner type/collection are merged.
+For each collector `c`, let `Nc` be its distinct owner count and
+`Bc = min(fetch.batch-size, floor(512 / owner-key-width))`.
+An eligible query uses `1 + sum(ceil(Nc / Bc))` SELECTs; a non-locking database find
+omits the initial root selection. The configured default/range remain 16 and 1–256;
+1 disables grouping. Composite nested owners use their own key width, not the root's.
+Empty nested owner sets cause no SELECT. All stages precede relationships, complete
+assembly, snapshots, cache publication and callbacks. Dirty state and in-place lazy
+wrappers/references survive; complete managed/cache finds need no SELECT, new JDBC
+connection or auto-flush.
+
+This is bounded graph loading, not arbitrary-depth fetching. Third collection edges,
+collections under root to-one branches, unsupported eager closures, polymorphic or
+otherwise non-hydratable targets, entity/embeddable map keys, embedded graph subpaths,
+explicit joins/grouped/having/multi-root/multi-selection/set/locking queries and locking
+finds retain complete ordinary loading or established explicit refusal. Existing
+owner-pagination guards still apply; no collection-row limit or in-memory pagination
+is introduced. Counts exclude ordinary completion for dirty in-memory association
+changes and omitted unsupported lazy mappings. Explicit fetch joins and unnested
+single-collection graphs keep their existing collectors. Deeper graphs and broader
+fetch/lazy/batch/mapping eligibility remain separate backlog items.
+
 == Lazy read batching
 
 [cols="3,1,4"]

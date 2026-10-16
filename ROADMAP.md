@@ -4,7 +4,7 @@ Noether owns the implementations extracted from Mansart on 2026-10-11.
 
 | Building block | Status | Detailed roadmap |
 | --- | --- | --- |
-| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D19); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
+| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D20); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
 | Jakarta Validation 3.1 | V0–V2 provisional local test/TCK stopgap; not published | [Validation](noether-validation/ROADMAP.md) |
 
 The extraction changes repository, artifact, package and provider names, not
@@ -167,13 +167,30 @@ collections, unsupported graph/query/mapping shapes and explicit fetch joins ret
 their established complete fallbacks/refusals. D5/D9–D18 and BUG-20261016-01 above remain
 historical deliveries; details and exact count qualifications are in the detailed roadmap.
 
+Decision D20 (2026-10-16) adds **two collection edges per graph path**, beginning
+with a root collection: `Order.lines.discounts`, or `Order.lines.product.tags`.
+D19's split planner now builds at most two collection stages. Each nested
+owner-type/collection request is merged, distinct owner identities are taken from
+the first stage's full-state rows, and each collector uses its own D13 bound
+(`min(batch-size, floor(512 / key-width))`, default 16, range 1–256). Independent
+root branches and root/element to-one chains remain supported. Supported entity
+and element collection leaves preserve duplicates, nulls, positions and map keys.
+SQL root pagination precedes both complete stages; all rows are captured before
+relationships/snapshots/cache/callbacks. Managed dirty state, in-place completion,
+no find auto-flush and complete managed/cache fast hits are retained.
+BUG-20261016-02 fixes duplicate bag occurrence removal exposed by this gate.
+Third collection edges, collections reached only through root to-ones, unsupported
+eager closures and the established complex/polymorphic/query/map-key boundaries
+retain complete fallback or explicit refusal. D5/D9–D19 and BUG01 remain historical.
+
 ## Remaining Persistence work
 
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
-1. Nested collection-valued graph subgraphs remain a future bounded lot; D19 covers
-   independent root collections with root/element to-one branches.
+1. Deeper collection-valued graph subgraphs and collections under root to-one
+   branches remain separate bounded lots; D20 supports two collection edges
+   beginning at a root collection.
    Broader SQL fetch eligibility: same-query owner pagination,
    entity/embeddable map keys; polymorphic/`JOINED`/`TABLE_PER_CLASS` targets,
    broader to-one `DISTINCT` and locking queries, embedded/treated graph paths and complex graph queries.

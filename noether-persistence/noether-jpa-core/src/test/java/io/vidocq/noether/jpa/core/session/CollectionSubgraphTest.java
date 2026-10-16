@@ -24,6 +24,7 @@ class CollectionSubgraphTest {
     private static final String FETCH = "jakarta.persistence.fetchgraph";
     private static final String LOAD = "jakarta.persistence.loadgraph";
     private final List<String> sql = new ArrayList<>();
+    private int connections;
     private EntityManagerFactory factory;
     private EntityManager em;
 
@@ -35,6 +36,7 @@ class CollectionSubgraphTest {
     private void open(int batchSize) {
         var source = new CountingDataSource("jdbc:h2:mem:collection-subgraph-" + DATABASES.incrementAndGet() + ";DB_CLOSE_DELAY=-1") {
             @Override public Connection getConnection() throws SQLException {
+                connections++;
                 Connection connection = super.getConnection();
                 return (Connection) Proxy.newProxyInstance(Connection.class.getClassLoader(), new Class<?>[]{Connection.class},
                     (proxy, method, args) -> {
@@ -77,6 +79,11 @@ class CollectionSubgraphTest {
         third.getPicks().add(l20);
         first.getKeyed().put("b", l12);
         first.getKeyed().put("a", l10);
+        l10.getDiscounts().addAll(List.of(hammer, hammer, saw));
+        l20.getDiscounts().add(hammer);
+        l10.getNotes().addAll(Arrays.asList("first", null, "first"));
+        l10.getCodes().put("a", "one");
+        l10.getCodes().put("b", "two");
         var payment = new Payment(700, first, hammer);
         var noTarget = new Payment(701, first, null);
         first.getPayments().addAll(List.of(noTarget, payment));
@@ -89,6 +96,7 @@ class CollectionSubgraphTest {
     }
 
     @AfterEach void close() {
+        Order.inspectNested = Line.inspectNested = false;
         Order.requireComplete = Payment.inspect = Order.inspectAll = Order.inspect = Order.inspectMixed = Line.inspectAll = Line.inspect = Product.fail = Product.mutate = false;
         if (factory != null) factory.close();
     }
@@ -129,6 +137,228 @@ class CollectionSubgraphTest {
         graph.addSubgraph("picks").addSubgraph("product").addAttributeNodes("supplier", "category");
         graph.addSubgraph("keyed").addSubgraph("product").addAttributeNodes("supplier", "category");
         return graph;
+    }
+
+    private EntityGraph<Order> nestedGraph(String collection) {
+        var graph = mixedGraph(collection);
+        Subgraph<Line> lines = graph.addSubgraph(collection);
+        lines.addSubgraph("discounts").addAttributeNodes("supplier", "category");
+        lines.addAttributeNodes("notes", "codes");
+        return graph;
+    }
+
+    /** §3.7.4: each collection edge is a separate complete, bounded read, never a multiplying join. */
+    @Test void nestedCollectionsUseGroupedReadsForQueriesCriteriaAndFindBeforeCallbacks() {
+        for (String hint : List.of(FETCH, LOAD)) {
+            for (String operation : List.of("jpql", "criteria", "find")) {
+                cold();
+                Order.inspectNested = Line.inspectNested = true;
+                List<Order> found;
+                if (operation.equals("find")) found = List.of(em.find(Order.class, 1L, Map.of(hint, nestedGraph("lines"))));
+                else if (operation.equals("criteria")) {
+                    var cb = em.getCriteriaBuilder();
+                    var criteria = cb.createQuery(Order.class);
+                    var root = criteria.from(Order.class);
+                    criteria.select(root).distinct(true).orderBy(cb.asc(root.get("id")));
+                    found = em.createQuery(criteria).setHint(hint, nestedGraph("lines")).getResultList();
+                } else found = orders(hint, nestedGraph("lines"));
+                assertThat(selects()).as(operation + "/" + hint + sql).isEqualTo(operation.equals("find") ? 4 : 5);
+                assertMixed(found.getFirst());
+                Line line = found.getFirst().getLines().get(1);
+                assertThat(line.getDiscounts()).extracting(Product::getId).containsExactlyInAnyOrder(200L, 200L, 201L);
+                assertThat(line.getDiscounts()).filteredOn(p -> p.getId() == 200).allSatisfy(p -> assertThat(p).isSameAs(line.getProduct()));
+                assertThat(line.getNotes()).containsExactly("first", null, "first");
+                assertThat(line.getCodes()).containsEntry("a", "one").containsEntry("b", "two").hasSize(2);
+                assertThat(found.getFirst().nestedSeen).isEqualTo(3);
+                assertThat(line.nestedSeen).isEqualTo("3:3:2");
+                assertThat(found.getFirst().getLines().getFirst().getDiscounts()).isEmpty();
+                assertThat(Order.LOADS.get()).isEqualTo(found.size());
+                assertThat(Line.LOADS.get()).isEqualTo(found.size() == 1 ? 4 : 6);
+                assertThat(selects()).isEqualTo(operation.equals("find") ? 4 : 5);
+            }
+        }
+    }
+
+    @Test void nestedCollectionsPreserveBagsMapsSharedOwnersAndRootOnlyPagination() {
+        for (String collection : List.of("picks", "keyed")) {
+            cold();
+            var found = orders(LOAD, nestedGraph(collection));
+            Collection<Line> lines = collection.equals("picks") ? found.getFirst().getPicks() : found.getFirst().getKeyed().values();
+            Line line = lines.stream().filter(l -> l.getId() == 10).findFirst().orElseThrow();
+            assertThat(line.getDiscounts()).hasSize(3);
+            assertThat(line.getNotes()).containsExactly("first", null, "first");
+            if (collection.equals("picks")) assertThat(lines.stream().filter(l -> l == line)).hasSize(2);
+            else assertThat(found.getFirst().getKeyed()).containsOnlyKeys("a", "b");
+            assertThat(selects()).isEqualTo(5);
+        }
+        cold();
+        var graph = nestedGraph("lines");
+        graph.addSubgraph("picks").addSubgraph("discounts").addAttributeNodes("supplier", "category");
+        var found = orders(LOAD, graph);
+        assertThat(found.getFirst().getPicks()).hasSize(3);
+        assertThat(found.getFirst().getPicks()).filteredOn(l -> l.getId() == 10)
+            .allSatisfy(l -> assertThat(l).isSameAs(found.getFirst().getLines().get(1)));
+        assertThat(found.getFirst().getLines().get(1).getDiscounts()).hasSize(3);
+        assertThat(selects()).isEqualTo(6);
+        cold();
+        var page = em.createQuery("select o from CsOrder o order by o.id", Order.class)
+            .setHint(LOAD, nestedGraph("lines")).setFirstResult(1).setMaxResults(2).getResultList();
+        assertThat(page).extracting(Order::getId).containsExactly(2L, 3L);
+        assertThat(page.getFirst().getLines()).isEmpty();
+        assertThat(page.getLast().getLines()).hasSize(2);
+        assertThat(page.getLast().getLines().getFirst().getDiscounts()).extracting(Product::getId).containsExactly(200L);
+        assertThat(selects()).isEqualTo(5);
+        assertThat(sql.getFirst()).containsIgnoringCase("offset").containsIgnoringCase("fetch first").doesNotContainIgnoringCase("join");
+        cold();
+        assertThat(em.find(Order.class, 999L, Map.of(FETCH, nestedGraph("lines")))).isNull();
+        assertThat(selects()).isEqualTo(1);
+    }
+
+    @Test void nestedOwnerCountsAreIndependentlyBoundedAndSettingOneDisablesGrouping() {
+        for (int batch : List.of(16, 1)) {
+            if (batch == 1) { factory.close(); open(1); }
+            em.getTransaction().begin();
+            Order first = em.find(Order.class, 1L);
+            for (int i = 0; i < 17; i++) {
+                var line = new Line(100 + i, i, first, null, null);
+                line.getNotes().add("extra");
+                first.getLines().add(line);
+                em.persist(line);
+            }
+            em.getTransaction().commit();
+            cold();
+            var graph = em.createEntityGraph(Order.class);
+            graph.addSubgraph("lines").addAttributeNodes("notes");
+            var found = orders(FETCH, graph);
+            assertThat(found.getFirst().getLines()).hasSize(21);
+            assertThat(found.getFirst().getLines().getLast().getNotes()).containsExactly("extra");
+            assertThat(selects()).as("batch " + batch + sql).isEqualTo(batch == 16 ? 4 : 27);
+        }
+    }
+
+    @Test void nestedFindCompletesExistingWrappersAndReferencesWithoutOverwritingDirtyStateOrFlushing() {
+        Order first = em.find(Order.class, 1L);
+        List<Line> wrapper = first.getLines();
+        assertThat(loaded(first, "lines")).isFalse();
+        Line known = em.find(Line.class, 10L);
+        Collection<Product> discounts = known.getDiscounts();
+        List<String> notes = known.getNotes();
+        known.setQuantity(99);
+        Product reference = known.getProduct();
+        assertThat(loaded(reference)).isFalse();
+        em.getTransaction().begin();
+        first.setLabel("dirty");
+        sql.clear();
+        Order found = em.find(Order.class, 1L, Map.of(FETCH, nestedGraph("lines")));
+        assertThat(found).isSameAs(first);
+        assertThat(found.getLines()).isSameAs(wrapper);
+        assertThat(found.getLines().get(1)).isSameAs(known);
+        assertThat(known.getDiscounts()).isSameAs(discounts).hasSize(3);
+        assertThat(known.getNotes()).isSameAs(notes).containsExactly("first", null, "first");
+        assertThat(known.getProduct()).isSameAs(reference);
+        assertThat(reference.getName()).isEqualTo("hammer");
+        assertThat(known.getQuantity()).isEqualTo(99);
+        assertThat(first.getLabel()).isEqualTo("dirty");
+        assertThat(selects()).isEqualTo(4);
+        assertThat(sql).allSatisfy(s -> assertThat(s).startsWithIgnoringCase("select"));
+        notes.add("dirty-note");
+        discounts.remove(discounts.iterator().next());
+        reference.setName("dirty-product");
+        sql.clear();
+        int acquired = connections;
+        assertThat(em.find(Order.class, 1L, Map.of(LOAD, nestedGraph("lines")))).isSameAs(first);
+        assertThat(connections).isEqualTo(acquired);
+        assertThat(selects()).isZero();
+        assertThat(notes).containsExactly("first", null, "first", "dirty-note");
+        assertThat(discounts).hasSize(2);
+        assertThat(reference.getName()).isEqualTo("dirty-product");
+        em.getTransaction().commit();
+        cold();
+        first = em.find(Order.class, 1L, Map.of(LOAD, nestedGraph("lines")));
+        assertThat(first.getLabel()).isEqualTo("dirty");
+        assertThat(first.getLines().get(1).getQuantity()).isEqualTo(99);
+        assertThat(first.getLines().get(1).getNotes()).containsExactly("first", null, "first", "dirty-note");
+        assertThat(first.getLines().get(1).getDiscounts()).hasSize(2);
+    }
+
+    @Test void nestedFindCompletesPartiallyCachedGraphsBeforeCallbacksAndPreservesFastHits() {
+        em.find(Order.class, 1L, Map.of(LOAD, mixedGraph("lines")));
+        em.clear();
+        sql.clear();
+        Order.inspectNested = Line.inspectNested = true;
+        Order.LOADS.set(0);
+        var found = em.find(Order.class, 1L, Map.of(LOAD, nestedGraph("lines")));
+        assertThat(found.nestedSeen).isEqualTo(3);
+        assertThat(found.getLines().get(1).getDiscounts()).hasSize(3);
+        assertThat(Order.LOADS.get()).isEqualTo(1);
+        assertThat(selects()).isEqualTo(4);
+        sql.clear();
+        int acquired = connections;
+        assertThat(em.find(Order.class, 1L, Map.of(FETCH, nestedGraph("lines")))).isSameAs(found);
+        assertThat(connections).isEqualTo(acquired);
+        assertThat(selects()).isZero();
+        cold();
+        em.find(Order.class, 1L, Map.of(LOAD, nestedGraph("lines")));
+        em.clear();
+        sql.clear();
+        acquired = connections;
+        found = em.find(Order.class, 1L, Map.of(LOAD, nestedGraph("lines")));
+        assertThat(found.nestedSeen).isEqualTo(3);
+        assertThat(selects()).isZero();
+        assertThat(connections).isEqualTo(acquired);
+    }
+
+    @Test void nestedPlansAreRebuiltAfterGraphMutationAndHintReplacementAndKeepCallbackMutationsAndFailures() {
+        var graph = mixedGraph("lines");
+        var query = em.createQuery("select o from CsOrder o order by o.id", Order.class).setHint(FETCH, graph);
+        assertThat(query.getResultList().getFirst().getLines()).hasSize(4);
+        assertThat(selects()).isEqualTo(1);
+        cold();
+        graph.addSubgraph("lines").addSubgraph("discounts").addAttributeNodes("supplier", "category");
+        em.getTransaction().begin();
+        Product.mutate = true;
+        var found = query.getResultList().getFirst();
+        assertThat(found.getLines().get(1).getDiscounts()).extracting(Product::getName)
+            .containsExactlyInAnyOrder("hammer!", "hammer!", "saw!");
+        assertThat(Product.LOADS.get()).isEqualTo(3);
+        assertThat(selects()).isEqualTo(3);
+        Product.mutate = false;
+        em.getTransaction().commit();
+        cold();
+        assertThat(em.find(Product.class, 200L).getName()).isEqualTo("hammer!");
+        cold();
+        assertThat(query.setHint(FETCH, mixedGraph("lines")).getResultList().getFirst().getLines()).hasSize(4);
+        assertThat(selects()).isEqualTo(1);
+        cold();
+        em.getTransaction().begin();
+        Product.fail = true;
+        assertThatThrownBy(() -> query.setHint(FETCH, nestedGraph("lines")).getResultList())
+            .hasStackTraceContaining("product callback failed");
+        assertThat(em.getTransaction().getRollbackOnly()).isTrue();
+        em.getTransaction().rollback();
+    }
+
+    @Test void nestedCollectionsThroughToOneOwnersAreGroupedAndThirdEdgesAndCyclesKeepCompleteFallbacks() {
+        var graph = graph("lines", "supplier", "category", "tags", "facts");
+        var found = orders(LOAD, graph);
+        assertThat(found.getFirst().getLines().get(1).getProduct().getTags()).containsExactlyInAnyOrder("steel", "wood");
+        assertThat(found.getLast().getLines().getFirst().getProduct())
+            .isSameAs(found.getFirst().getLines().get(1).getProduct());
+        assertThat(selects()).isEqualTo(4);
+        cold();
+        var deep = nestedGraph("lines");
+        deep.addSubgraph("lines").addSubgraph("discounts").addAttributeNodes("tags");
+        var first = em.find(Order.class, 1L, Map.of(LOAD, deep));
+        assertThat(first.getLines().get(1).getDiscounts()).filteredOn(p -> p.getId() == 200)
+            .allSatisfy(p -> assertThat(p.getTags()).containsExactlyInAnyOrder("steel", "wood"));
+        assertThat(sql.getFirst()).doesNotContainIgnoringCase("CS_LINE");
+        cold();
+        var cyclic = em.createEntityGraph(Order.class);
+        cyclic.addSubgraph("lines").addSubgraph("order").addSubgraph("lines")
+            .addSubgraph("order").addAttributeNodes("lines");
+        var cycleRoot = em.find(Order.class, 1L, Map.of(FETCH, cyclic));
+        assertThat(cycleRoot.getLines()).hasSize(4).allSatisfy(l -> assertThat(l.getOrder()).isSameAs(cycleRoot));
+        assertThat(sql.getFirst()).doesNotContainIgnoringCase("join");
     }
 
     @Test void multipleRootCollectionsUseSeparateGroupedReadsBeforeCallbacks() {
@@ -359,7 +589,7 @@ class CollectionSubgraphTest {
         }
     }
 
-    @Test void mutableGraphsReplaceSingleWithSplitPlansAndNestedCollectionsKeepCompleteFallbacks() {
+    @Test void mutableGraphsReplaceSingleWithSplitPlansAndNestedCollectionsUseCompleteSplitReads() {
         var graph = mixedGraph("lines");
         var query = em.createQuery("select o from CsOrder o order by o.id", Order.class).setHint(FETCH, graph);
         assertMixed(query.getResultList().getFirst());
@@ -942,7 +1172,9 @@ class CollectionSubgraphTest {
         em.find(Line.class, 11L).setItem(em.find(Item.class, 601L));
         em.getTransaction().commit();
         Map<String, EntityGraph<Order>> graphs = new LinkedHashMap<>();
-        graphs.put("nested collection", graph("lines", "supplier", "tags"));
+        var deeper = graph("lines", "supplier", "category");
+        deeper.addSubgraph("lines").addSubgraph("discounts").addAttributeNodes("tags");
+        graphs.put("nested collection", deeper);
         var polymorphic = em.createEntityGraph(Order.class);
         polymorphic.addSubgraph("lines").addAttributeNodes("item");
         graphs.put("polymorphic target", polymorphic);
@@ -1000,7 +1232,7 @@ class CollectionSubgraphTest {
     @Entity(name = "CsOrder") @Table(name = "CS_ORDER")
     public static class Order {
         static final AtomicInteger LOADS = new AtomicInteger();
-        static boolean inspect, inspectMixed, inspectAll, requireComplete;
+        static boolean inspect, inspectMixed, inspectAll, requireComplete, inspectNested;
         private long id;
         private String label;
         private Customer customer;
@@ -1012,6 +1244,7 @@ class CollectionSubgraphTest {
         List<String> seen;
         String rootSeen;
         String allSeen;
+        int nestedSeen;
         public Order() {}
         Order(long id, String label, Customer customer) { this.id = id; this.label = label; this.customer = customer; }
         @Id public long getId() { return id; }
@@ -1038,6 +1271,14 @@ class CollectionSubgraphTest {
         public void setPayments(List<Payment> payments) { this.payments = payments; }
         @PostLoad void loaded() {
             LOADS.incrementAndGet();
+            if (inspectNested) {
+                assertThat(io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(lines)).isFalse();
+                nestedSeen = lines.stream().mapToInt(l -> {
+                    assertThat(io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(l.getDiscounts())).isFalse();
+                    assertThat(io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(l.getNotes())).isFalse();
+                    return l.getDiscounts().size();
+                }).sum();
+            }
             if (requireComplete) {
                 assertThat(io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(lines)).isFalse();
                 assertThat(io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(picks)).isFalse();
@@ -1074,12 +1315,16 @@ class CollectionSubgraphTest {
     @Entity(name = "CsLine") @Table(name = "CS_LINE")
     public static class Line {
         static final AtomicInteger LOADS = new AtomicInteger();
-        static boolean inspect, inspectAll;
+        static boolean inspect, inspectAll, inspectNested;
         private long id;
         private int quantity;
         private Order order;
         private Product product;
         private Item item;
+        private Collection<Product> discounts = new ArrayList<>();
+        private List<String> notes = new ArrayList<>();
+        private Map<String, String> codes = new LinkedHashMap<>();
+        String nestedSeen;
         String productSeen;
         String allSeen;
         public Line() {}
@@ -1099,8 +1344,23 @@ class CollectionSubgraphTest {
         @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "item_id")
         public Item getItem() { return item; }
         public void setItem(Item item) { this.item = item; }
+        @ManyToMany @JoinTable(name = "CS_DISCOUNTS")
+        public Collection<Product> getDiscounts() { return discounts; }
+        public void setDiscounts(Collection<Product> discounts) { this.discounts = discounts; }
+        @ElementCollection @CollectionTable(name = "CS_NOTES") @OrderColumn(name = "note_position")
+        public List<String> getNotes() { return notes; }
+        public void setNotes(List<String> notes) { this.notes = notes; }
+        @ElementCollection @CollectionTable(name = "CS_CODES") @MapKeyColumn(name = "code_key")
+        public Map<String, String> getCodes() { return codes; }
+        public void setCodes(Map<String, String> codes) { this.codes = codes; }
         @PostLoad void loaded() {
             LOADS.incrementAndGet();
+            if (inspectNested) {
+                assertThat(io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(discounts)).isFalse();
+                assertThat(io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(notes)).isFalse();
+                assertThat(io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(codes)).isFalse();
+                nestedSeen = discounts.size() + ":" + notes.size() + ":" + codes.size();
+            }
             if (inspectAll) allSeen = order.getLines().size() + ":" + order.getPicks().size() + ":" + order.getKeyed().size();
             if (inspect) productSeen = product == null ? null : product.getName();
         }

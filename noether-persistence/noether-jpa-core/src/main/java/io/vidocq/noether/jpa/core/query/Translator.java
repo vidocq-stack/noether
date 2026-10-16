@@ -228,10 +228,10 @@ final class Translator {
     }
 
     /**
-     * D19: one independent D16-D18 collector per root collection. Templates have no user predicates:
-     * execution constrains them to the identities selected (and paged) by the original owner query.
+     * D19/D20: independent D16-D18 collectors in at most two collection stages. Templates have no user
+     * predicates: execution constrains roots to the SQL-selected page, then groups distinct nested owners.
      */
-    static List<Compiled> splitGraph(Ast.Statement statement, MappedUnit unit, FetchPlan graph) {
+    static List<List<Compiled>> splitGraph(Ast.Statement statement, MappedUnit unit, FetchPlan graph) {
         if (!(statement instanceof Ast.Select select) || select.from().size() != 1 || select.items().size() != 1
                 || !select.from().getFirst().joins().isEmpty() || !select.groupBy().isEmpty() || select.having() != null
                 || !(select.items().getFirst().expression() instanceof Ast.Path path) || path.treatEntity() != null
@@ -249,7 +249,19 @@ final class Translator {
                 collections.put(node.getKey(), node.getValue());
             } else branches.attribute(node.getKey()).merge(node.getValue());
         }
-        if (collections.size() < 2) return List.of();
+        Map<MappedEntity, FetchPlan> nested = new java.util.LinkedHashMap<>();
+        Map<String, FetchPlan> pruned = new java.util.LinkedHashMap<>();
+        for (var collection : collections.entrySet()) {
+            FetchPlan elements = new FetchPlan();
+            var attribute = root.model().attribute(collection.getKey()).orElseThrow();
+            if (attribute instanceof AssociationAttribute association) {
+                if (!planner.nestedCollections(unit.entity(association.targetEntity()).orElse(null),
+                        collection.getValue(), elements, nested, new java.util.HashSet<>())) return List.of();
+            } else elements.merge(collection.getValue());
+            pruned.put(collection.getKey(), elements);
+        }
+        if (collections.size() < 2 && nested.isEmpty()) return List.of();
+        collections = pruned;
         // FETCH may overfetch mapped eager collections; never resolve those per owner during staged hydration.
         for (var attribute : root.model().attributes()) {
             if (attribute instanceof ElementCollectionAttribute e && e.fetch() == jakarta.persistence.FetchType.EAGER
@@ -258,13 +270,75 @@ final class Translator {
                 collections.putIfAbsent(attribute.name(), new FetchPlan());
             }
         }
+        List<Compiled> result = planner.collectionCollectors(root, collections, branches, nested);
+        if (result.isEmpty()) return List.of();
+        List<Compiled> second = new ArrayList<>();
+        for (var owner : nested.entrySet()) {
+            Map<String, FetchPlan> leaves = new java.util.LinkedHashMap<>();
+            FetchPlan toOnes = new FetchPlan();
+            for (var node : owner.getValue().attributes().entrySet()) {
+                var attribute = owner.getKey().model().attribute(node.getKey()).orElse(null);
+                if (attribute instanceof ElementCollectionAttribute
+                        || attribute instanceof AssociationAttribute a && !a.singleValued()) leaves.put(node.getKey(), node.getValue());
+                else toOnes.attribute(node.getKey()).merge(node.getValue());
+            }
+            List<Compiled> compiled = planner.collectionCollectors(owner.getKey(), leaves, toOnes, Map.of());
+            if (compiled.isEmpty()) return List.of();
+            second.addAll(compiled);
+        }
+        return second.isEmpty() ? List.of(result) : List.of(result, List.copyOf(second));
+    }
+
+    /** Cuts the second collection edge out of the first collector while retaining its joined to-one owners. */
+    private boolean nestedCollections(MappedEntity source, FetchPlan requested, FetchPlan pruned,
+            Map<MappedEntity, FetchPlan> nested, java.util.Set<Class<?>> eagerPath) {
+        if (!hydratable(source) || source.statements().keyColumns().size() > 512) return false;
+        FetchPlan expanded = new FetchPlan();
+        expanded.merge(requested);
+        boolean expand = eagerPath.add(source.model().javaType());
+        if (expand) {
+            for (var attribute : source.model().attributes()) {
+                if (attribute instanceof ElementCollectionAttribute e && e.fetch() == jakarta.persistence.FetchType.EAGER
+                        || attribute instanceof AssociationAttribute a && a.fetch() == jakarta.persistence.FetchType.EAGER) {
+                    expanded.attribute(attribute.name());
+                }
+            }
+        }
+        FetchPlan leaves = new FetchPlan();
+        for (var node : expanded.attributes().entrySet()) {
+            var attribute = source.model().attribute(node.getKey()).orElse(null);
+            if (attribute instanceof ElementCollectionAttribute
+                    || attribute instanceof AssociationAttribute a && !a.singleValued()) {
+                if (attribute instanceof AssociationAttribute a) {
+                    if (!toOneSubgraph(unit.entity(a.targetEntity()).orElse(null), node.getValue())) return false;
+                } else if (!node.getValue().isEmpty()) return false;
+                leaves.attribute(node.getKey()).merge(node.getValue());
+            } else if (attribute instanceof AssociationAttribute a) {
+                if (!nestedCollections(unit.entity(a.targetEntity()).orElse(null), node.getValue(),
+                        pruned.attribute(node.getKey()), nested, eagerPath)) return false;
+            } else {
+                if (attribute == null || !node.getValue().isEmpty()) return false;
+                pruned.attribute(node.getKey());
+            }
+        }
+        if (!leaves.isEmpty()) {
+            FetchPlan merged = nested.computeIfAbsent(source, _ -> new FetchPlan());
+            merged.merge(leaves);
+            merged.merge(pruned);
+        }
+        if (expand) eagerPath.remove(source.model().javaType());
+        return true;
+    }
+
+    private List<Compiled> collectionCollectors(MappedEntity root, Map<String, FetchPlan> collections,
+            FetchPlan branches, Map<MappedEntity, FetchPlan> nested) {
         Ast.Select owners = graphRoot(root);
         List<Compiled> result = new ArrayList<>();
         for (var collection : collections.entrySet()) {
             FetchPlan branch = new FetchPlan();
             branch.merge(branches);
             branch.attribute(collection.getKey()).merge(collection.getValue());
-            if (!collection.getKey().equals(planner.graphCollection(root, branch))) return List.of();
+            if (!collection.getKey().equals(graphCollection(root, branch))) return List.of();
             // Permitted FETCH overfetch keeps mapped eager to-ones in the collectors, not per-owner reads.
             Ast.Statement execution = graphSelect(owners, unit, branch, true);
             Compiled compiled = translate(execution, unit, null, null, null, true, true);
@@ -272,10 +346,12 @@ final class Translator {
             for (Compiled.Hydration hydration : compiled.hydrations()) {
                 for (var attribute : hydration.type().model().attributes()) {
                     if (attribute instanceof AssociationAttribute a && a.fetch() == jakarta.persistence.FetchType.EAGER) {
-                        if (a.singleValued() && !planner.hydratable(unit.entity(a.targetEntity()).orElse(null))) return List.of();
-                        if (!a.singleValued() && hydration.type() != root) return List.of();
+                        if (a.singleValued() && !hydratable(unit.entity(a.targetEntity()).orElse(null))) return List.of();
+                        if (!a.singleValued() && hydration.type() != root
+                                && !nested.getOrDefault(hydration.type(), new FetchPlan()).attributes().containsKey(a.name())) return List.of();
                     } else if (attribute instanceof ElementCollectionAttribute e
-                            && e.fetch() == jakarta.persistence.FetchType.EAGER && hydration.type() != root) return List.of();
+                            && e.fetch() == jakarta.persistence.FetchType.EAGER && hydration.type() != root
+                            && !nested.getOrDefault(hydration.type(), new FetchPlan()).attributes().containsKey(e.name())) return List.of();
                 }
             }
             result.add(compiled);

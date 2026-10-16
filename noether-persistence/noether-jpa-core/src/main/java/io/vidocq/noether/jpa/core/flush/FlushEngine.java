@@ -468,26 +468,26 @@ public final class FlushEngine {
             Object[] owner = statements.keyValues(type.id(work.entry().instance()));
             Object current = work.state()[table.attribute()];
             try {
-                if (table.indexed()) {
-                    // keys and positions are written with the rows: a changed collection is written again whole
-                    if (snapshot != null && !type.state().collectionChanged(table.attribute(), snapshot[table.attribute()], current)) {
-                        continue;
-                    }
+                if (snapshot != null && !type.state().collectionChanged(table.attribute(), snapshot[table.attribute()], current)) {
+                    continue; // unchanged, an unloaded LAZY collection among them
+                }
+                List<Object> before = CollectionMapping.elements(
+                    snapshot == null ? null : StatePolicy.snapshotValue(snapshot[table.attribute()]));
+                Set<Object> unique = identitySet();
+                boolean repeated = before.stream().anyMatch(element -> !unique.add(element));
+                if (table.indexed() || repeated) {
+                    // A target-key delete cannot remove just one occurrence of a duplicate bag row.
                     if (snapshot != null) {
                         try (PreparedStatement delete = connection.prepareStatement(render(table.deleteOwner()))) {
                             bindOwner(delete, table.ownerBinders(), owner);
                             delete.executeUpdate();
                         }
                     }
-                    joinRows(render(table.insert()), table, owner, CollectionMapping.elements(current), CollectionMapping.keys(current),
+                    joinRows(render(table.insert()), table, owner, CollectionMapping.elements(current),
+                        table.indexed() ? CollectionMapping.keys(current) : null,
                         statements, connection);
                     continue;
                 }
-                if (snapshot != null && !type.state().collectionChanged(table.attribute(), snapshot[table.attribute()], current)) {
-                    continue; // unchanged, an unloaded LAZY collection among them
-                }
-                List<Object> before = CollectionMapping.elements(
-                    snapshot == null ? null : StatePolicy.snapshotValue(snapshot[table.attribute()]));
                 List<Object> now = CollectionMapping.elements(current);
                 joinRows(render(table.deleteRow()), table, owner, minus(before, now), null, statements, connection);
                 joinRows(render(table.insert()), table, owner, minus(now, before), null, statements, connection);

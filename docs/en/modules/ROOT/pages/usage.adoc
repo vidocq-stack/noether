@@ -76,8 +76,21 @@ var withPayments = em.createQuery("select o from Order o", Order.class)
     .setHint("jakarta.persistence.loadgraph", graph).getResultList();
 ----
 
-Collection-valued subgraph nodes and unsupported polymorphic targets retain complete
-loading. See xref:reference.adoc#_multiple_root_collection_graphs_d19_2026_10_16[].
+Two collection edges beginning at a root collection use grouped split reads (D20):
+
+[source,java]
+----
+graph.addSubgraph("lines").addSubgraph("discounts").addAttributeNodes("supplier");
+// The root query pages only orders; lines and their discounts are then read completely.
+var page = em.createQuery("select o from Order o order by o.id", Order.class)
+    .setHint("jakarta.persistence.fetchgraph", graph).setMaxResults(20).getResultList();
+var order = em.find(Order.class, id, Map.of("jakarta.persistence.loadgraph", graph));
+----
+
+Finite element-to-one chains may lead to the second collection's owners, for example
+`lines.product.tags`. Third collection edges, collections under root to-one branches
+and unsupported polymorphic/complex targets retain complete ordinary loading.
+See xref:reference.adoc#_two_collection_graph_edges_d20_2026_10_16[].
 See xref:internals.adoc#_query_graph_sql_loading_d14_2026_10_15[].
 
 == Find entity graphs
