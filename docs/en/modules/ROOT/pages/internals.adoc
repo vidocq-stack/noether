@@ -29,7 +29,8 @@ unloaded state is ignored by merge. Shared-cache graphs containing unloaded refe
 are not captured, avoiding a forced load or retained context. An eager cache graph that
 would reuse an existing unloaded reference falls back to ordinary loading before allocating
 any nodes, preserving identity and eager semantics. Fully loaded graphs retain the original
-cache behavior. Entity graphs keep secondary selects; eligible collection fetch joins use the D12 path below.
+cache behavior. Collection graph nodes keep secondary selects; eligible query graph to-ones
+reuse the D11 path (D14 below), and eligible collection fetch joins use the D12 path below.
 
 Eligible to-one fetch joins (decision D11) add the target's statement columns — primary and
 secondary tables — to the translated select (`Compiled.hydrations()`, fetched entities first).
@@ -67,6 +68,23 @@ distinct-ordering rule but are not user result items. Other pagination shapes th
 Unbounded single-result calls read every collection row.
 The pagination check uses the translator's actual collection-join metadata, including
 entity-join aliases and set operands, rather than a second mapping/path interpreter.
+
+== Query graph SQL loading (D14, 2026-10-15)
+
+At each execution, `JpqlQuery` snapshots the current graph hint and
+`Translator.graphSelect` lowers eligible direct/nested to-ones to LEFT fetch joins.
+No graph plan is cached across mutable graph or hint changes. Unconditional explicit
+fetch joins are reused; query predicates, parameters, ordering and pagination stay intact.
+The existing D11 statement-column hydration handles null targets, identity, dirty state,
+in-place lazy references, converters, secondary tables, snapshots, callbacks and cache.
+
+Eligibility is one concrete-root entity selection, no distinct/grouping/locking/set query,
+explicit collection fetch or conditional/treated join. D11-unsupported target types,
+embedded/treated nodes and all collection nodes retain complete follow-up loading.
+FETCH contributes explicit nodes; LOAD additionally expands mapped eager to-ones,
+guarded against eager type cycles. The ordinary loader may overfetch FETCH's omitted
+eager state, as permitted by the specification: no eager requirement is suppressed.
+Graph-aware `find` and nested collection SQL fetching are separate future lots.
 
 == Lazy read batches (D13, 2026-10-15)
 

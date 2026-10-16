@@ -150,6 +150,77 @@ final class Translator {
     }
 
     /**
+     * Lowers query graph to-ones to the existing fetch-join pipeline. No semantic query clause is changed:
+     * graph joins are LEFT joins, and shapes not admitting D11 hydration keep their ordinary follow-up fetch plan.
+     * FETCH only requests explicit nodes here (the loader may still overfetch eager state); LOAD additionally
+     * requests mapped eager to-ones. Collection nodes and unsupported entity types remain loader work.
+     */
+    static Ast.Statement graphSelect(Ast.Statement statement, MappedUnit unit, FetchPlan graph, boolean load) {
+        if (!(statement instanceof Ast.Select select) || select.distinct() || select.from().size() != 1
+                || select.items().size() != 1 || !select.groupBy().isEmpty() || select.having() != null
+                || !(select.items().getFirst().expression() instanceof Ast.Path path)
+                || path.treatEntity() != null || path.segments().size() != 1) return statement;
+        Ast.Range range = select.from().getFirst();
+        if (range.entity() == null || !range.variable().equalsIgnoreCase(path.segments().getFirst())
+                || range.joins().stream().anyMatch(j -> j.on() != null || j.path().treatEntity() != null)) return statement;
+        Translator planner = new Translator(unit, null, null);
+        MappedEntity root = planner.entityNamed(range.entity());
+        if (!planner.hydratable(root)) return statement;
+        List<Ast.Join> joins = new ArrayList<>(range.joins());
+        planner.graphJoins(root, range.variable(), graph, load, new java.util.HashSet<>(), joins,
+            statement.toString().toLowerCase(Locale.ROOT), new int[1]);
+        if (joins.equals(range.joins())) return statement;
+        return new Ast.Select(select.distinct(), select.items(),
+            List.of(new Ast.Range(range.entity(), range.collection(), range.variable(), joins)),
+            select.where(), select.groupBy(), select.having(), select.orderBy());
+    }
+
+    private void graphJoins(MappedEntity source, String variable, FetchPlan requested, boolean load,
+            java.util.Set<Class<?>> eagerPath, List<Ast.Join> joins, String occupied, int[] next) {
+        FetchPlan plan = new FetchPlan();
+        plan.merge(requested);
+        boolean expand = load && eagerPath.add(source.model().javaType());
+        if (expand) {
+            for (var attribute : source.model().attributes()) {
+                if (attribute instanceof AssociationAttribute association && association.singleValued()
+                        && association.fetch() == jakarta.persistence.FetchType.EAGER) plan.attribute(attribute.name());
+            }
+        }
+        for (var node : plan.attributes().entrySet()) {
+            if (!(source.model().attribute(node.getKey()).orElse(null) instanceof AssociationAttribute association)
+                    || !association.singleValued()) continue;
+            MappedEntity target = unit.entity(association.targetEntity()).orElse(null);
+            if (!hydratable(target)) continue;
+            Ast.Path path = new Ast.Path(List.of(variable, node.getKey()));
+            int existing = -1;
+            for (int i = 0; i < joins.size(); i++) {
+                Ast.Join join = joins.get(i);
+                if (join.fetch() && join.on() == null && join.path().treatEntity() == null
+                        && join.path().segments().size() == 2
+                        && join.path().segments().getFirst().equalsIgnoreCase(variable)
+                        && join.path().segments().get(1).equals(node.getKey())) {
+                    existing = i;
+                    break;
+                }
+            }
+            String alias = existing < 0 ? null : joins.get(existing).variable();
+            if (alias == null) {
+                do {
+                    alias = "_noether_graph_" + next[0]++;
+                } while (occupied.contains(alias));
+                if (existing < 0) joins.add(new Ast.Join(Ast.Join.Kind.LEFT, true, path, alias, null));
+                else {
+                    Ast.Join join = joins.get(existing);
+                    joins.set(existing, new Ast.Join(join.kind(), true, join.path(), alias, null));
+                }
+            }
+            // An explicit finite subgraph may repeat a type; only automatic eager expansion is cycle guarded.
+            graphJoins(target, alias, node.getValue(), load, eagerPath, joins, occupied, next);
+        }
+        if (expand) eagerPath.remove(source.model().javaType());
+    }
+
+    /**
      * Pages distinct owner identities in SQL, then lets the ordinary fetch plan load complete collections.
      * Only scalar root ordering is admitted: an element's ordering could give several distinct rows per owner.
      */

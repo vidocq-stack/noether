@@ -15,7 +15,38 @@ The official artifact checksums and TCK-BUG-001 byte-exact derived-jar fixture
 patch are unchanged; original artifacts are never edited. `TCK_FIXTURES=official`
 selects the untouched Persistence fixture. See the runner README for setup.
 
-== Current null-row and lazy batch verification (2026-10-15)
+== Query entity graph SQL verification (2026-10-15)
+
+Decision D14 reuses D11 for direct/nested query graph to-ones. Six SQL-count
+assertions failed before production edits (22 tests, 6 failures, no errors), then the
+initial 22-test gate passed. `FetchJoinTest` now passes *26 tests*, adding 12 graph
+regressions: JPQL/Criteria hints, nullable targets, nested converter/secondary-table
+state, XML eager mappings, managed lazy/dirty identity, snapshots/callbacks/cache,
+mutable/replaced/competing hints, explicit fetches with filtering/ordering/pagination,
+mixed collection graph follow-up and complex query/polymorphic/find fallbacks.
+FETCH permits extra eager state through ordinary loading; LOAD includes mapped eager
+to-ones in eligible SQL. No eager contract is suppressed. `find` and collection graph SQL
+are not rewritten.
+
+The D10–D14 focused gate passes *116 tests*. `./mvnw -ntp clean install` passes
+*897 tests* (85 independently parsed Surefire XML reports), zero failures/errors/skips.
+The full patched Persistence 3.2.1 TCK on PostgreSQL *17-alpine*, Temurin *25.0.4+7-LTS*
+and Maven *3.9.16* reports *2135 tests / 2131 passed / 0 failures / 0 errors /
+4 official skips*. All 259 reports and 2135 unique execution/class/method identities
+were independently checked, with no duplicates and the correct derived-jar classpath.
+All 46 snapshotted original fixture/cache files retain their SHA-256 checksums.
+The script exit status alone was not treated as proof.
+
+Installed official jar SHA-256:
+`a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`.
+Derived TCK-BUG-001 jar:
+`1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+The four official disabled tests are unchanged; their identities and exact commands
+are recorded in `noether-persistence/TCK.md`. This is a locally patched result,
+not an untouched official TCK result or certification.
+Earlier D5/D9–D13 evidence below remains historical.
+
+== Null-row and lazy batch verification (2026-10-15)
 
 Decision D13 first fixes BUG-20261015-09 (three red ordinary/graph/LEFT-fetch null-row
 regressions), then adds bounded lazy collection and D10 reference batching (five red

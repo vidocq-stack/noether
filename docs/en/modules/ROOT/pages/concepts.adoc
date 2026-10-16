@@ -43,5 +43,14 @@ target from the same SQL row as its owner. The context still holds one instance 
 an unloaded reference is filled in place, and an instance already managed (even modified) is
 kept as is. Only non-`DISTINCT`, non-grouped, non-locking top-level selects of the root
 variable, with fetch paths `variable.attribute` to targets of one concrete entity type (no
-subclass, no joined or table-per-class inheritance), are read this way; other queries,
-collection fetches, entity graph hints and `find` load their targets with follow-up selects.
+subclass, no joined or table-per-class inheritance), are read this way; other query shapes
+and `find` keep complete follow-up loading. Collection fetch joins have their separate
+D12 row-assembly path.
+
+Query entity graphs (D14) use that same to-one hydration path for one concrete-root
+entity selection. Graph nodes and nested to-one subgraphs contribute LEFT fetch joins;
+LOAD additionally includes mapped eager to-ones. FETCH may still overfetch eager state
+through the ordinary loader, so omitted eager attributes are not guaranteed unloaded.
+Collection graph nodes, unsupported types and complex query shapes keep complete
+follow-up loading; graph-aware `find` and nested collection SQL remain future work.
+See xref:reference.adoc[] for exact eligibility.

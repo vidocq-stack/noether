@@ -366,10 +366,14 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         if (maxResults == 0) {
             return new ArrayList<>();
         }
+        Object graph = getHints().containsKey(FETCH_GRAPH) ? getHints().get(FETCH_GRAPH) : getHints().get(LOAD_GRAPH);
+        Ast.Statement execution = graph != null && lockMode == LockModeType.NONE && !collectionFetch
+            ? Translator.graphSelect(statement, runtime.mapping(), runtime.plan(graph), !getHints().containsKey(FETCH_GRAPH))
+            : statement;
         Compiled compiled = paginateCollection
             ? Translator.paginateCollection(statement, runtime.mapping(), p -> values.get(key(p)),
                 getFirstResult() > 0 ? getFirstResult() : null, getMaxResults() < Integer.MAX_VALUE ? getMaxResults() : null)
-            : Translator.translate(statement, runtime.mapping(), p -> values.get(key(p)),
+            : Translator.translate(execution, runtime.mapping(), p -> values.get(key(p)),
             getFirstResult() > 0 ? getFirstResult() : null, !collectionFetch && maxResults < Integer.MAX_VALUE ? maxResults : null,
             lockMode == LockModeType.NONE); // a locking query reads its entities as before: its rows are the locked ones
         return (List<X>) runtime.read(getFlushMode(), connection -> execute(compiled, connection));

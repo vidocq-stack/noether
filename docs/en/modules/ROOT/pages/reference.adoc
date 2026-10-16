@@ -22,6 +22,29 @@ Java module names retain their suffixes under `io.vidocq.noether.jpa.*` and
 Mansart version. Integration vehicles and all provisional Validation artifacts
 are excluded from release publishing.
 
+== Query entity graph hints
+
+[cols="2,4"]
+|===
+| Standard hint | Query SQL contract (D14)
+| `jakarta.persistence.fetchgraph`
+| Explicit eligible to-one nodes/subgraphs become LEFT fetch joins. Omitted eager
+attributes may still be overfetched by the loader; they are not guaranteed unloaded.
+| `jakarta.persistence.loadgraph`
+| The same explicit nodes, plus eligible mapped eager to-ones (cycle-guarded expansion).
+|===
+
+If both hints are present, FETCH retains its existing precedence. Graph objects must
+belong to the same persistence unit and match the query root under the existing
+validation rules. Graph/hint changes are reread per execution.
+
+SQL scope: one concrete-root entity selection, no distinct/grouping/locking/set query,
+explicit collection fetch or conditional/treated joins. Unsupported target types,
+embedded/treated graph nodes and collection nodes use complete existing follow-up
+loading. Mixed graphs may combine same-row to-ones with complete collection reads.
+`find` is unchanged. No eager requirement is suppressed; D10 lazy eligibility and D13
+batch bounds remain unchanged. See xref:internals.adoc[] for the shared hydration path.
+
 == Lazy read batching
 
 [cols="3,1,4"]

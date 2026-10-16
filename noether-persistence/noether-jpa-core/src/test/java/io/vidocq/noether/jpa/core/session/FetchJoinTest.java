@@ -119,6 +119,239 @@ class FetchJoinTest {
     }
 
     @Test
+    void jpqlGraphLoadsNullableToOnesFromTheResultSql() {
+        open();
+        var graph = em.createEntityGraph(Order.class);
+        graph.addAttributeNodes("customer");
+        var orders = em.createQuery("select o from FjOrder o order by o.id", Order.class)
+            .setHint("jakarta.persistence.fetchgraph", graph).getResultList();
+        assertThat(orders).extracting(Order::getLabel).containsExactly("o1", "o2", "o3", "o4");
+        assertThat(selects()).isEqualTo(1);
+        assertThat(orders.get(2).getCustomer()).isNull();
+        assertThat(orders.get(0).getCustomer().getName()).isEqualTo("alice");
+        assertThat(orders.get(0).getCustomer()).isSameAs(orders.get(1).getCustomer());
+        assertThat(loaded(orders.get(0), "customer")).isTrue();
+        assertThat(loaded(orders.get(0).getCustomer(), "address")).isFalse();
+        assertThat(Customer.POST_LOADS.get()).isEqualTo(2);
+    }
+
+    @Test
+    void criteriaGraphLoadsNestedToOnesWithConvertersAndSecondaryTables() {
+        open();
+        var graph = em.createEntityGraph(Order.class);
+        graph.addSubgraph("customer").addAttributeNodes("address");
+        var cb = em.getCriteriaBuilder();
+        var criteria = cb.createQuery(Order.class);
+        var root = criteria.from(Order.class);
+        criteria.select(root).orderBy(cb.asc(root.get("id")));
+        var orders = em.createQuery(criteria).setHint("jakarta.persistence.loadgraph", graph).getResultList();
+        assertThat(orders).hasSize(4);
+        assertThat(orders.get(2).getCustomer()).isNull();
+        assertThat(orders.get(3).getCustomer().getAddress()).isNull();
+        assertThat(orders.get(0).getCustomer().getAddress().getCity()).isEqualTo("paris");
+        assertThat(orders.get(0).getCustomer().getAddress().getZip()).isEqualTo("75001");
+        assertThat(loaded(orders.get(0).getCustomer(), "address")).isTrue();
+        assertThat(selects()).isEqualTo(1);
+    }
+
+    @Test
+    void loadGraphAddsOmittedEagerToOnesWhileFetchGraphMayOverfetchThemThroughTheLoader() {
+        // §3.8.1: FETCH permits extra eager state; LOAD must retain the mapped eager contract.
+        open();
+        var graph = em.createEntityGraph(Line.class);
+        Line fetched = em.createQuery("select l from FjLine l", Line.class)
+            .setHint("jakarta.persistence.fetchgraph", graph).getSingleResult();
+        assertThat(fetched.order.getLabel()).isEqualTo("o1");
+        assertThat(loaded(fetched, "order")).isTrue();
+        assertThat(selects()).isGreaterThan(1);
+        em.clear();
+        sql.clear();
+        Line loaded = em.createQuery("select l from FjLine l", Line.class)
+            .setHint("jakarta.persistence.loadgraph", graph).getSingleResult();
+        assertThat(loaded.order.getLabel()).isEqualTo("o1");
+        assertThat(loaded(loaded, "order")).isTrue();
+        assertThat(loaded(loaded.order, "customer")).isFalse();
+        assertThat(selects()).isEqualTo(1);
+    }
+
+    @Test
+    void graphHydratesExistingLazyReferencesInPlaceAndPreservesDirtyState() {
+        open();
+        Customer reference = em.find(Order.class, 2L).getCustomer();
+        var graph = em.createEntityGraph(Order.class);
+        graph.addAttributeNodes("customer");
+        sql.clear();
+        var query = em.createQuery("select o from FjOrder o where o.id = 1", Order.class)
+            .setHint("jakarta.persistence.fetchgraph", graph);
+        var order = query.getSingleResult();
+        assertThat(order.getCustomer()).isSameAs(reference);
+        assertThat(reference.getName()).isEqualTo("alice");
+        assertThat(loaded(order, "customer")).isTrue();
+        assertThat(selects()).isEqualTo(1);
+        em.getTransaction().begin();
+        reference.setName("dirty");
+        sql.clear();
+        assertThat(query.setFlushMode(FlushModeType.COMMIT).getSingleResult()).isSameAs(order);
+        assertThat(reference.getName()).isEqualTo("dirty");
+        assertThat(selects()).isEqualTo(1);
+        em.getTransaction().commit();
+        assertThat(updates()).isEqualTo(1);
+        em.clear();
+        assertThat(em.find(Customer.class, 10L).getName()).isEqualTo("dirty");
+    }
+
+    @Test
+    void graphMutationAndHintReplacementAreSeenOnEveryExecution() {
+        open();
+        var graph = em.createEntityGraph(Order.class);
+        graph.addAttributeNodes("customer");
+        var query = em.createQuery("select o from FjOrder o where o.id = 1", Order.class)
+            .setHint("jakarta.persistence.fetchgraph", graph);
+        var order = query.getSingleResult();
+        assertThat(loaded(order.getCustomer(), "address")).isFalse();
+        assertThat(selects()).isEqualTo(1);
+        em.clear();
+        sql.clear();
+        graph.addSubgraph("customer").addAttributeNodes("address");
+        assertThat(query.getSingleResult().getCustomer().getAddress().getCity()).isEqualTo("paris");
+        assertThat(selects()).isEqualTo(1);
+        em.clear();
+        sql.clear();
+        query.setHint("jakarta.persistence.fetchgraph", em.createEntityGraph(Order.class));
+        order = query.getSingleResult();
+        assertThat(loaded(order, "customer")).isFalse();
+        assertThat(selects()).isEqualTo(2); // unchanged identifier query + ordinary owner load
+    }
+
+    @Test
+    void graphAndExplicitFetchJoinCoexistWithSqlPaginationAndFiltering() {
+        open();
+        var graph = em.createEntityGraph(Order.class);
+        graph.addSubgraph("customer").addAttributeNodes("address");
+        var orders = em.createQuery("select o from FjOrder o left join fetch o.customer c"
+            + " where o.label like :p order by o.id desc", Order.class)
+            .setParameter("p", "o%").setFirstResult(1).setMaxResults(2)
+            .setHint("jakarta.persistence.fetchgraph", graph).getResultList();
+        assertThat(orders).extracting(Order::getLabel).containsExactly("o3", "o2");
+        assertThat(orders.get(0).getCustomer()).isNull();
+        assertThat(orders.get(1).getCustomer().getAddress().getCity()).isEqualTo("paris");
+        assertThat(selects()).isEqualTo(1);
+    }
+
+    @Test
+    void graphFallbacksRetainDistinctCollectionAndPolymorphicResultsAndFind() {
+        open();
+        var graph = em.createEntityGraph(Order.class);
+        graph.addAttributeNodes("customer", "lines");
+        var orders = em.createQuery("select distinct o from FjOrder o order by o.id", Order.class)
+            .setHint("jakarta.persistence.fetchgraph", graph).getResultList();
+        assertThat(orders).hasSize(4);
+        assertThat(orders.getFirst().getLines()).hasSize(1);
+        assertThat(loaded(orders.getFirst(), "lines")).isTrue();
+        assertThat(orders.getFirst().getCustomer().getName()).isEqualTo("alice");
+        assertThat(selects()).isGreaterThan(1);
+        em.clear();
+        sql.clear();
+        var shipments = em.createEntityGraph(Shipment.class);
+        shipments.addAttributeNodes("vehicle");
+        var shipment = em.createQuery("select s from FjShipment s", Shipment.class)
+            .setHint("jakarta.persistence.loadgraph", shipments).getSingleResult();
+        assertThat(shipment.getVehicle()).isInstanceOf(Car.class);
+        assertThat(((Car) shipment.getVehicle()).brand).isEqualTo("fiat");
+        assertThat(loaded(shipment, "vehicle")).isTrue();
+        em.clear();
+        sql.clear();
+        assertThat(em.find(Order.class, 1L, java.util.Map.of("jakarta.persistence.fetchgraph", graph))
+            .getCustomer().getName()).isEqualTo("alice");
+        assertThat(selects()).isGreaterThan(1);
+    }
+
+    @Test
+    void graphHintValidationStillRejectsWrongTypesAndRoots() {
+        open();
+        var query = em.createQuery("select o from FjOrder o", Order.class);
+        assertThatIllegalArgumentException().isThrownBy(() -> query.setHint("jakarta.persistence.fetchgraph", "bad"));
+        assertThatIllegalArgumentException().isThrownBy(() ->
+            query.setHint("jakarta.persistence.loadgraph", em.createEntityGraph(Customer.class)));
+    }
+
+    @Test
+    void mixedGraphKeepsCollectionFollowUpCompleteWithoutMultiplyingRootRows() {
+        open();
+        var graph = em.createEntityGraph(Order.class);
+        graph.addAttributeNodes("customer", "lines");
+        var orders = em.createQuery("select o from FjOrder o order by o.id", Order.class)
+            .setHint("jakarta.persistence.fetchgraph", graph).setMaxResults(2).getResultList();
+        assertThat(orders).extracting(Order::getId).containsExactly(1L, 2L);
+        assertThat(orders.getFirst().getLines()).hasSize(1);
+        assertThat(orders.get(1).getLines()).isEmpty();
+        assertThat(orders).allSatisfy(o -> {
+            assertThat(loaded(o, "customer")).isTrue();
+            assertThat(loaded(o, "lines")).isTrue();
+        });
+        assertThat(selects()).isEqualTo(4); // graph row query + collection keys/element + empty collection
+    }
+
+    @Test
+    void graphHydrationKeepsXmlConvertersSnapshotsCallbacksAndCacheSafe() {
+        open("orm/fetch-join.xml", SharedCacheMode.ALL);
+        var graph = em.createEntityGraph(Order.class);
+        graph.addSubgraph("customer").addAttributeNodes("address");
+        em.getTransaction().begin();
+        var orders = em.createQuery("select o from FjOrder o order by o.id", Order.class)
+            .setHint("jakarta.persistence.loadgraph", graph).getResultList();
+        assertThat(orders.getFirst().getCustomer().getAddress().getCity()).isEqualTo("paris");
+        assertThat(orders.getFirst().getCustomer().getAddress().getZip()).isEqualTo("75001");
+        assertThat(selects()).isEqualTo(1);
+        assertThat(Customer.POST_LOADS.get()).isEqualTo(2);
+        em.getTransaction().commit();
+        assertThat(updates()).isZero();
+        em.clear();
+        sql.clear();
+        assertThat(em.find(Order.class, 1L).getCustomer().getAddress().getCity()).isEqualTo("paris");
+    }
+
+    @Test
+    void graphHintPrecedenceAndReplacementDoNotLeaveASqlPlanBehind() {
+        open();
+        var graph = em.createEntityGraph(Line.class);
+        var query = em.createQuery("select l from FjLine l", Line.class)
+            .setHint("jakarta.persistence.loadgraph", graph);
+        assertThat(query.getSingleResult().order.getLabel()).isEqualTo("o1");
+        assertThat(selects()).isEqualTo(1);
+        em.clear();
+        sql.clear();
+        query.setHint("jakarta.persistence.fetchgraph", graph);
+        assertThat(query.getSingleResult().order.getLabel()).isEqualTo("o1");
+        assertThat(selects()).isEqualTo(3);
+        em.clear();
+        sql.clear();
+        graph.addAttributeNodes("order");
+        assertThat(query.getSingleResult().order.getLabel()).isEqualTo("o1");
+        assertThat(selects()).isEqualTo(1);
+    }
+
+    @Test
+    void groupingAndMultiSelectionRemainOnTheCompleteFollowUpPath() {
+        open();
+        var graph = em.createEntityGraph(Order.class);
+        graph.addAttributeNodes("customer");
+        var rows = em.createQuery("select o, o.label from FjOrder o order by o.id", Object[].class)
+            .setHint("jakarta.persistence.fetchgraph", graph).getResultList();
+        assertThat(rows).hasSize(4);
+        assertThat(((Order) rows.getFirst()[0]).getCustomer().getName()).isEqualTo("alice");
+        assertThat(loaded(rows.getFirst()[0], "customer")).isTrue();
+        assertThat(selects()).isGreaterThan(1);
+        em.clear();
+        sql.clear();
+        var orders = em.createQuery("select o from FjOrder o group by o order by o.id", Order.class)
+            .setHint("jakarta.persistence.loadgraph", graph).getResultList();
+        assertThat(orders).hasSize(4);
+        assertThat(orders.getFirst().getCustomer().getName()).isEqualTo("alice");
+        assertThat(selects()).isGreaterThan(1);
+    }
+
+    @Test
     void jpqlInnerFetchJoinLoadsOwnersAndSharedTargetsFromOneSelectAndExcludesMissingTargets() {
         open();
         List<Order> orders = em.createQuery("select o from FjOrder o join fetch o.customer order by o.id", Order.class)

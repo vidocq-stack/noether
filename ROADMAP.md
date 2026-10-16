@@ -4,7 +4,7 @@ Noether owns the implementations extracted from Mansart on 2026-10-11.
 
 | Building block | Status | Detailed roadmap |
 | --- | --- | --- |
-| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D13); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
+| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D14); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
 | Jakarta Validation 3.1 | V0–V2 provisional local test/TCK stopgap; not published | [Validation](noether-validation/ROADMAP.md) |
 
 The extraction changes repository, artifact, package and provider names, not
@@ -87,14 +87,28 @@ Active transaction connections, no-auto-flush semantics, cache storage restricti
 snapshots/callbacks and detach/clear/close behavior are preserved. Graphs, EAGER contracts
 and SQL fetch eligibility are not extended. Earlier delivery history remains unchanged.
 
+Decision D14 (2026-10-15) makes query entity graphs drive SQL to-one loading for
+JPQL and Criteria single-root entity selections. Explicit graph to-ones and their nested
+to-one subgraphs become LEFT fetch joins through D11's SQL AST and hydration. LOAD also
+includes eligible mapped eager to-ones with cycle-guarded expansion; FETCH requests only
+explicit nodes in SQL, but the existing loader may still overfetch omitted eager state
+(permitted by the specification). No eager requirement is suppressed. Hints and mutable
+graphs are reread on every execution. Explicit fetch joins, SQL filtering, ordering and
+pagination retain their semantics; dirty state, identity and unloaded references use the
+existing loader. Collections still load completely through follow-up reads, not graph SQL.
+Distinct/grouped/locked/set/multi-selection queries, conditional/treated joins,
+embedded graph paths and polymorphic/inherited unsupported types keep their established
+loading paths. `find` with a graph is unchanged. See the detailed D14 contract.
+
 ## Remaining Persistence work
 
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
-1. Broader SQL fetch eligibility: multiple/nested collection fetches, same-query owner pagination,
+1. Graph-aware `find` SQL loading and nested/multiple collection SQL fetching are the next
+   separate lots. Broader SQL fetch eligibility: same-query owner pagination,
    entity/embeddable map keys; polymorphic/`JOINED`/`TABLE_PER_CLASS` targets,
-   `DISTINCT` and locking queries, entity graph hints and `find` with a graph.
+   `DISTINCT` and locking queries, embedded/treated graph paths and complex graph queries.
 2. Broader lazy to-one support beyond the D10 eligible shapes, and batching beyond D13's
    single-table/non-polymorphic scope (secondary tables, inheritance, inverse join tables,
    entity-valued map keys).

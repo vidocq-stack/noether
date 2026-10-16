@@ -149,7 +149,7 @@ existing unloaded references hydrated in place, managed (possibly modified) inst
 overwritten, snapshots and `PostLoad` as for `find`. Eligible: non-`DISTINCT` and
 non-grouped top-level selects without lock mode, a selected root variable and fetch paths
 `var.attribute` chained from it, targets of one concrete type (no subclass, no joined or
-table-per-class inheritance). Other shapes, entity graph hints and `find` keep the existing
+table-per-class inheritance). Other shapes and `find` keep the existing
 correct follow-up selects; collection fetching has its own bounded D12 path below.
 
 One collection `JOIN FETCH` / `LEFT JOIN FETCH` (JPQL or Criteria, decision D12,
@@ -164,15 +164,30 @@ publication follow complete assembly. Other mapped eager relationships may still
 
 Multiple/nested fetches, extra joins, restricted collection aliases, polymorphic or
 `JOINED`/`TABLE_PER_CLASS` owners/targets, embedded fetch paths and entity/embeddable map
-keys retain complete secondary loading. Fetch/load graph hints and `find` are not rewritten.
+keys retain complete secondary loading. Collection graph nodes and `find` are not SQL-rewritten.
 Pagination (`setFirstResult` above zero or finite `setMaxResults`) of a single-root entity
 selection uses a safe fallback: **page distinct owner identities in SQL, then load their
 complete collections through ordinary secondary selects**. Only scalar root ordering is
 admitted; grouped/locked queries, complex projections and element ordering throw
 `PersistenceException` before SQL. No partial collection or silent in-memory pagination.
 Unbounded `getSingleResult` reads all joined rows.
-Null collection elements retain the existing assembler limitation (BUG-20261015-09);
-batching and broader SQL fetch shapes remain in the prioritized roadmap.
+Null collection elements are preserved since D13 (BUG-20261015-09);
+broader SQL fetch shapes remain in the prioritized roadmap.
+
+Query `jakarta.persistence.fetchgraph` / `jakarta.persistence.loadgraph` hints now
+drive eligible to-one SQL loading (D14, 2026-10-15): one root entity selection, no
+distinct/grouping/locking or explicit collection fetch, supported concrete owner/targets.
+Direct and nested to-one graph nodes become LEFT fetch joins using D11's hydration,
+including converters and secondary-table state. Existing unconditional fetch joins,
+filtering, ordering and SQL pagination are preserved; null targets do not filter roots.
+LOAD also includes eligible mapped eager to-ones. FETCH only adds explicit nodes to SQL,
+but may overfetch omitted eager state through the existing loader, as permitted by
+the specification; it does not promise those attributes remain unloaded.
+Hints and mutable graphs are reread on each execution. Identity, dirty managed state,
+in-place lazy-reference initialization, callbacks, snapshots and cache safeguards are
+unchanged. Collection nodes still use complete follow-up loading; complex queries,
+embedded/treated nodes and unsupported polymorphic/inherited types retain existing
+fallbacks. Graph-aware `find` and nested collection SQL fetching are the next separate lots.
 
 The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;

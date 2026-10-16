@@ -126,7 +126,12 @@ operations. Named queries registered from Criteria retain their AST and settings
 Graph metadata validates attributes and key/value/subclass subgraphs against the metamodel.
 Named graphs are immutable recursive snapshots; entity-manager graph copies are mutable and independent.
 `jakarta.persistence.fetchgraph` / `jakarta.persistence.loadgraph` hints and typed 3.2 graph APIs are supported.
-The eager loader legally loads the required graph state; these hints do not guarantee lazy exclusion of other state.
+Eligible query graph to-ones and nested to-one subgraphs now use the existing same-row
+fetch-join hydration (D14). LOAD includes mapped eager to-ones; FETCH contributes
+explicit nodes to SQL but may legally overfetch other eager state through the loader.
+These hints do not guarantee lazy exclusion of omitted eager attributes. Collection
+graph nodes, unsupported mappings and complex query shapes keep complete follow-up
+loading, and `find` is unchanged. See xref:reference.adoc[] for exact boundaries.
 
 [IMPORTANT]
 ====

@@ -1,3 +1,65 @@
+## Noether query graph SQL to-one verification — 2026-10-15
+
+Decision D14 lowers eligible JPQL/Criteria graph to-ones to the existing D11 fetch-join
+SQL/hydration path. Before production edits, `FetchJoinTest` ran **22 scenarios:
+6 failures, 0 errors**, all SQL-count assertions (JPQL 7 instead of 1 SELECT,
+nested Criteria 9 instead of 1, existing lazy reference/explicit-fetch coexistence/
+mutable graph/LOAD eager state 3 instead of 1). The initial green gate passed
+**22/22**. Twelve new regressions now bring `FetchJoinTest` to **26/26**.
+
+Coverage includes null-preserving LEFT joins, JPQL and Criteria graph hints, nested
+converted secondary-table values, XML eager mappings, identity and in-place unloaded
+references, dirty managed targets, snapshots/callbacks/cache, mutable graphs and replaced/
+competing hints, filtering/ordering/pagination with explicit fetch joins, mixed collection
+graph follow-up, and distinct/grouped/multi-selection/polymorphic/find fallbacks.
+FETCH only contributes explicit graph nodes to SQL and may retain additional eager
+state through ordinary loading (§3.8.1); LOAD includes mapped eager to-ones with
+cycle-guarded expansion. This does not suppress eager requirements or rewrite `find`
+or collection graph paths. Exact support and remaining lots are in D14 of `ROADMAP.md`.
+
+On Temurin **25.0.4+7-LTS**, Maven **3.9.16**, macOS aarch64, from the Noether root:
+
+```bash
+export JAVA_HOME="$HOME/.sdkman/candidates/java/25.0.4-tem"
+export PATH="$JAVA_HOME/bin:$PATH"
+./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test \
+  -Dtest=LazyBatchTest,CollectionFetchJoinTest,FetchJoinTest,LazyCollectionTest,LazyToOneTest,SecondLevelCacheTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw -ntp clean install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+The focused gate passes **116/116**, zero failures/errors/skips. The clean reactor
+passes **897/897** (885 baseline + 12 graph regressions), independently counted from
+**85 Surefire XML reports**. The full patched PostgreSQL **17-alpine** TCK run
+(finished **2026-10-15 21:26 CEST**) reports **2135 tests / 2131 passed /
+0 failures / 0 errors / 4 unchanged official skips**:
+
+- execution 1: 2134 tests, 2130 passed, 4 skipped;
+- execution 2: 1 test, 1 passed;
+- skips: `core.query.language.Client6#resultContainsFetchReference`,
+  `core.metamodelapi.identifiabletype.Client#getDeclaredSingularAttributes`,
+  `se.entityManagerFactory.Client2#createEntityManagerFactoryStringMapTest`,
+  `se.schemaGeneration.annotations.tableGenerator.Client#tableGeneratorTest`.
+
+Independent XML aggregation checks **259 reports**, **2135 unique execution/class/method
+identities**, no duplicates and no failure/error outcomes. Every report's two test
+classpath properties contain exactly the derived fixture jar, not the official jar.
+The script exit status (0) alone is not used as proof. SHA-256 checks of **46 original
+cache/installed TCK fixture files** before/after show no changes:
+
+- installed official spec-tests jar:
+  `a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`;
+- byte-exact TCK-BUG-001 derived spec-tests jar:
+  `1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+
+Reports remain at `**/target/surefire-reports/TEST-*.xml` and
+`noether-jpa-tck/target/failsafe-reports/execution-{1,2}/TEST-*.xml`; fixture provenance
+is in `noether-jpa-tck/target/tck-fixtures/fixture-provenance.json`.
+This locally patched result is **not an untouched official result or certification**.
+Earlier D5/D9–D13 evidence below is preserved as historical delivery evidence.
+
 ## Noether null collection rows and lazy batch verification — 2026-10-15
 
 Decision D13 fixes BUG-20261015-09 before adding bounded lazy collection and eligible

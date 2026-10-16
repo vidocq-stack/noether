@@ -19,6 +19,30 @@ CDI/JTA integration uses `noether-jpa-cdi` and the external Mansart transaction
 manager. The core does not import CDI, JTA or Vauban. See
 xref:modules/noether-persistence.adoc[the detailed Persistence guide].
 
+== Query entity graphs
+
+Both JPQL and Criteria entity queries accept standard graph hints:
+
+[source,java]
+----
+var graph = em.createEntityGraph(Order.class);
+graph.addSubgraph("customer").addAttributeNodes("address");
+var orders = em.createQuery("select o from Order o order by o.id", Order.class)
+    .setHint("jakarta.persistence.fetchgraph", graph)
+    .setFirstResult(0).setMaxResults(20).getResultList();
+----
+
+Eligible direct and nested to-ones are hydrated from the query's LEFT-joined rows,
+without filtering null targets. `loadgraph` additionally includes mapped eager to-ones;
+`fetchgraph` only contributes explicit nodes to SQL but may still overfetch eager state
+through the loader. It does not guarantee omitted eager attributes remain unloaded.
+Graph/hint changes are honored on query reuse.
+
+This is bounded to one concrete-root entity selection without distinct/grouping/locking,
+set operations, explicit collection fetches or conditional/treated joins. Collections and
+unsupported graph nodes retain complete follow-up reads; `find` is unchanged.
+See xref:internals.adoc#_query_graph_sql_loading_d14_2026_10_15[].
+
 == Bounded lazy reads
 
 First access batches pending compatible lazy collections or to-one references in the
