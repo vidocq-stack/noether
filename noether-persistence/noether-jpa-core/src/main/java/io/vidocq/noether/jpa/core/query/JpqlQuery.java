@@ -410,15 +410,17 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         Ast.Statement execution = graph != null && lockMode == LockModeType.NONE && !collectionFetch
             ? Translator.graphSelect(statement, runtime.mapping(), runtime.plan(graph), !getHints().containsKey(FETCH_GRAPH))
             : statement;
+        boolean graphRows = execution != statement;
         Compiled compiled = Translator.translate(execution, runtime.mapping(), p -> values.get(key(p)),
-            null, null, lockMode == LockModeType.NONE);
+            null, null, lockMode == LockModeType.NONE, graphRows);
         if (compiled.collectionFetch() && (getFirstResult() > 0 || getMaxResults() < Integer.MAX_VALUE)) {
-            compiled = Translator.paginateCollection(execution, runtime.mapping(), p -> values.get(key(p)),
+            // the owner page of a graph-synthesized collection needs none of its LEFT joins
+            compiled = Translator.paginateCollection(graphRows ? statement : execution, runtime.mapping(), p -> values.get(key(p)),
                 getFirstResult() > 0 ? getFirstResult() : null, getMaxResults() < Integer.MAX_VALUE ? getMaxResults() : null);
         } else if (!compiled.collectionFetch() && (getFirstResult() > 0 || maxResults < Integer.MAX_VALUE)) {
             compiled = Translator.translate(execution, runtime.mapping(), p -> values.get(key(p)),
                 getFirstResult() > 0 ? getFirstResult() : null, maxResults < Integer.MAX_VALUE ? maxResults : null,
-                lockMode == LockModeType.NONE);
+                lockMode == LockModeType.NONE, graphRows);
         }
         Compiled read = compiled;
         return (List<X>) runtime.read(getFlushMode(), connection -> execute(read, connection));

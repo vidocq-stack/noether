@@ -239,6 +239,25 @@ gets exactly one callback before `find`, `refresh` or the query returns; callbac
 mutations stay dirty and callback exceptions still propagate. Evidence is in
 [`noether-persistence/TCK.md`](noether-persistence/TCK.md).
 
+Decision **D17 (2026-10-16)** extends D16 to **one root collection with to-one subgraphs**,
+for example `Order -> lines -> product -> supplier`. The single graph-requested entity
+collection is LEFT-joined as in D16, and every to-one subgraph node of its elements (direct
+or nested chains of concrete, non-polymorphic entities; basic/embedded leaves may coexist)
+becomes a LEFT fetch join from the collection alias. Owners, elements and targets are
+hydrated from the same rows through D12's collector and D11's generated column access; LOAD
+also joins the elements' mapped eager to-ones. It applies to the same JPQL/Criteria shapes
+and eligible non-locking database `find` as D16. Null targets never filter elements, empty
+owners stay, bag duplicates, list positions and basic map keys are kept, and shared targets
+have one managed instance. Dirty managed entities/collections are not overwritten,
+unloaded lazy references complete in place, and each fresh entity gets one `PostLoad`
+after the whole graph is assembled (BUG-20261016-01 load scope). Graph-collection pagination
+pages owners in SQL from the original statement (no synthetic joins), then completes
+collections and subgraphs through secondary loads. Nested collection subgraphs (including
+element collections of targets), polymorphic/inherited targets, multiple collections, root
+to-one nodes beside the collection and unknown/embedded-subgraph nodes keep the complete
+existing fallback; explicit fetch joins are unchanged. Evidence is in
+[`noether-persistence/TCK.md`](noether-persistence/TCK.md).
+
 The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;
 the bundled Jakarta ORM schema retains its original upstream licence.

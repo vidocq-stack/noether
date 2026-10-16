@@ -1,3 +1,27 @@
+## Noether one collection with to-one subgraphs SQL verification (D17) — 2026-10-16
+
+Decision D17 extends D16 to one graph-requested root entity collection whose element
+subgraph holds direct/nested to-one chains (e.g. `Order -> lines -> product -> supplier`),
+hydrated from the same rows (see `ROADMAP.md`, D17). Mandatory TDD red before production
+edits: the focused gate ran **177 tests / 11 SQL-count failures / 0 errors** (10 in the
+new `CollectionSubgraphTest`, 1 in the updated D16 nested-subgraph test of
+`CollectionFetchJoinTest`). Green: the focused
+`CollectionSubgraphTest,CollectionFetchJoinTest,FetchJoinTest,PostLoadCollectionCycleTest,LazyCollectionTest,SecondLevelCacheTest,LazyBatchTest,LazyToOneTest`
+gate passes **177/177** (12 + 35 + 40 + 20 + 19 + 16 + 17 + 18).
+
+Same environment and commands as the D16 section below (focused selector above). The
+clean reactor finished **2026-10-16 13:00:55 CEST**: **958 tests / 958 passed /
+0 failures / 0 errors / 0 skips** from **87 XML reports** (946 plus 12 tests). The full
+locally patched Persistence 3.2.1 TCK on an isolated Docker **PostgreSQL 17-alpine**
+finished **13:03:11 CEST**: **2135 tests / 2131 passed / 0 failures / 0 errors / 4 skips**.
+Independent aggregation verifies all **259 XML reports**, **2135 unique
+execution/class/method identities** with identities and outcomes equal to the
+BUG-20261016-01 baseline, **518** derived-jar classpath checks, the **85** original
+`.tck-cache` / installed `jakarta/tck` files and file set unchanged, and the same official
+(`a6ad07d4…b364024`) and derived (`1f7e82ba…e4d9a4`) SHA-256 and four official skips as
+below. The runner's exit 0 alone is not used as proof; this remains a locally patched
+result, not certification. The sections below are kept as recorded.
+
 ## Noether PostLoad collection cycle fix (BUG-20261016-01) — 2026-10-16
 
 BUG-20261016-01 (ordinary-loader `PostLoad` reentering a lazy collection still being

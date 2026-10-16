@@ -667,7 +667,7 @@ class CollectionFetchJoinTest {
         em.getTransaction().rollback();
     }
 
-    @Test void collectionGraphNestedAndMultiplePathsKeepCompleteSecondaryFallback() {
+    @Test void collectionGraphMultiplePathsKeepCompleteSecondaryFallbackWhileToOneSubgraphsJoin() {
         for (boolean nested : List.of(false, true)) {
             cold();
             var graph = graph("children");
@@ -677,14 +677,19 @@ class CollectionFetchJoinTest {
                 .setHint("jakarta.persistence.loadgraph", graph).getSingleResult();
             assertThat(owner.children).extracting(c -> c.id).containsExactly(11L, 10L);
             assertThat(owner.children).allSatisfy(c -> assertThat(c.owner).isSameAs(owner));
-            assertThat(sql.getFirst()).doesNotContainIgnoringCase(" join ");
-            assertThat(selects()).isGreaterThan(1);
+            // D17: a to-one subgraph of the single collection joins in the same select; two collections still fall back
+            if (nested) assertThat(sql.getFirst()).containsIgnoringCase(" join ");
+            else assertThat(sql.getFirst()).doesNotContainIgnoringCase(" join ");
+            if (nested) assertThat(selects()).isEqualTo(1);
+            else assertThat(selects()).isGreaterThan(1);
             if (!nested) assertThat(owner.labels).containsExactly("z", "a", "z");
             cold();
             Owner found = em.find(Owner.class, 1L, Map.of("jakarta.persistence.fetchgraph", graph));
             assertThat(found.children).extracting(c -> c.id).containsExactly(11L, 10L);
-            assertThat(sql.getFirst()).doesNotContainIgnoringCase(" join ");
-            assertThat(selects()).isGreaterThan(1);
+            assertThat(found.children).allSatisfy(c -> assertThat(c.owner).isSameAs(found));
+            if (nested) assertThat(selects()).isEqualTo(1);
+            else assertThat(sql.getFirst()).doesNotContainIgnoringCase(" join ");
+            if (!nested) assertThat(selects()).isGreaterThan(1);
             if (!nested) assertThat(found.labels).containsExactly("z", "a", "z");
         }
     }

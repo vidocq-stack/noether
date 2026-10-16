@@ -68,7 +68,8 @@ existing collection-fetch assembler. Eligible queries select one concrete root,
 optionally DISTINCT, with no existing joins, grouping/having, set operations or locks.
 Eligible non-locking database finds use the same path, including unloaded managed roots.
 Basic graph attribute nodes may coexist, but explicit to-one association nodes and
-all subgraphs retain D14/D15's existing loading instead.
+(at D16 delivery) all subgraphs retain D14/D15's existing loading instead; D17 below
+adds to-one subgraphs on the collection.
 
 The join is LEFT: empty owners remain and null element rows remain distinguishable
 from absence. Synthetic graph joins do not duplicate query roots. Entity, basic and
@@ -87,6 +88,29 @@ Multiple collections, nested-to-one collection subgraphs, mixed to-one nodes,
 extra/filtering joins, complex/polymorphic/inherited shapes, embedded/treated paths,
 and entity/embeddable map keys keep complete existing fallbacks. Nested/multiple
 collection SQL is future work, not a Cartesian-product expansion.
+
+== One collection with to-one subgraphs (D17, 2026-10-16)
+
+The single graph-requested root collection of D16 may carry an element subgraph, when the
+collection is entity-valued and the subgraph holds only direct or nested to-one nodes
+(for example `lines { product { supplier, category } }`) to concrete, non-polymorphic
+entities, plus basic/embedded leaves. Every to-one becomes a LEFT fetch join from the
+collection alias, and owner, element and targets are hydrated from the same rows. LOAD
+also joins the elements' mapped eager to-ones; FETCH may overfetch omitted eager state.
+The same query/find shapes as D16 apply.
+
+Null targets never filter elements; empty owners, null elements, bag duplicates, list
+positions and basic/derived map keys are preserved; shared targets keep one managed
+instance. Dirty managed entities and collections are not overwritten, unloaded lazy
+references complete in place, and `PostLoad` runs once per fresh entity after the
+whole graph is assembled; callback mutations remain dirty and failures propagate.
+Finite owner pagination pages distinct owners in SQL without the graph joins, then loads
+collections and subgraphs through complete secondary reads.
+
+Multiple collections, collection-valued nodes inside the subgraph (including element
+collections of targets), polymorphic/inherited targets, embedded subgraphs, root to-one
+nodes beside the collection and the D16 query/map-key restrictions keep the complete
+existing fallback. Explicit JOIN FETCH semantics are unchanged.
 
 == Lazy read batching
 

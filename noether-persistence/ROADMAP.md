@@ -1268,15 +1268,68 @@ load discards its queue and propagates. The loading guard stays. Regressions:
 `PostLoadCollectionCycleTest` (20, batch sizes 1 and 16) and a `CollectionFetchJoinTest`
 reproducer; evidence in `TCK.md`.
 
+### D17 — One root collection with to-one subgraphs in one SELECT ✅ (2026-10-16)
+
+Approved after D16 and BUG-20261016-01 (baseline `23f5595`), before multiple collections
+and nested collection-valued subgraphs. Before production edits the new
+`CollectionSubgraphTest` and the updated D16 nested-subgraph test ran
+**177 focused tests / 11 SQL-count failures / 0 errors** (graphs used 10–17 SELECTs instead
+of 1). The completed focused gate passes **177/177** (12 new scenarios). D5/D9–D16 and the
+BUG-20261016-01 record above remain historical.
+
+**Exact SQL scope**
+
+- The graph explicitly requests exactly **one entity-valued root collection** (D16 root and
+  query shape: JPQL/Criteria single concrete root, optional DISTINCT, no existing joins,
+  grouping, set operations or locks; or an eligible non-locking database find, including
+  an unloaded managed root). Basic attribute nodes may coexist on the root.
+- The collection's element subgraph may contain **direct and nested to-one chains**
+  (e.g. `lines { product { supplier, category } }`) whose targets are concrete,
+  non-polymorphic, D11-hydratable entities; basic/embedded leaf nodes may coexist at any
+  level. Each to-one becomes a LEFT fetch join from the collection (or chained) alias.
+  LOAD also joins the elements' and targets' mapped eager to-ones (the back-reference of a
+  bidirectional element is joined too, which is redundant but correct); FETCH may still
+  overfetch omitted eager state through ordinary loading, as permitted.
+- The D12 collector hydrates owner, element and every target from the same rows through
+  generated column access and the dialect SQL AST. Null LEFT targets never filter
+  elements; empty owners and null elements stay; duplicate bag values, list positions
+  and basic/derived map keys are preserved; shared targets resolve to one managed
+  instance. Dirty managed entities/collections are not overwritten, unloaded lazy
+  references complete in place, and snapshots, cache publication and one `PostLoad`
+  per fresh entity follow complete assembly (BUG-20261016-01 load scope). Callback
+  mutations stay dirty and callback failures propagate. Graphs/hints are reread each
+  execution; find never auto-flushes.
+- Pagination of a graph collection query pages **distinct owners in SQL from the original
+  statement** (no synthetic joins in the page), then completes collections and subgraphs
+  through secondary loading; no row-limited partial collection and no silent in-memory
+  page. Non-scalar ordering is still refused before SQL.
+
+**Safe fallback and implementation boundary**
+
+Multiple collection nodes, collection-valued nodes inside the subgraph (nested
+collections, element collections of targets), polymorphic/inherited/`JOINED`/
+`TABLE_PER_CLASS` targets, embedded nodes with subgraphs, unknown attributes, root to-one
+nodes beside the collection, user joins, entity/embeddable map keys and complex query
+shapes keep the complete existing loading (D14/D15 to-one joins plus complete follow-up
+collections). Explicit JOIN FETCH statements are unchanged. Production changes are limited
+to `Translator` (subgraph eligibility, chained graph joins validated against the collector
+before use, extra to-one hydrations only for synthetic graph rows) and `JpqlQuery`
+(graph-row flag; owner page from the original statement). No new SQL strings, reflection,
+dependency, module, package or executor. The second-level cache keeps its existing rule of
+not capturing graphs that reach unloaded lazy references.
+
+Full clean reactor: **958/958**, **87 XML reports**; full patched PostgreSQL TCK: **2135 tests / 2131 passed / 0 failures / 0 errors / 4 unchanged official skips**. Independent
+identity/outcome and fixture-hash verification are in `TCK.md`.
+
 ## Remaining work
 
-Prioritized backlog after D16, 2026-10-16. Each item needs its own approved, bounded lot; until then
+Prioritized backlog after D17, 2026-10-16. Each item needs its own approved, bounded lot; until then
 the documented fallback (follow-up selects, eager loading, or an explicit refusal naming the
 milestone) stays in place.
 
-1. **Future separate lots: collection-to-one subgraphs and multiple collection SQL fetching.**
-   D16 covers one leaf root collection; mixed to-one/collection graph row assembly
-   remains outside its scope.
+1. **Future separate lots: multiple collection SQL fetching, nested collection-valued
+   subgraphs and root to-one nodes beside a graph collection.** D16 covers one leaf root
+   collection and D17 one root collection with to-one subgraphs only.
    Broader SQL fetch eligibility — same-query owner pagination,
    entity/embeddable map keys; polymorphic, `JOINED` and `TABLE_PER_CLASS` targets
    (type resolution from the row), broader to-one `DISTINCT` and locking queries, `TREAT`/embedded paths, and entity
@@ -1299,6 +1352,7 @@ Recorded before implementation; each entry: date, decision, reason.
 
 | # | Date | Decision | Status |
 |---|---|---|---|
+| D17 | 2026-10-16 | Extend D16 to one graph-requested root entity collection whose element subgraph holds direct/nested to-one chains to concrete hydratable targets: LEFT fetch joins from the collection alias, hydrated from the same rows by the D12 collector and D11 access, validated before use. Preserve D16 null/empty/bag/list/map/identity/dirty/in-place/callback/cache/no-auto-flush semantics; SQL owner pagination from the original statement then complete secondary loads. Multiple collections, nested collection subgraphs, root to-ones beside the collection and polymorphic/complex paths keep complete fallbacks; explicit fetch joins unchanged. | Actioned |
 | D16 | 2026-10-16 | Reuse D12 assembly, D14 graph planning and D15 find routing for one graph-requested leaf root collection. LEFT owner retention, supported list/map/bag/null semantics, managed identity/dirty state and staged lifecycle completion; execution-time plans protect SQL owner pagination. No subgraphs, multiple collections, mixed explicit to-one nodes or broader complex/polymorphic SQL eligibility; existing fallbacks and explicit fetch joins remain intact. No new hydration architecture. Detailed support and measured verification are recorded in the D16 delivery section. | Actioned |
 | D1 | 2026-10-07 | Folder `noether-persistence/`, Maven parent `noether-jpa`, sub-modules `noether-jpa-*`, Java modules `io.vidocq.noether.jpa.*`. | Actioned |
 | D2 | 2026-10-07 | Certification database: PostgreSQL (official TCK DDL); H2 for unit tests only. | Actioned |

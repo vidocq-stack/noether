@@ -53,9 +53,21 @@ var order = em.find(Order.class, id, Map.of("jakarta.persistence.fetchgraph", gr
 ----
 
 Empty owners stay present and collections are complete. Finite query pages use SQL
-owner paging plus complete secondary reads. Subgraphs on the collection, multiple
+owner paging plus complete secondary reads. At D16, subgraphs on the collection, multiple
 collections and mixed explicit to-one graph nodes retain existing complete loading.
 See xref:reference.adoc#_one_leaf_collection_graph_d16_2026_10_16[] for exact boundaries.
+D17 adds to-one subgraphs on that collection, loaded in the same SELECT:
+
+[source,java]
+----
+var graph = em.createEntityGraph(Order.class);
+graph.addSubgraph("lines").addSubgraph("product").addAttributeNodes("supplier");
+var orders = em.createQuery("select o from Order o", Order.class)
+    .setHint("jakarta.persistence.fetchgraph", graph).getResultList();
+----
+
+Collection-valued subgraph nodes, multiple collections and polymorphic targets retain
+complete loading. See xref:reference.adoc#_one_collection_with_to_one_subgraphs_d17_2026_10_16[].
 See xref:internals.adoc#_query_graph_sql_loading_d14_2026_10_15[].
 
 == Find entity graphs

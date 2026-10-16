@@ -15,6 +15,19 @@ The official artifact checksums and TCK-BUG-001 byte-exact derived-jar fixture
 patch are unchanged; original artifacts are never edited. `TCK_FIXTURES=official`
 selects the untouched Persistence fixture. See the runner README for setup.
 
+== Collection to-one subgraph SQL verification (D17, 2026-10-16)
+
+Decision D17 loads one graph-requested root collection with direct/nested to-one
+subgraphs in the same SELECT. TDD red before production edits: *177 focused tests /
+11 SQL-count failures*; green: *177/177* (12 new `CollectionSubgraphTest` scenarios).
+The clean reactor finished *2026-10-16 13:00:55 CEST*: *958/958 tests* across *87 XML
+reports*. The full patched PostgreSQL *17-alpine* TCK finished *13:03:11 CEST*:
+*2135 tests / 2131 passed / 0 failures / 0 errors / 4 skips*, with identities/outcomes,
+*259 XML reports*, *518* derived-jar checks, the *85* original input files and
+official/derived SHA-256 independently verified unchanged. Locally patched, not
+certification. See xref:reference.adoc#_one_collection_with_to_one_subgraphs_d17_2026_10_16[].
+The sections below are kept as recorded.
+
 == PostLoad collection cycle fix (2026-10-16)
 
 BUG-20261016-01 is fixed: `PostLoad` callbacks are deferred to the outermost

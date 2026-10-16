@@ -129,6 +129,25 @@ duplicates/order/keys, in-place wrappers/references and dirty state, and complet
 before snapshots/callbacks/cache. No new SQL AST, loader, runtime reflection, dependency,
 module, package or executor is introduced. D13 batching and D14/D15 to-one SQL are unchanged.
 
+== Collection to-one subgraph SQL loading (D17, 2026-10-16)
+
+When the single graph collection is entity-valued and its element subgraph contains only
+basic/embedded leaves and to-one chains to concrete D11-hydratable targets,
+`Translator.graphSelect` also plans those to-ones (and, under LOAD, the elements' eager
+to-ones) as LEFT fetch joins from the collection alias, reusing D14's planner. The whole
+statement is compiled against the D12 collector before use; on failure it retries the plain
+D16 collection join, then the original statement. Any collection node inside the subgraph,
+polymorphic/non-hydratable target, unknown attribute or embedded subgraph rejects the
+collection path and keeps D14/D15 behavior.
+
+For synthetic graph rows only, `Translator.collectionHydration` accepts extra joins: each
+must be an unconditional LEFT fetch of a single-valued association from the collection or
+an already chained alias, without `ON`, `TREAT` or restrictions. Their entity hydrations are
+added after the owner and element, so one row hydrates owner, element and targets through
+the existing staged loader. Explicit fetch-join statements keep the D12 one-join rule.
+`JpqlQuery` passes the graph-row flag to the translator and pages owners from the original
+statement, then lets the ordinary graph follow-up complete collections and subgraphs.
+
 == Lazy read batches (D13, 2026-10-15)
 
 `EntityLoader` groups pending compatible persistence-context entries on first access.

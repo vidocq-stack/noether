@@ -130,6 +130,8 @@ final class Translator {
     private final java.util.Set<String> collectionAliases = new java.util.HashSet<>();
     private boolean collectionFetch;
     private boolean hydrating;
+    /** Whether the statement is graph-synthesized: only then may to-one joins of the collection elements hydrate. */
+    private boolean graphRows;
     private boolean selecting;
 
     /** @param bindings the values bound to the parameters, to expand those holding collections; {@code null} to validate */
@@ -153,8 +155,9 @@ final class Translator {
      * Lowers query graph to-ones to the existing fetch-join pipeline. No semantic query clause is changed:
      * graph joins are LEFT joins, and shapes not admitting D11 hydration keep their ordinary follow-up fetch plan.
      * FETCH only requests explicit nodes here (the loader may still overfetch eager state); LOAD additionally
-     * requests mapped eager to-ones. One leaf root collection may instead reuse D12's complete row collector;
-     * nested/multiple collection graphs and unsupported entity types remain loader work.
+     * requests mapped eager to-ones. One root collection may instead reuse D12's complete row collector, with the
+     * to-one subgraphs of its entity elements joined from the collection alias (D17); nested collection subgraphs,
+     * multiple collections, root to-ones beside the collection and unsupported entity types remain loader work.
      */
     static Ast.Statement graphSelect(Ast.Statement statement, MappedUnit unit, FetchPlan graph, boolean load) {
         if (!(statement instanceof Ast.Select select) || select.from().size() != 1
@@ -176,8 +179,20 @@ final class Translator {
                     List.of(new Ast.Join(Ast.Join.Kind.LEFT, true,
                         new Ast.Path(List.of(range.variable(), collection)), alias, null)))),
                 select.where(), select.groupBy(), select.having(), select.orderBy());
+            FetchPlan elements = graph.attributes().get(collection);
+            if (root.model().attribute(collection).orElse(null) instanceof AssociationAttribute association
+                    && (!elements.isEmpty() || load)) {
+                List<Ast.Join> joins = new ArrayList<>(execution.from().getFirst().joins());
+                java.util.Set<Class<?>> eagerPath = new java.util.HashSet<>(List.of(root.model().javaType()));
+                planner.graphJoins(unit.entity(association.targetEntity()).orElseThrow(), alias, elements, load, eagerPath,
+                    joins, statement.toString().toLowerCase(Locale.ROOT), new int[1]);
+                Ast.Select subgraphs = new Ast.Select(select.distinct(), select.items(),
+                    List.of(new Ast.Range(range.entity(), range.collection(), range.variable(), joins)),
+                    select.where(), select.groupBy(), select.having(), select.orderBy());
+                if (translate(subgraphs, unit, null, null, null, true, true).collection() != null) return subgraphs;
+            }
             // Never add a multiplying join unless the existing collector can assemble this exact shape.
-            return translate(execution, unit, null, null, null, true).collection() != null ? execution : statement;
+            return translate(execution, unit, null, null, null, true, true).collection() != null ? execution : statement;
         }
         if (select.distinct()) return statement;
         List<Ast.Join> joins = new ArrayList<>(range.joins());
@@ -192,17 +207,33 @@ final class Translator {
     private String graphCollection(MappedEntity root, FetchPlan graph) {
         String collection = null;
         for (var node : graph.attributes().entrySet()) {
-            // Subgraphs, including nested to-ones on a collection, belong to a separate bounded lot.
-            if (!node.getValue().isEmpty()) return null;
             var attribute = root.model().attribute(node.getKey()).orElse(null);
             if (attribute instanceof AssociationAttribute association && association.singleValued()) return null;
             if (attribute instanceof ElementCollectionAttribute
                     || attribute instanceof AssociationAttribute association && !association.singleValued()) {
                 if (collection != null) return null;
                 collection = node.getKey();
-            }
+                // D17: an entity collection's subgraph may only request to-one chains of hydratable entities.
+                if (!node.getValue().isEmpty() && (!(attribute instanceof AssociationAttribute association)
+                        || !toOneSubgraph(unit.entity(association.targetEntity()).orElse(null), node.getValue()))) return null;
+            } else if (!node.getValue().isEmpty()) return null;
         }
         return collection;
+    }
+
+    /** Whether every node is a basic/embedded leaf or a to-one of a hydratable entity with such a subgraph. */
+    private boolean toOneSubgraph(MappedEntity source, FetchPlan plan) {
+        if (!hydratable(source)) return false;
+        for (var node : plan.attributes().entrySet()) {
+            var attribute = source.model().attribute(node.getKey()).orElse(null);
+            if (attribute instanceof AssociationAttribute association && association.singleValued()) {
+                if (!toOneSubgraph(unit.entity(association.targetEntity()).orElse(null), node.getValue())) return false;
+            } else if (attribute == null || attribute instanceof ElementCollectionAttribute
+                    || attribute instanceof AssociationAttribute || !node.getValue().isEmpty()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -215,7 +246,7 @@ final class Translator {
             List.of(new Ast.Range(type.model().entityName(), null, "this", List.of())), null, List.of(), null, List.of());
         Ast.Statement execution = graphSelect(select, unit, graph, load);
         if (execution == select) return null;
-        Compiled compiled = translate(execution, unit, null, null, null, true);
+        Compiled compiled = translate(execution, unit, null, null, null, true, true);
         if (compiled.hydrations().isEmpty() || !(compiled.sql() instanceof Query query)) return null;
         Compiled.EntityItem root = (Compiled.EntityItem) compiled.items().getFirst();
         Object[] keys = type.statements().keyValues(id);
@@ -320,8 +351,18 @@ final class Translator {
      */
     static Compiled translate(Ast.Statement statement, MappedUnit unit, Function<Ast.Parameter, Object> bindings, Integer offset,
             Integer limit, boolean hydrate) {
+        return translate(statement, unit, bindings, offset, limit, hydrate, false);
+    }
+
+    /**
+     * Like {@link #translate(Ast.Statement, MappedUnit, Function, Integer, Integer, boolean)}; {@code graph} marks a
+     * statement {@link #graphSelect} synthesized, whose collection elements may also hydrate their to-one joins.
+     */
+    static Compiled translate(Ast.Statement statement, MappedUnit unit, Function<Ast.Parameter, Object> bindings, Integer offset,
+            Integer limit, boolean hydrate, boolean graph) {
         Translator translator = new Translator(unit, bindings, null);
         translator.hydrating = hydrate;
+        translator.graphRows = graph;
         String bulkEntity = statement instanceof Ast.Update update ? update.entity()
             : statement instanceof Ast.Delete delete ? delete.entity() : null;
         if (bulkEntity != null && (unit.inheritance(translator.entityNamed(bulkEntity).model().javaType()).joined()
@@ -698,11 +739,14 @@ final class Translator {
         return new Query(select.distinct() && collectionHydration == null, sqlItems, from, where, groupBy, having, orderBy, offset, limit);
     }
 
-    /** A single unrestricted collection fetch of the selected concrete root; other shapes retain secondary loading. */
+    /**
+     * A single unrestricted collection fetch of the selected concrete root; other shapes retain secondary loading. A
+     * graph-synthesized statement may follow it with LEFT to-one fetch joins chained from the entity elements (D17).
+     */
     private boolean collectionHydration(Ast.Select select, List<Expression> sqlItems) {
         if (select.from().size() != 1 || select.items().size() != 1) return false;
         Ast.Range range = select.from().getFirst();
-        if (range.entity() == null || range.joins().size() != 1
+        if (range.entity() == null || range.joins().isEmpty() || range.joins().size() > 1 && !graphRows
                 || !(select.items().getFirst().expression() instanceof Ast.Path selected)
                 || selected.treatEntity() != null || selected.segments().size() != 1
                 || !selected.segments().getFirst().equalsIgnoreCase(range.variable())) return false;
@@ -723,8 +767,27 @@ final class Translator {
         IndexMapping index = target.index();
         // Entity-valued keys need their own hydration graph; embeddable keys keep the established loader for now.
         if (index != null && (index.keyEntity() != null || index.index() instanceof CollectionIndex.ByEmbedded)) return false;
+        List<Variable> toOnes = new ArrayList<>();
+        java.util.Set<String> chained = new java.util.HashSet<>();
+        if (join.variable() != null) chained.add(join.variable().toLowerCase(Locale.ROOT));
+        for (Ast.Join next : range.joins().subList(1, range.joins().size())) {
+            List<String> segments = next.path().segments();
+            if (target.type() == null || !next.fetch() || next.kind() != Ast.Join.Kind.LEFT || next.on() != null
+                    || next.path().treatEntity() != null || next.variable() == null || segments.size() != 2
+                    || !chained.contains(segments.getFirst().toLowerCase(Locale.ROOT))) return false;
+            Variable source = variables.get(segments.getFirst().toLowerCase(Locale.ROOT));
+            Variable fetched = declaredJoins.get(next);
+            if (source == null || source.type() == null || fetched == null || fetched.element() != null
+                    || !(source.type().model().attribute(segments.get(1)).orElse(null) instanceof AssociationAttribute to)
+                    || !to.singleValued() || !hydratable(fetched.type())
+                    || collectionRestriction(select.where(), next.variable())
+                    || select.orderBy().stream().anyMatch(o -> collectionRestriction(o.expression(), next.variable()))) return false;
+            chained.add(next.variable().toLowerCase(Locale.ROOT));
+            toOnes.add(fetched);
+        }
         addHydration(owner, sqlItems);
         if (target.type() != null) addHydration(target, sqlItems);
+        for (Variable fetched : toOnes) addHydration(fetched, sqlItems);
         List<ValueBinder> readers = new ArrayList<>();
         if (target.element() != null) {
             // The owner FK distinguishes an absent LEFT row from a present row with a NULL value.

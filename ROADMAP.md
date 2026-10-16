@@ -4,7 +4,7 @@ Noether owns the implementations extracted from Mansart on 2026-10-11.
 
 | Building block | Status | Detailed roadmap |
 | --- | --- | --- |
-| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D16); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
+| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D17); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
 | Jakarta Validation 3.1 | V0–V2 provisional local test/TCK stopgap; not published | [Validation](noether-validation/ROADMAP.md) |
 
 The extraction changes repository, artifact, package and provider names, not
@@ -130,13 +130,25 @@ collection still being loaded, is fixed by deferring `PostLoad` to the outermost
 `EntityLoader` load scope; no feature scope changes. Details in the detailed roadmap and
 `noether-persistence/BUG.md`.
 
+Decision D17 (2026-10-16) adds **one root collection with to-one subgraphs** (e.g.
+`Order -> lines -> product -> supplier`) on top of D16: the element subgraph's direct and
+nested to-ones of concrete entities become LEFT fetch joins from the collection alias and
+are hydrated from the same rows (D11/D12 assembly, D14 planning, D15 find routing,
+BUG-20261016-01 callback scope). D16's semantics (empty owners, null targets/elements, bags,
+list/map keys, identity, dirty state, in-place references, callbacks/cache, SQL owner
+pagination with complete secondary loads, no find auto-flush) are preserved. Multiple
+collections, nested collection subgraphs, root to-ones beside the collection and
+polymorphic/complex paths keep the existing complete fallback. D5/D9–D16 and
+BUG-20261016-01 above remain historical delivery records.
+
 ## Remaining Persistence work
 
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
-1. Nested-to-one collection subgraphs and multiple collection SQL fetching are future
-   separate lots; D16 covers one leaf root collection only.
+1. Multiple collection SQL fetching, nested collection-valued subgraphs and root to-one
+   nodes beside a graph collection are future separate lots; D17 covers one root
+   collection with to-one subgraphs only.
    Broader SQL fetch eligibility: same-query owner pagination,
    entity/embeddable map keys; polymorphic/`JOINED`/`TABLE_PER_CLASS` targets,
    broader to-one `DISTINCT` and locking queries, embedded/treated graph paths and complex graph queries.
