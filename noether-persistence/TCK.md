@@ -1,3 +1,66 @@
+## Noether mixed root collection and root to-one SQL verification (D18) — 2026-10-16
+
+Decision D18 combines one root collection with direct/nested root to-one branches and
+D17 element to-one subgraphs (see `ROADMAP.md`). Baseline: `96403af`. Mandatory
+pre-production red: **18 tests / 6 failures / 0 errors** in `CollectionSubgraphTest`,
+including **five SQL-count failures** (4–11 SELECTs instead of one) and one changed
+callback-ordering assertion. Green focused gate: **95 tests / 95 passed /
+0 failures / 0 errors / 0 skips** (20 collection-subgraph, 35 collection-fetch,
+40 to-one-fetch scenarios). Eight new scenarios cover mixed JPQL/Criteria/find FETCH
+and LOAD graphs, direct/nested root and element branches, user-alias collisions and
+finite repeated-type paths, shared identities, absent targets/empty owners/null basic
+elements, duplicate bags/indexed lists/map keys, dirty state/in-place wrappers and
+references, no find auto-flush, complete callbacks/mutations/failures/cache, mutable
+graphs/hints, SQL owner pagination and complete multiple/nested-collection fallbacks.
+Existing D14–D17, explicit-fetch, lazy, batching, cache, generated-access and Java module
+regressions also pass in the full reactor.
+
+Environment: macOS, **Temurin 25.0.4**, **Maven 3.9.16**, H2 unit tests and isolated Docker
+**PostgreSQL 17-alpine** for the TCK; no shared database/service restart.
+Exact commands, from the repository root:
+
+```sh
+export JAVA_HOME=$HOME/.sdkman/candidates/java/25.0.4-tem
+export PATH="$JAVA_HOME/bin:$PATH"
+# Red used CollectionSubgraphTest alone, before production changes.
+./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test \
+  -Dtest=CollectionSubgraphTest,CollectionFetchJoinTest,FetchJoinTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw -ntp clean install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+The clean reactor finished **14:10:05 CEST**: **966 tests / 966 passed /
+0 failures / 0 errors / 0 skips**, independently aggregated from **87 XML reports**
+(958 baseline plus eight). The full locally patched Persistence 3.2.1 TCK finished
+**14:11:41 CEST**: **2135 tests / 2131 passed / 0 failures / 0 errors / 4 skips**.
+Independent verification checked all **259 XML reports**, **2135 unique
+execution/class/method identities** and exactly unchanged identities/outcomes against
+the D17 baseline, not just the runner's exit status. Both classpath properties in each
+report (**518 checks**) select exactly the derived spec-tests jar.
+
+The file set and SHA-256 of all **85 original `.tck-cache` / installed `jakarta/tck`
+files**, plus both runner tools, are unchanged. Official jar SHA-256:
+`a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`;
+derived jar SHA-256:
+`1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+The two jars retain the same **1126 entries**, with only the two authorized TCK-BUG-001
+ORM resources changed; each original/patched resource hash matches provenance.
+The four unchanged official skips are:
+
+- `core.metamodelapi.identifiabletype.Client#getDeclaredSingularAttributes`
+- `core.query.language.Client6#resultContainsFetchReference`
+- `se.entityManagerFactory.Client2#createEntityManagerFactoryStringMapTest`
+- `se.schemaGeneration.annotations.tableGenerator.Client#tableGeneratorTest`
+
+Logs and independent before/after verification snapshots use the
+`mixed-root-graphs-` session-artifact prefix (`verification.json` is the summary).
+This is locally patched evidence, **not an official result or certification**.
+Pagination still uses SQL distinct-owner paging plus complete secondary reads; multiple
+and nested collections and broader unsupported mapping/query shapes retain established
+fallback/refusal. No new benchmark was run. All historical evidence below is preserved.
+
 ## Noether one collection with to-one subgraphs SQL verification (D17) — 2026-10-16
 
 Decision D17 extends D16 to one graph-requested root entity collection whose element

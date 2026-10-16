@@ -355,7 +355,7 @@ class FetchJoinTest {
     }
 
     @Test
-    void findMixedGraphKeepsCompleteCollectionFollowUpAndPlainFindUnchanged() {
+    void findMixedGraphUsesOneSelectAndPlainFindIsUnchanged() {
         open();
         Order plain = em.find(Order.class, 1L);
         assertThat(plain.getLabel()).isEqualTo("o1");
@@ -370,7 +370,7 @@ class FetchJoinTest {
         assertThat(order.getCustomer().getName()).isEqualTo("alice");
         assertThat(order.getLines()).extracting(line -> line.id).containsExactly(1000L);
         assertThat(order.getLines().getFirst().order).isSameAs(order);
-        assertThat(selects()).isEqualTo(3);
+        assertThat(selects()).isEqualTo(1);
     }
 
     @Test
@@ -494,7 +494,7 @@ class FetchJoinTest {
     }
 
     @Test
-    void graphFallbacksRetainDistinctCollectionAndPolymorphicResultsAndFind() {
+    void mixedDistinctGraphsUseOneSelectAndPolymorphicGraphsRetainFallback() {
         open();
         var graph = em.createEntityGraph(Order.class);
         graph.addAttributeNodes("customer", "lines");
@@ -504,7 +504,7 @@ class FetchJoinTest {
         assertThat(orders.getFirst().getLines()).hasSize(1);
         assertThat(loaded(orders.getFirst(), "lines")).isTrue();
         assertThat(orders.getFirst().getCustomer().getName()).isEqualTo("alice");
-        assertThat(selects()).isGreaterThan(1);
+        assertThat(selects()).isEqualTo(1);
         em.clear();
         sql.clear();
         var shipments = em.createEntityGraph(Shipment.class);
@@ -514,11 +514,12 @@ class FetchJoinTest {
         assertThat(shipment.getVehicle()).isInstanceOf(Car.class);
         assertThat(((Car) shipment.getVehicle()).brand).isEqualTo("fiat");
         assertThat(loaded(shipment, "vehicle")).isTrue();
+        assertThat(selects()).isGreaterThan(1);
         em.clear();
         sql.clear();
         assertThat(em.find(Order.class, 1L, java.util.Map.of("jakarta.persistence.fetchgraph", graph))
             .getCustomer().getName()).isEqualTo("alice");
-        assertThat(selects()).isGreaterThan(1);
+        assertThat(selects()).isEqualTo(1);
     }
 
     @Test
@@ -544,7 +545,7 @@ class FetchJoinTest {
             assertThat(loaded(o, "customer")).isTrue();
             assertThat(loaded(o, "lines")).isTrue();
         });
-        assertThat(selects()).isEqualTo(4); // graph row query + collection keys/element + empty collection
+        assertThat(selects()).isEqualTo(7); // SQL owner page + owner state/customer + collection keys/element
     }
 
     @Test

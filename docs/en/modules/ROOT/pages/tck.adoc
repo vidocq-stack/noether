@@ -15,6 +15,37 @@ The official artifact checksums and TCK-BUG-001 byte-exact derived-jar fixture
 patch are unchanged; original artifacts are never edited. `TCK_FIXTURES=official`
 selects the untouched Persistence fixture. See the runner README for setup.
 
+== Mixed root collection and root to-one SQL verification (D18, 2026-10-16)
+
+D18 combines exactly one root collection with root to-one branches and D17 element
+to-one subgraphs. Mandatory red before production edits ran *18 tests / 6 failures /
+0 errors*, including five actual SQL-count failures (4–11 SELECTs instead of one).
+The focused collection-subgraph/collection-fetch/to-one-fetch gate passes *95/95*,
+including eight new mixed-graph scenarios. The full clean reactor finished at
+*14:10:05 CEST*: *966 tests / 966 passed / 0 failures / 0 errors / 0 skips*
+from *87 XML reports* (958 baseline plus eight).
+
+The complete locally patched Persistence 3.2.1 TCK on isolated Docker PostgreSQL 17,
+Temurin 25.0.4 and Maven 3.9.16 finished at *14:11:41 CEST*:
+*2135 tests / 2131 passed / 0 failures / 0 errors / 4 unchanged official skips*.
+All *259 XML reports*, *2135 unique execution/class/method identities* and outcomes
+match the D17 baseline; *518* classpath properties select exactly the derived jar.
+All *85 original cache/installed TCK files* and both runner tools retain the same file
+set and SHA-256. The official (`a6ad07d4…b364024`) and derived
+(`1f7e82ba…e4d9a4`) hashes are unchanged; all 1126 jar entries were compared, with
+only the two authorized TCK-BUG-001 ORM resources differing.
+
+Coverage includes mixed JPQL/Criteria/find FETCH/LOAD graphs, shared root/element
+identities, alias collisions/finite repeated-type paths, null targets/elements and empty
+owners, duplicate bags/indexed lists/maps, dirty state and in-place lazy instances,
+complete callbacks/mutations/failures/cache, mutable graph/hints and complete SQL owner
+pagination/fallbacks. Multiple/nested collections and broader unsupported shapes retain
+established loading/refusal. Pagination remains distinct-owner SQL plus complete
+secondary reads. No shared service restart or benchmark was needed.
+Commands, exact hashes, four skip identities and evidence are recorded in
+`noether-persistence/TCK.md`. This is *locally patched evidence, not certification*.
+Historical D5/D9–D17 and BUG-20261016-01 evidence below is preserved.
+
 == Collection to-one subgraph SQL verification (D17, 2026-10-16)
 
 Decision D17 loads one graph-requested root collection with direct/nested to-one

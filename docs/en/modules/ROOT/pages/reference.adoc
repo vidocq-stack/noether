@@ -112,6 +112,34 @@ collections of targets), polymorphic/inherited targets, embedded subgraphs, root
 nodes beside the collection and the D16 query/map-key restrictions keep the complete
 existing fallback. Explicit JOIN FETCH semantics are unchanged.
 
+== Mixed root collection and root to-one graphs (D18, 2026-10-16)
+
+D18 extends the historical D16/D17 scopes above: exactly one explicitly requested
+root collection may coexist with direct/nested root to-one branches, for example
+`Order { customer { favorite { supplier } }, lines { product { supplier } } }`.
+The collection may hold entities (with D17 element to-one subgraphs) or D16
+basic/embeddable values. Root and element targets must be concrete D11-hydratable
+entities; all explicit subgraphs contain only to-ones and basic/embedded leaves.
+Both branches use LEFT joins in one SQL statement for eligible JPQL/Criteria and
+non-locking database finds. LOAD also joins mapped eager to-ones on both branches;
+FETCH may overfetch eager state.
+
+Null root/element targets never filter owners or elements; empty owners, null
+basic elements, duplicate bags, list positions/order and supported map keys survive.
+Shared root/element targets have one managed identity, with dirty state, in-place
+lazy references/wrappers and complete lifecycle/snapshot/cache behavior preserved.
+Callbacks run once per fresh identity after assembly, and their mutations remain
+dirty. Mutable graphs and replacement hints are planned at each execution.
+Managed/cache find hits keep ordinary graph completion and never auto-flush.
+
+The D16 query/mapping restrictions remain. Pagination uses SQL distinct-owner paging
+without synthetic graph joins and then complete secondary graph loading, not
+single-query or in-memory pagination. Multiple root collections, collections nested
+under either branch, unsupported map keys, polymorphic/inherited/complex shapes and
+explicit fetch joins retain their established complete fallback or explicit refusal.
+Multiple collection SQL fetching, nested collections, broader fetch eligibility and
+broader lazy/batch/mapping support remain separate prioritized roadmap items.
+
 == Lazy read batching
 
 [cols="3,1,4"]

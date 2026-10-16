@@ -148,6 +148,30 @@ the existing staged loader. Explicit fetch-join statements keep the D12 one-join
 `JpqlQuery` passes the graph-row flag to the translator and pages owners from the original
 statement, then lets the ordinary graph follow-up complete collections and subgraphs.
 
+== Mixed root and element graph branches (D18, 2026-10-16)
+
+`Translator.graphCollection` now admits root to-one branches beside the one collection,
+validating each through the existing to-one-subgraph eligibility check. It still rejects
+a second collection or collections nested on either branch. `graphSelect` invokes
+`graphJoins` for both element and root branches with *one shared alias sequence*, avoiding
+collisions between branches and with user aliases. Existing finite explicit graph
+recursion and automatic eager-cycle guards remain; LOAD expands both branches.
+
+For synthetic graph rows only, `collectionHydration` accepts validated LEFT to-one
+chains starting at the owner *or* element alias. Owner and entity element stay the first
+two hydrations, followed by all branch targets; basic/embeddable collection payloads
+retain their own readers. This reuses `JpqlQuery`, the dialect AST and `EntityLoader`
+unchanged: row identities are registered before relationships, collections are assembled
+without a to-one Cartesian multiplier, and snapshots/callbacks/cache see the complete
+graph. Existing dirty instances and lazy wrappers/references retain their identity.
+
+The combined graph is validated against the same collector before use. Unsupported
+shapes retain complete established fallback; explicit fetch joins are unchanged.
+Pagination still pages SQL distinct owners from the original statement and completes
+the graph through secondary reads. Managed/cache find hits retain ordinary completion
+and find gains no auto-flush. There is no second planner, raw SQL, runtime entity
+reflection, new dependency, package, module or executor.
+
 == Lazy read batches (D13, 2026-10-15)
 
 `EntityLoader` groups pending compatible persistence-context entries on first access.

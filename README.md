@@ -258,6 +258,27 @@ to-one nodes beside the collection and unknown/embedded-subgraph nodes keep the 
 existing fallback; explicit fetch joins are unchanged. Evidence is in
 [`noether-persistence/TCK.md`](noether-persistence/TCK.md).
 
+Decision **D18 (2026-10-16)** combines D14–D17 for **mixed graphs with exactly one root
+collection and direct/nested root to-one branches**, for example
+`Order { customer { favorite { supplier } }, lines { product { supplier } } }`.
+Concrete hydratable targets on either branch use LEFT joins in the same SQL statement;
+shared root/element targets retain one managed identity without multiplying collection
+entries. This also applies to a basic/embeddable root element collection with root
+to-ones, and LOAD expands mapped eager to-ones on both branches (FETCH may overfetch).
+Eligible JPQL/Criteria and non-locking database finds retain D16/D17's query/mapping
+boundaries, complete lifecycle/dirty/lazy/cache contracts and execution-time graph/hint
+planning. Managed/cache find hits keep their ordinary completion paths without
+auto-flush. Pagination still pages distinct owners in SQL, then completely loads their
+collections and branches; it is not single-query pagination.
+
+Multiple root collections, collections nested on either branch, unsupported map keys,
+complex/polymorphic shapes and existing explicit fetch joins retain their established
+complete loading or explicit refusal. Prioritized remaining work: multiple collection
+SQL fetching, nested collections, broader fetch eligibility, broader lazy/batch shapes
+and missing relational mappings (detailed backlog in the roadmaps). D5/D9–D17 and
+BUG-20261016-01 above remain historical records. D18 verification is recorded in
+[`noether-persistence/TCK.md`](noether-persistence/TCK.md).
+
 The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;
 the bundled Jakarta ORM schema retains its original upstream licence.

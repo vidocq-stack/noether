@@ -16,8 +16,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.*;
 
 /**
- * §3.7.4 and §4.4.5.3: one graph-requested root collection and the to-one subgraphs of its elements are read from
- * the same SQL rows, with complete collections, one managed instance per identity and staged callbacks (D17).
+ * §3.7.4 and §4.4.5.3: one graph-requested root collection and root/element to-one branches are read from
+ * the same SQL rows, with complete collections, one managed instance per identity and staged callbacks (D17/D18).
  */
 class CollectionSubgraphTest {
     private static final AtomicInteger DATABASES = new AtomicInteger();
@@ -55,9 +55,12 @@ class CollectionSubgraphTest {
         Product drill = new Product(202, "drill", null, tools);
         hammer.getTags().addAll(List.of("steel", "wood"));
         Customer alice = new Customer(500, "alice");
+        alice.setFavorite(hammer);
         Item plain = new Item(600, "plain");
         SpecialItem special = new SpecialItem(601, "special", "gold");
         Order first = new Order(1, "first", alice), empty = new Order(2, "empty", null), third = new Order(3, "third", null);
+        first.setFeatured(hammer);
+        third.setFeatured(drill);
         // items stay unset here: a lazy to-one of a polymorphic hierarchy is resolved eagerly (D10), see the fallback test
         Line l10 = new Line(10, 1, first, hammer, null), l11 = new Line(11, 2, first, saw, null);
         Line l12 = new Line(12, 3, first, null, null), l13 = new Line(13, 4, first, hammer, null);
@@ -75,7 +78,7 @@ class CollectionSubgraphTest {
     }
 
     @AfterEach void close() {
-        Order.inspect = Line.inspect = Product.fail = Product.mutate = false;
+        Order.inspect = Order.inspectMixed = Line.inspect = Product.fail = Product.mutate = false;
         if (factory != null) factory.close();
     }
 
@@ -101,6 +104,269 @@ class CollectionSubgraphTest {
 
     private List<Order> orders(String hint, EntityGraph<?> graph) {
         return em.createQuery("select o from CsOrder o order by o.id", Order.class).setHint(hint, graph).getResultList();
+    }
+
+    private EntityGraph<Order> mixedGraph(String collection) {
+        var graph = graph(collection, "supplier", "category");
+        graph.addSubgraph("customer").addSubgraph("favorite").addAttributeNodes("supplier", "category");
+        graph.addSubgraph("featured").addAttributeNodes("supplier", "category");
+        return graph;
+    }
+
+    private void assertMixed(Order order) {
+        assertFirstOrderGraph(order);
+        assertThat(order.getCustomer().getName()).isEqualTo("alice");
+        assertThat(order.getCustomer().getFavorite()).isSameAs(order.getFeatured())
+            .isSameAs(order.getLines().get(1).getProduct());
+        assertThat(order.getFeatured().getSupplier().getName()).isEqualTo("acme");
+    }
+
+    @Test void mixedJpqlCriteriaAndFindReadRootAndElementBranchesInOneSelect() {
+        for (String hint : List.of(FETCH, LOAD)) {
+            for (String operation : List.of("jpql", "criteria", "find")) {
+                cold();
+                Order.inspect = Order.inspectMixed = Line.inspect = true;
+                var graph = mixedGraph("lines");
+                List<Order> found;
+                if (operation.equals("find")) {
+                    found = List.of(em.find(Order.class, 1L, Map.of(hint, graph)));
+                } else if (operation.equals("criteria")) {
+                    var cb = em.getCriteriaBuilder();
+                    var criteria = cb.createQuery(Order.class);
+                    var root = criteria.from(Order.class);
+                    criteria.select(root).distinct(true).orderBy(cb.asc(root.get("id")));
+                    found = em.createQuery(criteria).setHint(hint, graph).getResultList();
+                } else {
+                    // The user alias deliberately overlaps the generated alias prefix.
+                    found = em.createQuery("select _noether_graph_0 from CsOrder _noether_graph_0 order by _noether_graph_0.id",
+                        Order.class).setHint(hint, graph).getResultList();
+                }
+                assertThat(selects()).as(operation + "/" + hint + sql).isEqualTo(1);
+                assertMixed(found.getFirst());
+                assertThat(found.getFirst().rootSeen).isEqualTo("alice:hammer:acme");
+                assertThat(Order.LOADS.get()).isEqualTo(found.size());
+                assertThat(Product.LOADS.get()).isEqualTo(found.size() == 1 ? 2 : 3);
+                assertThat(Category.LOADS.get()).isEqualTo(1);
+                assertThat(Supplier.LOADS.get()).isEqualTo(2);
+                if (found.size() == 3) {
+                    assertThat(found.get(1).getCustomer()).isNull();
+                    assertThat(found.get(1).getFeatured()).isNull();
+                    assertThat(found.get(1).getLines()).isEmpty();
+                    assertThat(found.get(2).getCustomer()).isNull();
+                    assertThat(found.get(2).getFeatured()).isSameAs(found.get(2).getLines().get(1).getProduct());
+                    assertThat(found.get(2).getFeatured().getSupplier()).isNull();
+                }
+                assertThat(selects()).isEqualTo(1);
+            }
+        }
+        cold();
+        assertMixed(em.find(mixedGraph("lines"), 1L));
+        assertThat(selects()).isEqualTo(1);
+        cold();
+        assertThat(em.find(Order.class, 999L, Map.of(FETCH, mixedGraph("lines")))).isNull();
+        assertThat(selects()).isEqualTo(1);
+    }
+
+    @Test void mixedBagsMapsAndDirectRootNodesKeepAllEntries() {
+        for (String hint : List.of(FETCH, LOAD)) {
+            cold();
+            var bag = mixedGraph("picks");
+            var found = orders(hint, bag);
+            var picks = new ArrayList<>(found.getFirst().getPicks());
+            assertThat(picks).extracting(Line::getId).containsExactlyInAnyOrder(10L, 10L, 11L);
+            assertThat(picks.stream().filter(l -> l.getId() == 10).findFirst().orElseThrow().getProduct())
+                .isSameAs(found.getFirst().getCustomer().getFavorite()).isSameAs(found.getFirst().getFeatured());
+            assertThat(found.get(1).getPicks()).isEmpty();
+            assertThat(selects()).isEqualTo(1);
+            cold();
+            var keyed = orders(hint, mixedGraph("keyed"));
+            assertThat(keyed.getFirst().getKeyed()).containsOnlyKeys("a", "b");
+            assertThat(keyed.getFirst().getKeyed().get("a").getProduct()).isSameAs(keyed.getFirst().getFeatured());
+            assertThat(keyed.getFirst().getKeyed().get("b").getProduct()).isNull();
+            assertThat(keyed.get(1).getKeyed()).isEmpty();
+            assertThat(selects()).isEqualTo(1);
+            cold();
+            var direct = graph("lines", "supplier", "category");
+            direct.addAttributeNodes("customer");
+            assertThat(orders(hint, direct).getFirst().getCustomer().getName()).isEqualTo("alice");
+            assertThat(selects()).isEqualTo(1);
+        }
+    }
+
+    @Test void mixedLoadExpandsRootEagerBranchesAndFetchAllowsOverfetch() {
+        for (String hint : List.of(FETCH, LOAD)) {
+            cold();
+            var graph = graph("lines", "supplier", "category");
+            graph.addAttributeNodes("customer");
+            var first = orders(hint, graph).getFirst();
+            assertThat(first.getCustomer().getFavorite()).isSameAs(first.getLines().get(1).getProduct());
+            assertThat(first.getCustomer().getFavorite().getCategory().getName()).isEqualTo("tools");
+            assertThat(selects()).isEqualTo(1);
+        }
+    }
+
+    @Test void mixedManagedDirtyStateLazyReferencesAndWrappersSurviveWithoutFindFlush() {
+        var line = em.find(Line.class, 10L);
+        var product = line.getProduct();
+        assertThat(loaded(product)).isFalse();
+        line.setQuantity(99);
+        var customer = em.find(Customer.class, 500L);
+        customer.setName("dirty-alice");
+        var first = em.find(Order.class, 1L);
+        var wrapper = first.getLines();
+        assertThat(loaded(first, "lines")).isFalse();
+        em.getTransaction().begin();
+        sql.clear();
+        var found = em.createQuery("select o from CsOrder o where o.id = 1", Order.class)
+            .setFlushMode(FlushModeType.COMMIT).setHint(FETCH, mixedGraph("lines")).getSingleResult();
+        assertThat(found).isSameAs(first);
+        assertThat(found.getLines()).isSameAs(wrapper);
+        assertThat(found.getLines().get(1)).isSameAs(line);
+        assertThat(line.getQuantity()).isEqualTo(99);
+        assertThat(found.getFeatured()).isSameAs(product);
+        assertThat(found.getCustomer()).isSameAs(customer);
+        assertThat(customer.getName()).isEqualTo("dirty-alice");
+        assertThat(selects()).isEqualTo(1);
+        assertThat(sql).noneMatch(s -> s.stripLeading().toLowerCase(Locale.ROOT).startsWith("update"));
+        var removed = wrapper.removeFirst();
+        sql.clear();
+        assertThat(em.find(Order.class, 1L, Map.of(LOAD, mixedGraph("lines"))).getLines())
+            .isSameAs(wrapper).hasSize(3);
+        assertThat(sql).noneMatch(s -> s.stripLeading().toLowerCase(Locale.ROOT).startsWith("update"));
+        wrapper.addFirst(removed);
+        em.getTransaction().commit();
+        cold();
+        assertThat(em.find(Line.class, 10L).getQuantity()).isEqualTo(99);
+        assertThat(em.find(Customer.class, 500L).getName()).isEqualTo("dirty-alice");
+    }
+
+    @Test void mixedCallbacksMutationsAndCacheAreComplete() {
+        Order.inspect = Order.inspectMixed = Line.inspect = true;
+        Product.mutate = true;
+        em.getTransaction().begin();
+        var first = em.find(Order.class, 1L, Map.of(LOAD, mixedGraph("lines")));
+        assertThat(first.rootSeen).isEqualTo("alice:hammer:acme");
+        assertThat(first.getFeatured().getName()).isEqualTo("hammer!");
+        assertThat(Product.LOADS.get()).isEqualTo(2);
+        assertThat(selects()).isEqualTo(1);
+        em.getTransaction().commit();
+        Product.mutate = false;
+        Order.inspect = Order.inspectMixed = Line.inspect = false;
+        em.clear();
+        sql.clear();
+        var product = em.find(Product.class, 200L);
+        assertThat(product.getName()).isEqualTo("hammer!");
+        assertThat(product.getSupplier().getName()).isEqualTo("acme");
+        assertThat(selects()).isZero();
+        cold();
+        assertThat(em.find(Product.class, 200L).getName()).isEqualTo("hammer!");
+        cold();
+        Product.fail = true;
+        em.getTransaction().begin();
+        assertThatThrownBy(() -> em.find(Order.class, 1L, Map.of(FETCH, mixedGraph("lines"))))
+            .hasStackTraceContaining("product callback failed");
+        assertThat(em.getTransaction().getRollbackOnly()).isTrue();
+        em.getTransaction().rollback();
+        Product.fail = false;
+        cold();
+        assertThat(em.find(Order.class, 1L, Map.of(LOAD, mixedGraph("lines"))).getFeatured().getName())
+            .isEqualTo("hammer!");
+        assertThat(selects()).isEqualTo(1);
+    }
+
+    @Test void mixedFindDoesNotFlushDirtyJoinedTargetsAndFiniteCyclesKeepIdentity() {
+        for (String hint : List.of(FETCH, LOAD)) {
+            cold();
+            var supplier = em.find(Supplier.class, 300L);
+            supplier.setName("dirty-acme");
+            em.getTransaction().begin();
+            var graph = mixedGraph("lines");
+            graph.addSubgraph("lines").addSubgraph("order").addSubgraph("featured")
+                .addAttributeNodes("supplier", "category");
+            sql.clear();
+            var first = em.find(Order.class, 1L, Map.of(hint, graph));
+            assertThat(first.getFeatured().getSupplier()).isSameAs(supplier);
+            assertThat(first.getCustomer().getFavorite()).isSameAs(first.getFeatured());
+            assertThat(first.getLines().get(1).getOrder()).isSameAs(first);
+            assertThat(first.getLines().get(1).getProduct()).isSameAs(first.getFeatured());
+            assertThat(supplier.getName()).isEqualTo("dirty-acme");
+            assertThat(Product.LOADS.get()).isEqualTo(2);
+            assertThat(Order.LOADS.get()).isEqualTo(1);
+            assertThat(selects()).isEqualTo(1);
+            assertThat(sql).noneMatch(s -> s.stripLeading().toLowerCase(Locale.ROOT).startsWith("update"));
+            em.getTransaction().rollback();
+        }
+    }
+
+    @Test void mixedElementCollectionKeepsNullRowsDuplicatesAndAbsentRootTargets() {
+        em.getTransaction().begin();
+        em.find(Product.class, 200L).getTags().addAll(Arrays.asList(null, "steel"));
+        em.getTransaction().commit();
+        for (String hint : List.of(FETCH, LOAD)) {
+            for (String operation : List.of("jpql", "criteria", "find")) {
+                cold();
+                var graph = em.createEntityGraph(Product.class);
+                graph.addAttributeNodes("tags", "supplier", "category");
+                List<Product> products;
+                if (operation.equals("find")) {
+                    products = List.of(em.find(Product.class, 200L, Map.of(hint, graph)));
+                } else if (operation.equals("criteria")) {
+                    var cb = em.getCriteriaBuilder();
+                    var criteria = cb.createQuery(Product.class);
+                    var root = criteria.from(Product.class);
+                    criteria.select(root).orderBy(cb.asc(root.get("id")));
+                    products = em.createQuery(criteria).setHint(hint, graph).getResultList();
+                } else {
+                    products = em.createQuery("select p from CsProduct p order by p.id", Product.class)
+                        .setHint(hint, graph).getResultList();
+                }
+                assertThat(products.getFirst().getTags()).containsExactlyInAnyOrder("steel", "wood", null, "steel");
+                assertThat(products.getFirst().getSupplier().getName()).isEqualTo("acme");
+                assertThat(products.getFirst().getCategory().getName()).isEqualTo("tools");
+                if (products.size() == 3) {
+                    assertThat(products.get(1).getTags()).isEmpty();
+                    assertThat(products.get(2).getTags()).isEmpty();
+                    assertThat(products.get(2).getSupplier()).isNull();
+                    assertThat(products.get(2).getCategory()).isSameAs(products.getFirst().getCategory());
+                }
+                assertThat(selects()).as(operation + "/" + hint).isEqualTo(1);
+            }
+        }
+    }
+
+    @Test void mixedMutableGraphHintsAndOwnerPaginationReplanWithoutPartialCollections() {
+        var graph = graph("lines", "supplier", "category");
+        var query = em.createQuery("select o from CsOrder o order by o.id", Order.class).setHint(FETCH, graph);
+        assertThat(orders(FETCH, graph).getFirst().getLines()).hasSize(4);
+        cold();
+        graph.addSubgraph("customer").addSubgraph("favorite").addAttributeNodes("supplier", "category");
+        graph.addSubgraph("featured").addAttributeNodes("supplier", "category");
+        assertMixed(query.getResultList().getFirst());
+        assertThat(selects()).isEqualTo(1);
+        cold();
+        var multiple = mixedGraph("lines");
+        multiple.addAttributeNodes("picks");
+        var fallback = query.setHint(FETCH, multiple).getResultList();
+        assertMixed(fallback.getFirst());
+        assertThat(fallback.getFirst().getPicks()).hasSize(3);
+        assertThat(selects()).isGreaterThan(1);
+        cold();
+        assertMixed(query.setHint(FETCH, graph).getResultList().getFirst());
+        assertThat(selects()).isEqualTo(1);
+        cold();
+        var page = query.setHint(LOAD, mixedGraph("lines")).setMaxResults(1).getResultList();
+        assertThat(page).extracting(Order::getId).containsExactly(1L);
+        assertMixed(page.getFirst());
+        assertThat(sql.getFirst()).containsIgnoringCase("distinct").containsIgnoringCase("fetch first")
+            .doesNotContainIgnoringCase("join");
+        assertThat(selects()).isEqualTo(8);
+        cold();
+        page = query.setFirstResult(1).setMaxResults(2).getResultList();
+        assertThat(page).extracting(Order::getId).containsExactly(2L, 3L);
+        assertThat(page.getFirst().getLines()).isEmpty();
+        assertThat(describe(page.get(1).getLines())).containsExactly("20:hammer/acme", "21:drill/-");
+        assertThat(page.get(1).getFeatured()).isSameAs(page.get(1).getLines().get(1).getProduct());
+        assertThat(selects()).isEqualTo(9);
     }
 
     private static List<String> describe(Collection<Line> lines) {
@@ -411,9 +677,9 @@ class CollectionSubgraphTest {
         var multiple = graph("lines", "supplier");
         multiple.addAttributeNodes("picks");
         graphs.put("multiple collections", multiple);
-        var mixed = graph("lines", "supplier");
-        mixed.addAttributeNodes("customer");
-        graphs.put("root to-one with collection", mixed);
+        var rootNested = mixedGraph("lines");
+        rootNested.addSubgraph("customer").addSubgraph("favorite").addAttributeNodes("tags");
+        graphs.put("root nested collection", rootNested);
         for (var entry : graphs.entrySet()) {
             for (String hint : List.of(FETCH, LOAD)) {
                 cold();
@@ -431,6 +697,8 @@ class CollectionSubgraphTest {
                         assertThat(first.getLines().get(1).getItem().getName()).isEqualTo("plain");
                     }
                     case "multiple collections" -> assertThat(first.getPicks()).hasSize(3);
+                    case "root nested collection" -> assertThat(first.getCustomer().getFavorite().getTags())
+                        .containsExactlyInAnyOrder("steel", "wood");
                     default -> assertThat(first.getCustomer().getName()).isEqualTo("alice");
                 }
                 cold();
@@ -464,14 +732,16 @@ class CollectionSubgraphTest {
     @Entity(name = "CsOrder") @Table(name = "CS_ORDER")
     public static class Order {
         static final AtomicInteger LOADS = new AtomicInteger();
-        static boolean inspect;
+        static boolean inspect, inspectMixed;
         private long id;
         private String label;
         private Customer customer;
+        private Product featured;
         private List<Line> lines = new ArrayList<>();
         private Collection<Line> picks = new ArrayList<>();
         private Map<String, Line> keyed = new LinkedHashMap<>();
         List<String> seen;
+        String rootSeen;
         public Order() {}
         Order(long id, String label, Customer customer) { this.id = id; this.label = label; this.customer = customer; }
         @Id public long getId() { return id; }
@@ -481,6 +751,9 @@ class CollectionSubgraphTest {
         @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "customer_id")
         public Customer getCustomer() { return customer; }
         public void setCustomer(Customer customer) { this.customer = customer; }
+        @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "featured_id")
+        public Product getFeatured() { return featured; }
+        public void setFeatured(Product featured) { this.featured = featured; }
         @OneToMany(mappedBy = "order") @OrderColumn(name = "line_position")
         public List<Line> getLines() { return lines; }
         public void setLines(List<Line> lines) { this.lines = lines; }
@@ -493,6 +766,11 @@ class CollectionSubgraphTest {
         @PostLoad void loaded() {
             LOADS.incrementAndGet();
             if (inspect) seen = describe(lines);
+            if (inspectMixed && customer != null) {
+                rootSeen = customer.getName() + ":" + customer.getFavorite().getName() + ":"
+                    + featured.getSupplier().getName();
+                assertThat(customer.getFavorite()).isSameAs(featured).isSameAs(lines.get(1).getProduct());
+            }
         }
     }
 
@@ -594,12 +872,16 @@ class CollectionSubgraphTest {
     public static class Customer {
         private long id;
         private String name;
+        private Product favorite;
         public Customer() {}
         Customer(long id, String name) { this.id = id; this.name = name; }
         @Id public long getId() { return id; }
         public void setId(long id) { this.id = id; }
         public String getName() { return name; }
         public void setName(String name) { this.name = name; }
+        @ManyToOne @JoinColumn(name = "favorite_id")
+        public Product getFavorite() { return favorite; }
+        public void setFavorite(Product favorite) { this.favorite = favorite; }
     }
 
     @Entity(name = "CsItem") @Table(name = "CS_ITEM")

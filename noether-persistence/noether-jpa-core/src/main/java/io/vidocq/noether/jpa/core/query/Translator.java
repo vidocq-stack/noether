@@ -130,7 +130,7 @@ final class Translator {
     private final java.util.Set<String> collectionAliases = new java.util.HashSet<>();
     private boolean collectionFetch;
     private boolean hydrating;
-    /** Whether the statement is graph-synthesized: only then may to-one joins of the collection elements hydrate. */
+    /** Whether the statement is graph-synthesized: only then may root/element to-ones accompany a collection. */
     private boolean graphRows;
     private boolean selecting;
 
@@ -156,8 +156,8 @@ final class Translator {
      * graph joins are LEFT joins, and shapes not admitting D11 hydration keep their ordinary follow-up fetch plan.
      * FETCH only requests explicit nodes here (the loader may still overfetch eager state); LOAD additionally
      * requests mapped eager to-ones. One root collection may instead reuse D12's complete row collector, with the
-     * to-one subgraphs of its entity elements joined from the collection alias (D17); nested collection subgraphs,
-     * multiple collections, root to-ones beside the collection and unsupported entity types remain loader work.
+     * to-one subgraphs of its entity elements joined from the collection alias (D17), alongside root to-one
+     * branches (D18). Nested collection subgraphs, multiple collections and unsupported types remain loader work.
      */
     static Ast.Statement graphSelect(Ast.Statement statement, MappedUnit unit, FetchPlan graph, boolean load) {
         if (!(statement instanceof Ast.Select select) || select.from().size() != 1
@@ -180,17 +180,20 @@ final class Translator {
                         new Ast.Path(List.of(range.variable(), collection)), alias, null)))),
                 select.where(), select.groupBy(), select.having(), select.orderBy());
             FetchPlan elements = graph.attributes().get(collection);
+            List<Ast.Join> joins = new ArrayList<>(execution.from().getFirst().joins());
+            String occupied = statement.toString().toLowerCase(Locale.ROOT);
+            int[] next = new int[1];
             if (root.model().attribute(collection).orElse(null) instanceof AssociationAttribute association
                     && (!elements.isEmpty() || load)) {
-                List<Ast.Join> joins = new ArrayList<>(execution.from().getFirst().joins());
                 java.util.Set<Class<?>> eagerPath = new java.util.HashSet<>(List.of(root.model().javaType()));
                 planner.graphJoins(unit.entity(association.targetEntity()).orElseThrow(), alias, elements, load, eagerPath,
-                    joins, statement.toString().toLowerCase(Locale.ROOT), new int[1]);
-                Ast.Select subgraphs = new Ast.Select(select.distinct(), select.items(),
-                    List.of(new Ast.Range(range.entity(), range.collection(), range.variable(), joins)),
-                    select.where(), select.groupBy(), select.having(), select.orderBy());
-                if (translate(subgraphs, unit, null, null, null, true, true).collection() != null) return subgraphs;
+                    joins, occupied, next);
             }
+            planner.graphJoins(root, range.variable(), graph, load, new java.util.HashSet<>(), joins, occupied, next);
+            Ast.Select subgraphs = new Ast.Select(select.distinct(), select.items(),
+                List.of(new Ast.Range(range.entity(), range.collection(), range.variable(), joins)),
+                select.where(), select.groupBy(), select.having(), select.orderBy());
+            if (translate(subgraphs, unit, null, null, null, true, true).collection() != null) return subgraphs;
             // Never add a multiplying join unless the existing collector can assemble this exact shape.
             return translate(execution, unit, null, null, null, true, true).collection() != null ? execution : statement;
         }
@@ -208,7 +211,10 @@ final class Translator {
         String collection = null;
         for (var node : graph.attributes().entrySet()) {
             var attribute = root.model().attribute(node.getKey()).orElse(null);
-            if (attribute instanceof AssociationAttribute association && association.singleValued()) return null;
+            if (attribute instanceof AssociationAttribute association && association.singleValued()) {
+                if (!toOneSubgraph(unit.entity(association.targetEntity()).orElse(null), node.getValue())) return null;
+                continue;
+            }
             if (attribute instanceof ElementCollectionAttribute
                     || attribute instanceof AssociationAttribute association && !association.singleValued()) {
                 if (collection != null) return null;
@@ -741,7 +747,7 @@ final class Translator {
 
     /**
      * A single unrestricted collection fetch of the selected concrete root; other shapes retain secondary loading. A
-     * graph-synthesized statement may follow it with LEFT to-one fetch joins chained from the entity elements (D17).
+     * graph-synthesized statement may follow it with LEFT to-one fetch joins from the elements (D17) or root (D18).
      */
     private boolean collectionHydration(Ast.Select select, List<Expression> sqlItems) {
         if (select.from().size() != 1 || select.items().size() != 1) return false;
@@ -769,10 +775,11 @@ final class Translator {
         if (index != null && (index.keyEntity() != null || index.index() instanceof CollectionIndex.ByEmbedded)) return false;
         List<Variable> toOnes = new ArrayList<>();
         java.util.Set<String> chained = new java.util.HashSet<>();
+        chained.add(range.variable().toLowerCase(Locale.ROOT));
         if (join.variable() != null) chained.add(join.variable().toLowerCase(Locale.ROOT));
         for (Ast.Join next : range.joins().subList(1, range.joins().size())) {
             List<String> segments = next.path().segments();
-            if (target.type() == null || !next.fetch() || next.kind() != Ast.Join.Kind.LEFT || next.on() != null
+            if (!next.fetch() || next.kind() != Ast.Join.Kind.LEFT || next.on() != null
                     || next.path().treatEntity() != null || next.variable() == null || segments.size() != 2
                     || !chained.contains(segments.getFirst().toLowerCase(Locale.ROOT))) return false;
             Variable source = variables.get(segments.getFirst().toLowerCase(Locale.ROOT));
