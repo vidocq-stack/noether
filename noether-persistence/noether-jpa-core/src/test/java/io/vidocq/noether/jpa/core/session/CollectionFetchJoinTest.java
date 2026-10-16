@@ -544,6 +544,30 @@ class CollectionFetchJoinTest {
         assertThat(selects()).isEqualTo(1);
     }
 
+    @Test void ordinaryFindCompletesTheLazyCollectionBeforeParentAndElementCallbacks() {
+        // BUG-20261016-01, §3.6.3: the member's callback reads the collection whose loading loaded it.
+        em.getTransaction().begin();
+        Group group = new Group();
+        group.setId(62);
+        Member member = new Member();
+        member.setId(72);
+        member.setName("member");
+        member.setGroup(group);
+        em.persist(group);
+        em.persist(member);
+        em.getTransaction().commit();
+        cold();
+        Group.loadedSize = Member.loadedSize = -1;
+        Member.loads = 0;
+        Group found = em.getReference(Group.class, 62L);
+        assertThat(found.getMembers()).extracting(Member::getId).containsExactly(72L);
+        assertThat(found.getMembers().getFirst().getGroup()).isSameAs(found);
+        assertThat(Group.loadedSize).isEqualTo(1);
+        assertThat(Member.loadedSize).isEqualTo(1);
+        assertThat(Member.loads).isEqualTo(1);
+        assertThat(em.find(Group.class, 62L)).isSameAs(found);
+    }
+
     @Test void collectionGraphPaginationLimitsOwnersInSqlAndCompletesCollections() {
         var query = em.createQuery("select o from CfOwner o order by o.id", Owner.class)
             .setHint("jakarta.persistence.fetchgraph", graph("labels")).setMaxResults(1);

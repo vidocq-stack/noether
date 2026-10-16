@@ -125,6 +125,11 @@ existing complete fallbacks. Explicit fetch joins and D14/D15 mixed graph SQL ar
 Focused verification: 144/144; detailed support and full evidence are recorded below.
 D5/D9–D15 above remain historical delivery records.
 
+Follow-up fix (2026-10-16): BUG-20261016-01, the ordinary-loader `PostLoad` reentry into a
+collection still being loaded, is fixed by deferring `PostLoad` to the outermost
+`EntityLoader` load scope; no feature scope changes. Details in the detailed roadmap and
+`noether-persistence/BUG.md`.
+
 ## Remaining Persistence work
 
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the

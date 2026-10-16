@@ -1,3 +1,26 @@
+## Noether PostLoad collection cycle fix (BUG-20261016-01) — 2026-10-16
+
+BUG-20261016-01 (ordinary-loader `PostLoad` reentering a lazy collection still being
+loaded) is fixed by deferring `PostLoad` to the outermost `EntityLoader` load scope of
+the persistence context (see `BUG.md` and the D16 follow-up in `ROADMAP.md`). Mandatory
+TDD red before production edits: the new `PostLoadCollectionCycleTest` ran **20 tests /
+0 failures / 15 errors**, each the loading guard; the `CollectionFetchJoinTest`
+`Group`/`Member` reproducer failed with the same `PersistenceException`. Green: the
+targeted `PostLoadCollectionCycleTest,CollectionFetchJoinTest,LazyBatchTest,LazyCollectionTest`
+gate passes **91/91** (20 + 35 + 17 + 19).
+
+Same environment and commands as the D16 section below. The clean reactor finished
+**2026-10-16 12:27:02 CEST**: **946 tests / 946 passed / 0 failures / 0 errors / 0 skips**
+from **86 XML reports** (925 plus 21 tests). The full locally patched Persistence 3.2.1
+TCK on an isolated Docker **PostgreSQL 17-alpine** finished **12:28:57 CEST**:
+**2135 tests / 2131 passed / 0 failures / 0 errors / 4 skips**. Independent aggregation
+again verifies all **259 XML reports**, **2135 unique execution/class/method identities**
+with identities and outcomes equal to the D16 baseline, **518** derived-jar classpath
+checks, the **85** original `.tck-cache` / installed `jakarta/tck` files unchanged, and
+the same official (`a6ad07d4…b364024`) and derived (`1f7e82ba…e4d9a4`) SHA-256 and four
+official skips as below. The runner's exit 0 alone is not used as proof; this remains a
+locally patched result, not certification. The D16 section below is kept as recorded.
+
 ## Noether one-collection entity graph SQL verification — 2026-10-16
 
 Decision D16 reuses D12's complete collection assembler, D14's graph planner and

@@ -21,7 +21,11 @@ replaced later by `find`. The first intercepted call hydrates it in place, recor
 snapshot and invokes `PostLoad`. The identifier getter stays callable without SQL when
 it only reads the identifier; all other accessible declared methods, including setters,
 initialize first. Final/native/abstract methods, exposed instance fields, interfaces and
-inheritance are conservatively excluded. XML fetch/column overlays share the normal model,
+inheritance are conservatively excluded.
+Every `EntityLoader` read runs in a load scope of the persistence context: `PostLoad`
+is queued and invoked when the outermost load returns, once the collections initialized
+inside it are complete in place (BUG-20261016-01). Each freshly loaded entity still gets
+one callback before `find`, `refresh` or the query returns. XML fetch/column overlays share the normal model,
 but identifier/access-plan changes fall back to eager loading.
 
 Unloaded reference entries are excluded from flush and persist cascades, and detached

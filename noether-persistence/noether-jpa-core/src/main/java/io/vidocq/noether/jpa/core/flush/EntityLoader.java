@@ -70,7 +70,8 @@ import java.util.function.Function;
  * (a to-many relationship or an element collection) is a {@link LazyCollection} that {@link #initialize loads} its
  * elements on its first access; an EAGER one is loaded with its owner, from its join table, the foreign keys of its
  * targets or its collection table. The instance is managed before its relationships are resolved, so that a cycle
- * closes on it.
+ * closes on it. Each public read is a {@link PersistenceContext#loading load}: its PostLoad callbacks run once the
+ * outermost load has returned, after the collections it was initializing are complete (BUG-20261016-01).
  */
 public final class EntityLoader {
 
@@ -102,6 +103,11 @@ public final class EntityLoader {
      */
     public Object load(MappedEntity type, Object id, Connection connection, PersistenceContext context, LockModeType mode,
             Integer timeout) {
+        return context.loading(() -> read(type, id, connection, context, mode, timeout));
+    }
+
+    private Object read(MappedEntity type, Object id, Connection connection, PersistenceContext context, LockModeType mode,
+            Integer timeout) {
         Optional<ManagedEntity> known = context.find(new EntityKey(type.root(), id));
         if (known.isPresent()) {
             if (LazyReference.unloaded(known.get().instance())) {
@@ -131,6 +137,11 @@ public final class EntityLoader {
      */
     public Object load(MappedEntity type, Object id, Object[] values, boolean[] nulls, Connection connection,
             PersistenceContext context) {
+        return context.loading(() -> read(type, id, values, nulls, connection, context));
+    }
+
+    private Object read(MappedEntity type, Object id, Object[] values, boolean[] nulls, Connection connection,
+            PersistenceContext context) {
         Row row = new Row(values, nulls);
         Optional<ManagedEntity> known = context.find(new EntityKey(type.root(), id));
         if (known.isEmpty()) {
@@ -159,7 +170,10 @@ public final class EntityLoader {
      */
     public void loadCollection(List<FetchedEntity> rows, MappedEntity owner, int attribute, List<FetchedElement> elements,
             Connection connection, PersistenceContext context) {
-        loadRows(rows, owner, attribute, elements, connection, context, null);
+        context.loading(() -> {
+            loadRows(rows, owner, attribute, elements, connection, context, null);
+            return null;
+        });
     }
 
     private void loadRows(List<FetchedEntity> rows, MappedEntity owner, int attribute, List<FetchedElement> elements,
@@ -240,7 +254,7 @@ public final class EntityLoader {
             entry.type().access().read(entry.instance(), state);
             context.updated(entry, entry.type().state().snapshot(state));
         }
-        for (ManagedEntity entry : pending.keySet()) entry.type().callback("PostLoad", entry.instance());
+        for (ManagedEntity entry : pending.keySet()) context.postLoad(() -> entry.type().callback("PostLoad", entry.instance()));
     }
 
     /** Makes a new instance of {@code type} managed from its {@code row}, then resolves its relationships. */
@@ -261,12 +275,19 @@ public final class EntityLoader {
         type.deriveId(instance); // §2.4.1: the identifier attributes an @MapsId maps, from the parent now loaded
         type.access().read(instance, state);
         context.updated(entry, type.state().snapshot(state));
-        type.callback("PostLoad", instance); // §3.6.3: once the state is loaded
+        context.postLoad(() -> type.callback("PostLoad", instance)); // §3.6.3: once the state is loaded
         return instance;
     }
 
     /** Hydrates the already registered reference, never allocating a second instance for its identity. */
     public void initializeReference(ManagedEntity entry, Connection connection, PersistenceContext context) {
+        context.loading(() -> {
+            readReference(entry, connection, context);
+            return null;
+        });
+    }
+
+    private void readReference(ManagedEntity entry, Connection connection, PersistenceContext context) {
         MappedEntity type = entry.type();
         if (batchSize > 1 && batchable(type)) {
             List<Object> ids = new ArrayList<>();
@@ -302,7 +323,7 @@ public final class EntityLoader {
         relationships(type, entry.key().id(), instance, state, row, connection, context);
         type.access().read(instance, state);
         context.updated(entry, type.state().snapshot(state));
-        type.callback("PostLoad", instance);
+        context.postLoad(() -> type.callback("PostLoad", instance));
     }
 
     private Object reference(AssociationAttribute association, MappedEntity target, Object key,
@@ -366,6 +387,10 @@ public final class EntityLoader {
      * {@code null} if the row is gone.
      */
     public Object[] refresh(MappedEntity type, Object id, Object instance, Connection connection, PersistenceContext context) {
+        return context.loading(() -> reread(type, id, instance, connection, context));
+    }
+
+    private Object[] reread(MappedEntity type, Object id, Object instance, Connection connection, PersistenceContext context) {
         Row row = row(type, id, connection, LockModeType.NONE, null);
         if (row == null) {
             return null;
@@ -376,7 +401,7 @@ public final class EntityLoader {
         relationships(type, id, instance, state, row, connection, context, previous);
         type.access().read(instance, state);
         Object[] snapshot = type.state().snapshot(state);
-        type.callback("PostLoad", instance); // §3.6.3: after a refresh too
+        context.postLoad(() -> type.callback("PostLoad", instance)); // §3.6.3: after a refresh too
         return snapshot;
     }
 
@@ -484,6 +509,13 @@ public final class EntityLoader {
      * collection, so that the next flush compares them.
      */
     public void initialize(ManagedEntity entry, LazyCollection lazy, Connection connection, PersistenceContext context) {
+        context.loading(() -> {
+            complete(entry, lazy, connection, context);
+            return null;
+        });
+    }
+
+    private void complete(ManagedEntity entry, LazyCollection lazy, Connection connection, PersistenceContext context) {
         MappedEntity type = entry.type();
         int i = lazy.attribute();
         if (batchSize > 1 && type.access().get(entry.instance(), i) == lazy

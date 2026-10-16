@@ -231,6 +231,14 @@ full clean reactor and patched PostgreSQL TCK evidence are recorded in
 [`noether-persistence/TCK.md`](noether-persistence/TCK.md). The ordinary-loader callback
 cycle discovered during this work is tracked separately as BUG-20261016-01.
 
+BUG-20261016-01 is fixed (2026-10-16, follow-up to D16): every `EntityLoader` read runs in a
+load scope of the persistence context, and `PostLoad` callbacks are deferred until the
+outermost load returns, so a callback that reads a lazy collection (or an element callback
+reaching back to its owner's collection) sees it complete. Each freshly loaded entity still
+gets exactly one callback before `find`, `refresh` or the query returns; callback
+mutations stay dirty and callback exceptions still propagate. Evidence is in
+[`noether-persistence/TCK.md`](noether-persistence/TCK.md).
+
 The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;
 the bundled Jakarta ORM schema retains its original upstream licence.

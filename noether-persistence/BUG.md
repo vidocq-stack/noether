@@ -835,7 +835,7 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
 ## BUG-20261016-01 — Ordinary find callbacks can reenter a loading collection
 
 - **Date**: 2026-10-16
-- **Status**: OPEN (pre-existing ordinary-loader callback cycle; outside D16)
+- **Status**: FIXED (uncommitted working tree on `feat/collection-entity-graphs`; no commit hash yet)
 - **Module**: `noether-jpa-core/flush/EntityLoader`
 - **Symptom**: an ordinary `find` of an owner whose `PostLoad` reads a lazy collection,
   and whose elements' `PostLoad` reads that same collection, throws
@@ -851,3 +851,38 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     through an owning lazy association, rather than `getReference`. D12/D16 staged
     collection hydration completes the collection before both callbacks. No ordinary
     callback/batch architecture change is included in this bounded feature.
+  - 2026-10-16: cause confirmed. `EntityLoader` invoked `PostLoad` inside each read: at the
+    end of `managed`, `hydrateReference` and `refresh`, and at the end of every `loadRows`,
+    including the target rows `batchCollection` hydrates before `loadCollection` completes
+    the requested wrapper. The owner's callback initializes `members`; the ordinary loader
+    (`collection` -> `inverse` -> `find` -> `load`) or the batch loader then runs the
+    element callback while `AbstractLazy.loading` is still set, so the element reenters the
+    wrapper and hits its guard. A batch size of 1 or 16 fails the same way.
+  - 2026-10-16: red before production edits: new `PostLoadCollectionCycleTest` ran
+    **20 tests / 0 failures / 15 errors**, every error this guard (`Group.members`,
+    `Club.members`, `Node.children`); the `CollectionFetchJoinTest` reproducer (actual
+    `Group`/`Member`, `getReference`) failed with the same error.
+  - 2026-10-16: fixed with a scoped load orchestration. `PersistenceContext.loading`
+    counts the nested loads of the thread-confined persistence context; every public
+    `EntityLoader` read (`load`, row `load`, `loadCollection`, `initialize`,
+    `initializeReference`, `refresh`) runs inside it, and `PostLoad` is queued through
+    `postLoad`. The queue is drained in deferral order only when the outermost load
+    returns, so the initializing wrapper itself has been completed in place (and every
+    batch or staged collection assembled, every snapshot taken) before any callback runs.
+    A callback that loads opens its own outermost load and drains its own callbacks before
+    it returns; a failed load discards its queued callbacks and propagates. The guard, the
+    D12/D16 staged pipeline, snapshots before callbacks, identity and refresh semantics are
+    unchanged; no lock, executor, `ThreadLocal`, reflection or SQL is added.
+  - 2026-10-16: green: `PostLoadCollectionCycleTest` 20/20 (batch sizes 1 and 16:
+    ordinary find and `getReference`, empty collection, queried groups sharing identity,
+    direct lazy access without an owner callback, child-first find, a three-level
+    self-referencing tree, persisted callback mutation, propagated callback failure marking
+    rollback, refresh loading a new element) asserting the actual element identifiers each
+    callback observed, without duplicates and exactly one callback per loaded entity; the
+    `CollectionFetchJoinTest` reproducer passes with the D12/D16 tests unchanged.
+  - 2026-10-16: full validation: `./mvnw -ntp clean install` **946/946** (86 XML reports,
+    925 + 21); full patched PostgreSQL 17 TCK **2135 / 2131 passed / 0 failures / 0 errors /
+    4 official skips**, identities and outcomes independently verified equal to the D16
+    baseline, official inputs and SHA-256 unchanged (`TCK.md`). Remaining edge: the
+    shared-cache restore path still invokes `PostLoad` directly after registering its whole
+    graph (no loader scope is open there).

@@ -43,6 +43,9 @@ public final class PersistenceContext {
     private long sequence;
     private LazyCollection.Loader lazyLoader;
     private java.util.function.Consumer<Object> referenceLoader;
+    /** Nesting depth of the loads in progress, and the PostLoad callbacks they deferred (BUG-20261016-01). */
+    private int loads;
+    private List<Runnable> postLoads = new ArrayList<>();
 
     public java.util.function.Consumer<Object> referenceLoader() { return referenceLoader; }
     public void referenceLoader(java.util.function.Consumer<Object> loader) { referenceLoader = loader; }
@@ -174,6 +177,41 @@ public final class PersistenceContext {
         ManagedEntity known = byInstance.get(new Instance(instance));
         if (known != null) {
             forget(known);
+        }
+    }
+
+    /**
+     * Runs {@code load}, a read of entity state from the database, as a load of this context: the PostLoad callbacks
+     * {@link #postLoad deferred} while it, or any load it nests, runs are invoked once the outermost one has returned,
+     * in the order they were deferred (§3.6.3). The LAZY collections the nested loads were initializing are then
+     * complete, so that a callback reading one, even the one whose loading read its entity, sees all its elements. A
+     * callback that loads again opens its own outermost load. A failed load discards the callbacks of its entities.
+     */
+    public <T> T loading(java.util.function.Supplier<T> load) {
+        T result;
+        loads++;
+        try {
+            result = load.get();
+        } catch (RuntimeException | Error failure) {
+            if (--loads == 0) postLoads = new ArrayList<>();
+            throw failure;
+        }
+        if (--loads == 0) {
+            while (!postLoads.isEmpty()) {
+                List<Runnable> ready = postLoads;
+                postLoads = new ArrayList<>();
+                ready.forEach(Runnable::run);
+            }
+        }
+        return result;
+    }
+
+    /** Invokes the PostLoad {@code callback} once the outermost {@link #loading load} returns; now outside of one. */
+    public void postLoad(Runnable callback) {
+        if (loads == 0) {
+            callback.run();
+        } else {
+            postLoads.add(callback);
         }
     }
 

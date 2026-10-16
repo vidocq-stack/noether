@@ -15,6 +15,19 @@ The official artifact checksums and TCK-BUG-001 byte-exact derived-jar fixture
 patch are unchanged; original artifacts are never edited. `TCK_FIXTURES=official`
 selects the untouched Persistence fixture. See the runner README for setup.
 
+== PostLoad collection cycle fix (2026-10-16)
+
+BUG-20261016-01 is fixed: `PostLoad` callbacks are deferred to the outermost
+`EntityLoader` load scope, so a callback reading a lazy collection sees it complete.
+TDD red: *20 tests / 15 errors* (the loading guard) plus the `CollectionFetchJoinTest`
+reproducer; green: targeted gate *91/91*. The clean reactor finished
+*2026-10-16 12:27:02 CEST*: *946/946 tests* across *86 XML reports*. The full patched
+PostgreSQL *17-alpine* TCK finished *12:28:57 CEST*: *2135 tests / 2131 passed /
+0 failures / 0 errors / 4 skips*, with identities/outcomes, *259 XML reports*, *518*
+derived-jar checks, the *85* original input files and official/derived SHA-256
+independently verified unchanged from D16. Locally patched, not certification.
+The D16 section below is kept as recorded.
+
 == One-collection entity graph SQL verification (2026-10-16)
 
 Decision D16 adds one leaf root collection through the existing D12 assembler and

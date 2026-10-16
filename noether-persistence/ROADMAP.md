@@ -1257,6 +1257,17 @@ Full clean reactor: **925/925**, **85 XML reports**; full patched PostgreSQL TCK
 **2135 tests / 2131 passed / 0 failures / 0 errors / 4 unchanged official skips**.
 Independent identity/outcome and fixture-hash verification are in `TCK.md`.
 
+**Follow-up fix — BUG-20261016-01 (2026-10-16).** The paragraph above is the D16 record.
+The ordinary loader then fixed the reentry without new scope: `PersistenceContext.loading`
+wraps every public `EntityLoader` read (`load`, `loadCollection`, `initialize`,
+`initializeReference`, `refresh`), and `PostLoad` is queued and run only when the outermost
+load returns — after the initializing wrapper has been completed in place, batch/staged
+collections assembled and snapshots taken. Callbacks keep running once per freshly loaded
+entity before the operation returns; a callback that loads drains its own scope; a failed
+load discards its queue and propagates. The loading guard stays. Regressions:
+`PostLoadCollectionCycleTest` (20, batch sizes 1 and 16) and a `CollectionFetchJoinTest`
+reproducer; evidence in `TCK.md`.
+
 ## Remaining work
 
 Prioritized backlog after D16, 2026-10-16. Each item needs its own approved, bounded lot; until then
