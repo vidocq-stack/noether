@@ -474,8 +474,24 @@ public final class EntityLoader {
             if (attributes.get(i) instanceof AssociationAttribute association && association.singleValued()) {
                 Optional<EntityStatements.Reference> owned = statements.reference(i);
                 if (owned.isPresent()) {
-                    Object key = statements.referencedKey(owned.get(), row.values());
-                    value = key == null ? null : reference(association, entity(association.targetEntity()), key, connection, context);
+                    Object[] tuple = statements.referencedValues(owned.get(), row.values());
+                    Object key = null;
+                    MappedEntity target = entity(association.targetEntity());
+                    if (tuple != null && owned.get().businessKey()) {
+                        var referenced = statements.referencedColumns(owned.get());
+                        List<Object[]> found = keys(new Select(target.statements().select().table(),
+                            target.statements().keyColumns().stream().map(EntityStatements.Column::name).toList(),
+                            referenced.stream().map(EntityStatements.Column::name).toList()),
+                            referenced.stream().map(EntityStatements.Column::binder).toList(), tuple,
+                            target.statements().keyColumns().stream().map(EntityStatements.Column::binder).toList(),
+                            describe(association), connection);
+                        if (found.size() != 1) throw new PersistenceException("Business-key join " + association.name()
+                            + " must resolve exactly one target identity");
+                        key = target.statements().key(found.getFirst());
+                    } else if (tuple != null) {
+                        key = target.statements().key(tuple);
+                    }
+                    value = key == null ? null : reference(association, target, key, connection, context);
                 } else if (!association.owning()) {
                     List<Indexed> owners = inverse(association, null, id, statements, connection, context);
                     value = owners.isEmpty() ? null : owners.getFirst().element();
@@ -570,6 +586,7 @@ public final class EntityLoader {
     /** Deliberately conservative: secondary tables and polymorphism keep the ordinary complete loader. */
     private boolean batchable(MappedEntity type) {
         return type.statements().tables().size() == 1
+            && type.statements().references().stream().noneMatch(EntityStatements.Reference::businessKey)
             && unit.inheritance(type.model().javaType()).hierarchy().size() == 1
             && type.statements().keyColumns().size() <= 512;
     }
@@ -876,6 +893,12 @@ public final class EntityLoader {
         Optional<CollectionMapping> collection = ownerStatements.collection(attribute);
         boolean stored = index != null && index.stored();
         if (reference.isPresent()) {
+            if (reference.get().businessKey()) {
+                MappedEntity referenced = entity(reference.get().target());
+                Object instance = context.find(new EntityKey(referenced.root(), id)).orElseThrow().instance();
+                key = ownerStatements.referencedColumns(reference.get()).stream()
+                    .map(c -> referenced.access().get(instance, c.attribute())).toArray();
+            }
             List<ValueBinder> foreignKey = new ArrayList<>();
             for (int c : reference.get().columns()) {
                 foreignKey.add(ownerStatements.columns().get(c).binder());

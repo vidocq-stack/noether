@@ -51,6 +51,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 
@@ -72,7 +73,7 @@ public final class EntityStatements {
      * @param path the indexes, in the nested embeddables, that lead from the attribute to the column; empty for a basic
      *        attribute
      * @param accesses the access of each embeddable along {@code path}
-     * @param foreignKey for a column of an owned single-valued relationship, the part of the target's key it holds;
+     * @param foreignKey for a column of an owned single-valued relationship, the referenced target value it holds;
      *        {@code null} otherwise
      */
     public record Column(Identifier name, ValueBinder binder, int attribute, int[] path, ManagedAccess[] accesses, boolean id,
@@ -80,19 +81,30 @@ public final class EntityStatements {
     }
 
     /**
-     * What a foreign key column holds: part {@code part} of the key of the instance its relationship references, in
-     * the order of {@link #keyValues(Object)} of the target.
+     * What a foreign key column holds: part {@code part} of the target identity, or the BASIC target access slot
+     * {@code targetAttribute} for a unique business column. A negative slot retains the original ID mapping.
      */
-    public record ForeignKey(Class<?> target, int part) {
+    public record ForeignKey(Class<?> target, int part, int targetAttribute) {
+        public ForeignKey(Class<?> target, int part) {
+            this(target, part, -1);
+        }
     }
 
     /**
      * An owned single-valued relationship (§2.10): the attribute and its foreign key columns, in the order of the
-     * target's key parts.
+     * target's identity parts, or in explicit business-join order.
      *
      * @param columns the indexes, in {@link #columns()}, of its foreign key columns
+     * @param referencedColumns empty for identity references, otherwise the unique target business tuple
      */
-    public record Reference(int attribute, Class<?> target, int[] columns) {
+    public record Reference(int attribute, Class<?> target, int[] columns, List<Identifier> referencedColumns) {
+        public Reference(int attribute, Class<?> target, int[] columns) {
+            this(attribute, target, columns, List.of());
+        }
+
+        public boolean businessKey() {
+            return !referencedColumns.isEmpty();
+        }
     }
 
     /**
@@ -371,7 +383,66 @@ public final class EntityStatements {
         }
         List<KeyColumn> keys = relationalKeys(target, binders, inheritances, delimited);
         if (keys == null) {
+            if (association.joinColumns().stream().anyMatch(j -> j.referencedColumnName() != null
+                    && target.attributes().stream().filter(a -> a instanceof BasicAttribute).map(a -> (BasicAttribute) a)
+                        .anyMatch(a -> sameColumn(Identifier.of(a.column().name(), delimited), Identifier.of(j.referencedColumnName(), delimited))))) {
+                throw new PersistenceException("Business-key joins do not support derived or nested target identifiers");
+            }
             return "a relationship to an entity with a derived identity or a nested embedded identifier";
+        }
+        boolean business = association.joinColumns().stream().anyMatch(j -> j.referencedColumnName() != null
+            && keys.stream().noneMatch(k -> sameColumn(k.identifier(delimited), Identifier.of(j.referencedColumnName(), delimited))));
+        if (business) {
+            if (id || association.mapsId() != null || association.name().contains(".")
+                    || !target.secondaryTables().isEmpty()
+                    || inheritances.apply(target.javaType()) != null
+                        && inheritances.apply(target.javaType()).hierarchy().size() != 1) {
+                throw new PersistenceException("Business-key join " + describe(association)
+                    + " requires a non-derived, primary-table target without inheritance or embedded relationships");
+            }
+            List<BasicAttribute> referenced = new ArrayList<>();
+            for (JoinColumnModel join : association.joinColumns()) {
+                JoinColumnModel first = association.joinColumns().getFirst();
+                if (join.nullable() != first.nullable() || join.insertable() != first.insertable()
+                        || join.updatable() != first.updatable()) {
+                    throw new PersistenceException("Composite business-key join columns require uniform nullability and writeability");
+                }
+                if (!join.insertable() || !join.updatable()) {
+                    throw new PersistenceException("Business-key joins require writable join columns (insertable=true, updatable=true)");
+                }
+                BasicAttribute basic = target.attributes().stream().filter(a -> a instanceof BasicAttribute)
+                    .map(a -> (BasicAttribute) a)
+                    .filter(a -> join.referencedColumnName() != null
+                        && sameColumn(Identifier.of(a.column().name(), delimited), Identifier.of(join.referencedColumnName(), delimited)))
+                    .findFirst().orElseThrow(() -> new PersistenceException("Business-key join " + describe(association)
+                        + " must explicitly reference existing BASIC columns"));
+                if (basic.column().nullable() || basic.column().updatable() || !basic.column().insertable() || basic.version()
+                        || basic.column().table() != null
+                        || referenced.contains(basic)
+                        || keys.stream().anyMatch(k -> sameColumn(k.identifier(delimited), Identifier.of(basic.column().name(), delimited)))) {
+                    throw new PersistenceException("Business-key join " + describe(association)
+                        + " requires distinct, non-null, immutable non-ID primary-table BASIC columns (nullable=false, updatable=false)");
+                }
+                if (target.attributes().stream().filter(a -> a instanceof BasicAttribute b
+                        && sameColumn(Identifier.of(b.column().name(), delimited), Identifier.of(basic.column().name(), delimited))).count() != 1) {
+                    throw new PersistenceException("Business-key referenced columns must resolve to one unambiguous BASIC attribute");
+                }
+                referenced.add(basic);
+            }
+            int[] indexes = new int[referenced.size()];
+            for (int part = 0; part < referenced.size(); part++) {
+                BasicAttribute basic = referenced.get(part);
+                JoinColumnModel join = association.joinColumns().get(part);
+                if (join.table() != null) throw new PersistenceException("Business-key joins do not support secondary tables");
+                indexes[part] = columns.size();
+                columns.add(new Column(Identifier.of(join.name() == null ? leaf(association.name()) + "_" + basic.column().name()
+                    : join.name(), delimited), binders.apply(basic), attribute, new int[0], new ManagedAccess[0], false, false,
+                    join.insertable(), join.updatable(), 0,
+                    new ForeignKey(association.targetEntity(), part, target.attributes().indexOf(basic))));
+            }
+            references.add(new Reference(attribute, association.targetEntity(), indexes,
+                referenced.stream().map(b -> Identifier.of(b.column().name(), delimited)).toList()));
+            return null;
         }
         JoinColumnModel[] joins = byKeyPart(describe(association), association.joinColumns(), keys, target, delimited);
         if (joins == null) {
@@ -434,6 +505,11 @@ public final class EntityStatements {
         return "the relationship " + association.name() + " of " + association.declaringClass().getName();
     }
 
+    public static boolean sameColumn(Identifier first, Identifier second) {
+        return first.quoted() || second.quoted() ? first.name().equals(second.name())
+            : first.name().equalsIgnoreCase(second.name());
+    }
+
     private static String leaf(String path) {
         return path.substring(path.lastIndexOf('.') + 1);
     }
@@ -467,6 +543,11 @@ public final class EntityStatements {
         List<KeyColumn> targetKeys = relationalKeys(target, binders, inheritances, delimited);
         if (ownerKeys == null || targetKeys == null) {
             return new CollectionMapping.Unsupported(attribute, association, "a join table of an entity with a derived identity");
+        }
+        if (association.singleValued() && association.joinTable() != null
+                && association.joinTable().inverseJoinColumns().stream().anyMatch(j -> j.referencedColumnName() != null
+                    && targetKeys.stream().noneMatch(k -> sameColumn(k.identifier(delimited), Identifier.of(j.referencedColumnName(), delimited))))) {
+            throw new PersistenceException("Business-key joins do not support join tables");
         }
         if (association.kind() == AssociationAttribute.Kind.ONE_TO_MANY && association.joinTable() == null
                 && !association.joinColumns().isEmpty()) {
@@ -883,7 +964,7 @@ public final class EntityStatements {
             Column column = columns.get(c);
             Object value = column.attribute() < 0 ? discriminatorValue : state[column.attribute()];
             if (column.foreignKey() != null) {
-                values[c] = value == null ? null : keyPart(value, column.foreignKey());
+                values[c] = value == null ? null : referencedPart(value, column.foreignKey());
                 continue;
             }
             for (int step = 0; step < column.path().length && value != null; step++) {
@@ -894,11 +975,17 @@ public final class EntityStatements {
         return values;
     }
 
-    /** The part of the key of {@code target} a foreign key column holds; {@code null} while the key is not assigned. */
-    private Object keyPart(Object target, ForeignKey foreignKey) {
+    /** The referenced value a foreign key column holds; ID parts may be null before identifier generation. */
+    private Object referencedPart(Object target, ForeignKey foreignKey) {
         MappedEntity type = entities.apply(target.getClass());
         if (type == null) {
             type = entities.apply(foreignKey.target());
+        }
+        if (foreignKey.targetAttribute() >= 0) {
+            io.vidocq.noether.jpa.core.spi.LazyReference.initialize(target);
+            Object value = type.access().get(target, foreignKey.targetAttribute());
+            if (value == null) throw new PersistenceException("A referenced business-key value must not be null");
+            return value;
         }
         Object id = type.id(target);
         return id == null ? null : type.statements().keyValues(id)[foreignKey.part()];
@@ -960,10 +1047,10 @@ public final class EntityStatements {
     }
 
     /**
-     * The identity of the instance a reference holds, from the values of its foreign key columns in a row; {@code null}
-     * when they are all SQL {@code NULL}.
+     * The referenced tuple from the foreign-key columns in a row; null when all columns are SQL NULL.
+     * A business tuple is deliberately not an entity identity.
      */
-    public Object referencedKey(Reference reference, Object[] values) {
+    public Object[] referencedValues(Reference reference, Object[] values) {
         check();
         Object[] parts = new Object[reference.columns().length];
         boolean empty = true;
@@ -974,13 +1061,31 @@ public final class EntityStatements {
         if (empty) {
             return null;
         }
-        return parts.length == 1 ? parts[0] : CompositeId.of(parts);
+        if (reference.businessKey() && Arrays.stream(parts).anyMatch(Objects::isNull)) {
+            throw new PersistenceException("Partially null composite business-key join of " + entity);
+        }
+        return parts;
     }
 
     /** The reference whose foreign key columns hold the relationship attribute {@code attribute}, if this side owns it. */
     public Optional<Reference> reference(int attribute) {
         check();
         return references.stream().filter(r -> r.attribute() == attribute).findFirst();
+    }
+
+    /** Actual target columns, never an assumption that a foreign key holds JPA identity. */
+    public List<Column> referencedColumns(Reference reference) {
+        MappedEntity target = entities.apply(reference.target());
+        return reference.businessKey() ? reference.referencedColumns().stream()
+            .map(n -> target.statements().columns().stream().filter(c -> sameColumn(c.name(), n)).findFirst().orElseThrow()).toList()
+            : target.statements().keyColumns();
+    }
+
+    public Column referencedColumn(ForeignKey foreignKey) {
+        MappedEntity target = entities.apply(foreignKey.target());
+        return foreignKey.targetAttribute() < 0 ? target.statements().keyColumns().get(foreignKey.part())
+            : target.statements().columns().stream().filter(c -> c.attribute() == foreignKey.targetAttribute()
+                && c.foreignKey() == null).findFirst().orElseThrow();
     }
 
     /**

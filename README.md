@@ -372,6 +372,53 @@ The remaining priorities are deeper/cyclic graphs, broader fetch/lazy/batch
 eligibility and missing mappings. D5/D9–D20 and BUG records above are historical;
 the exact D21 contract and verification are in the detailed roadmap and `TCK.md`.
 
+Decision **D22 (2026-10-16)** pauses further graph optimization in favour of
+**owning to-one joins to unique non-ID business columns**, for example
+`Order.customer_code -> Customer.code` while `Customer.id` remains its JPA identity.
+Single and composite tuples work with annotations, metadata-complete ORM XML and
+XML overrides, including reordered referenced columns and attribute converters.
+
+```java
+@Entity
+class Customer {
+    @Id long id;
+    @Column(unique = true, nullable = false, updatable = false)
+    String code;
+}
+// On an entity whose own @Id is independent of the association:
+@ManyToOne
+@JoinColumn(name = "customer_code", referencedColumnName = "code")
+Customer customer;
+```
+
+Referenced attributes must be unambiguous primary-table BASIC columns, explicitly
+non-null, insertable and immutable (`updatable=false`), backed by `unique=true`
+for one column or a matching table `uniqueConstraints` tuple. Composite join columns
+must all name their target and use uniform nullability. Owning join columns must
+be fully writable (`insertable=true`, `updatable=true`); read-only/shared-column
+business joins are explicitly outside this lot.
+Mixed ID/business tuples, duplicate/missing/nonunique references and mutable keys
+are refused at bootstrap. A managed key change is also rejected at flush, using
+converter-aware snapshots; detached references must agree with their actual identity.
+
+Writes bind business values; reads resolve the tuple to the actual target ID before
+ordinary loading, so `find`, repeated references and L2 cache retain JPA identity.
+Many-to-one, owning/inverse one-to-one, reassignment/null, cascade/orphan removal,
+required insert/delete dependencies, nullable cycles and same-row references are
+covered. Non-null dependency cycles are explicitly refused. Generated foreign keys
+reference the real unique columns. JPQL/Criteria joins, navigation, projections,
+identity/null comparisons and bulk association SET to an existing entity
+parameter/literal or NULL use those mappings. Bulk expression SET and mutation of
+referenced key attributes are refused.
+
+Business joins deliberately remain **eager/ordinary-loading fallbacks**, including
+graphs and explicit fetch joins; their owners are excluded from optimized row/graph
+hydration and lazy batching. No business tuple is treated as a lazy-reference ID.
+This lot excludes join tables, secondary tables, inheritance, embedded association
+paths, derived/unsupported nested identifiers and inverse collections on business
+joins. Further mapping boundaries take priority over expanding D10–D21 optimization;
+see the detailed roadmap, `BUG.md` and `TCK.md`. Earlier D5/D9–D21 evidence is historical.
+
 The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;
 the bundled Jakarta ORM schema retains its original upstream licence.

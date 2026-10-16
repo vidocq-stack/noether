@@ -15,6 +15,48 @@ The official artifact checksums and TCK-BUG-001 byte-exact derived-jar fixture
 patch are unchanged; original artifacts are never edited. `TCK_FIXTURES=official`
 selects the untouched Persistence fixture. See the runner README for setup.
 
+== Unique business-key to-one verification (D22, 2026-10-16)
+
+D22 adds bounded immutable unique non-ID BASIC target tuples to owning to-one
+joins, without expanding graph optimization. Mandatory pre-production red:
+*1 test / 0 failures / 1 error*, the old P5 non-ID-reference refusal.
+The focused business/ID/D10–D21/cache/lifecycle gate passes *248/248*;
+the clean root reactor passes *1019/1019* across *88 XML reports*
+(baseline 998 plus *21* provider-owned feature regressions).
+
+New coverage includes annotation, metadata-complete/XML-overlay mappings,
+single/reordered composite tuples, converters and generated IDs, actual FK
+values/constraints, managed and cache identity, nullable/required/self/cyclic
+dependencies, lifecycle/orphans/merge/refresh, inverse one-to-one, JPQL/Criteria
+and bulk assignment, invalid bootstrap shapes and safe eager/ordinary
+fetch/graph/batch fallbacks. BUG-20261016-04/05 retain follow-up red/green findings.
+A separate named-application-module PostgreSQL 17 probe passes *10/10* checks
+of the new feature, using the existing TCK JDBC driver and its own removed
+disposable container; no shipped dependency or shared-service restart is added.
+
+The full runner, with `TCK_FIXTURES=patched TCK_VALIDATION=off`, reports:
+
+[cols="1,1,1,1,1,1",options="header"]
+|===
+|Gate |Tests |Pass |Failure |Error |Skip
+|Full PostgreSQL 17 Persistence TCK |2135 |2131 |0 |0 |4
+|Execution 1 |2134 |2130 |0 |0 |4
+|Execution 2 |1 |1 |0 |0 |0
+|===
+
+Independent aggregation checks *259 XML reports*, *2135 distinct
+execution/class/method identities*, unchanged baseline identity/outcome multisets,
+*518 effective classpath properties* and identical input file sets/hashes for
+*49 official/derived inputs*. ZIP comparison confirms only the two approved
+TCK-BUG-001 XML changes; the other *1124 entries* are unchanged. Exact commands,
+hashes, four official skips and `non-key-to-one-` session artifact names are in
+`noether-persistence/TCK.md`.
+
+This remains *local patched regression evidence, not certification or an
+unmodified official TCK result*. The provider-owned tests/probe, rather than the
+official suite alone, prove the newly supported mapping. Historical
+D5/D9–D21 and BUG evidence below remains unchanged.
+
 == Root to-one collection graph verification (D21, 2026-10-16)
 
 D21 groups collections reached through finite root to-one chains, retaining the

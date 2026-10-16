@@ -41,7 +41,7 @@ final class SchemaPlan {
                         : basic(model.attributes().get(column.attribute()), column.path());
                     if (column.foreignKey() != null) {
                         var referenced = unit.entity(column.foreignKey().target()).orElseThrow();
-                        var key = referenced.statements().keyColumns().get(column.foreignKey().part());
+                        var key = statements.referencedColumn(column.foreignKey());
                         basic = basic(referenced.model().attributes().get(key.attribute()), key.path());
                     }
                     SchemaStatement.Column definition = definition(column.name(), basic, column.id(),
@@ -119,7 +119,11 @@ final class SchemaPlan {
                 var names = Arrays.stream(reference.columns()).mapToObj(c -> columns.get(c).name()).toList();
                 foreignKey(statements.select().table(), names, unit.entity(reference.target()).orElseThrow(),
                     override != null && override.isWritten("foreignKey") ? override.annotation("foreignKey")
-                        : annotation == null ? null : annotation.annotation("foreignKey"));
+                        : annotation == null ? null : annotation.annotation("foreignKey"),
+                    statements.referencedColumns(reference).stream().map(EntityStatements.Column::name).toList());
+                if (reference.businessKey() && association.kind() == AssociationAttribute.Kind.ONE_TO_ONE) {
+                    unique(statements.select().table(), names, "_business_" + reference.attribute());
+                }
             }
             for (var collection : statements.elementCollections()) {
                 var columnsByName = tables.computeIfAbsent(collection.table(), _ -> new LinkedHashMap<>());
@@ -292,7 +296,7 @@ final class SchemaPlan {
         for (Object value : annotation.annotations("uniqueConstraints")) {
             var constraint = (AnnotationInfo) value;
             String name = constraint.string("name");
-            indexes.add(new SchemaStatement(CREATE_INDEX, table, List.of(), List.of(),
+            indexes.add(new SchemaStatement(ADD_UNIQUE_CONSTRAINT, table, List.of(), List.of(),
                 identifier(name == null || name.isBlank() ? table.name().name() + "_uk_" + indexes.size() : name),
                 constraint.strings("columnNames").stream().map(c -> new SchemaStatement.IndexColumn(identifier(c), false)).toList(),
                 true, 1, 1));
@@ -443,6 +447,11 @@ final class SchemaPlan {
     }
 
     private void foreignKey(Table table, List<Identifier> columns, MappedEntity target, AnnotationInfo annotation) {
+        foreignKey(table, columns, target, annotation, target.statements().keyColumns().stream().map(EntityStatements.Column::name).toList());
+    }
+
+    private void foreignKey(Table table, List<Identifier> columns, MappedEntity target, AnnotationInfo annotation,
+            List<Identifier> referencedColumns) {
         var inheritance = unit.inheritance(target.model().javaType());
         // There is no single referenced table for a polymorphic table-per-class key.
         if (inheritance.tablePerClass() && (inheritance.abstractEntity(target.model())
@@ -452,7 +461,7 @@ final class SchemaPlan {
         String name = annotation == null ? null : annotation.string("name");
         Identifier constraint = identifier(name != null && !name.isBlank() ? name : table.name().name() + "_fk_" + foreignKeys.size());
         var statement = new ForeignKeyStatement(table, constraint, columns, target.statements().select().table(),
-            target.statements().keyColumns().stream().map(EntityStatements.Column::name).toList(),
+            referencedColumns,
             annotation == null ? null : annotation.string("foreignKeyDefinition"), false);
         if (foreignKeys.stream().noneMatch(k -> k.table().equals(table) && k.columns().equals(columns))) foreignKeys.add(statement);
     }

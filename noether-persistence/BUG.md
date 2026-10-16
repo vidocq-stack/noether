@@ -959,3 +959,51 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     skips**. Both managed and fully cached nested graph finds assert no new JDBC
     acquisition. Fixture bytes, input file sets and TCK identities/outcomes are
     independently verified unchanged.
+
+## BUG-20261016-04 — Composite unique indexes are not referenceable constraints on H2
+
+- **Date**: 2026-10-16
+- **Status**: FIXED (pending commit)
+- **Module**: `SchemaPlan`, dialect SPI schema AST.
+- **Symptom**: the new composite business-key regression fails during DDL with
+  `Constraint "PRIMARY KEY | UNIQUE (REVISION, PART_CODE)" not found`.
+- **Minimal reproduction**:
+  `./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test -Dtest=BusinessKeyToOneTest -Dsurefire.failIfNoSpecifiedTests=false`
+- **Cause**: `@Table(uniqueConstraints=...)` was emitted as a unique index, not
+  a unique constraint. H2 does not accept that index as the referenced constraint.
+- **Investigations**:
+  - 2026-10-16: single-column business-key roundtrip passed; adding the reordered
+    composite reference reproduced the DDL failure before its implementation fix.
+  - 2026-10-16: added `ADD_UNIQUE_CONSTRAINT` to Noether's own SQL AST and standard
+    renderer. Table/XML unique constraints now precede foreign keys as real
+    constraints. The composite and XML roundtrips pass without changing H2 settings.
+
+## BUG-20261016-05 — Business-key bring-up exposed identity and flush safety gaps
+
+- **Date**: 2026-10-16
+- **Status**: FIXED (pending commit)
+- **Module**: `EntityOperations`, `EntityManagerImpl`, `JpqlQuery`, `FlushEngine`.
+- **Symptom**: intermediate D22 implementations accepted contradictory detached
+  tuples, silently cleared an association when bulk SET named a missing identity,
+  compared converted domain values with database-value snapshots, and deferred
+  required same-type business foreign keys to SQL NULL.
+- **Minimal reproduction**:
+  `./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test -Dtest=BusinessKeyToOneTest -Dsurefire.failIfNoSpecifiedTests=false`
+- **Cause**: identity-key shortcuts, raw snapshot equality and type-only insert
+  ordering were insufficient for non-ID tuples.
+- **Investigations**:
+  - 2026-10-16: separate failing regressions retained in the `non-key-to-one-`
+    detached, bulk, converter and ordering red logs. These are bring-up defects,
+    not regressions claimed against the previously unsupported baseline.
+  - 2026-10-16: detached values are checked against actual managed identity with
+    existing state policies; bulk targets must exist; immutability uses converter-aware
+    dirty checking. Required business-key dependencies are ordered per instance,
+    same-row references bind directly, nullable cycles retain deferred writes, and
+    non-null dependency cycles are explicitly refused before SQL.
+  - 2026-10-16: a further bootstrap red protects the bounded write contract:
+    read-only/shared-column business joins are explicitly refused, avoiding the
+    existing deferred-FK path's unrestricted reference updates for these shapes.
+  - 2026-10-16: a COMMIT-flush-mode red exposed the same bulk-assignment safety
+    gap for a managed but not-yet-inserted target. Validation now checks and
+    locks the actual database identity row, not the persistence context/cache,
+    before executing the business-tuple scalar subqueries.

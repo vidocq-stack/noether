@@ -93,6 +93,8 @@ public abstract class StandardDialect implements Dialect {
             case DROP_SEQUENCE -> "DROP SEQUENCE IF EXISTS " + table(schema.table());
             case CREATE_SCHEMA -> "CREATE SCHEMA IF NOT EXISTS " + name(schema.table().name());
             case DROP_SCHEMA -> "DROP SCHEMA IF EXISTS " + name(schema.table().name());
+            case ADD_UNIQUE_CONSTRAINT -> "ALTER TABLE " + table(schema.table()) + " ADD CONSTRAINT " + name(schema.objectName())
+                + " UNIQUE (" + schema.indexColumns().stream().map(c -> name(c.name())).collect(java.util.stream.Collectors.joining(", ")) + ")";
             case CREATE_INDEX -> "CREATE " + (schema.unique() ? "UNIQUE " : "") + "INDEX " + name(schema.objectName())
                 + " ON " + table(schema.table()) + " (" + String.join(", ", schema.indexColumns().stream()
                     .map(c -> name(c.name()) + (c.descending() ? " DESC" : "")).toList()) + ")";

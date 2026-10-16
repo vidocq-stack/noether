@@ -479,6 +479,7 @@ final class EntityManagerImpl implements EntityManager {
             loadReplacedCollections();
             Set<Object> newInstances = Collections.newSetFromMap(new java.util.IdentityHashMap<>());
             for (ManagedEntity entry : context.entries()) {
+                validateBusinessKey(entry);
                 if (!entry.inserted()) {
                     newInstances.add(entry.instance());
                 }
@@ -489,10 +490,25 @@ final class EntityManagerImpl implements EntityManager {
             }
             operations.beforeFlush();
             factory.flushEngine(connection).flush(context, connection,
-                entry -> factory.validator().validate("pre-update", entry.instance()));
+                entry -> {
+                    validateBusinessKey(entry);
+                    factory.validator().validate("pre-update", entry.instance());
+                });
             for (Object instance : newInstances) {
                 context.entry(instance).map(ManagedEntity::key).filter(java.util.Objects::nonNull)
                     .ifPresent(this::touch);
+            }
+        }
+    }
+
+    private void validateBusinessKey(ManagedEntity entry) {
+        if (!entry.inserted() || entry.snapshot() == null
+                || io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(entry.instance())) return;
+        Object[] state = readState(entry);
+        for (int i : entry.type().state().changes(entry.snapshot(), state)) {
+            if (factory.mapping().businessKeyAttribute(entry.type(), i)) {
+                throw new jakarta.persistence.PersistenceException("Referenced business-key attribute "
+                    + entry.type().model().attributes().get(i).name() + " is immutable");
             }
         }
     }

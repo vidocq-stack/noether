@@ -455,6 +455,27 @@ final class EntityOperations {
             cascade(entity, type, CascadeType.PERSIST, target -> persist(target, visited));
             List<AttributeModel> attributes = type.model().attributes();
             for (int i = 0; i < attributes.size(); i++) {
+                var reference = type.statements().reference(i).orElse(null);
+                if (reference != null && reference.businessKey()) {
+                    Object target = type.access().get(entity, i);
+                    if (target != null && context.entry(target).isEmpty()) {
+                        Object managed = managedReference(target);
+                        if (managed != target) {
+                            MappedEntity targetType = factory.mapping().entity(reference.target()).orElseThrow();
+                            io.vidocq.noether.jpa.core.spi.LazyReference.initialize(managed);
+                            for (var column : type.statements().referencedColumns(reference)) {
+                                int attribute = column.attribute();
+                                if (!java.util.Objects.deepEquals(
+                                        targetType.state().copy(attribute, targetType.access().get(target, attribute)),
+                                        targetType.state().copy(attribute, targetType.access().get(managed, attribute)))) {
+                                    throw new jakarta.persistence.PersistenceException(
+                                        "Detached business-key values contradict the target's JPA identity");
+                                }
+                            }
+                            type.access().set(entity, i, managed);
+                        }
+                    }
+                }
                 // any relationship from X, the inverse side as well as the owning one
                 if (attributes.get(i) instanceof AssociationAttribute association && !association.cascades(CascadeType.PERSIST)
                         && !LazyCollection.unloaded(type.access().get(entity, i))) {

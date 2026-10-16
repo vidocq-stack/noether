@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entity-mappings xmlns="https://jakarta.ee/xml/ns/persistence/orm" version="3.2">
+  <access>FIELD</access>
+  <entity class="io.vidocq.noether.jpa.core.session.BusinessKeyToOneTest$Customer" name="BusinessCustomer" metadata-complete="true">
+    <table name="XML_CUSTOMER"/>
+    <attributes>
+      <id name="id"/>
+      <basic name="code"><column name="XML_CODE" nullable="false" unique="true" updatable="false"/></basic>
+    </attributes>
+  </entity>
+  <entity class="io.vidocq.noether.jpa.core.session.BusinessKeyToOneTest$Order" name="BusinessOrder" metadata-complete="true">
+    <table name="XML_ORDER"/>
+    <attributes>
+      <id name="id"/>
+      <many-to-one name="customer" target-entity="io.vidocq.noether.jpa.core.session.BusinessKeyToOneTest$Customer" fetch="LAZY">
+        <join-column name="XML_CUSTOMER_CODE" referenced-column-name="XML_CODE"/>
+        <cascade><cascade-persist/></cascade>
+      </many-to-one>
+    </attributes>
+  </entity>
+  <entity class="io.vidocq.noether.jpa.core.session.BusinessKeyToOneTest$Part">
+    <table name="XML_PART">
+      <unique-constraint><column-name>XML_CODE</column-name><column-name>XML_REVISION</column-name></unique-constraint>
+    </table>
+    <attributes>
+      <basic name="code"><column name="XML_CODE" nullable="false" updatable="false"/></basic>
+      <basic name="revision"><column name="XML_REVISION" nullable="false" updatable="false"/></basic>
+    </attributes>
+  </entity>
+  <entity class="io.vidocq.noether.jpa.core.session.BusinessKeyToOneTest$Item">
+    <table name="XML_ITEM"/>
+    <attributes>
+      <one-to-one name="part" orphan-removal="true">
+        <join-column name="XML_PART_REVISION" referenced-column-name="XML_REVISION"/>
+        <join-column name="XML_PART_CODE" referenced-column-name="XML_CODE"/>
+        <cascade><cascade-all/></cascade>
+      </one-to-one>
+    </attributes>
+  </entity>
+</entity-mappings>

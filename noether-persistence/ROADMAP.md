@@ -1561,27 +1561,91 @@ in-place/cache/callback/flush state, mutable graphs/hints and SQL-only paginatio
 Exact independently aggregated build/TCK evidence is recorded in `TCK.md`.
 D5/D9–D20 and BUG01–BUG03 above remain historical records.
 
+### D22 — To-one joins referencing unique non-ID business columns ✅ (2026-10-16)
+
+Approved after D21 (`2283e5f`), before further graph optimization.
+`Order.customer_code -> Customer.code` does not make `code` the customer's identity.
+`Reference` retains the referenced tuple separately from identity columns, and its
+foreign-key parts retain the target BASIC access slot and existing value binder.
+No reflection, new generation mechanism, dependency, module, package or executor
+is introduced.
+
+**Delivered scope**
+
+- Owning `ManyToOne` and `OneToOne` through primary-table join columns, plus inverse
+  one-to-one, with single/composite non-ID BASIC target columns. Column-name matching
+  respects quoting, composite join order is explicit, and binders include converters.
+  Annotation, metadata-complete ORM XML and annotation/XML overlay mappings share
+  the same model and planner.
+- Target columns must be distinct/unambiguous, `nullable=false`, `insertable=true`
+  and `updatable=false`, with single-column `unique=true` or an exact matching
+  `Table.uniqueConstraints` tuple (constraint order may differ from join order).
+  Missing/nonunique/duplicate references, ID/business mixtures and nonuniform
+  composite join nullability/writeability fail bootstrap. Owning join columns
+  must be fully writable; read-only/shared-column business joins are explicitly
+  refused rather than using deferred writes that disregard their flags. Managed key mutation is
+  rejected before writes using converter-aware state policies; bulk key SET is
+  rejected. Detached references must agree with the actual managed identity.
+- FK writes read the referenced values through generated target access. Ordinary
+  reads select the actual ID by the business tuple, then use the existing loader
+  and persistence context. All-null nullable tuples mean no association; partially
+  null tuples fail explicitly. Repeated references, `find`, refresh, merge and
+  cache identities remain ID-based rather than business-tuple identities.
+- Required business dependencies are ordered per instance on insert/delete;
+  self references bind directly and nullable cycles reuse deferred FK updates.
+  Non-null cycles are explicitly refused without attempting invalid null writes.
+  Reassignment, clearing, cascade persist and one-to-one orphan removal reuse the
+  ordinary lifecycle/flush paths.
+- Generated DDL references the actual unique columns. Table/XML unique constraints
+  are real SQL unique constraints, not merely indexes (BUG-20261016-04), through
+  `ADD_UNIQUE_CONSTRAINT` in Noether's own D4 AST.
+- JPQL/Criteria joins, path navigation, projections, association identity/null
+  comparisons and bulk association assignments are mapped coherently. Business
+  association comparisons use ID-valued correlated lookups; bulk SET accepts an
+  existing entity parameter/literal or NULL, checks target existence and selects
+  its database tuple. Arbitrary association SET expressions and referenced-key
+  mutation are explicitly refused. Existing complex bulk-path restrictions remain.
+
+**Deliberate boundaries and fallbacks**
+
+Business joins exclude join tables, owner/target secondary tables and inheritance,
+embedded association paths, derived/unsupported nested identifiers and inverse
+collections mapped by the business relationship. Referenced keys are immutable;
+database-side/out-of-band business-key mutation is outside this contract.
+Owners containing business references are not eligible for D11–D21 optimized
+hydration/graph collectors or D13 batching. Their business associations also skip
+D10 lazy-reference eligibility, even when otherwise getter-interceptable.
+Queries, fetch joins and graph finds still load complete correct state through
+the ordinary loader; no existing ID-based path receives a business tuple as an ID.
+Unrelated D5/D9–D21 eligibility and historical measurements remain unchanged.
+
+The mandatory initial red precedes production changes. Follow-up reds cover
+real unique constraints, detached identity contradictions, unknown bulk IDs,
+converted snapshots and required dependency ordering (BUG-20261016-05).
+Exact independently aggregated reactor/TCK evidence is recorded in `TCK.md`.
+
 ## Remaining work
 
-Prioritized backlog after D21, 2026-10-16. Each item needs its own approved, bounded lot; until then
+Prioritized backlog after D22, 2026-10-16. Each item needs its own approved, bounded lot; until then
 the documented fallback (follow-up selects, eager loading, or an explicit refusal naming the
 milestone) stays in place.
 
-1. **Deeper collection-valued graph subgraphs and broader SQL fetch eligibility** —
+1. **Remaining relational mapping shapes** — derived-identity targets; business joins
+   through join/secondary tables or inheritance, embedded business association paths,
+   inverse collections and safely mutable referenced keys; inverse many-to-many
+   indexes and relationships inside collection-table embeddable elements.
+   Null basic collection elements were fixed by D13 (BUG-20261015-09).
+2. **Deeper collection-valued graph subgraphs and broader SQL fetch eligibility** —
    more than two collection edges and broader cyclic graph optimization;
    same-query owner pagination,
    entity/embeddable map keys; polymorphic, `JOINED` and `TABLE_PER_CLASS` targets
    (type resolution from the row), broader to-one `DISTINCT` and locking queries, `TREAT`/embedded paths, and entity
    graph hints on complex query shapes beyond D14 and locking finds beyond D15.
-2. **Broader lazy to-one support and batch eligibility** — targets and owners currently kept eager by D10: field access,
+3. **Broader lazy to-one support and batch eligibility** — targets and owners currently kept eager by D10: field access,
    final forms, inverse one-to-one, join tables, embedded paths, inheritance, composite/derived and
    XML-only/remapped identifiers; shared-cache storage of graphs holding unloaded references.
    Extend D13 beyond one-table/non-polymorphic mappings, inverse target-FK collections and
    non-entity map keys only with a separate proven eligibility contract.
-3. **Missing relational mapping shapes** ("Left after P5"; refused explicitly today) — relationships
-   to an entity with a derived identity, join columns referencing non-key columns, indexes on the
-   inverse side of a many-to-many, relationships inside collection-table embeddable elements.
-   Null basic collection elements were fixed separately by D13 (BUG-20261015-09).
 4. **Deferred outside Persistence** (see Out of Scope / root roadmap) — Data/JPA integration and
    generation mutualisation with Mansart.
 
@@ -1591,6 +1655,7 @@ Recorded before implementation; each entry: date, decision, reason.
 
 | # | Date | Decision | Status |
 |---|---|---|---|
+| D22 | 2026-10-16 | Pause graph optimization and deliver bounded owning to-one joins to immutable, non-null, unique non-ID BASIC columns (single/composite, annotation/XML). Separate referenced tuple access/binders from JPA identity; resolve actual IDs before ordinary loading, preserve lifecycle/cache/query semantics and generate FKs to real unique constraints. Explicitly refuse invalid/mutable/unsupported shapes and non-null cycles; keep business owners on safe eager/ordinary graph/fetch loading rather than ID-assuming lazy/batch/optimized hydration. | Actioned |
 | D21 | 2026-10-16 | Extend D19/D20 to graph-requested collections reached through finite root to-one chains. Seed intermediate owners through D14–D18 LEFT hydration, then group distinct compatible owner identities with D13 key/parameter bounds and the existing collection collectors; merge shared owner-type requests at their latest collection depth. Preserve the two-collection-edge limit, independent branches, lifecycle/dirty/in-place/cache/flush/no-auto-flush contracts and SQL root-only pagination. Explicit cyclic paths, third edges and unsupported eager/mapping/query closures retain complete fallback/refusal; earlier graph eligibility and explicit fetch joins remain unchanged. | Actioned |
 | D20 | 2026-10-16 | Extend D19 to at most two collection edges beginning at a root collection, including second owners reached through element to-ones. Merge nested owner-type/collection requests, deduplicate identities from stage-one rows and apply each owner's D13 key/parameter bound. Reuse D16–D18 collectors and staged lifecycle/cache/dirty/in-place completion; SQL root-only pagination and no find auto-flush remain intact. Third collection edges, root-to-one collections and unsupported eager/query/mapping closures retain complete fallback/refusal. Fix duplicate bag occurrence deletion (BUG-20261016-02) exposed by the nested dirty-state gate. | Actioned |
 | D19 | 2026-10-16 | Load multiple graph-requested root collections through independent D16–D18 collectors constrained to SQL-selected owner batches, using D13's configured/512-parameter key bound. Stage all identities and collection branches before relationships/snapshots/BUG01-scoped callbacks; preserve root/element to-one joins, identity, dirty/in-place/cache/flush semantics and SQL owner pagination. Nested collection subgraphs and unsupported query/mapping shapes retain complete fallbacks; explicit fetch and single-collection paths remain unchanged. | Actioned |

@@ -205,6 +205,56 @@ changes and omitted unsupported lazy mappings. Explicit fetch joins and unnested
 single-collection graphs keep their existing collectors. Deeper graphs and broader
 fetch/lazy/batch/mapping eligibility remain separate backlog items.
 
+== Unique business-key to-one joins (D22, 2026-10-16)
+
+D22 prioritizes relational mapping over further graph optimization.
+An owning `ManyToOne` or `OneToOne` may reference single/composite *non-ID BASIC*
+columns, for example `Order.customer_code -> Customer.code`, without changing
+`Customer.id` as the JPA identity. Annotation, metadata-complete ORM XML and
+annotation/XML overrides use the same planner, generated accesses and binders,
+including converters and explicit composite-column ordering.
+
+Referenced columns must be unambiguous primary-table attributes with
+`nullable=false`, `insertable=true`, `updatable=false`, and either single-column
+`unique=true` or an exact table `uniqueConstraints` tuple. Composite join columns
+must explicitly name every referenced column and have uniform nullability and
+writeability; owning join columns must be fully insertable/updatable.
+Read-only/shared-column business joins are outside this bounded lot.
+Missing, duplicate, nonunique, ID/business-mixed or mutable mappings
+fail bootstrap. All-null nullable join tuples mean no target; partial-null tuples
+fail at load. Managed key mutation is refused at flush with converter-aware dirty
+checking. Detached references must agree with their actual managed identity.
+
+Writes bind the business tuple. Reads first resolve the actual target identifier
+and then use ordinary identity-based loading. Repeated references, `find`, refresh,
+merge and L2 cache never key managed instances by a business value. Owning/inverse
+one-to-one, reassignment/clearing, persist cascade, orphan removal, required
+insert/delete ordering, self references and nullable cycles use the existing
+lifecycle paths. Non-null dependency cycles are explicitly refused.
+DDL foreign keys reference the actual unique target columns; table/XML unique
+constraints are emitted as SQL constraints rather than unique indexes.
+
+JPQL/Criteria joins, navigation, projections and association identity/null
+comparisons follow this mapping. Bulk association SET accepts an existing entity
+parameter/literal or NULL and checks target existence; arbitrary SET expressions
+and referenced-key mutation are explicitly refused. Existing complex bulk-path
+restrictions remain unchanged; bulk mutations still do not cascade orphan removal.
+
+[IMPORTANT]
+====
+Business associations deliberately use eager/ordinary loading. Their owners
+are excluded from D11–D21 optimized hydration/graph collectors and D13 batching,
+and the business association is excluded from D10 lazy-reference eligibility,
+even when getter-interceptable. Fetch joins and graph queries/finds still produce
+complete state, without treating a foreign business tuple as an entity ID.
+====
+
+This bounded lot excludes join tables, secondary tables, inheritance, embedded
+association paths, derived/unsupported nested identifiers, inverse business
+collections and out-of-band or mutable business keys. These remaining mapping
+boundaries precede deeper graph/lazy/batch optimization in the roadmap.
+Historical D5/D9–D21 and BUG evidence is retained.
+
 == Root to-one collection graphs (D21, 2026-10-16)
 
 D21 supersedes D20's root-to-one-collection fallback for finite, acyclic root

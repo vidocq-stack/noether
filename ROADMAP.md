@@ -4,7 +4,7 @@ Noether owns the implementations extracted from Mansart on 2026-10-11.
 
 | Building block | Status | Detailed roadmap |
 | --- | --- | --- |
-| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D21); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
+| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D22); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
 | Jakarta Validation 3.1 | V0–V2 provisional local test/TCK stopgap; not published | [Validation](noether-validation/ROADMAP.md) |
 
 The extraction changes repository, artifact, package and provider names, not
@@ -205,18 +205,32 @@ above remain historical.
 
 ## Remaining Persistence work
 
+Decision D22 (2026-10-16) pauses graph optimization and delivers owning to-one
+joins to single/composite unique non-ID BASIC columns through the existing
+annotation/XML, access/binder, SQL AST, schema, loading and query architecture.
+Writes use business values; lookups resolve actual JPA identity before managing
+targets. Many-to-one and owning/inverse one-to-one include converters,
+cascade/orphan removal, reassignment/null, required instance ordering and nullable
+cycles. Immutable non-null keys and declared uniqueness are mandatory; invalid
+references and unsupported mapping combinations are refused. Business owners
+retain ordinary eager/graph/fetch loading, not ID-based optimized hydration or
+lazy batching. Detailed support/refusal rules and independent verification are
+in the Persistence roadmap and `TCK.md`; D5/D9–D21 and BUG history remain intact.
+
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
-1. More than two collection edges and broader cyclic graph optimization remain
+1. Remaining relational mapping shapes: derived-identity targets, business joins
+   through join/secondary tables or inheritance, inverse business collections,
+   embedded business association paths and safely mutable referenced keys;
+   inverse many-to-many indexes and collection-table embeddable relationships.
+   Null basic collection elements were fixed by D13 (BUG-20261015-09).
+2. More than two collection edges and broader cyclic graph optimization remain
    separate bounded lots; D21 includes collections under finite root to-one branches.
    Broader SQL fetch eligibility: same-query owner pagination,
    entity/embeddable map keys; polymorphic/`JOINED`/`TABLE_PER_CLASS` targets,
    broader to-one `DISTINCT` and locking queries, embedded/treated graph paths and complex graph queries.
-2. Broader lazy to-one support beyond the D10 eligible shapes, and batching beyond D13's
+3. Broader lazy to-one support beyond the D10 eligible shapes, and batching beyond D13's
    single-table/non-polymorphic scope (secondary tables, inheritance, inverse join tables,
    entity-valued map keys).
-3. Missing relational mapping shapes still refused explicitly (derived-identity targets,
-   non-key join columns, inverse many-to-many indexes, relationships in collection-table
-   embeddables). Null basic collection elements were fixed by D13 (BUG-20261015-09).
 4. Deferred Data/JPA integration and generation mutualisation with Mansart.

@@ -20,11 +20,13 @@
 package io.vidocq.noether.jpa.core.query;
 
 import io.vidocq.noether.jpa.core.mapping.MappedEntity;
+import io.vidocq.noether.jpa.core.mapping.EntityStatements;
 import io.vidocq.noether.jpa.core.flush.EntityLoader;
 import io.vidocq.noether.jpa.core.query.jpql.Ast;
 import io.vidocq.noether.jpa.core.query.jpql.Parser;
 import io.vidocq.noether.jpa.core.session.NotYet;
 import io.vidocq.noether.jpa.dialect.Dialect;
+import io.vidocq.noether.jpa.dialect.sql.Select;
 import jakarta.persistence.CacheRetrieveMode;
 import jakarta.persistence.CacheStoreMode;
 import jakarta.persistence.FlushModeType;
@@ -364,6 +366,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         checkBound();
         Compiled compiled = Translator.translate(statement, runtime.mapping(), p -> values.get(key(p)), null, null);
         return runtime.write(getFlushMode(), connection -> {
+            validateBusinessAssignments(connection);
             Dialect dialect = runtime.dialect(connection);
             if (!compiled.mutations().isEmpty()) {
                 return executeMutations(compiled, connection, dialect);
@@ -381,6 +384,50 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
                 throw new PersistenceException("The bulk statement failed: " + e.getMessage() + " — " + jpql, e);
             }
         });
+    }
+
+    private void validateBusinessAssignments(Connection connection) {
+        if (!(statement instanceof Ast.Update update)) return;
+        var model = runtime.mapping().model().entity(update.entity()).orElseThrow();
+        var owner = runtime.mapping().entity(model.javaType()).orElseThrow();
+        for (var assignment : update.assignments()) {
+            String name = assignment.path().segments().getLast();
+            int index = -1;
+            for (int i = 0; i < owner.model().attributes().size(); i++) {
+                if (owner.model().attributes().get(i).name().equals(name)) index = i;
+            }
+            var reference = owner.statements().reference(index).orElse(null);
+            if (reference == null || !reference.businessKey()) continue;
+            Object target = switch (assignment.value()) {
+                case Ast.Parameter parameter -> values.get(key(parameter));
+                case Ast.Literal literal -> literal.value();
+                default -> throw new IllegalArgumentException("Business-key SET requires an entity parameter/literal or NULL");
+            };
+            if (target == null) continue;
+            var type = runtime.mapping().entity(reference.target()).orElseThrow();
+            Object id = type.id(target);
+            if (id == null || !storedBusinessTarget(type, id, connection)) {
+                throw new PersistenceException("Business-key association SET references an unknown target identity");
+            }
+        }
+    }
+
+    private boolean storedBusinessTarget(MappedEntity type, Object id, Connection connection) {
+        var mapping = type.statements();
+        var keys = mapping.keyColumns();
+        var names = keys.stream().map(EntityStatements.Column::name).toList();
+        // Keep the assigned target present until the association mutation commits.
+        Select select = new Select(mapping.select().table(), names, names).locked(Select.Lock.SHARED, false);
+        Dialect dialect = runtime.dialect(connection);
+        try (PreparedStatement statement = connection.prepareStatement(dialect.render(select))) {
+            Object[] values = mapping.keyValues(id);
+            for (int i = 0; i < values.length; i++) keys.get(i).binder().bind(dialect, statement, i + 1, values[i]);
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next();
+            }
+        } catch (SQLException e) {
+            throw new PersistenceException("Business-key association SET target identity lookup failed", e);
+        }
     }
 
     private int executeMutations(Compiled compiled, Connection connection, Dialect dialect) {

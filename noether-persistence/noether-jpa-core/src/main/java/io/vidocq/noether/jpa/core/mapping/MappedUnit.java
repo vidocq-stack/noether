@@ -82,6 +82,7 @@ public final class MappedUnit {
     private final ClassInfos source;
     private final Map<Class<?>, InheritanceMapping> inheritance;
     private final Set<AssociationAttribute> lazyReferences;
+    private final Map<MappedEntity, Set<Integer>> businessKeyAttributes = new IdentityHashMap<>();
 
     private MappedUnit(PersistenceUnitModel model, Map<Class<?>, ManagedAccess> entities,
             Map<EmbeddableModel, ManagedAccess> embeddables, Map<BasicAttribute, ValueBinder> binders,
@@ -94,7 +95,55 @@ public final class MappedUnit {
         this.binders = binders;
         this.mapped = mapped;
         this.inheritance = inheritance;
+        validateBusinessKeys();
         this.lazyReferences = lazyReferences();
+    }
+
+    private void validateBusinessKeys() {
+        for (MappedEntity owner : mapped.values()) {
+            if (!owner.statements().supported()) continue;
+            for (var reference : owner.statements().references()) {
+                if (!reference.businessKey()) continue;
+                var target = mapped.get(reference.target());
+                if (!owner.model().secondaryTables().isEmpty() || inheritance.get(owner.model().javaType()).hierarchy().size() != 1) {
+                    throw new PersistenceException("Business-key joins do not support owner inheritance or secondary tables");
+                }
+                var columns = owner.statements().referencedColumns(reference);
+                for (int c : reference.columns()) {
+                    var column = owner.statements().columns().get(c);
+                    if (owner.statements().columns().stream().filter(other -> EntityStatements.sameColumn(other.name(), column.name())).count() != 1) {
+                        throw new PersistenceException("Business-key join columns must have distinct, unshared owner column names");
+                    }
+                }
+                businessKeyAttributes.computeIfAbsent(target, _ -> new LinkedHashSet<>())
+                    .addAll(columns.stream().map(EntityStatements.Column::attribute).toList());
+                boolean unique = columns.size() == 1
+                    && ((BasicAttribute) target.model().attributes().get(columns.getFirst().attribute())).column().unique();
+                var table = source.read(target.model().javaType().getName()).orElseThrow().annotation("jakarta.persistence.Table").orElse(null);
+                if (table != null) {
+                    unique |= table.annotations("uniqueConstraints").stream().anyMatch(u -> {
+                        var names = u.strings("columnNames").stream().map(this::identifier).toList();
+                        return names.size() == columns.size() && columns.stream()
+                            .allMatch(c -> names.stream().anyMatch(n -> EntityStatements.sameColumn(n, c.name())));
+                    });
+                }
+                if (!unique) throw new PersistenceException("Business-key join to " + target.model().entityName()
+                    + " requires a matching unique constraint on the referenced BASIC columns");
+                for (var attribute : target.model().attributes()) {
+                    if (attribute instanceof AssociationAttribute inverse && !inverse.singleValued()
+                            && inverse.targetEntity() == owner.model().javaType()
+                            && inverse.mappedBy() != null && inverse.mappedBy().equals(
+                                owner.model().attributes().get(reference.attribute()).name())) {
+                        throw new PersistenceException("Business-key joins do not yet support inverse collections");
+                    }
+                }
+            }
+        }
+    }
+
+    /** Referenced immutable values are protected even against in-memory changes ignored by updatable=false. */
+    public boolean businessKeyAttribute(MappedEntity type, int attribute) {
+        return businessKeyAttributes.getOrDefault(type, Set.of()).contains(attribute);
     }
 
     private Set<AssociationAttribute> lazyReferences() {
@@ -109,6 +158,8 @@ public final class MappedUnit {
                         || association.access() != AccessKind.PROPERTY || association.name().contains(".")
                         || association.mapsId() != null
                         || owner.model().id() instanceof IdModel.Derived derived && derived.relationship().equals(association)) continue;
+                if (owner.statements().reference(owner.model().attributes().indexOf(attribute))
+                        .map(EntityStatements.Reference::businessKey).orElse(false)) continue;
                 var declaring = classes.read(association.declaringClass().getName()).orElseThrow();
                 String suffix = Character.toUpperCase(association.name().charAt(0)) + association.name().substring(1);
                 boolean getter = declaring.methods().stream().anyMatch(m ->

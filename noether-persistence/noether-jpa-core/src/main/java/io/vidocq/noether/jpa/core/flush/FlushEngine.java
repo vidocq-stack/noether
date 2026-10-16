@@ -19,6 +19,7 @@
  */
 package io.vidocq.noether.jpa.core.flush;
 
+import io.vidocq.noether.jpa.core.model.AssociationAttribute;
 import io.vidocq.noether.jpa.core.context.ManagedEntity;
 import io.vidocq.noether.jpa.core.context.PersistenceContext;
 import io.vidocq.noether.jpa.core.jdbc.type.ValueBinder;
@@ -162,7 +163,9 @@ public final class FlushEngine {
             }
         }
         inserts.sort(INSERT_ORDER);
+        orderBusinessInserts(inserts);
         deletes.sort(DELETE_ORDER);
+        orderBusinessDeletes(deletes);
         Set<Object> pending = identitySet();
         Set<Object> removed = identitySet();
         deletes.forEach(work -> removed.add(work.entry().instance()));
@@ -233,6 +236,48 @@ public final class FlushEngine {
     }
 
     // ---- inserts ------------------------------------------------------------------------------------------
+
+    /** Business tuples are already assigned, but a required FK still needs its target row before its owner. */
+    private static void orderBusinessInserts(List<Work> inserts) {
+        if (inserts.stream().noneMatch(w -> w.type().statements().references().stream()
+                .anyMatch(r -> requiredBusinessReference(w.type(), r)))) return;
+        List<Work> remaining = new ArrayList<>(inserts);
+        Set<Object> pending = identitySet();
+        remaining.forEach(w -> pending.add(w.entry().instance()));
+        inserts.clear();
+        while (!remaining.isEmpty()) {
+            Work next = remaining.stream().filter(w -> w.type().statements().references().stream()
+                .filter(r -> requiredBusinessReference(w.type(), r))
+                .noneMatch(r -> w.state()[r.attribute()] != w.entry().instance()
+                    && pending.contains(w.state()[r.attribute()]))).findFirst().orElseThrow(() ->
+                        new PersistenceException("Cannot insert a non-null business-key cycle without deferred database constraints"));
+            remaining.remove(next);
+            pending.remove(next.entry().instance());
+            inserts.add(next);
+        }
+    }
+
+    private static boolean requiredBusinessReference(MappedEntity type, EntityStatements.Reference reference) {
+        if (!reference.businessKey()) return false;
+        var association = (AssociationAttribute) type.model().attributes().get(reference.attribute());
+        return !association.optional() || association.joinColumns().stream().anyMatch(j -> !j.nullable());
+    }
+
+    private static void orderBusinessDeletes(List<Work> deletes) {
+        if (deletes.stream().noneMatch(w -> w.type().statements().references().stream()
+                .anyMatch(r -> requiredBusinessReference(w.type(), r)))) return;
+        List<Work> remaining = new ArrayList<>(deletes);
+        deletes.clear();
+        while (!remaining.isEmpty()) {
+            Work next = remaining.stream().filter(candidate -> remaining.stream().noneMatch(owner -> owner != candidate
+                && owner.type().statements().references().stream()
+                    .filter(r -> requiredBusinessReference(owner.type(), r))
+                    .anyMatch(r -> owner.entry().snapshot()[r.attribute()] == candidate.entry().instance())))
+                .findFirst().orElseThrow(() -> new PersistenceException("Cannot delete a non-null business-key cycle"));
+            remaining.remove(next);
+            deletes.add(next);
+        }
+    }
 
     /**
      * Inserts the rows of {@code group}. A foreign key referencing an instance of {@code pending}, whose row comes later
@@ -390,7 +435,8 @@ public final class FlushEngine {
         Object[] values = statements.values(work.state());
         for (EntityStatements.Reference reference : statements.references()) {
             Object target = work.state()[reference.attribute()];
-            if (target != null && pending.contains(target)) {
+            if (target != null && pending.contains(target)
+                    && !(reference.businessKey() && target == work.entry().instance())) {
                 for (int c : reference.columns()) {
                     values[c] = null;
                 }

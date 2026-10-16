@@ -891,10 +891,20 @@ final class Translator {
             }
             int index = attribute(variable, attribute.getFirst());
             AttributeModel model = variable.type().model().attributes().get(index);
+            if (unit.businessKeyAttribute(variable.type(), index)) {
+                throw new IllegalArgumentException("Referenced business-key attributes are immutable; bulk SET is not supported");
+            }
             if (model instanceof AssociationAttribute association && association.singleValued()) {
                 var reference = variable.type().statements().reference(index).orElseThrow(() -> new IllegalArgumentException(
                     "SET assigns " + association.name() + ", which this side of the relationship does not own (§4.10)"));
                 EntityStatements statements = variable.type().statements();
+                if (reference.businessKey()) {
+                    List<Expression> values = businessAssignment(statements, reference, assignment.value());
+                    for (int k = 0; k < reference.columns().length; k++) {
+                        assignments.add(new UpdateQuery.Assignment(statements.columns().get(reference.columns()[k]).name(), values.get(k)));
+                    }
+                    continue;
+                }
                 Entity like = new Entity(entity(association.targetEntity()), columns(variable.alias(), statements,
                     reference.columns()), binders(statements, reference.columns()));
                 List<Expression> values = assignment.value() instanceof Ast.Literal(Object v) && v == null ? null
@@ -915,6 +925,24 @@ final class Translator {
         return new UpdateQuery(roots.getFirst(), variable.alias(), assignments, where);
     }
 
+    private List<Expression> businessAssignment(EntityStatements statements, EntityStatements.Reference reference, Ast.Expr value) {
+        if (!(value instanceof Ast.Parameter) && !(value instanceof Ast.Literal)) {
+            throw new IllegalArgumentException("Business-key association SET accepts only an entity parameter/literal or NULL");
+        }
+        if (value instanceof Ast.Literal literal && literal.value() == null) {
+            return reference.referencedColumns().stream().<Expression>map(_ -> new Expression.Literal(null)).toList();
+        }
+        MappedEntity target = entity(reference.target());
+        String alias = alias();
+        Entity identity = entityValue(alias, target);
+        List<Expression> id = sql(value instanceof Ast.Parameter || value instanceof Ast.Literal
+            ? boundValue(value, identity) : value(value));
+        Expression where = equal(key(alias, target), id);
+        return reference.referencedColumns().stream().<Expression>map(column -> new Expression.Subquery(
+            new Query(false, List.of(new Expression.Column(alias, column)),
+                List.of(new Query.From(table(target), alias, List.of())), where, List.of(), null, List.of(), null, null))).toList();
+    }
+
     private DeleteQuery delete(Ast.Delete delete) {
         Variable variable = bulkVariable(delete.entity(), delete.variable());
         Expression where = restricted(delete.where() == null ? null : condition(delete.where()));
@@ -930,6 +958,11 @@ final class Translator {
         Variable variable = root(table(type), type, null);
         define(name, variable);
         return variable;
+    }
+
+    private List<Expression> referencedKey(String alias, EntityStatements owner, EntityStatements.Reference reference) {
+        if (!reference.businessKey()) return key(alias, entity(reference.target()));
+        return owner.referencedColumns(reference).stream().<Expression>map(c -> new Expression.Column(alias, c.name())).toList();
     }
 
     /** A bulk statement works on one table: a path that would need a join is not translated (§4.10). */
@@ -1155,6 +1188,7 @@ final class Translator {
     /** Whether the rows of {@code type} are of that one concrete entity, read from its own tables. */
     private boolean hydratable(MappedEntity type) {
         if (type == null || !type.statements().supported()) return false;
+        if (type.statements().references().stream().anyMatch(EntityStatements.Reference::businessKey)) return false;
         var inheritance = unit.inheritance(type.model().javaType());
         return !inheritance.joined() && !inheritance.tablePerClass() && !inheritance.abstractEntity(type.model())
             && inheritance.hierarchy().stream().noneMatch(e -> e.javaType() != type.model().javaType() && type.model().javaType().isAssignableFrom(e.javaType()));
@@ -1468,12 +1502,12 @@ final class Translator {
         Expression on;
         var owned = from.type().statements().reference(attribute);
         if (owned.isPresent()) { // from.fk = target.key
-            on = equal(columns(from, owned.get().columns()), key(alias, target));
+            on = equal(columns(from, owned.get().columns()), referencedKey(alias, from.type().statements(), owned.get()));
         } else if (!association.owning()) { // the owner's foreign key holds this key: target.fk = from.key
             var inverse = target.statements().reference(attribute(target, association.mappedBy()));
             if (inverse.isEmpty()) return collectionJoin(from, attribute, association, kind, target);
             var reference = inverse.get();
-            on = foreignKeyPredicate(alias, target, reference.columns(), key(from.alias(), from.type()));
+            on = foreignKeyPredicate(alias, target, reference.columns(), referencedKey(from.alias(), target.statements(), reference));
         } else {
             return collectionJoin(from, attribute, association, kind, target);
         }
@@ -1624,7 +1658,7 @@ final class Translator {
                 Variable member = root(table(target), target, null);
                 var reference = owner.type().statements().reference(attribute);
                 if (reference.isPresent()) {
-                    correlations.add(equal(columns(owner, reference.get().columns()), key(member.alias(), target)));
+                    correlations.add(equal(columns(owner, reference.get().columns()), referencedKey(member.alias(), owner.type().statements(), reference.get())));
                 } else if (!association.owning()) {
                     var inverse = target.statements().reference(attribute(target, association.mappedBy()));
                     if (inverse.isEmpty()) {
@@ -1633,7 +1667,8 @@ final class Translator {
                         correlations.add(equal(names(row.alias(), link.ownerColumns()), ownerKey));
                         correlations.add(equal(names(row.alias(), link.memberColumns()), key(member.alias(), target)));
                     } else {
-                        correlations.add(foreignKeyPredicate(member.alias(), target, inverse.get().columns(), ownerKey));
+                        correlations.add(foreignKeyPredicate(member.alias(), target, inverse.get().columns(),
+                            referencedKey(owner.alias(), target.statements(), inverse.get())));
                     }
                 } else {
                     var link = (Link.ByTable) collection(owner, attribute, association);
@@ -1758,7 +1793,17 @@ final class Translator {
             case BasicAttribute basic -> basicValue(variable, attribute, basic);
             case AssociationAttribute association when association.singleValued() -> {
                 var owned = variable.type().statements().reference(attribute);
-                if (owned.isPresent() && !selecting) { // compared and tested by its foreign key, without a join
+                if (owned.isPresent() && owned.get().businessKey() && !selecting) {
+                    var reference = owned.get();
+                    MappedEntity target = entity(association.targetEntity());
+                    String alias = alias();
+                    Expression on = equal(referencedKey(alias, variable.type().statements(), reference), columns(variable, reference.columns()));
+                    List<Expression> identity = key(alias, target).stream().<Expression>map(k -> new Expression.Subquery(
+                        new Query(false, List.of(k), List.of(new Query.From(table(target), alias, List.of())),
+                            on, List.of(), null, List.of(), null, null))).toList();
+                    yield new Entity(target, identity, target.statements().keyColumns().stream().map(EntityStatements.Column::binder).toList());
+                }
+                if (owned.isPresent() && !owned.get().businessKey() && !selecting) { // compared by identity only
                     EntityStatements statements = variable.type().statements();
                     yield new Entity(entity(association.targetEntity()), columns(variable, owned.get().columns()),
                         binders(statements, owned.get().columns()));

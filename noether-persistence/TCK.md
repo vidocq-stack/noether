@@ -1,3 +1,82 @@
+## Noether unique business-key to-one verification (D22) — 2026-10-16
+
+Baseline: `2283e5f` (998 reactor tests). D22 prioritizes bounded relational mapping
+over further graph optimization: owning to-one joins can reference unique non-ID
+BASIC target columns while every managed/cache identity remains the actual JPA ID.
+Exact eligibility, unsupported shapes and ordinary-loading fallbacks are in D22
+of `ROADMAP.md`; D5/D9–D21 and all earlier BUG records below remain historical.
+
+The mandatory initial red precedes production edits: the single
+`writesBusinessValueAndResolvesActualIdentity` regression reports **1 test,
+0 failures, 1 error**, refusing the non-ID reference under the old P5 boundary.
+Follow-up reds expose real unique-constraint DDL, detached identity contradictions,
+missing bulk target identities, converted snapshots, and required insert/delete
+ordering; BUG-20261016-04/05 retain the investigation trail.
+
+```sh
+export JAVA_HOME="$HOME/.sdkman/candidates/java/25.0.4-tem"
+export PATH="$JAVA_HOME/bin:$PATH"
+./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test \
+  -Dtest=BusinessKeyToOneTest,ToOneTest,LazyCollectionTest,LazyToOneTest,LazyBatchTest,FetchJoinTest,CollectionFetchJoinTest,CollectionSubgraphTest,SecondLevelCacheTest,PostLoadCollectionCycleTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw -ntp clean install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+| Gate | Tests | Pass | Failure | Error | Skip |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Focused business/ID/D10–D21/cache/lifecycle gate | 248 | 248 | 0 | 0 | 0 |
+| Clean root reactor, 88 XML reports | 1019 | 1019 | 0 | 0 | 0 |
+| Full locally patched Persistence TCK, PostgreSQL 17 | 2135 | 2131 | 0 | 0 | 4 |
+| Execution 1 | 2134 | 2130 | 0 | 0 | 4 |
+| Execution 2 (signature) | 1 | 1 | 0 | 0 | 0 |
+
+The **21 new provider-owned tests** cover annotation and metadata-complete/XML-overlay
+single/composite tuples, reordered referenced names, generated IDs, converted values
+and converter-aware flush, physical FK values and DDL, nullable/required joins,
+repeated/managed/cache identity, reassignment/null, cascade/orphans, merge/refresh,
+inverse one-to-one, JPQL/Criteria joins/projections/comparisons/bulk mutations,
+same-type required ordering/self references, nullable cycles, explicit non-null
+cycle refusal, partially-null composite rows, otherwise interceptable LAZY
+properties and D21 collection-graph ordinary fallbacks. Bootstrap negative cases
+cover nonunique/missing/duplicate/mixed/mutable/nullable/nonuniform/read-only references,
+unknown or managed-but-not-yet-inserted bulk targets under COMMIT flush mode,
+join tables and inverse business collections.
+
+An additional provider-owned scratch probe runs a **named application module**
+against its own disposable PostgreSQL 17 container: **10/10 checks**, covering
+single converted and reordered composite business joins, identity/null/roundtrip,
+JPQL/Criteria, bulk reassignment, physical FK values and referenced-column metadata.
+It uses the already installed official-TCK JDBC dependency (the upstream driver's
+automatic module), not an alternative provider or a new shipped dependency.
+The container is removed afterward; no shared service is restarted.
+
+Independent `non-key-to-one-verification.json` aggregation proves **259 TCK XML
+reports**, **2135 distinct execution/class/method identities**, unchanged identity/
+outcome multisets against the pre-change D21 snapshot, and **518 effective classpath
+checks** (both classpath properties per report contain exactly the derived fixture).
+The pre/post input file sets and SHA-256 hashes of **49 official/derived files**
+are identical. ZIP entry comparison confirms that only the two approved
+TCK-BUG-001 XML resources differ from the official jar; all other **1124 entries**
+are byte-identical.
+
+- Official spec-tests SHA-256:
+  `a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`.
+- Derived TCK-BUG-001 SHA-256:
+  `1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+- Four unchanged official skips: `identifiabletype.Client#getDeclaredSingularAttributes`,
+  `query.language.Client6#resultContainsFetchReference`,
+  `entityManagerFactory.Client2#createEntityManagerFactoryStringMapTest`,
+  `schemaGeneration.annotations.tableGenerator.Client#tableGeneratorTest`.
+
+Session artifacts are prefixed `non-key-to-one-`: red/targeted/full-build/full-TCK
+logs, pre-run input/TCK snapshots, the independent verifier, identity outcomes,
+PostgreSQL probe source/result and final verification JSON.
+This is **local patched regression evidence**, not an unmodified official TCK
+result or certification. The official TCK does not by itself prove D22's newly
+supported feature; the provider-owned regressions and PostgreSQL probe do.
+
 ## Noether root-to-one collection graph verification (D21) — 2026-10-16
 
 Baseline: `7a4f527` (986 reactor tests). D21 adds bounded graph-requested collections
