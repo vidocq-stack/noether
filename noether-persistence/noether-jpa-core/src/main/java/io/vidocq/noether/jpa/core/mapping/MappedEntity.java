@@ -50,6 +50,7 @@ public final class MappedEntity {
     private final Map<String, int[]> callbacks;
     private final Function<Class<?>, MappedEntity> entities;
     private final List<KeyPart> parts;
+    private final boolean mapsId;
 
     /** @param entities the mapped entities of the unit, by class: the parents of a derived identity, looked up when used */
     MappedEntity(EntityModel model, ManagedAccess access, Class<?> root, ManagedAccess embeddedId, ManagedAccess idClass,
@@ -57,6 +58,7 @@ public final class MappedEntity {
         this.model = model;
         this.entities = entities;
         this.parts = parts(model, embeddedId, idClass);
+        this.mapsId = model.attributes().stream().anyMatch(a -> a instanceof AssociationAttribute r && r.mapsId() != null);
         this.idClass = idClass;
         this.state = state;
         this.access = access;
@@ -280,7 +282,7 @@ public final class MappedEntity {
         switch (model.id()) {
             case IdModel.Single single when derivedWhole() -> {
                 Object target = access.get(instance, parts.getFirst().attribute());
-                if (target != null) {
+                if (target != null && parent(parts.getFirst(), target).id(target) != null) {
                     access.set(instance, model.attributes().indexOf(single.attribute()), parent(parts.getFirst(), target).idObject(target));
                 }
             }
@@ -297,16 +299,31 @@ public final class MappedEntity {
                     access.set(instance, model.attributes().indexOf(embedded.attribute()), key);
                 }
             }
-            case IdModel.Embedded embedded when parts.stream().anyMatch(KeyPart::parent) && !embeddedId.type().isRecord() -> {
+            case IdModel.Embedded embedded when parts.stream().anyMatch(KeyPart::parent) -> {
                 int attribute = model.attributes().indexOf(embedded.attribute());
                 Object key = access.get(instance, attribute);
+                if (embeddedId.type().isRecord()) {
+                    if (key == null) {
+                        throw new jakarta.persistence.PersistenceException("@MapsId requires the remaining embedded identifier parts");
+                    }
+                    Object[] components = new Object[embedded.attribute().embeddable().attributes().size()];
+                    embeddedId.read(key, components);
+                    for (KeyPart part : parts) {
+                        Object target = part.parent() ? access.get(instance, part.attribute()) : null;
+                        if (target != null && parent(part, target).id(target) != null) {
+                            components[part.component()] = parent(part, target).idObject(target);
+                        }
+                    }
+                    access.set(instance, attribute, embeddedId.construct(components));
+                    break;
+                }
                 if (key == null) {
                     key = embeddedId.instantiate();
                     access.set(instance, attribute, key);
                 }
                 for (KeyPart part : parts) {
                     Object target = part.parent() ? access.get(instance, part.attribute()) : null;
-                    if (target != null) {
+                    if (target != null && parent(part, target).id(target) != null) {
                         embeddedId.set(key, part.component(), parent(part, target).idObject(target));
                     }
                 }
@@ -314,6 +331,24 @@ public final class MappedEntity {
             default -> {
                 // nothing an @MapsId maps
             }
+        }
+    }
+
+    public boolean hasMapsId() {
+        return mapsId;
+    }
+
+    /** A managed derived identity cannot be reassigned or cleared (§2.4, §2.4.2). */
+    public void validateMapsId(Object instance, Object expected) {
+        if (!mapsId) return;
+        boolean changed = !java.util.Objects.equals(expected, id(instance));
+        // §2.4.2.1: relationship-mapped embedded ID components are read-only, not independently mutable state.
+        if (!changed && model.id() instanceof IdModel.Embedded) deriveId(instance);
+        if (changed
+                || idObject(instance) == null
+                || !java.util.Objects.equals(expected, key(idObject(instance)))) {
+            throw new jakarta.persistence.PersistenceException("@MapsId identity of " + model.entityName()
+                + " cannot be changed or cleared");
         }
     }
 

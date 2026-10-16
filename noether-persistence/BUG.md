@@ -1007,3 +1007,37 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     gap for a managed but not-yet-inserted target. Validation now checks and
     locks the actual database identity row, not the persistence context/cache,
     before executing the business-tuple scalar subqueries.
+
+## BUG-20261016-06 — MapsId generated parents leave phantom zero IDs and allow reassignment
+
+- **Date**: 2026-10-16
+- **Status**: FIXED (pending commit)
+- **Module**: `MappedEntity`, `MappedUnit`, `FlushEngine`, `EntityLoader`, `SchemaPlan`.
+- **Symptom**: a cascaded IDENTITY parent is inserted correctly, but its dependent's
+  primitive ID remains zero, including PostPersist and cache state. Reassigning or
+  clearing a persisted MapsId relationship silently changes its identity tuple.
+  Invalid names/types are accepted at bootstrap.
+- **Minimal reproduction**:
+  `./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test -Dtest=MapsIdToOneTest -Dsurefire.failIfNoSpecifiedTests=false`
+- **Cause**: derivation ran before cascaded generated IDs were assigned and was
+  not repeated at insert; MapsId shapes and managed identities were not validated.
+- **Investigations**:
+  - 2026-10-16: initial red, before production edits: 9 tests, 9 failures,
+    no errors. Preserved as `mapsid-to-one-red.log` in session artifacts.
+  - 2026-10-16: initial full patched TCK exposed four refresh-related errors
+    (annotations.mapsid and derivedid.ex1b/ex2b/ex3b): refresh rebuilt embedded
+    state without deriving relationship-mapped components. New provider-owned
+    red proves the same defect and the specification's read-only embedded-part
+    contract. Refresh now derives before snapshots/PostLoad; direct writes to
+    mapped embedded components are ignored, not misclassified as identity changes.
+  - 2026-10-16: follow-up reds cover sequence cascade timing, immutable-record
+    keys, missing-parent diagnostics, pre-flush/callback/bulk identity changes,
+    physical incoming-FK names and BIGINT types, cyclic insertion order and
+    unsupported nested shapes. Normative §2.4.2.1 requires OneToOne for a shared
+    whole ID; a dedicated red prevents accepting simple-ID ManyToOne mappings.
+  - 2026-10-16: final focused gate **305/305**, full clean reactor **1058/1058**
+    (39 new provider-owned tests), and full locally patched PostgreSQL TCK
+    **2135 tests / 2131 passed / 0 failures / 0 errors / 4 unchanged skips**.
+    Independent aggregation verifies 259 XML reports, unchanged test identities/
+    outcomes, 518 effective classpath checks and unchanged file sets/hashes for
+    49 official/derived inputs. No fixture or exclusion was modified.

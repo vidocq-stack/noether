@@ -381,7 +381,7 @@ public final class EntityStatements {
             throw new PersistenceException("The relationship " + association.name() + " of " + association.declaringClass().getName()
                 + " references " + association.targetEntity().getName() + ", which is not an entity of the persistence unit");
         }
-        List<KeyColumn> keys = relationalKeys(target, binders, inheritances, delimited);
+        List<KeyColumn> keys = relationalKeys(target, models, binders, inheritances, delimited);
         if (keys == null) {
             if (association.joinColumns().stream().anyMatch(j -> j.referencedColumnName() != null
                     && target.attributes().stream().filter(a -> a instanceof BasicAttribute).map(a -> (BasicAttribute) a)
@@ -537,10 +537,10 @@ public final class EntityStatements {
         }
         IndexMapping index = indexing.index();
         if (!association.owning()) {
-            return inverse(association, attribute, target, index, binders, inheritances, delimited);
+            return inverse(association, attribute, target, index, models, binders, inheritances, delimited);
         }
-        List<KeyColumn> ownerKeys = relationalKeys(owner, binders, inheritances, delimited);
-        List<KeyColumn> targetKeys = relationalKeys(target, binders, inheritances, delimited);
+        List<KeyColumn> ownerKeys = relationalKeys(owner, models, binders, inheritances, delimited);
+        List<KeyColumn> targetKeys = relationalKeys(target, models, binders, inheritances, delimited);
         if (ownerKeys == null || targetKeys == null) {
             return new CollectionMapping.Unsupported(attribute, association, "a join table of an entity with a derived identity");
         }
@@ -624,7 +624,8 @@ public final class EntityStatements {
      * in the table of the target, beside the foreign key of the owning side: this side writes it.
      */
     private static CollectionMapping inverse(AssociationAttribute association, int attribute, EntityModel target, IndexMapping index,
-            Function<BasicAttribute, ValueBinder> binders, Function<Class<?>, InheritanceMapping> inheritances, boolean delimited) {
+            Function<Class<?>, EntityModel> models, Function<BasicAttribute, ValueBinder> binders,
+            Function<Class<?>, InheritanceMapping> inheritances, boolean delimited) {
         if (index == null || !index.stored()) {
             return new CollectionMapping.MappedBy(attribute, association, index, null, null);
         }
@@ -634,7 +635,7 @@ public final class EntityStatements {
         }
         InheritanceMapping inheritance = inheritances.apply(target.javaType());
         EntityModel declaring = inheritance == null ? target : inheritance.declaringEntity(side.declaringClass());
-        List<KeyColumn> targetKeys = relationalKeys(declaring, binders, inheritances, delimited);
+        List<KeyColumn> targetKeys = relationalKeys(declaring, models, binders, inheritances, delimited);
         if (targetKeys == null) {
             return new CollectionMapping.Unsupported(attribute, association, "an index of an inverse side without a mapped key");
         }
@@ -696,7 +697,7 @@ public final class EntityStatements {
                     throw new PersistenceException("The map key of " + relationship + " is " + entity.getName()
                         + ", which is not an entity of the persistence unit");
                 }
-                List<KeyColumn> keys = relationalKeys(keyModel, binders, inheritances, delimited);
+                List<KeyColumn> keys = relationalKeys(keyModel, models, binders, inheritances, delimited);
                 JoinColumnModel[] joins = keys == null ? null : byKeyPart("the map key of " + relationship, written, keys, keyModel, delimited);
                 if (joins == null) {
                     yield new Indexing(null, "a map key entity with a derived identity, or referenced by a column that is not its key");
@@ -721,7 +722,7 @@ public final class EntityStatements {
     private static Optional<ElementCollectionMapping> elementCollection(EntityModel owner, ElementCollectionAttribute elements,
             int attribute, Function<Class<?>, EntityModel> models, Function<BasicAttribute, ValueBinder> binders,
             Function<EmbeddableModel, ManagedAccess> embeddables, Function<Class<?>, InheritanceMapping> inheritances, boolean delimited) {
-        List<KeyColumn> ownerKeys = relationalKeys(owner, binders, inheritances, delimited);
+        List<KeyColumn> ownerKeys = relationalKeys(owner, models, binders, inheritances, delimited);
         if (ownerKeys == null) {
             return Optional.empty();
         }
@@ -786,9 +787,34 @@ public final class EntityStatements {
         return mapping == null || mapping.joined() || mapping.tablePerClass() ? entity.table() : mapping.root().table();
     }
 
-    private static List<KeyColumn> relationalKeys(EntityModel entity, Function<BasicAttribute, ValueBinder> binders,
+    private static List<KeyColumn> relationalKeys(EntityModel entity, Function<Class<?>, EntityModel> models,
+            Function<BasicAttribute, ValueBinder> binders,
             Function<Class<?>, InheritanceMapping> inheritances, boolean delimited) {
         List<KeyColumn> keys = keyColumns(entity, binders);
+        for (AttributeModel attribute : entity.attributes()) {
+            if (!(attribute instanceof AssociationAttribute association) || association.mapsId() == null) continue;
+            EntityModel target = models.apply(association.targetEntity());
+            List<KeyColumn> parent = keyColumns(target, binders);
+            if (parent == null) return null;
+            JoinColumnModel[] joins = byKeyPart(describe(association), association.joinColumns(), parent, target, delimited);
+            if (joins == null) return null;
+            List<KeyColumn> derived = new ArrayList<>();
+            for (int k = 0; k < parent.size(); k++) {
+                String name = joins[k].name() == null ? leaf(association.name()) + "_" + parent.get(k).name() : joins[k].name();
+                derived.add(new KeyColumn(name, parent.get(k).binder()));
+            }
+            if (association.mapsId().isEmpty()) {
+                keys = derived;
+            } else if (keys != null && entity.id() instanceof IdModel.Embedded embedded && derived.size() == 1) {
+                keys = new ArrayList<>(keys);
+                var components = embedded.attribute().embeddable().attributes();
+                for (int c = 0; c < components.size(); c++) {
+                    if (components.get(c).name().equals(association.mapsId())) keys.set(c, derived.getFirst());
+                }
+            } else {
+                return null;
+            }
+        }
         InheritanceMapping mapping = inheritances.apply(entity.javaType());
         if (keys == null || mapping == null || !mapping.joined()) {
             return keys;

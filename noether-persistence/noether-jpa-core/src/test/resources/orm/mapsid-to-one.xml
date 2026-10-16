@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entity-mappings xmlns="https://jakarta.ee/xml/ns/persistence/orm" version="3.2">
+  <entity class="io.vidocq.noether.jpa.core.session.MapsIdToOneTest$Shared" name="MapsShared" metadata-complete="true" access="FIELD">
+    <post-persist method-name="persisted"/>
+    <post-load method-name="loaded"/>
+    <attributes>
+      <id name="id"/>
+      <basic name="note"/>
+      <one-to-one name="parent" maps-id="" fetch="LAZY">
+        <join-column name="xml_parent"/>
+        <cascade><cascade-persist/><cascade-merge/></cascade>
+      </one-to-one>
+      <transient name="persistedId"/>
+      <transient name="loadedId"/>
+      <transient name="changeOnUpdate"/>
+    </attributes>
+  </entity>
+  <entity class="io.vidocq.noether.jpa.core.session.MapsIdToOneTest$Named" name="MapsNamed" metadata-complete="true" access="FIELD">
+    <attributes>
+      <embedded-id name="id"/>
+      <basic name="note"/>
+      <many-to-one name="parent" maps-id="parentId" fetch="LAZY">
+        <join-column name="xml_fk"/>
+        <cascade><cascade-persist/></cascade>
+      </many-to-one>
+    </attributes>
+  </entity>
+</entity-mappings>

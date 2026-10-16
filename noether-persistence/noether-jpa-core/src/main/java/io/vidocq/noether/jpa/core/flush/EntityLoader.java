@@ -433,6 +433,7 @@ public final class EntityLoader {
         type.access().read(instance, previous);
         Object[] state = state(type, instance, row);
         relationships(type, id, instance, state, row, connection, context, previous);
+        type.deriveId(instance);
         type.access().read(instance, state);
         Object[] snapshot = type.state().snapshot(state);
         context.postLoad(() -> type.callback("PostLoad", instance)); // §3.6.3: after a refresh too

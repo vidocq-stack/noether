@@ -37,13 +37,7 @@ final class SchemaPlan {
                 keys.putIfAbsent(table, mapped.select().conditions());
                 for (int c : mapped.selected()) {
                     var column = columns.get(c);
-                    BasicAttribute basic = column.attribute() < 0 ? null
-                        : basic(model.attributes().get(column.attribute()), column.path());
-                    if (column.foreignKey() != null) {
-                        var referenced = unit.entity(column.foreignKey().target()).orElseThrow();
-                        var key = statements.referencedColumn(column.foreignKey());
-                        basic = basic(referenced.model().attributes().get(key.attribute()), key.path());
-                    }
+                    BasicAttribute basic = basic(entity, column);
                     SchemaStatement.Column definition = definition(column.name(), basic, column.id(),
                         column.name().equals(mapped.insert().generatedKey()));
                     if (column.foreignKey() != null) {
@@ -176,7 +170,7 @@ final class SchemaPlan {
         for (int i = 0; i < names.size(); i++) {
             var key = keys.get(i);
             target.putIfAbsent(names.get(i), definition(names.get(i),
-                basic(entity.model().attributes().get(key.attribute()), key.path()), true, false));
+                basic(entity, key), true, false));
         }
     }
 
@@ -214,6 +208,15 @@ final class SchemaPlan {
             if (attribute instanceof EmbeddedAttribute embedded) attribute = embedded.embeddable().attributes().get(step);
         }
         return attribute instanceof BasicAttribute basic ? basic : null;
+    }
+
+    private BasicAttribute basic(MappedEntity entity, EntityStatements.Column column) {
+        while (column.foreignKey() != null) {
+            var foreign = column.foreignKey();
+            column = entity.statements().referencedColumn(foreign);
+            entity = unit.entity(foreign.target()).orElseThrow();
+        }
+        return column.attribute() < 0 ? null : basic(entity.model().attributes().get(column.attribute()), column.path());
     }
 
     private static SchemaStatement.Column definition(Identifier name, BasicAttribute basic, boolean key, boolean identity) {

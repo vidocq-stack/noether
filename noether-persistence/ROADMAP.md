@@ -1624,13 +1624,81 @@ real unique constraints, detached identity contradictions, unknown bulk IDs,
 converted snapshots and required dependency ordering (BUG-20261016-05).
 Exact independently aggregated reactor/TCK evidence is recorded in `TCK.md`.
 
+### D23 — Strengthen simple-parent MapsId derived identity ✅ (2026-10-16)
+
+Approved after D22 (`0633dad`), before further graph optimization. This is a
+bounded completion of existing P5 machinery, **not** the first MapsId implementation:
+P5 already covered the specification's six derived-identity example families.
+
+**New verified contract (§2.4.2, §11.1 MapsId).** An owning one-to-one to a
+simple-ID parent derives the dependent's matching simple `@Id` (unnamed MapsId).
+An owning many-to-one or one-to-one derives one named direct BASIC component
+of the dependent's `@EmbeddedId`.
+The normative §2.4.2.1 rule requires **OneToOne** for a whole shared identifier;
+the broader MapsId Javadoc's ManyToOne mention does not override that rule.
+Primitive/wrapper types must match. Mutable and record embedded identifiers keep
+their other application-assigned components. Annotation and metadata-complete XML
+feed the same semantic model, generated access, mapping and execution paths.
+
+Initial derived attributes are read-only from the application's perspective:
+the relationship supplies their values. Cascaded sequence IDs are copied before
+persist/merge returns and registered in the same context; IDENTITY parent keys are
+copied again immediately before binding the dependent INSERT. PostPersist sees
+the actual identifier, as do snapshots, context registration and cache storage.
+Generated primitive zero placeholders never become dependent identities; assigned
+zero IDs on nongenerated parents remain legitimate. Missing parent identity or
+incomplete remaining embedded components fail before the dependent INSERT.
+
+Once an identity is registered it cannot be reassigned or cleared, including
+before the first flush, on later flushes, or by PreUpdate callbacks. Association
+and scalar/embedded IDs must describe the same tuple. Relationship-mapped embedded
+components are read-only (§2.4.2.1): direct changes are ignored and rederived,
+while changing an unmapped key component or the defining relationship is refused.
+Refresh now rederives those components before snapshots and PostLoad, fixing a
+latent P5 zero/null-key defect exposed by the stricter identity check.
+JPQL and Criteria bulk SET
+of MapsId associations or identifier attributes is explicitly refused; ordinary
+state updates remain supported. Required MapsId FK edges are ordered per instance
+beside required business edges; nullable ordinary backlinks may still be deferred.
+Deletes reverse the required edges without ever nulling a shared PK column.
+
+Physical identifier metadata for simple MapsId entities and direct named simple
+components now uses the association's actual column names/binders. Incoming
+foreign keys, their default names, generated SQL and DDL reference those physical
+keys; DDL follows derived key columns to the underlying BASIC type rather than
+defaulting a long key to INTEGER. Loads by ID/FK, same-context identity,
+JPQL/Criteria navigation/comparison/fetch joins, graph/cache loads and lifecycle
+callbacks use the shared tuple. An otherwise interceptable LAZY MapsId property
+still takes the documented eager fallback; D10–D21 optimization is not expanded.
+
+**Explicit boundaries.** Unknown/dotted names; named MapsId on a simple ID;
+incompatible identifier types; inverse/collection/join-table relationships;
+whole-ID many-to-one mappings (OneToOne is required by §2.4.2.1);
+overlapping full/component mappings; independently generated dependent IDs;
+noninsertable or secondary-table join columns; chained derived targets;
+nested/relationship-valued parent IDs; and nested owner key components not wholly
+mapped by a relationship are refused at bootstrap. New coverage is single-table,
+non-polymorphic, simple-parent derived identity. Existing P5 exact matching flat
+composite-parent examples remain compatible and are rerun in the full TCK; no
+claim is made for arbitrary nested/composite/partial key tuples, incoming joins
+to nested composite-derived keys, broader inheritance or join-table shapes.
+
+Mandatory initial red: 9 tests, 9 failures, before production edits. Follow-up
+reds expose immutable-record derivation, missing-parent diagnostics, sequence
+cascade timing, callback/bulk/pre-flush identity mutation, physical incoming FK
+metadata, cyclic insert ordering and unsupported nested shapes. The dedicated
+`MapsIdToOneTest` and existing derived-identity, relationship, business-key,
+lazy/fetch/graph/cache/context suites form the focused gate. Exact independently
+aggregated reactor/TCK counters and immutable-input checks are in `TCK.md`.
+
 ## Remaining work
 
-Prioritized backlog after D22, 2026-10-16. Each item needs its own approved, bounded lot; until then
+Prioritized backlog after D23, 2026-10-16. Each item needs its own approved, bounded lot; until then
 the documented fallback (follow-up selects, eager loading, or an explicit refusal naming the
 milestone) stays in place.
 
-1. **Remaining relational mapping shapes** — derived-identity targets; business joins
+1. **Remaining relational mapping shapes** — broader derived/composite/nested identity
+   targets beyond D23; business joins
    through join/secondary tables or inheritance, embedded business association paths,
    inverse collections and safely mutable referenced keys; inverse many-to-many
    indexes and relationships inside collection-table embeddable elements.
@@ -1655,6 +1723,7 @@ Recorded before implementation; each entry: date, decision, reason.
 
 | # | Date | Decision | Status |
 |---|---|---|---|
+| D23 | 2026-10-16 | Strengthen existing P5 MapsId support for simple-parent owning to-ones: unnamed shared simple ID and a named direct BASIC embedded-ID component, annotation/XML. Derive cascaded/generated IDs at the correct lifecycle stage, register actual identity, order required FK edges, propagate physical key names/types and reject identity mutation and unsupported nested/chained/partial mappings. Preserve legacy flat composite examples and safe eager graph/lazy fallbacks without widening optimization or claiming arbitrary composite support. | Actioned |
 | D22 | 2026-10-16 | Pause graph optimization and deliver bounded owning to-one joins to immutable, non-null, unique non-ID BASIC columns (single/composite, annotation/XML). Separate referenced tuple access/binders from JPA identity; resolve actual IDs before ordinary loading, preserve lifecycle/cache/query semantics and generate FKs to real unique constraints. Explicitly refuse invalid/mutable/unsupported shapes and non-null cycles; keep business owners on safe eager/ordinary graph/fetch loading rather than ID-assuming lazy/batch/optimized hydration. | Actioned |
 | D21 | 2026-10-16 | Extend D19/D20 to graph-requested collections reached through finite root to-one chains. Seed intermediate owners through D14–D18 LEFT hydration, then group distinct compatible owner identities with D13 key/parameter bounds and the existing collection collectors; merge shared owner-type requests at their latest collection depth. Preserve the two-collection-edge limit, independent branches, lifecycle/dirty/in-place/cache/flush/no-auto-flush contracts and SQL root-only pagination. Explicit cyclic paths, third edges and unsupported eager/mapping/query closures retain complete fallback/refusal; earlier graph eligibility and explicit fetch joins remain unchanged. | Actioned |
 | D20 | 2026-10-16 | Extend D19 to at most two collection edges beginning at a root collection, including second owners reached through element to-ones. Merge nested owner-type/collection requests, deduplicate identities from stage-one rows and apply each owner's D13 key/parameter bound. Reuse D16–D18 collectors and staged lifecycle/cache/dirty/in-place completion; SQL root-only pagination and no find auto-flush remain intact. Third collection edges, root-to-one collections and unsupported eager/query/mapping closures retain complete fallback/refusal. Fix duplicate bag occurrence deletion (BUG-20261016-02) exposed by the nested dirty-state gate. | Actioned |

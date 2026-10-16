@@ -1,3 +1,78 @@
+## Noether simple-parent MapsId verification (D23) — 2026-10-16
+
+Baseline: `0633dad` (1019 reactor tests). D23 strengthens existing P5 derived
+identity instead of claiming MapsId was previously absent. The bounded new
+contract is **OneToOne** for an unnamed whole shared simple ID, and owning
+**ManyToOne/OneToOne** for a named direct BASIC embedded-ID component derived
+from a simple parent ID. Annotation and metadata-complete XML are covered.
+Normative Persistence 3.2 §2.4.2.1 requires OneToOne for a whole shared ID and
+read-only semantics for relationship-mapped embedded-ID components; the MapsId
+Javadoc's broader ManyToOne description is not a waiver of those rules.
+
+Mandatory red before production edits: **9 tests, 9 failures, 0 errors**.
+Follow-up reds cover record keys, missing-parent diagnostics, generated sequence
+cascade timing, callback/bulk/pre-flush identity changes, physical incoming-FK
+metadata/types, cyclic ordering and unsupported nested shapes. The first full
+patched run exposed four latent refresh errors in `annotations.mapsid` and
+`derivedid.ex1b/ex2b/ex3b`; a provider-owned red reproduces the missing rederivation.
+Refresh now completes IDs before snapshots/PostLoad, and read-only embedded
+components are rederived rather than rejected as independent key changes.
+BUG-20261016-06 preserves the investigation; no fixture or exclusion was changed.
+
+```sh
+export JAVA_HOME="$HOME/.sdkman/candidates/java/25.0.4-tem"
+export PATH="$JAVA_HOME/bin:$PATH"
+./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test \
+  -Dtest=MapsIdToOneTest,DerivedIdentityTest,ToOneTest,BusinessKeyToOneTest,LazyToOneTest,LazyCollectionTest,LazyBatchTest,FetchJoinTest,CollectionFetchJoinTest,CollectionSubgraphTest,SecondLevelCacheTest,PostLoadCollectionCycleTest,PersistenceContextTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw -ntp clean install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+| Gate | Tests | Pass | Failure | Error | Skip |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Focused MapsId/derived/context/to-one/business/lazy/fetch/graph/cache gate | 305 | 305 | 0 | 0 | 0 |
+| Clean root reactor, 89 XML reports | 1058 | 1058 | 0 | 0 | 0 |
+| Full locally patched Persistence TCK, PostgreSQL 17 | 2135 | 2131 | 0 | 0 | 4 |
+| Execution 1 | 2134 | 2130 | 0 | 0 | 4 |
+| Execution 2 (signature) | 1 | 1 | 0 | 0 | 0 |
+
+The **39 new provider-owned H2 regressions** assert actual generated/assigned IDs
+(including legitimate nongenerated zero), physical shared/named/incoming FK
+values and BIGINT types, real FK enforcement, sequence/IDENTITY cascades and merge,
+context/cache identity, callbacks, refresh, record keys, non-ID updates and delete
+order, JPQL/Criteria navigation/comparison/fetch, graph/cache loading and otherwise
+interceptable property-LAZY eager fallback. They also assert bootstrap refusal
+for invalid names/types/relationship kinds, overlapping/chained/generated/nested
+shapes, missing key remainders, identity reassignment/null, unmapped key mutation
+and bulk identity SET. Earlier P5 composite-parent examples remain green in the
+full PostgreSQL TCK; arbitrary composite/nested/partial key support is not claimed.
+
+Independent `mapsid-to-one-verify.py` aggregation checks **259 TCK XML reports**,
+**2135 distinct execution/class/method identities**, unchanged identity/outcome
+multisets against the D22 baseline, and **518 effective classpath checks**.
+All **49 official/derived input files** retain the same file sets and SHA-256
+hashes. ZIP entry comparison proves that only the two approved TCK-BUG-001 XML
+resources differ from the official jar; the other **1124 entries** are byte-identical.
+The tested core jar also matches its installed artifact byte-for-byte.
+
+- Official spec-tests SHA-256:
+  `a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`.
+- Derived TCK-BUG-001 SHA-256:
+  `1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+- Four unchanged official skips: `identifiabletype.Client#getDeclaredSingularAttributes`,
+  `query.language.Client6#resultContainsFetchReference`,
+  `entityManagerFactory.Client2#createEntityManagerFactoryStringMapTest`,
+  `schemaGeneration.annotations.tableGenerator.Client#tableGeneratorTest`.
+
+Session artifacts are prefixed `mapsid-to-one-`: red/focused/clean-install/full-TCK
+logs, pre-run official-input and TCK-identity snapshots, independent verifier,
+final identity outcomes and verification JSON. The disposable PostgreSQL container
+was removed; no shared service was restarted. This is a **locally patched result**,
+not an untouched official result or certification. D22 and older records below
+remain historical.
+
 ## Noether unique business-key to-one verification (D22) — 2026-10-16
 
 Baseline: `2283e5f` (998 reactor tests). D22 prioritizes bounded relational mapping

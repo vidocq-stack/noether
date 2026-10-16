@@ -131,6 +131,9 @@ public final class FlushEngine {
         for (ManagedEntity entry : context.entries()) {
             if (io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(entry.instance())) continue;
             MappedEntity type = entry.type();
+            if (entry.key() != null) {
+                type.validateMapsId(entry.instance(), entry.key().id());
+            }
             switch (entry.status()) {
                 case MANAGED -> {
                     Object[] state = read(type, entry.instance());
@@ -139,6 +142,7 @@ public final class FlushEngine {
                     } else if (type.state().dirty(entry.snapshot(), state)) {
                         // §3.6.3: PreUpdate may change the instance, its changes are written with the others
                         type.callback("PreUpdate", entry.instance());
+                        type.validateMapsId(entry.instance(), entry.key().id());
                         validateUpdate.accept(entry);
                         updates.add(new Work(entry, read(type, entry.instance())));
                     } else if (Locks.forcesIncrement(entry.lockMode())) {
@@ -163,9 +167,9 @@ public final class FlushEngine {
             }
         }
         inserts.sort(INSERT_ORDER);
-        orderBusinessInserts(inserts);
+        orderRequiredInserts(inserts);
         deletes.sort(DELETE_ORDER);
-        orderBusinessDeletes(deletes);
+        orderRequiredDeletes(deletes);
         Set<Object> pending = identitySet();
         Set<Object> removed = identitySet();
         deletes.forEach(work -> removed.add(work.entry().instance()));
@@ -237,43 +241,44 @@ public final class FlushEngine {
 
     // ---- inserts ------------------------------------------------------------------------------------------
 
-    /** Business tuples are already assigned, but a required FK still needs its target row before its owner. */
-    private static void orderBusinessInserts(List<Work> inserts) {
+    /** Required business and MapsId foreign keys must never be deferred to SQL NULL. */
+    private static void orderRequiredInserts(List<Work> inserts) {
         if (inserts.stream().noneMatch(w -> w.type().statements().references().stream()
-                .anyMatch(r -> requiredBusinessReference(w.type(), r)))) return;
+                .anyMatch(r -> requiredReference(w.type(), r)))) return;
         List<Work> remaining = new ArrayList<>(inserts);
         Set<Object> pending = identitySet();
         remaining.forEach(w -> pending.add(w.entry().instance()));
         inserts.clear();
         while (!remaining.isEmpty()) {
             Work next = remaining.stream().filter(w -> w.type().statements().references().stream()
-                .filter(r -> requiredBusinessReference(w.type(), r))
+                .filter(r -> requiredReference(w.type(), r))
                 .noneMatch(r -> w.state()[r.attribute()] != w.entry().instance()
                     && pending.contains(w.state()[r.attribute()]))).findFirst().orElseThrow(() ->
-                        new PersistenceException("Cannot insert a non-null business-key cycle without deferred database constraints"));
+                        new PersistenceException("Cannot insert a non-null business-key cycle or MapsId cycle without deferred database constraints"));
             remaining.remove(next);
             pending.remove(next.entry().instance());
             inserts.add(next);
         }
     }
 
-    private static boolean requiredBusinessReference(MappedEntity type, EntityStatements.Reference reference) {
-        if (!reference.businessKey()) return false;
+    private static boolean requiredReference(MappedEntity type, EntityStatements.Reference reference) {
         var association = (AssociationAttribute) type.model().attributes().get(reference.attribute());
+        if (association.mapsId() != null) return true;
+        if (!reference.businessKey()) return false;
         return !association.optional() || association.joinColumns().stream().anyMatch(j -> !j.nullable());
     }
 
-    private static void orderBusinessDeletes(List<Work> deletes) {
+    private static void orderRequiredDeletes(List<Work> deletes) {
         if (deletes.stream().noneMatch(w -> w.type().statements().references().stream()
-                .anyMatch(r -> requiredBusinessReference(w.type(), r)))) return;
+                .anyMatch(r -> requiredReference(w.type(), r)))) return;
         List<Work> remaining = new ArrayList<>(deletes);
         deletes.clear();
         while (!remaining.isEmpty()) {
             Work next = remaining.stream().filter(candidate -> remaining.stream().noneMatch(owner -> owner != candidate
                 && owner.type().statements().references().stream()
-                    .filter(r -> requiredBusinessReference(owner.type(), r))
+                    .filter(r -> requiredReference(owner.type(), r))
                     .anyMatch(r -> owner.entry().snapshot()[r.attribute()] == candidate.entry().instance())))
-                .findFirst().orElseThrow(() -> new PersistenceException("Cannot delete a non-null business-key cycle"));
+                .findFirst().orElseThrow(() -> new PersistenceException("Cannot delete a non-null business-key cycle or MapsId cycle"));
             remaining.remove(next);
             deletes.add(next);
         }
@@ -431,6 +436,13 @@ public final class FlushEngine {
 
     /** The column values of the row of {@code work}, foreign keys to rows not inserted yet left {@code NULL}. */
     private static Object[] insertValues(Work work, Set<Object> pending, List<ReferenceWrite> later) {
+        if (work.type().hasMapsId()) {
+            work.type().deriveId(work.entry().instance());
+            if (work.type().id(work.entry().instance()) == null) {
+                throw new PersistenceException("@MapsId requires an assigned parent identity and all remaining identifier parts");
+            }
+            work.type().access().read(work.entry().instance(), work.state());
+        }
         EntityStatements statements = work.type().statements();
         Object[] values = statements.values(work.state());
         for (EntityStatements.Reference reference : statements.references()) {

@@ -15,6 +15,39 @@ The official artifact checksums and TCK-BUG-001 byte-exact derived-jar fixture
 patch are unchanged; original artifacts are never edited. `TCK_FIXTURES=official`
 selects the untouched Persistence fixture. See the runner README for setup.
 
+== Simple-parent MapsId verification (D23, 2026-10-16)
+
+D23 strengthens existing P5 derived identity: unnamed whole shared simple ID
+on owning OneToOne, or one named direct BASIC embedded-ID component on owning
+ManyToOne/OneToOne to a simple-ID parent, annotation and metadata-complete XML.
+The normative §2.4.2.1 OneToOne restriction and read-only embedded-component
+rules are enforced; arbitrary nested/composite/partial keys are not claimed.
+
+Mandatory initial red: *9 tests / 9 failures / 0 errors* before production edits.
+The final focused gate passes *305/305*; full `clean install` passes
+*1058/1058* across *89 XML reports*, including *39* new provider-owned MapsId
+regressions and the existing Java module-path/processor/container vehicles.
+Coverage includes actual assigned/generated IDs and physical FK contents/types,
+sequence/IDENTITY cascades, merge/refresh, insert/delete ordering, immutable
+identity and read-only components, JPQL/Criteria, eager lazy/graph/cache fallbacks,
+callbacks and explicit unsupported-shape refusals.
+
+The final locally patched full PostgreSQL 17 TCK reports
+*2135 tests / 2131 passed / 0 failures / 0 errors / 4 unchanged official skips*.
+Execution 1 reports *2134 / 2130 / 0 / 0 / 4*; the isolated signature execution
+reports *1/1*. A preliminary run exposed four refresh/rederivation errors;
+BUG-20261016-06 and a provider-owned red retain that investigation. The final
+result includes the fix, without fixture or exclusion changes.
+
+Independent XML aggregation verifies *2135 distinct execution/class/method
+identities*, unchanged identity/outcome multisets, *518 effective classpath
+checks*, unchanged file sets and SHA-256 hashes for *49 official/derived inputs*,
+and exactly the two approved TCK-BUG-001 fixture-resource differences.
+All other *1124 jar entries* are identical. Artifacts use the
+`mapsid-to-one-` prefix in session storage; exact commands and checksums are in
+`noether-persistence/TCK.md`. This is locally patched evidence, not an untouched
+official result or certification. D22 and older entries remain historical.
+
 == Unique business-key to-one verification (D22, 2026-10-16)
 
 D22 adds bounded immutable unique non-ID BASIC target tuples to owning to-one

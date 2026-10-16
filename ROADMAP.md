@@ -4,7 +4,7 @@ Noether owns the implementations extracted from Mansart on 2026-10-11.
 
 | Building block | Status | Detailed roadmap |
 | --- | --- | --- |
-| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D22); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
+| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D23); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
 | Jakarta Validation 3.1 | V0–V2 provisional local test/TCK stopgap; not published | [Validation](noether-validation/ROADMAP.md) |
 
 The extraction changes repository, artifact, package and provider names, not
@@ -217,10 +217,22 @@ retain ordinary eager/graph/fetch loading, not ID-based optimized hydration or
 lazy batching. Detailed support/refusal rules and independent verification are
 in the Persistence roadmap and `TCK.md`; D5/D9–D21 and BUG history remain intact.
 
+Decision D23 (2026-10-16) strengthens the existing P5 MapsId support for simple
+parent identifiers: unnamed shared simple PK/FK on owning one-to-one, and a named
+direct BASIC component of an embedded ID on owning many-to-one/one-to-one,
+annotations and metadata-complete
+XML. Cascaded/generated IDs, insert dependencies, physical incoming key metadata,
+identity immutability, ordinary updates/deletes, JPQL/Criteria, eager graph/lazy
+fallbacks, cache and callbacks are covered. Invalid names/types, chained/nested/
+overlapping mappings and unsupported partial shapes fail explicitly. Existing P5
+flat composite-parent examples remain supported, without a broader composite claim.
+See the detailed roadmap and `TCK.md` for independently aggregated evidence.
+
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
-1. Remaining relational mapping shapes: derived-identity targets, business joins
+1. Remaining relational mapping shapes beyond D23's simple MapsId contract:
+   broader derived/composite/nested identity targets, business joins
    through join/secondary tables or inheritance, inverse business collections,
    embedded business association paths and safely mutable referenced keys;
    inverse many-to-many indexes and collection-table embeddable relationships.

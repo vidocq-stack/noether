@@ -419,6 +419,54 @@ paths, derived/unsupported nested identifiers and inverse collections on busines
 joins. Further mapping boundaries take priority over expanding D10–D21 optimization;
 see the detailed roadmap, `BUG.md` and `TCK.md`. Earlier D5/D9–D21 evidence is historical.
 
+### Simple MapsId derived identity (D23, 2026-10-16)
+
+The existing P5 derived-identity mappings now have a strengthened, bounded
+simple-parent contract, for annotations and metadata-complete `orm.xml`:
+
+- An owning `@OneToOne` with unnamed `@MapsId` derives a
+  dependent's simple `@Id` from the target's matching simple ID.
+- An owning `@ManyToOne` or `@OneToOne` with `@MapsId("parentId")`
+  derives one direct BASIC component of an `@EmbeddedId`
+  from the matching simple target ID. Other key components remain application
+  supplied. Mutable and record embedded identifiers are covered.
+
+```java
+@Id long id;
+@MapsId
+@OneToOne(cascade = CascadeType.PERSIST)
+@JoinColumn(name = "parent_id")
+Parent parent;
+```
+
+The relationship owns the shared PK/FK columns; the corresponding scalar ID
+attribute is not a second writable column. Initial derived values are copied
+from the relationship. Cascaded sequence IDs are available when persist returns;
+IDENTITY-derived values are finalized at insert, before PostPersist and caching.
+Generated-parent primitive zero placeholders are never registered as real IDs
+(an explicitly assigned zero on a nongenerated parent remains valid).
+Once registered, changing or clearing the identity-defining relationship or
+non-derived key parts is refused, including PreUpdate changes and JPQL/Criteria
+bulk identity assignments. Direct changes to relationship-mapped embedded-ID
+components are ignored and rederived, as required by their read-only semantics.
+Ordinary non-ID updates and dependent-first deletes remain supported.
+
+Loads, incoming foreign keys, JPQL/Criteria paths and entity comparisons, fetch
+joins/graphs, cache identity and PostLoad use the same actual tuple. MapsId
+associations retain the existing safe eager fallback rather than gaining lazy
+subclass/batch eligibility. Generated DDL references actual derived columns and
+preserves their underlying target key types.
+
+Unknown/dotted names, incompatible types, named MapsId on a simple ID, inverse
+relationships, whole-ID many-to-one mappings (§2.4.2.1), overlapping mappings,
+join tables, independently generated dependent
+IDs, noninsertable/secondary-table join columns, chained derived targets, nested
+target IDs and unmapped nested key remainders are explicitly refused.
+Incomplete remaining embedded key values or missing parent identities fail before
+the dependent INSERT. The already-covered P5 flat composite-parent examples remain
+supported; this lot does **not** claim arbitrary composite/nested/partial mappings.
+See D23 in the detailed roadmap and `noether-persistence/TCK.md` for evidence.
+
 The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;
 the bundled Jakarta ORM schema retains its original upstream licence.

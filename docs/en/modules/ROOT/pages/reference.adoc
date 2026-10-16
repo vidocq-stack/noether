@@ -205,6 +205,46 @@ changes and omitted unsupported lazy mappings. Explicit fetch joins and unnested
 single-collection graphs keep their existing collectors. Deeper graphs and broader
 fetch/lazy/batch/mapping eligibility remain separate backlog items.
 
+== Simple-parent MapsId derived identity (D23, 2026-10-16)
+
+The existing P5 mappings now have a strengthened bounded contract:
+
+* Owning `@OneToOne` with unnamed `@MapsId`: dependent simple
+  `@Id` and parent simple ID have matching types.
+* Owning `@ManyToOne`/`@OneToOne` with `@MapsId("parentId")`: one direct BASIC component of a dependent
+  `@EmbeddedId` matches the parent's simple ID. Other components are supplied by
+  the application. Mutable and record key classes are covered.
+
+Annotations and metadata-complete `orm.xml` (`maps-id=""` or
+`maps-id="parentId"`) use the same model and generated accesses.
+The association owns the shared PK/FK columns; derived scalar attributes are
+not additional writable columns. Initial values come from the parent.
+Sequence-cascaded IDs are available after persist/merge; IDENTITY values are
+finalized before the dependent INSERT and PostPersist. No generated primitive
+zero placeholder is registered or cached as an actual dependent key.
+
+An identity cannot be changed or cleared after registration, including before
+first flush, inside PreUpdate or through bulk identity SET. Ordinary updates and
+dependent-first deletes remain supported. Direct writes to relationship-mapped
+embedded-ID components are ignored and rederived (their specification-defined
+read-only semantics); refresh restores them before snapshots and PostLoad.
+Missing parent identity and incomplete
+remaining key components fail before the dependent INSERT.
+Incoming FKs and generated DDL use actual derived column names and underlying
+BASIC key types. ID/FK loads, JPQL/Criteria navigation/comparison, fetch joins/
+graphs, caches and callbacks agree on the tuple. MapsId relationships retain
+the existing eager fallback, even for otherwise interceptable LAZY properties.
+
+Bootstrap explicitly refuses unknown/dotted names, incompatible types, named
+MapsId on a simple ID, whole-ID many-to-one (OneToOne is required by §2.4.2.1),
+inverse/collection/join-table mappings, overlapping key
+parts, independently generated dependent IDs, noninsertable/secondary-table
+join columns, chained targets and unsupported nested target/remaining key
+shapes. Existing P5 exact matching flat composite-parent examples remain
+supported; D23 does not imply arbitrary nested/composite/partial key support,
+incoming joins to nested composite-derived keys or broader optimized loading.
+See the detailed Persistence roadmap and `TCK.md` for the exact evidence.
+
 == Unique business-key to-one joins (D22, 2026-10-16)
 
 D22 prioritizes relational mapping over further graph optimization.

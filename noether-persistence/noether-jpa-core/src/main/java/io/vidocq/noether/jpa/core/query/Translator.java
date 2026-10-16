@@ -733,6 +733,7 @@ final class Translator {
                 List<String> segments = assignment.path().segments();
                 List<String> path = lookup(segments.getFirst()) == variable ? segments.subList(1, segments.size()) : segments;
                 int index = attribute(variable, path.getFirst());
+                validateMapsIdAssignment(type, index);
                 AttributeModel attribute = type.model().attributes().get(index);
                 List<EntityStatements.Column> columns;
                 List<Expression> values;
@@ -890,6 +891,7 @@ final class Translator {
                 throw new IllegalArgumentException("SET assigns an attribute, not the variable " + segments.getFirst() + " (§4.10)");
             }
             int index = attribute(variable, attribute.getFirst());
+            validateMapsIdAssignment(variable.type(), index);
             AttributeModel model = variable.type().model().attributes().get(index);
             if (unit.businessKeyAttribute(variable.type(), index)) {
                 throw new IllegalArgumentException("Referenced business-key attributes are immutable; bulk SET is not supported");
@@ -923,6 +925,14 @@ final class Translator {
         Expression where = restricted(update.where() == null ? null : condition(update.where()));
         requireSingleTable();
         return new UpdateQuery(roots.getFirst(), variable.alias(), assignments, where);
+    }
+
+    private static void validateMapsIdAssignment(MappedEntity type, int attribute) {
+        if (!type.hasMapsId()) return;
+        if (Arrays.stream(type.idAttributes()).anyMatch(i -> i == attribute)
+                || type.model().attributes().get(attribute) instanceof AssociationAttribute a && a.mapsId() != null) {
+            throw new jakarta.persistence.PersistenceException("@MapsId identifiers and relationships cannot be assigned by bulk SET");
+        }
     }
 
     private List<Expression> businessAssignment(EntityStatements statements, EntityStatements.Reference reference, Ast.Expr value) {

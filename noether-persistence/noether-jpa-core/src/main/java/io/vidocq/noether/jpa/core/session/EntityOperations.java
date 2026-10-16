@@ -105,6 +105,10 @@ final class EntityOperations {
             context.persist(entity, type);
         }
         cascade(entity, type, CascadeType.PERSIST, target -> persist(target, visited));
+        if (type.hasMapsId() && !context.entry(entity).orElseThrow().inserted()) {
+            type.deriveId(entity);
+            context.identify(context.entry(entity).orElseThrow(), type.id(entity));
+        }
     }
 
     /** §11.1.20: a generated identifier not assigned yet is assigned now, unless the insert generates it (IDENTITY). */
@@ -197,6 +201,10 @@ final class EntityOperations {
         }
         merged.put(entity, managed);
         cascadeMerge(entity, managed, type, merged);
+        if (type.hasMapsId() && !context.entry(managed).orElseThrow().inserted()) {
+            type.deriveId(managed);
+            context.identify(context.entry(managed).orElseThrow(), type.id(managed));
+        }
         return managed;
     }
 

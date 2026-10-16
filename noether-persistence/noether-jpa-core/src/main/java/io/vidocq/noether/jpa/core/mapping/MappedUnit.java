@@ -207,6 +207,7 @@ public final class MappedUnit {
     public static MappedUnit of(Collection<String> classNames, ClassLoader loader, ClassInfos source,
             Iterable<ManagedAccessProvider> providers) {
         PersistenceUnitModel model = EntityModelBuilder.build(classNames, source, loader);
+        validateMapsIds(model);
         Map<Class<?>, InheritanceMapping> inheritance = new IdentityHashMap<>();
         for (EntityModel entity : model.entities()) {
             inheritance.put(entity.javaType(), new InheritanceMapping(entity, model, source));
@@ -260,6 +261,67 @@ public final class MappedUnit {
             }
         }
         return new MappedUnit(model, entities, embeddables, binders, mapped, loader, source, inheritance);
+    }
+
+    private static void validateMapsIds(PersistenceUnitModel unit) {
+        for (EntityModel owner : unit.entities()) {
+            Set<String> mapped = new LinkedHashSet<>();
+            for (AttributeModel attribute : owner.attributes()) {
+                if (!(attribute instanceof AssociationAttribute association) || association.mapsId() == null) continue;
+                String name = association.mapsId();
+                String problem = "Invalid @MapsId relationship " + owner.entityName() + "." + association.name() + ": ";
+                if (!association.singleValued() || !association.owning() || association.joinTable() != null) {
+                    throw new PersistenceException(problem + "requires an owning to-one foreign key");
+                }
+                if (name.isEmpty() && association.kind() != AssociationAttribute.Kind.ONE_TO_ONE) {
+                    throw new PersistenceException(problem + "a shared whole identifier requires OneToOne (§2.4.2.1)");
+                }
+                if (!mapped.add(name) || mapped.contains("") && mapped.size() > 1) {
+                    throw new PersistenceException(problem + "overlapping identifier mappings");
+                }
+                EntityModel target = unit.entities().stream().filter(e -> e.javaType() == association.targetEntity())
+                    .findFirst().orElseThrow(() -> new PersistenceException(problem + "target is not managed"));
+                if (target.attributes().stream().anyMatch(a -> a instanceof AssociationAttribute r && r.mapsId() != null)) {
+                    throw new PersistenceException(problem + "chained derived identifiers are not supported");
+                }
+                if (target.id() instanceof IdModel.Embedded embedded
+                        && embedded.attribute().embeddable().attributes().stream().anyMatch(a -> !(a instanceof BasicAttribute))
+                        || target.id() instanceof IdModel.ByIdClass byIdClass
+                            && byIdClass.attributes().stream().anyMatch(a -> !(a instanceof BasicAttribute))) {
+                    throw new PersistenceException(problem + "nested or relationship-valued target identifiers are not supported");
+                }
+                Class<?> targetId = switch (target.id()) {
+                    case IdModel.Single single -> single.attribute().javaType();
+                    case IdModel.Embedded embedded -> embedded.attribute().javaType();
+                    case IdModel.ByIdClass byIdClass -> byIdClass.idClass();
+                    case IdModel.Derived _ -> throw new PersistenceException(problem + "chained derived identifiers are not supported");
+                };
+                AttributeModel dependent = switch (owner.id()) {
+                    case IdModel.Single single when name.isEmpty() && single.generation().isEmpty() -> single.attribute();
+                    case IdModel.Embedded embedded when name.isEmpty() -> embedded.attribute();
+                    case IdModel.Embedded embedded -> embedded.attribute().embeddable().attributes().stream()
+                        .filter(a -> a.name().equals(name)).findFirst()
+                        .orElseThrow(() -> new PersistenceException(problem + "no direct embedded identifier attribute " + name));
+                    default -> throw new PersistenceException(problem + "requires an assigned simple or embedded identifier");
+                };
+                if (boxed(dependent.javaType()) != boxed(targetId)) {
+                    throw new PersistenceException(problem + "identifier types must match the target identifier type");
+                }
+                if (association.joinColumns().stream().anyMatch(j -> !j.insertable() || j.table() != null)) {
+                    throw new PersistenceException(problem + "requires insertable primary-table join columns");
+                }
+            }
+            if (!mapped.isEmpty() && owner.id() instanceof IdModel.Embedded embedded
+                    && embedded.attribute().embeddable().attributes().stream()
+                        .anyMatch(a -> !(a instanceof BasicAttribute) && !mapped.contains(a.name()))) {
+                throw new PersistenceException("Invalid @MapsId identifier of " + owner.entityName()
+                    + ": unmapped nested embedded identifier parts are not supported");
+            }
+        }
+    }
+
+    private static Class<?> boxed(Class<?> type) {
+        return type.isPrimitive() ? java.lang.invoke.MethodType.methodType(type).wrap().returnType() : type;
     }
 
     public InheritanceMapping inheritance(Class<?> type) {
