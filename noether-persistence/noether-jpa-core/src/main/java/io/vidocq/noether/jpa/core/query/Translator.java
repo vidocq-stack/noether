@@ -153,10 +153,11 @@ final class Translator {
      * Lowers query graph to-ones to the existing fetch-join pipeline. No semantic query clause is changed:
      * graph joins are LEFT joins, and shapes not admitting D11 hydration keep their ordinary follow-up fetch plan.
      * FETCH only requests explicit nodes here (the loader may still overfetch eager state); LOAD additionally
-     * requests mapped eager to-ones. Collection nodes and unsupported entity types remain loader work.
+     * requests mapped eager to-ones. One leaf root collection may instead reuse D12's complete row collector;
+     * nested/multiple collection graphs and unsupported entity types remain loader work.
      */
     static Ast.Statement graphSelect(Ast.Statement statement, MappedUnit unit, FetchPlan graph, boolean load) {
-        if (!(statement instanceof Ast.Select select) || select.distinct() || select.from().size() != 1
+        if (!(statement instanceof Ast.Select select) || select.from().size() != 1
                 || select.items().size() != 1 || !select.groupBy().isEmpty() || select.having() != null
                 || !(select.items().getFirst().expression() instanceof Ast.Path path)
                 || path.treatEntity() != null || path.segments().size() != 1) return statement;
@@ -166,6 +167,19 @@ final class Translator {
         Translator planner = new Translator(unit, null, null);
         MappedEntity root = planner.entityNamed(range.entity());
         if (!planner.hydratable(root)) return statement;
+        String collection = planner.graphCollection(root, graph);
+        if (collection != null && range.joins().isEmpty()) {
+            String alias = "_noether_graph_collection";
+            while (statement.toString().toLowerCase(Locale.ROOT).contains(alias)) alias += "_";
+            Ast.Select execution = new Ast.Select(select.distinct(), select.items(),
+                List.of(new Ast.Range(range.entity(), range.collection(), range.variable(),
+                    List.of(new Ast.Join(Ast.Join.Kind.LEFT, true,
+                        new Ast.Path(List.of(range.variable(), collection)), alias, null)))),
+                select.where(), select.groupBy(), select.having(), select.orderBy());
+            // Never add a multiplying join unless the existing collector can assemble this exact shape.
+            return translate(execution, unit, null, null, null, true).collection() != null ? execution : statement;
+        }
+        if (select.distinct()) return statement;
         List<Ast.Join> joins = new ArrayList<>(range.joins());
         planner.graphJoins(root, range.variable(), graph, load, new java.util.HashSet<>(), joins,
             statement.toString().toLowerCase(Locale.ROOT), new int[1]);
@@ -173,6 +187,22 @@ final class Translator {
         return new Ast.Select(select.distinct(), select.items(),
             List.of(new Ast.Range(range.entity(), range.collection(), range.variable(), joins)),
             select.where(), select.groupBy(), select.having(), select.orderBy());
+    }
+
+    private String graphCollection(MappedEntity root, FetchPlan graph) {
+        String collection = null;
+        for (var node : graph.attributes().entrySet()) {
+            // Subgraphs, including nested to-ones on a collection, belong to a separate bounded lot.
+            if (!node.getValue().isEmpty()) return null;
+            var attribute = root.model().attribute(node.getKey()).orElse(null);
+            if (attribute instanceof AssociationAttribute association && association.singleValued()) return null;
+            if (attribute instanceof ElementCollectionAttribute
+                    || attribute instanceof AssociationAttribute association && !association.singleValued()) {
+                if (collection != null) return null;
+                collection = node.getKey();
+            }
+        }
+        return collection;
     }
 
     /**
@@ -197,7 +227,7 @@ final class Translator {
         }
         return new Compiled(new Query(false, query.select(), query.from(), where, query.groupBy(),
             query.having(), query.orderBy(), null, null), compiled.items(), compiled.resultType(),
-            compiled.slots(), compiled.mutations(), compiled.hydrations());
+            compiled.slots(), compiled.mutations(), compiled.hydrations(), compiled.collection(), compiled.collectionFetch());
     }
 
     private void graphJoins(MappedEntity source, String variable, FetchPlan requested, boolean load,

@@ -1,3 +1,66 @@
+## Noether one-collection entity graph SQL verification — 2026-10-16
+
+Decision D16 reuses D12's complete collection assembler, D14's graph planner and
+D15's graph-aware find routing for one explicitly requested leaf root collection.
+The mandatory pre-production red gate ran **32 collection tests / 8 SQL-count
+failures / 0 errors**. The completed collection gate passes **34/34** (14 added
+scenarios), and the focused graph/cache/lazy/batch gate passes **144/144**.
+
+Coverage asserts actual values, SELECT totals and load state for JPQL/Criteria,
+FETCH/LOAD and typed find, empty owners/missing roots, null elements and duplicate
+bags, list order/index/basic and derived map keys, shared identity, managed dirty
+wrappers/targets, callback completion, cache reuse/no-auto-flush, graph mutation/hint
+replacement, SQL owner-page completeness, nested/multiple graph fallback, filtering
+joins and existing explicit fetch/to-one graphs. Exact eligibility and remaining
+work are in `ROADMAP.md` (D16); nested-to-one collection subgraphs, multiple collections
+and mixed explicit to-one graph nodes are not new SQL shapes.
+
+On macOS aarch64, Temurin **25.0.4+7-LTS**, Maven **3.9.16**, from the Noether root:
+
+```bash
+export JAVA_HOME="$HOME/.sdkman/candidates/java/25.0.4-tem"
+export PATH="$JAVA_HOME/bin:$PATH"
+./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test \
+  -Dtest=CollectionFetchJoinTest,FetchJoinTest,LazyCollectionTest,LazyToOneTest,SecondLevelCacheTest,LazyBatchTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw -ntp clean install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+The final clean reactor finished **2026-10-16 09:04:51 CEST**: **925 tests /
+925 passed / 0 failures / 0 errors / 0 skips**, independently counted from **85 XML
+reports** (911 baseline plus 14 tests). The full locally patched Persistence 3.2.1
+TCK on an isolated Docker **PostgreSQL 17-alpine** finished **09:03:32 CEST**:
+**2135 tests / 2131 passed / 0 failures / 0 errors / 4 skips**.
+Independent testcase-level aggregation verifies all **259 XML reports**, all
+**2135 unique execution/class/method identities** (no duplicates), exact identity
+and outcome equality with the D15 baseline, and the derived fixture as the only
+spec-tests jar in both test classpaths of every report (**518 checks**).
+All **85** original `.tck-cache` / installed `jakarta/tck` files and their complete
+file set are unchanged; this check includes installed metadata. The installed
+official jar and derived jar retain their respective SHA-256:
+
+```text
+official a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024
+derived  1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4
+```
+
+The unchanged official skips (execution 1) are:
+
+- `core.metamodelapi.identifiabletype.Client#getDeclaredSingularAttributes`
+- `core.query.language.Client6#resultContainsFetchReference`
+- `se.entityManagerFactory.Client2#createEntityManagerFactoryStringMapTest`
+- `se.schemaGeneration.annotations.tableGenerator.Client#tableGeneratorTest`
+
+Names above are relative to `ee.jakarta.tck.persistence`. The runner's exit 0
+alone is not used as proof. This is a locally patched result, not an untouched
+official score or certification. No official fixture, SQL DDL or test was edited.
+D5/D9–D15 evidence below remains historical. The ordinary-find callback reentry
+discovered while creating the unloaded-root fixture is logged as
+**BUG-20261016-01 (OPEN, pre-existing, outside D16)**; the D16 staged path passes
+both owner and element callback assertions.
+
 ## Noether find graph SQL to-one verification — 2026-10-16
 
 Decision D15 extends D14's graph planner and D11's statement-column hydration to

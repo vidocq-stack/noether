@@ -380,6 +380,306 @@ class CollectionFetchJoinTest {
         assertThat(owner.children).extracting(c -> c.id).containsExactly(11L, 10L);
     }
 
+    // §3.7.4: graph joins initialize state, never filter owners or multiply query results.
+    private EntityGraph<Owner> graph(String attribute) {
+        var graph = em.createEntityGraph(Owner.class);
+        graph.addAttributeNodes(attribute);
+        return graph;
+    }
+
+    private void cold() {
+        em.clear();
+        factory.getCache().evictAll();
+        sql.clear();
+        Owner.LOADS.set(0);
+        Child.LOADS.set(0);
+    }
+
+    @Test void collectionGraphJpqlFetchAndLoadUseOneLeftSelect() {
+        for (String hint : List.of("jakarta.persistence.fetchgraph", "jakarta.persistence.loadgraph")) {
+            cold();
+            List<Owner> owners = em.createQuery("select o from CfOwner o order by o.id", Owner.class)
+                .setHint(hint, graph("children")).getResultList();
+            assertThat(owners).extracting(o -> o.id).containsExactly(1L, 2L, 3L);
+            assertThat(owners.getFirst().children).extracting(c -> c.id).containsExactly(11L, 10L);
+            assertThat(owners.get(1).children).isEmpty();
+            assertThat(owners.get(2).children).isEmpty();
+            assertThat(owners).allSatisfy(o -> assertThat(factory.getPersistenceUnitUtil().isLoaded(o, "children")).isTrue());
+            assertThat(owners.getFirst().children).allSatisfy(c -> assertThat(c.owner).isSameAs(owners.getFirst()));
+            assertThat(Owner.LOADS.get()).isEqualTo(3);
+            assertThat(Child.LOADS.get()).isEqualTo(2);
+            assertThat(selects()).as(hint).isEqualTo(1);
+            assertThat(sql.getFirst()).containsIgnoringCase("left join");
+        }
+    }
+
+    @Test void collectionGraphCriteriaDistinctAndRootFilterUseOneSelect() {
+        for (String hint : List.of("jakarta.persistence.fetchgraph", "jakarta.persistence.loadgraph")) {
+            cold();
+            var cb = em.getCriteriaBuilder();
+            var criteria = cb.createQuery(Owner.class);
+            var root = criteria.from(Owner.class);
+            criteria.select(root).distinct(true).where(cb.ge(root.get("id"), 1L)).orderBy(cb.asc(root.get("id")));
+            var owners = em.createQuery(criteria).setHint(hint, graph("labels")).getResultList();
+            assertThat(owners).extracting(o -> o.id).containsExactly(1L, 2L, 3L);
+            assertThat(owners.getFirst().labels).containsExactly("z", "a", "z");
+            assertThat(owners.get(1).labels).isEmpty();
+            assertThat(selects()).isEqualTo(1);
+        }
+    }
+
+    @Test void collectionGraphFindFetchAndLoadInitializeRowsAndMissingRoots() {
+        for (String hint : List.of("jakarta.persistence.fetchgraph", "jakarta.persistence.loadgraph")) {
+            for (String attribute : List.of("children", "labels")) {
+                cold();
+                Owner owner = em.find(Owner.class, 1L, Map.of(hint, graph(attribute)));
+                assertThat(factory.getPersistenceUnitUtil().isLoaded(owner, attribute)).isTrue();
+                if (attribute.equals("children")) assertThat(owner.children).extracting(c -> c.id).containsExactly(11L, 10L);
+                else assertThat(owner.labels).containsExactly("z", "a", "z");
+                assertThat(selects()).as(hint + " " + attribute).isEqualTo(1);
+                cold();
+                owner = em.find(Owner.class, 2L, Map.of(hint, graph(attribute)));
+                assertThat(selects()).isEqualTo(1);
+                assertThat(owner.children).isEmpty();
+                assertThat(owner.labels).isEmpty();
+                assertThat(factory.getPersistenceUnitUtil().isLoaded(owner, attribute)).isTrue();
+                cold();
+                assertThat(em.find(Owner.class, 999L, Map.of(hint, graph(attribute)))).isNull();
+                assertThat(selects()).isEqualTo(1);
+            }
+        }
+    }
+
+    @Test void collectionGraphPreservesNullRowsDuplicatesAndMapKeys() {
+        persistNullElements();
+        for (String attribute : List.of("labels", "bag", "settings", "named", "byName", "values", "sorted", "shared")) {
+            cold();
+            var owners = em.createQuery("select o from CfOwner o order by o.id", Owner.class)
+                .setHint("jakarta.persistence.fetchgraph", graph(attribute)).getResultList();
+            Owner owner = owners.getFirst();
+            assertThat(factory.getPersistenceUnitUtil().isLoaded(owner, attribute)).isTrue();
+            switch (attribute) {
+                case "labels" -> assertThat(owner.labels).containsExactly("z", "a", "z", null);
+                case "bag" -> assertThat(owner.bag).containsExactlyInAnyOrder("same", "same", "different", null);
+                case "settings" -> assertThat(owner.settings).containsEntry("null-value", null).containsEntry("a", "one").hasSize(3);
+                case "named" -> assertThat(owner.named).hasSize(2).containsKeys("first", "second");
+                case "byName" -> assertThat(owner.byName).hasSize(2).containsKeys("x", "y");
+                case "values" -> assertThat(owner.values).extracting(v -> v.text).containsExactly("a", "b");
+                case "sorted" -> assertThat(owner.sorted).extracting(c -> c.id).containsExactly(10L, 11L);
+                case "shared" -> assertThat(owners.get(2).shared.iterator().next()).isSameAs(
+                    owner.shared.stream().filter(c -> c.id == 10).findFirst().orElseThrow());
+            }
+            assertThat(owners).hasSize(3);
+            assertThat(selects()).as(attribute).isEqualTo(1);
+        }
+    }
+
+    @Test void collectionGraphFindUsesSameNullAndMapAssembly() {
+        persistNullElements();
+        for (String attribute : List.of("labels", "bag", "settings", "named")) {
+            cold();
+            Owner owner = em.find(Owner.class, 1L, Map.of("jakarta.persistence.fetchgraph", graph(attribute)));
+            switch (attribute) {
+                case "labels" -> assertThat(owner.labels).containsExactly("z", "a", "z", null);
+                case "bag" -> assertThat(owner.bag).containsExactlyInAnyOrder("same", "same", "different", null);
+                case "settings" -> assertThat(owner.settings).containsEntry("null-value", null).hasSize(3);
+                case "named" -> assertThat(owner.named).containsKeys("first", "second").hasSize(2);
+            }
+            assertThat(selects()).as(attribute).isEqualTo(1);
+        }
+    }
+
+    @Test void collectionGraphCompletesEagerStateBeforeCallbacksForQueriesAndTypedFind() {
+        persistNullElements();
+        for (String hint : List.of("jakarta.persistence.fetchgraph", "jakarta.persistence.loadgraph")) {
+            cold();
+            var graph = em.createEntityGraph(Inventory.class);
+            graph.addAttributeNodes("tags");
+            Inventory.loadedSize = -1;
+            Inventory inventory = em.createQuery("select i from CfInventory i where i.id = 91", Inventory.class)
+                .setHint(hint, graph).getSingleResult();
+            assertThat(inventory.tags).containsExactly("z", "z", "a", null);
+            assertThat(Inventory.loadedSize).isEqualTo(4);
+            assertThat(selects()).isEqualTo(1);
+            cold();
+            Inventory.loadedSize = -1;
+            inventory = em.find(graph, 91L);
+            assertThat(inventory.tags).containsExactly("z", "z", "a", null);
+            assertThat(Inventory.loadedSize).isEqualTo(4);
+            assertThat(selects()).isEqualTo(1);
+        }
+    }
+
+    @Test void collectionGraphFindHydratesUnloadedManagedRootInPlaceBeforeCallbacks() {
+        em.getTransaction().begin();
+        Group group = new Group();
+        group.setId(61);
+        Member member = new Member();
+        member.setId(71);
+        member.setName("member");
+        member.setGroup(group);
+        group.getMembers().add(member);
+        Holder holder = new Holder();
+        holder.setId(81);
+        holder.setGroup(group);
+        em.persist(group);
+        em.persist(member);
+        em.persist(holder);
+        em.getTransaction().commit();
+        cold();
+        Group reference = em.find(Holder.class, 81L).getGroup();
+        assertThat(factory.getPersistenceUnitUtil().isLoaded(reference)).isFalse();
+        sql.clear();
+        var graph = em.createEntityGraph(Group.class);
+        graph.addAttributeNodes("members");
+        Group.loadedSize = Member.loadedSize = -1;
+        Member.loads = 0;
+        Group found = em.find(Group.class, 61L, Map.of("jakarta.persistence.loadgraph", graph));
+        assertThat(found).isSameAs(reference);
+        assertThat(found.getMembers()).extracting(Member::getId).containsExactly(71L);
+        assertThat(found.getMembers().getFirst().getGroup()).isSameAs(reference);
+        assertThat(Group.loadedSize).isEqualTo(1);
+        assertThat(Member.loadedSize).isEqualTo(1);
+        assertThat(Member.loads).isEqualTo(1);
+        assertThat(selects()).isEqualTo(1);
+    }
+
+    @Test void collectionGraphPaginationLimitsOwnersInSqlAndCompletesCollections() {
+        var query = em.createQuery("select o from CfOwner o order by o.id", Owner.class)
+            .setHint("jakarta.persistence.fetchgraph", graph("labels")).setMaxResults(1);
+        var owners = query.getResultList();
+        assertThat(owners).extracting(o -> o.id).containsExactly(1L);
+        assertThat(owners.getFirst().labels).containsExactly("z", "a", "z");
+        assertThat(sql.getFirst()).containsIgnoringCase("fetch first");
+        assertThat(selects()).isEqualTo(3); // SQL owner page, root state, complete collection
+        cold();
+        owners = query.setFirstResult(1).getResultList();
+        assertThat(owners).extracting(o -> o.id).containsExactly(2L);
+        assertThat(owners.getFirst().labels).isEmpty();
+        assertThat(sql.getFirst()).containsIgnoringCase("offset");
+        cold();
+        var cb = em.getCriteriaBuilder();
+        var criteria = cb.createQuery(Owner.class);
+        var root = criteria.from(Owner.class);
+        criteria.select(root).orderBy(cb.asc(root.get("id")));
+        owners = em.createQuery(criteria).setHint("jakarta.persistence.loadgraph", graph("children"))
+            .setMaxResults(1).getResultList();
+        assertThat(owners).extracting(o -> o.id).containsExactly(1L);
+        assertThat(owners.getFirst().children).extracting(c -> c.id).containsExactly(11L, 10L);
+        assertThat(factory.getPersistenceUnitUtil().isLoaded(owners.getFirst(), "children")).isTrue();
+        assertThat(sql.getFirst()).containsIgnoringCase("fetch first");
+        assertThat(selects()).isEqualTo(4); // SQL owner page, root, collection keys, batched target state
+    }
+
+    @Test void collectionGraphIsReplannedAfterGraphMutationAndHintReplacement() {
+        var graph = graph("labels");
+        var query = em.createQuery("select o from CfOwner o where o.id = 1", Owner.class)
+            .setHint("jakarta.persistence.fetchgraph", graph);
+        assertThat(query.getSingleResult().labels).containsExactly("z", "a", "z");
+        assertThat(selects()).isEqualTo(1);
+        cold();
+        graph.addAttributeNodes("children");
+        Owner owner = query.getSingleResult();
+        assertThat(owner.children).hasSize(2);
+        assertThat(owner.labels).containsExactly("z", "a", "z");
+        assertThat(sql.getFirst()).doesNotContainIgnoringCase(" join ");
+        cold();
+        owner = query.setHint("jakarta.persistence.fetchgraph", graph("bag")).getSingleResult();
+        assertThat(owner.bag).containsExactlyInAnyOrder("same", "same", "different");
+        assertThat(selects()).isEqualTo(1);
+    }
+
+    @Test void collectionGraphKeepsDirtyManagedWrappersTargetsAndOrphanRemoval() {
+        Owner owner = em.find(Owner.class, 1L);
+        var wrapper = owner.children;
+        owner.name = "dirty";
+        sql.clear();
+        Owner found = em.createQuery("select o from CfOwner o where o.id = 1", Owner.class)
+            .setHint("jakarta.persistence.fetchgraph", graph("children")).getSingleResult();
+        assertThat(found).isSameAs(owner);
+        assertThat(found.children).isSameAs(wrapper);
+        assertThat(found.name).isEqualTo("dirty");
+        assertThat(selects()).isEqualTo(1);
+        wrapper.getFirst().name = "dirty-child";
+        wrapper.removeLast();
+        sql.clear();
+        assertThat(em.find(Owner.class, 1L, Map.of("jakarta.persistence.loadgraph", graph("children")))).isSameAs(owner);
+        assertThat(wrapper).hasSize(1);
+        assertThat(wrapper.getFirst().name).isEqualTo("dirty-child");
+        assertThat(selects()).isZero();
+        assertThat(em.createQuery("select o from CfOwner o where o.id = 1", Owner.class)
+            .setHint("jakarta.persistence.fetchgraph", graph("children")).getSingleResult()).isSameAs(owner);
+        assertThat(wrapper).hasSize(1);
+        assertThat(wrapper.getFirst().name).isEqualTo("dirty-child");
+        assertThat(selects()).isEqualTo(1);
+        owner.shared.removeIf(c -> c.id == 10);
+        owner.named.remove("first");
+        owner.byName.remove("x");
+        em.find(Owner.class, 3L).shared.clear();
+        em.getTransaction().begin();
+        em.flush();
+        em.getTransaction().commit();
+        cold();
+        assertThat(em.find(Child.class, 10L)).isNull();
+        assertThat(em.find(Child.class, 11L).name).isEqualTo("dirty-child");
+        assertThat(em.find(Owner.class, 1L).name).isEqualTo("dirty");
+    }
+
+    @Test void collectionGraphFindCacheHitAndManagedRootDoNotAutoFlush() {
+        Owner owner = em.find(Owner.class, 1L, Map.of("jakarta.persistence.fetchgraph", graph("labels")));
+        assertThat(owner.labels).containsExactly("z", "a", "z");
+        assertThat(selects()).isEqualTo(1);
+        em.clear(); sql.clear();
+        owner = em.find(Owner.class, 1L, Map.of("jakarta.persistence.loadgraph", graph("labels")));
+        assertThat(owner.labels).containsExactly("z", "a", "z");
+        assertThat(selects()).isZero();
+        em.getTransaction().begin();
+        owner.name = "not-flushed";
+        sql.clear();
+        Owner found = em.find(Owner.class, 1L, Map.of("jakarta.persistence.fetchgraph", graph("children")));
+        assertThat(found).isSameAs(owner);
+        assertThat(found.children).hasSize(2);
+        assertThat(sql).noneMatch(s -> s.stripLeading().toLowerCase(Locale.ROOT).startsWith("update"));
+        em.getTransaction().rollback();
+    }
+
+    @Test void collectionGraphNestedAndMultiplePathsKeepCompleteSecondaryFallback() {
+        for (boolean nested : List.of(false, true)) {
+            cold();
+            var graph = graph("children");
+            if (nested) graph.addSubgraph("children").addAttributeNodes("owner");
+            else graph.addAttributeNodes("labels");
+            Owner owner = em.createQuery("select o from CfOwner o where o.id = 1", Owner.class)
+                .setHint("jakarta.persistence.loadgraph", graph).getSingleResult();
+            assertThat(owner.children).extracting(c -> c.id).containsExactly(11L, 10L);
+            assertThat(owner.children).allSatisfy(c -> assertThat(c.owner).isSameAs(owner));
+            assertThat(sql.getFirst()).doesNotContainIgnoringCase(" join ");
+            assertThat(selects()).isGreaterThan(1);
+            if (!nested) assertThat(owner.labels).containsExactly("z", "a", "z");
+            cold();
+            Owner found = em.find(Owner.class, 1L, Map.of("jakarta.persistence.fetchgraph", graph));
+            assertThat(found.children).extracting(c -> c.id).containsExactly(11L, 10L);
+            assertThat(sql.getFirst()).doesNotContainIgnoringCase(" join ");
+            assertThat(selects()).isGreaterThan(1);
+            if (!nested) assertThat(found.labels).containsExactly("z", "a", "z");
+        }
+    }
+
+    @Test void collectionGraphWithFilteringJoinDoesNotInstallPartialCollections() {
+        Owner owner = em.createQuery("select o from CfOwner o join o.children c where c.name = 'x'", Owner.class)
+            .setHint("jakarta.persistence.fetchgraph", graph("children")).getSingleResult();
+        assertThat(owner.children).extracting(c -> c.id).containsExactly(11L, 10L);
+        assertThat(selects()).isGreaterThan(1);
+    }
+
+    @Test void collectionGraphDoesNotChangeExplicitInnerFetchJoin() {
+        var owners = em.createQuery("select o from CfOwner o join fetch o.children", Owner.class)
+            .setHint("jakarta.persistence.fetchgraph", graph("children")).getResultList();
+        assertThat(owners).extracting(o -> o.id).containsExactly(1L, 1L);
+        assertThat(owners.getFirst().children).hasSize(2);
+        assertThat(selects()).isEqualTo(1);
+    }
+
     @Entity(name = "CfOwner") @Table(name = "CF_OWNER")
     public static class Owner {
         static final AtomicInteger LOADS = new AtomicInteger();
@@ -467,10 +767,13 @@ class CollectionFetchJoinTest {
     public static class Holder {
         private long id;
         private Member member;
+        private Group group;
         public Holder() {}
         @Id public long getId() { return id; }
         public void setId(long id) { this.id = id; }
         @ManyToOne(fetch = FetchType.LAZY) public Member getMember() { return member; }
         public void setMember(Member member) { this.member = member; }
+        @ManyToOne(fetch = FetchType.LAZY) public Group getGroup() { return group; }
+        public void setGroup(Group group) { this.group = group; }
     }
 }

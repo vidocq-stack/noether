@@ -39,8 +39,23 @@ through the loader. It does not guarantee omitted eager attributes remain unload
 Graph/hint changes are honored on query reuse.
 
 This is bounded to one concrete-root entity selection without distinct/grouping/locking,
-set operations, explicit collection fetches or conditional/treated joins. Collections and
-unsupported graph nodes retain complete follow-up reads.
+set operations, explicit collection fetches or conditional/treated joins. Unsupported
+graph nodes retain complete follow-up reads. D16 additionally supports one leaf root
+collection (including DISTINCT queries) without existing joins:
+
+[source,java]
+----
+var graph = em.createEntityGraph(Order.class);
+graph.addAttributeNodes("lines");
+var orders = em.createQuery("select o from Order o order by o.id", Order.class)
+    .setHint("jakarta.persistence.loadgraph", graph).getResultList();
+var order = em.find(Order.class, id, Map.of("jakarta.persistence.fetchgraph", graph));
+----
+
+Empty owners stay present and collections are complete. Finite query pages use SQL
+owner paging plus complete secondary reads. Subgraphs on the collection, multiple
+collections and mixed explicit to-one graph nodes retain existing complete loading.
+See xref:reference.adoc#_one_leaf_collection_graph_d16_2026_10_16[] for exact boundaries.
 See xref:internals.adoc#_query_graph_sql_loading_d14_2026_10_15[].
 
 == Find entity graphs

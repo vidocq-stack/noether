@@ -831,3 +831,23 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     Batch state payloads now preserve binder values plus null flags. Foreign keys and
     collection indexes are normalized separately, matching the existing ordinary loader.
     The combined D10–D13 focused gate passes 104 tests, including both regressions.
+
+## BUG-20261016-01 — Ordinary find callbacks can reenter a loading collection
+
+- **Date**: 2026-10-16
+- **Status**: OPEN (pre-existing ordinary-loader callback cycle; outside D16)
+- **Module**: `noether-jpa-core/flush/EntityLoader`
+- **Symptom**: an ordinary `find` of an owner whose `PostLoad` reads a lazy collection,
+  and whose elements' `PostLoad` reads that same collection, throws
+  `The lazy collection Group.members was accessed while it was being loaded`.
+- **Minimal reproduction**: use `CollectionFetchJoinTest.Group` and `Member`, persist a
+  group with one member, clear/evict, then call `em.getReference(Group.class, id)`.
+  This API currently delegates to ordinary `find`; it does not create a lazy reference.
+- **Cause hypothesis**: ordinary owner `PostLoad` starts lazy batching; element callbacks
+  run before that initializing wrapper has been completed.
+- **Investigations**:
+  - 2026-10-16: observed while adding the D16 unloaded-managed-root regression, before
+    executing a graph find. The graph regression now obtains an actual unloaded root
+    through an owning lazy association, rather than `getReference`. D12/D16 staged
+    collection hydration completes the collection before both callbacks. No ordinary
+    callback/batch architecture change is included in this bounded feature.

@@ -164,7 +164,8 @@ publication follow complete assembly. Other mapped eager relationships may still
 
 Multiple/nested fetches, extra joins, restricted collection aliases, polymorphic or
 `JOINED`/`TABLE_PER_CLASS` owners/targets, embedded fetch paths and entity/embeddable map
-keys retain complete secondary loading. Collection graph nodes and `find` are not SQL-rewritten.
+keys retain complete secondary loading. At D12 delivery, collection graph nodes and
+`find` were not SQL-rewritten; D16 below adds the bounded single-collection graph path.
 Pagination (`setFirstResult` above zero or finite `setMaxResults`) of a single-root entity
 selection uses a safe fallback: **page distinct owner identities in SQL, then load their
 complete collections through ordinary secondary selects**. Only scalar root ordering is
@@ -185,7 +186,7 @@ but may overfetch omitted eager state through the existing loader, as permitted 
 the specification; it does not promise those attributes remain unloaded.
 Hints and mutable graphs are reread on each execution. Identity, dirty managed state,
 in-place lazy-reference initialization, callbacks, snapshots and cache safeguards are
-unchanged. Collection nodes still use complete follow-up loading; complex queries,
+unchanged. At D14 delivery collection nodes still used complete follow-up loading; complex queries,
 embedded/treated nodes and unsupported polymorphic/inherited types retain existing
 fallbacks. Nested/multiple collection SQL fetching remains a separate lot.
 
@@ -200,10 +201,35 @@ and dirty managed state is never overwritten. Unlike a query, find does not auto
 Hints/graphs are validated and reread per call; when both graph hints are present,
 find retains its existing merged plan (query FETCH precedence is unchanged).
 Plain find, locking finds, unsupported polymorphic/inherited mappings and unsupported
-graph paths retain their original loader. Collections still initialize completely
-through follow-up reads. Cache retrieve/store/REFRESH policy, lock/timeout hints,
+graph paths retain their original loader. At D15 delivery collections still initialized
+completely through follow-up reads. Cache retrieve/store/REFRESH policy, lock/timeout hints,
 callbacks and snapshots keep the existing find contract; no new timeout semantics
 or SQL collection fetching are introduced.
+
+Decision **D16 (2026-10-16)** adds SQL loading for **one leaf root collection** requested
+by a fetch/load graph, reusing D12's collector and D15's find routing. Eligible JPQL and
+Criteria queries select one concrete root, optionally `DISTINCT`, with no existing joins,
+grouping, set operations or locks. A non-locking database find, including an unloaded
+managed root, uses the same path. A LEFT join retains empty owners; query results do not
+gain duplicate roots. Entity/basic/embeddable collections retain null values, duplicate
+bags, list positions/order and supported basic/derived map keys. Managed dirty state and
+wrapper/target identity are preserved; collections complete before snapshots, callbacks
+and cache publication. Graphs/hints are reread each execution.
+
+Other mapped eager state still loads as required (FETCH may overfetch). Graphs containing
+subgraphs, multiple collections, or explicit to-one association nodes keep D14/D15's
+existing complete loading; mixed graphs are not degraded by replacing their to-one joins.
+Extra/filtering joins, complex/polymorphic shapes, embedded paths and entity/embeddable map
+keys also retain the existing loader. Explicit fetch joins are unchanged. Finite owner
+pagination uses **SQL distinct-owner paging plus complete secondary loads**, never a
+partial collection or silent in-memory page. Managed/cache find hits retain their fast
+paths; find gains no auto-flush. Nested-to-one collection subgraphs and multiple
+collection SQL fetching remain future lots.
+
+Verification: **34/34** collection-fetch scenarios (14 new), **144/144** focused tests;
+full clean reactor and patched PostgreSQL TCK evidence are recorded in
+[`noether-persistence/TCK.md`](noether-persistence/TCK.md). The ordinary-loader callback
+cycle discovered during this work is tracked separately as BUG-20261016-01.
 
 The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;

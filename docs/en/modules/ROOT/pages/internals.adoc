@@ -80,7 +80,7 @@ in-place lazy references, converters, secondary tables, snapshots, callbacks and
 
 Eligibility is one concrete-root entity selection, no distinct/grouping/locking/set query,
 explicit collection fetch or conditional/treated join. D11-unsupported target types,
-embedded/treated nodes and all collection nodes retain complete follow-up loading.
+embedded/treated nodes and collection nodes outside D16 retain complete follow-up loading.
 FETCH contributes explicit nodes; LOAD additionally expands mapped eager to-ones,
 guarded against eager type cycles. The ordinary loader may overfetch FETCH's omitted
 eager state, as permitted by the specification: no eager requirement is suppressed.
@@ -103,7 +103,27 @@ expansion and FETCH overfetch rules are unchanged. Initialized managed roots and
 hits retain normal graph completion without an unnecessary root query. Cache policy,
 generation fences, lock/timeout/refresh behavior and connection ownership stay in find.
 Plain/locked finds, unsupported D11 root/target types and graph paths keep ordinary
-loading; collections still initialize fully through follow-up statements.
+loading; collection nodes outside D16 initialize fully through follow-up statements.
+
+== One collection graph SQL loading (D16, 2026-10-16)
+
+`Translator.graphSelect` recognizes one root leaf collection with no existing joins.
+Before adding a LEFT fetch join it compiles the candidate against D12's collection
+collector, so unsupported map/target/query shapes do not gain multiplying joins.
+DISTINCT is admitted on this collection path only. Subgraphs, multiple collections
+and explicit to-one graph nodes keep the existing planner/follow-up behavior.
+
+`JpqlQuery` uses the execution-time plan to decide whether SQL row limits are safe;
+collection pages reuse SQL distinct-owner pagination and complete secondary loading.
+Synthetic collection graph rows are deduplicated by managed identity, unlike ordinary
+non-DISTINCT explicit fetch-join results. No query predicate becomes a graph filter.
+
+`Translator.graphFind` retains collection metadata and existing key predicates.
+`JpqlQuery.findGraph` shares the query's collection-row decoder and D12 staged loader,
+not query execution or auto-flush. The existing assembler retains empty/null distinction,
+duplicates/order/keys, in-place wrappers/references and dirty state, and completes state
+before snapshots/callbacks/cache. No new SQL AST, loader, runtime reflection, dependency,
+module, package or executor is introduced. D13 batching and D14/D15 to-one SQL are unchanged.
 
 == Lazy read batches (D13, 2026-10-15)
 

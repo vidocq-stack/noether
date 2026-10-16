@@ -4,7 +4,7 @@ Noether owns the implementations extracted from Mansart on 2026-10-11.
 
 | Building block | Status | Detailed roadmap |
 | --- | --- | --- |
-| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D15); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
+| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D16); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
 | Jakarta Validation 3.1 | V0–V2 provisional local test/TCK stopgap; not published | [Validation](noether-validation/ROADMAP.md) |
 
 The extraction changes repository, artifact, package and provider names, not
@@ -112,15 +112,29 @@ behavior remain intact. Plain/locking finds, unsupported types/paths and collect
 nodes keep complete ordinary loading. Cache, lock/timeout and refresh contracts are
 unchanged. D5/D9–D14 above remain historical delivery records.
 
+Decision D16 (2026-10-16) optimizes a graph-requested **single leaf root collection**
+before nested/multiple collection fetching. JPQL/Criteria single-root entity selections,
+including DISTINCT, with no existing joins/group/lock/set operations reuse D12's LEFT
+collection collector; eligible non-locking database finds reuse D15. No duplicate roots
+are introduced and empty owners, nulls, duplicate bags, order/index/map keys, dirty managed
+state, in-place wrappers/targets, callbacks/snapshots/cache and find's no-auto-flush
+contract are preserved. SQL owner pagination keeps complete secondary loads.
+Subgraphs (including nested to-ones), multiple collection nodes, explicit to-one graph
+nodes, filtering/extra joins, unsupported map keys and complex/polymorphic mappings keep
+existing complete fallbacks. Explicit fetch joins and D14/D15 mixed graph SQL are unchanged.
+Focused verification: 144/144; detailed support and full evidence are recorded below.
+D5/D9–D15 above remain historical delivery records.
+
 ## Remaining Persistence work
 
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
-1. Nested/multiple collection SQL fetching is the next separate lot.
+1. Nested-to-one collection subgraphs and multiple collection SQL fetching are future
+   separate lots; D16 covers one leaf root collection only.
    Broader SQL fetch eligibility: same-query owner pagination,
    entity/embeddable map keys; polymorphic/`JOINED`/`TABLE_PER_CLASS` targets,
-   `DISTINCT` and locking queries, embedded/treated graph paths and complex graph queries.
+   broader to-one `DISTINCT` and locking queries, embedded/treated graph paths and complex graph queries.
 2. Broader lazy to-one support beyond the D10 eligible shapes, and batching beyond D13's
    single-table/non-polymorphic scope (secondary tables, inheritance, inverse join tables,
    entity-valued map keys).

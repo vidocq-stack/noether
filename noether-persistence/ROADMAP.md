@@ -1204,16 +1204,71 @@ mixed collection graphs. Existing JPQL/Criteria graph tests remain green.
 Full clean reactor: **911/911** (85 reports); focused graph/cache/lazy/collection gate:
 **130/130**. Full TCK evidence is recorded in `TCK.md`.
 
+### D16 — One leaf collection entity graph uses existing SQL assembly ✅ (2026-10-16)
+
+Approved before nested/multiple collection fetching. Before production edits,
+`CollectionFetchJoinTest` ran **32 tests / 8 SQL-count failures / 0 errors**:
+graph queries/finds used secondary reads instead of the expected single SELECT.
+The completed suite passes **34/34** (14 added scenarios); the graph/cache/lazy/batch
+gate passes **144/144**. D5/D9–D15 and their original measurements remain historical.
+
+**Exact SQL scope**
+
+- A graph explicitly requests one leaf collection directly on a D12-hydratable concrete
+  root. Basic attribute nodes may coexist. No subgraphs or explicit to-one association
+  nodes: mixed graphs keep D14's existing to-one joins and full collection follow-up,
+  avoiding a regression in their SQL counts.
+- JPQL/Criteria select one root entity, with no existing joins/grouping/having/set
+  operations/locks. DISTINCT is supported by D12's identity deduplication, not SQL
+  element deduplication. Root predicates and scalar root ordering are preserved.
+- D15 graph-aware non-locking database finds use the same collection metadata and
+  decoder; translated key binders remain unchanged. Unloaded managed roots hydrate
+  in place. Managed/cache hits, missing roots, graph/hint mutation/merging, cache
+  policies, refresh/lock fallback and find's no-auto-flush contract stay unchanged.
+- The added join is always LEFT: empty owners stay present, persisted null elements
+  are distinct from absent rows, and synthetic joins do not multiply query results.
+  Entity/basic/embeddable collections, duplicate bags, ordered/indexed lists, sorted
+  sets and supported basic/derived map keys reuse the existing assembler. Dirty
+  state is not overwritten; unloaded wrappers and targets retain identity. Complete
+  collections precede callbacks, snapshots and cache publication.
+- LOAD's other eager requirements and permitted FETCH overfetch remain existing
+  loader work. Pagination uses D12's SQL distinct-owner page followed by complete
+  secondary loading; unsupported owner paging is explicitly refused, not silently
+  performed in memory. Unbounded single-result reads never limit element rows.
+
+**Safe fallback and implementation boundary**
+
+Nested collection-to-one subgraphs, multiple collections, mixed explicit to-one nodes,
+extra/filtering joins, polymorphic/inherited owners/targets, embedded/treated paths,
+entity/embeddable map keys and complex query shapes retain complete existing loading.
+Explicit JOIN FETCH behavior and D14/D15 to-one graphs are unchanged.
+Production changes are limited to `Translator` and `JpqlQuery`: validate eligibility
+against the D12 collector before adding a join, retain collection metadata in graph-find
+compilation, share the existing collection-row decoder with find, deduplicate only
+synthetic graph roots, and determine SQL pagination safety from the execution-time plan.
+No new hydration architecture, SQL strings, entity reflection, dependency, module,
+package or executor is added.
+
+An ordinary `getReference`/find callback reentry found while constructing the
+unloaded-root fixture is tracked as **BUG-20261016-01**, pre-existing and outside this
+bounded lot. The actual unloaded root is obtained through a lazy association; D16
+staged collection loading completes both owner and element callbacks correctly.
+Full clean reactor: **925/925**, **85 XML reports**; full patched PostgreSQL TCK:
+**2135 tests / 2131 passed / 0 failures / 0 errors / 4 unchanged official skips**.
+Independent identity/outcome and fixture-hash verification are in `TCK.md`.
+
 ## Remaining work
 
-Prioritized backlog after D15, 2026-10-16. Each item needs its own approved, bounded lot; until then
+Prioritized backlog after D16, 2026-10-16. Each item needs its own approved, bounded lot; until then
 the documented fallback (follow-up selects, eager loading, or an explicit refusal naming the
 milestone) stays in place.
 
-1. **Next separate lot: nested/multiple collection SQL fetching.**
+1. **Future separate lots: collection-to-one subgraphs and multiple collection SQL fetching.**
+   D16 covers one leaf root collection; mixed to-one/collection graph row assembly
+   remains outside its scope.
    Broader SQL fetch eligibility — same-query owner pagination,
    entity/embeddable map keys; polymorphic, `JOINED` and `TABLE_PER_CLASS` targets
-   (type resolution from the row), `DISTINCT` and locking queries, `TREAT`/embedded paths, and entity
+   (type resolution from the row), broader to-one `DISTINCT` and locking queries, `TREAT`/embedded paths, and entity
    graph hints on complex query shapes beyond D14 and locking finds beyond D15.
 2. **Broader lazy to-one support and batch eligibility** — targets and owners currently kept eager by D10: field access,
    final forms, inverse one-to-one, join tables, embedded paths, inheritance, composite/derived and
@@ -1233,6 +1288,7 @@ Recorded before implementation; each entry: date, decision, reason.
 
 | # | Date | Decision | Status |
 |---|---|---|---|
+| D16 | 2026-10-16 | Reuse D12 assembly, D14 graph planning and D15 find routing for one graph-requested leaf root collection. LEFT owner retention, supported list/map/bag/null semantics, managed identity/dirty state and staged lifecycle completion; execution-time plans protect SQL owner pagination. No subgraphs, multiple collections, mixed explicit to-one nodes or broader complex/polymorphic SQL eligibility; existing fallbacks and explicit fetch joins remain intact. No new hydration architecture. Detailed support and measured verification are recorded in the D16 delivery section. | Actioned |
 | D1 | 2026-10-07 | Folder `noether-persistence/`, Maven parent `noether-jpa`, sub-modules `noether-jpa-*`, Java modules `io.vidocq.noether.jpa.*`. | Actioned |
 | D2 | 2026-10-07 | Certification database: PostgreSQL (official TCK DDL); H2 for unit tests only. | Actioned |
 | D3 | 2026-10-07 | No `ClassTransformer` / no instrumentation: lazy loading and dirty checking without enhancement. | Actioned |

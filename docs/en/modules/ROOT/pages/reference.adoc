@@ -40,7 +40,7 @@ validation rules. Graph/hint changes are reread per execution.
 
 SQL scope: one concrete-root entity selection, no distinct/grouping/locking/set query,
 explicit collection fetch or conditional/treated joins. Unsupported target types,
-embedded/treated graph nodes and collection nodes use complete existing follow-up
+embedded/treated graph nodes and collection nodes outside D16 below use complete existing follow-up
 loading. Mixed graphs may combine same-row to-ones with complete collection reads.
 No eager requirement is suppressed; D10 lazy eligibility and D13
 batch bounds remain unchanged. See xref:internals.adoc[] for the shared hydration path.
@@ -58,8 +58,35 @@ Managed-instance and L2 cache hits retain their fast paths and graph initializat
 unloaded references hydrate in place, dirty state is not overwritten and find never
 auto-flushes. Existing retrieve/store/BYPASS/REFRESH, lock/timeout and refresh semantics
 are unchanged. Plain/locking finds, unsupported polymorphic/inherited types and
-unsupported graph paths retain ordinary loading. Collection graph nodes still use
-complete follow-up loading, not SQL collection graph joins.
+unsupported graph paths retain ordinary loading. Collection nodes outside D16 below
+use complete follow-up loading.
+
+== One leaf collection graph (D16, 2026-10-16)
+
+Both graph hints can join one explicitly requested root collection through the
+existing collection-fetch assembler. Eligible queries select one concrete root,
+optionally DISTINCT, with no existing joins, grouping/having, set operations or locks.
+Eligible non-locking database finds use the same path, including unloaded managed roots.
+Basic graph attribute nodes may coexist, but explicit to-one association nodes and
+all subgraphs retain D14/D15's existing loading instead.
+
+The join is LEFT: empty owners remain and null element rows remain distinguishable
+from absence. Synthetic graph joins do not duplicate query roots. Entity, basic and
+embeddable collections retain duplicate bags, list positions/order, sorted sets and
+supported basic/derived map keys. Collections complete before snapshots/callbacks/cache;
+managed dirty state and wrapper/target identity are preserved. Other mapped eager state
+remains loader work, including LOAD requirements and permitted FETCH overfetch.
+
+Finite owner pagination pages distinct owners in SQL, then loads their whole collections
+through secondary reads. Unsupported collection paging throws before SQL; no silent
+in-memory pagination or partial collection. Explicit JOIN FETCH semantics are unchanged.
+Managed/cache find hits keep their fast paths; find does not acquire query auto-flush.
+Mutable graphs and replacement hints are reread on every execution.
+
+Multiple collections, nested-to-one collection subgraphs, mixed to-one nodes,
+extra/filtering joins, complex/polymorphic/inherited shapes, embedded/treated paths,
+and entity/embeddable map keys keep complete existing fallbacks. Nested/multiple
+collection SQL is future work, not a Cartesian-product expansion.
 
 == Lazy read batching
 

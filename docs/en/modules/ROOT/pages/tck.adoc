@@ -15,6 +15,36 @@ The official artifact checksums and TCK-BUG-001 byte-exact derived-jar fixture
 patch are unchanged; original artifacts are never edited. `TCK_FIXTURES=official`
 selects the untouched Persistence fixture. See the runner README for setup.
 
+== One-collection entity graph SQL verification (2026-10-16)
+
+Decision D16 adds one leaf root collection through the existing D12 assembler and
+D15 find routing, not a new loader. Before production edits, the collection suite
+ran *32 tests / 8 SQL-count failures / 0 errors*. The final collection suite passes
+*34/34* (14 new tests), and the graph/cache/lazy/batch gate passes *144/144*.
+Coverage checks values, SELECT totals and load state for JPQL/Criteria/find,
+FETCH/LOAD, empty/missing owners, nulls/duplicates/order/keys, managed dirty state,
+in-place identity, callbacks/snapshots/cache, no-auto-flush, graph/hint mutation,
+SQL owner pagination and safe nested/multiple/filtering/explicit-fetch fallbacks.
+See xref:reference.adoc#_one_leaf_collection_graph_d16_2026_10_16[] for exact scope.
+
+The full final `./mvnw -ntp clean install` finished *2026-10-16 09:04:51 CEST*:
+*925/925 tests* across *85 XML reports*, zero failures/errors/skips.
+The full `TCK_FIXTURES=patched TCK_VALIDATION=off` Persistence 3.2.1 run on
+PostgreSQL *17-alpine*, Temurin *25.0.4+7-LTS* and Maven *3.9.16* finished
+*09:03:32 CEST*: *2135 tests / 2131 passed / 0 failures / 0 errors / 4 skips*.
+Independent aggregation checks all *259 XML reports*, *2135 unique
+execution/class/method identities*, no duplicates, exact baseline identity/outcome
+equality, and *518* derived-jar classpath checks. All *85* original cache/installed
+TCK files (including metadata) and their file set are unchanged. Official/derived
+SHA-256 hashes and the four skip identities remain unchanged from D15.
+
+Exact commands and hashes are recorded in `noether-persistence/TCK.md`; script
+exit 0 is not treated as sufficient evidence. This is a locally patched result,
+not untouched official conformance or certification. The unrelated pre-existing
+ordinary-find callback cycle is tracked as BUG-20261016-01, still OPEN; staged
+D16 graph hydration completes owner and element callbacks correctly.
+Earlier D5/D9–D15 evidence below remains historical.
+
 == Find entity graph SQL verification (2026-10-16)
 
 Decision D15 reuses D14 graph planning and existing statement-column/staged hydration
