@@ -835,7 +835,7 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
 ## BUG-20261016-01 — Ordinary find callbacks can reenter a loading collection
 
 - **Date**: 2026-10-16
-- **Status**: FIXED (uncommitted working tree on `feat/collection-entity-graphs`; no commit hash yet)
+- **Status**: FIXED (scoped loader fix delivered; D19 partial-cache follow-up verified in the current working tree, pending commit)
 - **Module**: `noether-jpa-core/flush/EntityLoader`
 - **Symptom**: an ordinary `find` of an owner whose `PostLoad` reads a lazy collection,
   and whose elements' `PostLoad` reads that same collection, throws
@@ -886,3 +886,26 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     baseline, official inputs and SHA-256 unchanged (`TCK.md`). Remaining edge: the
     shared-cache restore path still invokes `PostLoad` directly after registering its whole
     graph (no loader scope is open there).
+  - 2026-10-16: D19 extends the same load scope across all split root-collection
+    collectors and query/find graph completion. Registering every identity and assembling
+    every collection before dispatch prevents a callback from observing an uncompleted
+    sibling collection. `CollectionSubgraphTest` covers owner/line/payment callbacks
+    inspecting all requested branches, once-per-identity callbacks, mutation/flush,
+    failure/rollback and managed dirty wrapper/reference preservation. Existing
+    `PostLoadCollectionCycleTest` remains green at batch sizes 1 and 16. At this initial
+    D19 stage, the direct shared-cache callback implementation was unchanged.
+  - 2026-10-16: a further D19 red test exposed that recorded cache edge: warm a root
+    with to-one graph state but unloaded collections, clear the context, then find it
+    with three root-collection branches and a `PostLoad` asserting those branches
+    are already loaded. `partiallyCachedRootDefersCallbacksUntilEveryRequestedCollectionIsComplete`
+    fails before production edits (`unloaded(lines)` is true); allowing the callback
+    to initialize them instead costs six SELECTs rather than three. Fixed by routing
+    cache-restored callbacks through the same `context.postLoad` queue and keeping
+    restore plus graph completion in `context.loading`. Known-reference and query
+    completion use that scope too. No separate queue or cache representation is added;
+    the regression covers both cache-hit find and query reuse of that partial cache.
+  - 2026-10-16: final D19 gate **159/159**, clean reactor **977/977** (87 reports),
+    full patched PostgreSQL 17 TCK **2135 / 2131 passed / 0 failures / 0 errors /
+    4 unchanged official skips**. All identities/outcomes and immutable fixture/input
+    hashes independently verified; the previously recorded direct-cache callback edge
+    is now covered and closed.

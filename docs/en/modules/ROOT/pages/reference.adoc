@@ -140,6 +140,38 @@ explicit fetch joins retain their established complete fallback or explicit refu
 Multiple collection SQL fetching, nested collections, broader fetch eligibility and
 broader lazy/batch/mapping support remain separate prioritized roadmap items.
 
+== Multiple root collection graphs (D19, 2026-10-16)
+
+D19 supersedes only the historical multiple-root-collection fallback above. Two or
+more requested root collections, for example `Order.lines.product` and
+`Order.payments`, are read through *independent grouped SQL collectors*, never one
+Cartesian collection join. Root/element to-one branches retain D18 LEFT hydration.
+Mapped eager root collections become additional collectors; eager to-ones are joined
+for LOAD and permitted FETCH overfetch.
+
+Eligible JPQL/Criteria select one concrete root entity (DISTINCT allowed), without
+explicit joins, grouping, locks or set operations. Each branch must pass the existing
+D16–D18 mapping checks. Query SQL selects owner identities, then each collection is
+read for groups bounded by `min(fetch.batch-size, floor(512 / owner-key-width))`.
+The setting below defaults to 16 and accepts 1–256; 1 disables owner grouping.
+For `C` collectors and `N` owners this is `1 + C * ceil(N / bound)` SELECTs;
+eligible non-locking database finds need `C`. No per-element find is used.
+SQL distinct-owner pagination (scalar root order only) precedes complete split reads.
+
+All rows/identities/collections are staged before snapshots and callbacks. Empty
+owners, null elements/targets, bag duplicates, indexed lists/maps, shared managed
+identity, dirty state, in-place wrappers/references, cache and no find auto-flush
+contracts are preserved. Complete managed/cache graph finds need no SELECT.
+Plans are rebuilt for mutable graphs/hints.
+
+Nested collection-valued subgraphs, non-root mapped eager collections, unsupported
+polymorphic/complex/map-key shapes and broader query/locking shapes retain complete
+loading/refusal. Omitted unsupported lazy mappings can retain D10's eager fallback;
+dirty in-memory association changes also require ordinary completion. The SELECT
+bound does not cover those extra fallback reads. Single-collection and explicit
+JOIN FETCH SQL remain unchanged. Nested collection graphs, broader fetch/lazy/batch
+eligibility and missing mappings are the remaining prioritized lots.
+
 == Lazy read batching
 
 [cols="3,1,4"]

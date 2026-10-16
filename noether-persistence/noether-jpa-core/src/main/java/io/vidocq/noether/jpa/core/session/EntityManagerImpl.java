@@ -750,21 +750,25 @@ final class EntityManagerImpl implements EntityManager {
             Object id = type.key(primaryKey);
             Optional<ManagedEntity> known = context.find(new EntityKey(type.root(), id));
             if (known.isPresent()) {
-                // a removed instance or an incompatible concrete subtype is not found
-                Object instance = known.get().instance();
-                if (known.get().status() != ManagedEntity.Status.MANAGED || !entityClass.isInstance(instance)) {
-                    return null;
-                }
-                if (!locking && graph && io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(instance)) {
-                    onConnection(connection -> JpqlQuery.findGraph(factory.mapping(), type, id, plan, loadGraph,
-                        factory.flushEngine(connection).dialect(), connection, factory.loader(connection), context));
-                }
-                io.vidocq.noether.jpa.core.spi.LazyReference.initialize(instance);
-                if (locking) {
-                    lock(instance, lockMode, properties);
-                }
-                fetch(instance, plan, null);
-                return entityClass.cast(instance);
+                return context.loading(() -> {
+                    // a removed instance or an incompatible concrete subtype is not found
+                    Object instance = known.get().instance();
+                    if (known.get().status() != ManagedEntity.Status.MANAGED || !entityClass.isInstance(instance)) {
+                        return null;
+                    }
+                    if (!locking && graph && io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(instance)) {
+                        onConnection(connection -> JpqlQuery.findGraph(factory.mapping(), type, id, plan, loadGraph,
+                            factory.flushEngine(connection).dialect(), connection, factory.loader(connection), context));
+                    }
+                    io.vidocq.noether.jpa.core.spi.LazyReference.initialize(instance);
+                    if (locking) {
+                        lock(instance, lockMode, properties);
+                    }
+                    if (!locking && graph) {
+                        completeGraph(instance, type, plan);
+                    } else fetch(instance, plan, null);
+                    return entityClass.cast(instance);
+                });
             }
             CacheRetrieveMode retrieve = retrieveMode(properties);
             CacheStoreMode store = storeMode(properties);
@@ -772,9 +776,15 @@ final class EntityManagerImpl implements EntityManager {
             if (!locking && !cacheInvalidationPending && !transactionTouched.contains(lookupKey)
                     && retrieve == CacheRetrieveMode.USE
                     && store != CacheStoreMode.REFRESH) {
-                Optional<Object> cached = factory.cache().restore(type, id, context);
+                Optional<Object> cached = context.loading(() -> {
+                    Optional<Object> restored = factory.cache().restore(type, id, context);
+                    restored.ifPresent(instance -> {
+                        if (graph) completeGraph(instance, type, plan);
+                        else fetch(instance, plan, null);
+                    });
+                    return restored;
+                });
                 if (cached.isPresent()) {
-                    fetch(cached.get(), plan, null);
                     return entityClass.cast(cached.get());
                 }
             }
@@ -783,7 +793,7 @@ final class EntityManagerImpl implements EntityManager {
             if (transaction.isActive() && store != CacheStoreMode.BYPASS) {
                 captureCacheGeneration(cacheGeneration);
             }
-            Object result = onConnection(connection -> {
+            Object result = onConnection(connection -> context.loading(() -> {
                 var loader = factory.loader(connection);
                 Object found = !locking && graph && JpqlQuery.findGraph(factory.mapping(), type, id, plan, loadGraph,
                     factory.flushEngine(connection).dialect(), connection, loader, context)
@@ -798,7 +808,7 @@ final class EntityManagerImpl implements EntityManager {
                 }
                 fetch(found, plan, connection);
                 return found;
-            });
+            }));
             if (result != null) {
                 if (transaction.isActive()) {
                     if (store == CacheStoreMode.BYPASS) {
@@ -883,6 +893,30 @@ final class EntityManagerImpl implements EntityManager {
                 fetch(value, targets, connection);
             }
         }
+    }
+
+    private void completeGraph(Object instance, MappedEntity type, FetchPlan plan) {
+        long collections = plan.attributes().keySet().stream().filter(name -> {
+            int i = UnitUtil.index(type, name);
+            if (i < 0) return false;
+            var attribute = type.model().attributes().get(i);
+            return attribute instanceof io.vidocq.noether.jpa.core.model.ElementCollectionAttribute
+                || attribute instanceof io.vidocq.noether.jpa.core.model.AssociationAttribute a && !a.singleValued();
+        }).count();
+        boolean unloaded = plan.attributes().keySet().stream().anyMatch(name -> {
+            int i = UnitUtil.index(type, name);
+            return i >= 0 && LazyCollection.unloaded(type.access().get(instance, i));
+        });
+        if (collections < 2 || !unloaded) {
+            context.loading(() -> { fetch(instance, plan, null); return null; });
+            return;
+        }
+        onConnection(connection -> context.loading(() -> {
+            JpqlQuery.completeGraph(factory.mapping(), type, instance, plan,
+                factory.flushEngine(connection).dialect(), connection, factory.loader(connection), context);
+            fetch(instance, plan, connection);
+            return null;
+        }));
     }
 
     @Override
@@ -1059,7 +1093,7 @@ final class EntityManagerImpl implements EntityManager {
                     if (queryFlushMode == FlushModeType.AUTO && active) {
                         flush(connection);
                     }
-                    return work.apply(connection);
+                    return context.loading(() -> work.apply(connection));
                 });
             } catch (RuntimeException e) {
                 throw failed(e);
@@ -1153,6 +1187,18 @@ final class EntityManagerImpl implements EntityManager {
         public void hydrateCollection(List<io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedEntity> rows,
                 MappedEntity owner, int attribute,
                 List<io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedElement> elements, Connection connection) {
+            hydrateCollections(rows, List.of(new io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedCollection(
+                owner, attribute, elements)), connection);
+        }
+
+        @Override
+        public int graphBatchBound(MappedEntity owner, Connection connection) {
+            return factory.loader(connection).batchBound(owner);
+        }
+
+        @Override
+        public void hydrateCollections(List<io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedEntity> rows,
+                List<io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedCollection> collections, Connection connection) {
             Map<EntityKey, MappedEntity> fresh = new java.util.LinkedHashMap<>();
             for (var row : rows) {
                 EntityKey key = new EntityKey(row.type().root(), row.id());
@@ -1164,7 +1210,7 @@ final class EntityManagerImpl implements EntityManager {
             }
             long generation = factory.cache().generation();
             if (!fresh.isEmpty() && transaction.isActive() && cacheStoreMode != CacheStoreMode.BYPASS) captureCacheGeneration(generation);
-            factory.loader(connection).loadCollection(rows, owner, attribute, elements, connection, context);
+            factory.loader(connection).loadCollections(rows, collections, connection, context);
             for (var item : fresh.entrySet()) {
                 stored(item.getValue(), item.getKey().id(), context.find(item.getKey()).orElseThrow().instance(), generation);
             }

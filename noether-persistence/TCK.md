@@ -1,3 +1,69 @@
+## Noether split root collection graph verification (D19) — 2026-10-16
+
+Decision D19 reads multiple graph-requested root collections independently for bounded
+owner groups, reusing D13's setting/parameter bound and D16–D18's SQL collectors.
+Baseline: `921453d`. Mandatory pre-production red: **2 SQL-count tests / 2 failures /
+0 errors**: three owners/three collections used **14 instead of 4** SELECTs, and
+19 owners used **62 instead of 7**. A further pre-fix red test for BUG-20261016-01's
+recorded shared-cache edge failed because `PostLoad` saw unloaded required collections;
+allowing it to load them instead cost six SELECTs rather than three.
+
+Green focused gate: **159 tests / 159 passed / 0 failures / 0 errors / 0 skips**
+(`CollectionSubgraphTest` 29, `CollectionFetchJoinTest` 35, `FetchJoinTest` 40,
+`PostLoadCollectionCycleTest` 20, `LazyBatchTest` 19, `SecondLevelCacheTest` 16).
+The final clean reactor finished **14:36:01 CEST**: **977 tests / 977 passed /
+0 failures / 0 errors / 0 skips**, independently aggregated from **87 XML reports**
+(966 baseline plus eleven tests).
+
+Coverage includes JPQL/Criteria/find FETCH/LOAD, independent `Order.lines.product`
+and `Order.payments` entity collections, three-root-collection graphs, root to-one
+branches and element subgraphs, owner groups crossing the default size 16, configured
+sizes 1/2/256, 173 three-column owner keys (170 + 3 per collector, at most 512 key
+parameters), bag duplicates/shared identities, list order/map keys/null elements and
+empty owners, mapped eager expansion, dirty managed state/in-place wrappers/references,
+no find auto-flush, callbacks inspecting every branch exactly once, callback mutation
+and propagated failure, complete and partial-cache hits, mutable graphs/hints, complete
+SQL owner pagination, nested-collection fallback and existing D11–D18/BUG01 regressions.
+
+Exact commands, from the repository root:
+
+```sh
+export JAVA_HOME=$HOME/.sdkman/candidates/java/25.0.4-tem
+export PATH="$JAVA_HOME/bin:$PATH"
+# Initial red: CollectionSubgraphTest#multipleRootCollectionsUseSeparateGroupedReadsBeforeCallbacks
+#              +multipleRootCollectionsScaleByOwnerBatchesAndPageCompleteOwners
+# Cache red: CollectionSubgraphTest#partiallyCachedRootDefersCallbacksUntilEveryRequestedCollectionIsComplete
+./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test \
+  -Dtest=CollectionSubgraphTest,CollectionFetchJoinTest,FetchJoinTest,LazyBatchTest,PostLoadCollectionCycleTest,SecondLevelCacheTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw -ntp clean install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+These are deterministic SQL-count checks, not benchmarks. Historical D5/D9–D18 and
+BUG-20261016-01 deliveries/evidence below are preserved.
+
+The final full **locally patched** Persistence 3.2.1 TCK finished **14:37:25 CEST**:
+**2135 tests / 2131 passed / 0 failures / 0 errors / 4 unchanged official skips**,
+on isolated Docker **PostgreSQL 17-alpine**, Temurin **25.0.4**, Maven **3.9.16**.
+Independent aggregation verified all **259 XML reports**, **2135 unique
+execution/class/method identities** and exactly unchanged outcomes against D18.
+Both effective classpath properties in every XML report select only the derived
+spec-tests jar (**518 checks**), not just a successful script exit.
+
+The file set and SHA-256 of all **85 original cache/installed TCK input files** and
+**both runner tools** are unchanged. Official jar:
+`a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`;
+derived jar:
+`1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+All **1126 jar entries** were compared; only the two authorized TCK-BUG-001 ORM
+resources differ, with their original/patched hashes matching provenance.
+The four skip identities are unchanged from the D18 list immediately below.
+No official inputs, fixture patch tools, dependencies or Java module descriptors were
+changed, and no shared service was restarted. This is local patched evidence, not
+an official result or certification claim.
+
 ## Noether mixed root collection and root to-one SQL verification (D18) — 2026-10-16
 
 Decision D18 combines one root collection with direct/nested root to-one branches and

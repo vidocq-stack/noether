@@ -173,7 +173,9 @@ final class SecondLevelCache implements Cache {
             }
             for (Map.Entry<EntityKey, Node> entry : graph.nodes().entrySet()) {
                 if (created.contains(entry.getKey())) {
-                    types.get(entry.getKey()).callback("PostLoad", instances.get(entry.getKey()));
+                    MappedEntity type = types.get(entry.getKey());
+                    Object instance = instances.get(entry.getKey());
+                    context.postLoad(() -> type.callback("PostLoad", instance));
                 }
             }
             Object result = instances.get(graph.root());

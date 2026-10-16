@@ -4,7 +4,7 @@ Noether owns the implementations extracted from Mansart on 2026-10-11.
 
 | Building block | Status | Detailed roadmap |
 | --- | --- | --- |
-| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D18); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
+| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D19); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
 | Jakarta Validation 3.1 | V0–V2 provisional local test/TCK stopgap; not published | [Validation](noether-validation/ROADMAP.md) |
 
 The extraction changes repository, artifact, package and provider names, not
@@ -152,13 +152,28 @@ SQL distinct-owner paging plus complete secondary loading. Multiple/nested colle
 unsupported map keys, complex/polymorphic queries and explicit fetch joins retain their
 established fallbacks/refusals. D5/D9–D17 and BUG-20261016-01 remain historical above.
 
+Decision D19 (2026-10-16) delivers **multiple graph-requested root collections** through
+separate D16–D18 SQL collectors, grouped by the selected owner identities. JPQL/Criteria
+use an owner-ID SELECT plus one read per collection per owner batch; eligible non-locking
+database finds use the collectors directly. Root/element to-ones retain LEFT hydration,
+including eager expansion (permitted FETCH overfetch). All collections/identities are
+staged together before relationships, snapshots and callbacks under the BUG-20261016-01
+load scope. Bags, lists/maps, null/empty state, identity, dirty managed state, in-place
+wrappers/references, cache, graph mutation and no find auto-flush are preserved.
+SQL distinct-owner pagination precedes complete split reads, never in-memory pagination.
+The batch bound is `min(configured fetch batch size, floor(512 / owner-key width))`;
+size 1 disables owner grouping. Nested collection subgraphs, nested mapped eager
+collections, unsupported graph/query/mapping shapes and explicit fetch joins retain
+their established complete fallbacks/refusals. D5/D9–D18 and BUG-20261016-01 above remain
+historical deliveries; details and exact count qualifications are in the detailed roadmap.
+
 ## Remaining Persistence work
 
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
-1. Multiple collection SQL fetching and nested collection-valued subgraphs are future
-   separate lots; D18 covers one root collection with root/element to-one branches.
+1. Nested collection-valued graph subgraphs remain a future bounded lot; D19 covers
+   independent root collections with root/element to-one branches.
    Broader SQL fetch eligibility: same-query owner pagination,
    entity/embeddable map keys; polymorphic/`JOINED`/`TABLE_PER_CLASS` targets,
    broader to-one `DISTINCT` and locking queries, embedded/treated graph paths and complex graph queries.

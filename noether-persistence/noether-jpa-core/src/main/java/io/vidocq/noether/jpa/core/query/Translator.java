@@ -227,6 +227,95 @@ final class Translator {
         return collection;
     }
 
+    /**
+     * D19: one independent D16-D18 collector per root collection. Templates have no user predicates:
+     * execution constrains them to the identities selected (and paged) by the original owner query.
+     */
+    static List<Compiled> splitGraph(Ast.Statement statement, MappedUnit unit, FetchPlan graph) {
+        if (!(statement instanceof Ast.Select select) || select.from().size() != 1 || select.items().size() != 1
+                || !select.from().getFirst().joins().isEmpty() || !select.groupBy().isEmpty() || select.having() != null
+                || !(select.items().getFirst().expression() instanceof Ast.Path path) || path.treatEntity() != null
+                || path.segments().size() != 1 || select.from().getFirst().entity() == null
+                || !path.segments().getFirst().equalsIgnoreCase(select.from().getFirst().variable())) return List.of();
+        Translator planner = new Translator(unit, null, null);
+        MappedEntity root = planner.entityNamed(select.from().getFirst().entity());
+        if (!planner.hydratable(root) || root.statements().keyColumns().size() > 512) return List.of();
+        Map<String, FetchPlan> collections = new java.util.LinkedHashMap<>();
+        FetchPlan branches = new FetchPlan();
+        for (var node : graph.attributes().entrySet()) {
+            var attribute = root.model().attribute(node.getKey()).orElse(null);
+            if (attribute instanceof ElementCollectionAttribute
+                    || attribute instanceof AssociationAttribute a && !a.singleValued()) {
+                collections.put(node.getKey(), node.getValue());
+            } else branches.attribute(node.getKey()).merge(node.getValue());
+        }
+        if (collections.size() < 2) return List.of();
+        // FETCH may overfetch mapped eager collections; never resolve those per owner during staged hydration.
+        for (var attribute : root.model().attributes()) {
+            if (attribute instanceof ElementCollectionAttribute e && e.fetch() == jakarta.persistence.FetchType.EAGER
+                    || attribute instanceof AssociationAttribute a && !a.singleValued()
+                        && a.fetch() == jakarta.persistence.FetchType.EAGER) {
+                collections.putIfAbsent(attribute.name(), new FetchPlan());
+            }
+        }
+        Ast.Select owners = graphRoot(root);
+        List<Compiled> result = new ArrayList<>();
+        for (var collection : collections.entrySet()) {
+            FetchPlan branch = new FetchPlan();
+            branch.merge(branches);
+            branch.attribute(collection.getKey()).merge(collection.getValue());
+            if (!collection.getKey().equals(planner.graphCollection(root, branch))) return List.of();
+            // Permitted FETCH overfetch keeps mapped eager to-ones in the collectors, not per-owner reads.
+            Ast.Statement execution = graphSelect(owners, unit, branch, true);
+            Compiled compiled = translate(execution, unit, null, null, null, true, true);
+            if (compiled.collection() == null) return List.of();
+            for (Compiled.Hydration hydration : compiled.hydrations()) {
+                for (var attribute : hydration.type().model().attributes()) {
+                    if (attribute instanceof AssociationAttribute a && a.fetch() == jakarta.persistence.FetchType.EAGER) {
+                        if (a.singleValued() && !planner.hydratable(unit.entity(a.targetEntity()).orElse(null))) return List.of();
+                        if (!a.singleValued() && hydration.type() != root) return List.of();
+                    } else if (attribute instanceof ElementCollectionAttribute e
+                            && e.fetch() == jakarta.persistence.FetchType.EAGER && hydration.type() != root) return List.of();
+                }
+            }
+            result.add(compiled);
+        }
+        return List.copyOf(result);
+    }
+
+    static Ast.Select graphRoot(MappedEntity type) {
+        return new Ast.Select(false, List.of(new Ast.Item(new Ast.Path(List.of("this")), null)),
+            List.of(new Ast.Range(type.model().entityName(), null, "this", List.of())), null, List.of(), null, List.of());
+    }
+
+    /** Restricts an existing collector with D13's bounded complete owner-key tuples. */
+    static Compiled graphOwners(Compiled compiled, List<Object> ids) {
+        Query query = (Query) compiled.sql();
+        Compiled.EntityItem root = (Compiled.EntityItem) compiled.items().getFirst();
+        MappedEntity type = compiled.collection().owner();
+        Expression predicate = null;
+        if (root.keyBinders().size() == 1) {
+            List<Expression> keys = ids.stream().map(id -> (Expression) new Expression.Parameter(
+                Compiled.Slot.constant(type.statements().keyValues(id)[0], root.keyBinders().getFirst(), null))).toList();
+            predicate = new Expression.In(query.select().getFirst(), keys, false);
+        } else {
+            for (Object id : ids) {
+                Object[] values = type.statements().keyValues(id);
+                Expression tuple = null;
+                for (int i = 0; i < values.length; i++) {
+                    Expression equal = new Binary(query.select().get(i), Operator.EQ,
+                        new Expression.Parameter(Compiled.Slot.constant(values[i], root.keyBinders().get(i), null)));
+                    tuple = tuple == null ? equal : new Binary(tuple, Operator.AND, equal);
+                }
+                predicate = predicate == null ? tuple : new Binary(predicate, Operator.OR, tuple);
+            }
+        }
+        Expression where = query.where() == null ? predicate : new Binary(query.where(), Operator.AND, predicate);
+        return new Compiled(new Query(false, query.select(), query.from(), where, query.groupBy(),
+            query.having(), query.orderBy(), null, null), compiled.items(), compiled.resultType(), compiled.slots(),
+            compiled.mutations(), compiled.hydrations(), compiled.collection(), compiled.collectionFetch());
+    }
+
     /** Whether every node is a basic/embedded leaf or a to-one of a hydratable entity with such a subgraph. */
     private boolean toOneSubgraph(MappedEntity source, FetchPlan plan) {
         if (!hydratable(source)) return false;
@@ -248,8 +337,7 @@ final class Translator {
      * No hydration means ordinary find must handle this shape.
      */
     static Compiled graphFind(MappedUnit unit, MappedEntity type, Object id, FetchPlan graph, boolean load) {
-        Ast.Select select = new Ast.Select(false, List.of(new Ast.Item(new Ast.Path(List.of("this")), null)),
-            List.of(new Ast.Range(type.model().entityName(), null, "this", List.of())), null, List.of(), null, List.of());
+        Ast.Select select = graphRoot(type);
         Ast.Statement execution = graphSelect(select, unit, graph, load);
         if (execution == select) return null;
         Compiled compiled = translate(execution, unit, null, null, null, true, true);

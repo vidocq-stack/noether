@@ -164,6 +164,23 @@ public final class EntityLoader {
     /** One collection row; an absent LEFT row still records its owner. Entity elements carry their identifier. */
     public record FetchedElement(Object ownerId, Object element, Object[] index, boolean present) {}
 
+    /** A complete collection branch captured independently, never multiplied by another collection's rows. */
+    public record FetchedCollection(MappedEntity owner, int attribute, List<FetchedElement> elements) {}
+
+    /** Registers all split-read identities and completes every branch before snapshots or callbacks. */
+    public void loadCollections(List<FetchedEntity> rows, List<FetchedCollection> collections,
+            Connection connection, PersistenceContext context) {
+        context.loading(() -> {
+            loadRows(rows, collections, connection, context, null);
+            return null;
+        });
+    }
+
+    /** The D13 owner-key bound, also used by split graph reads. */
+    public int batchBound(MappedEntity owner) {
+        return bound(owner.statements().keyColumns().size());
+    }
+
     /**
      * Registers all identities before resolving relationships, then completes whole collections and snapshots before
      * any PostLoad callback. Existing managed state is preserved; an unloaded wrapper is completed in place.
@@ -177,6 +194,12 @@ public final class EntityLoader {
     }
 
     private void loadRows(List<FetchedEntity> rows, MappedEntity owner, int attribute, List<FetchedElement> elements,
+            Connection connection, PersistenceContext context, ManagedEntity initializing) {
+        loadRows(rows, owner == null ? List.of() : List.of(new FetchedCollection(owner, attribute, elements)),
+            connection, context, initializing);
+    }
+
+    private void loadRows(List<FetchedEntity> rows, List<FetchedCollection> collections,
             Connection connection, PersistenceContext context, ManagedEntity initializing) {
         Map<ManagedEntity, Row> pending = new LinkedHashMap<>();
         for (FetchedEntity fetched : rows) {
@@ -203,6 +226,33 @@ public final class EntityLoader {
                 pending.put(context.loaded(instance, type, fetched.id(), type.state().snapshot(state)), row);
             }
         }
+        for (var item : pending.entrySet()) {
+            ManagedEntity entry = item.getKey();
+            MappedEntity type = entry.type();
+            Object[] state = new Object[type.model().attributes().size()];
+            type.access().read(entry.instance(), state);
+            java.util.Set<Integer> fetched = new java.util.HashSet<>();
+            for (FetchedCollection collection : collections) {
+                if (collection.owner() == type && collection.elements().stream()
+                        .anyMatch(e -> Objects.equals(e.ownerId(), entry.key().id()))) fetched.add(collection.attribute());
+            }
+            relationships(type, entry.key().id(), entry.instance(), state, item.getValue(), connection, context, null, fetched);
+            type.deriveId(entry.instance());
+        }
+        for (FetchedCollection collection : collections) {
+            completeRows(collection.owner(), collection.attribute(), collection.elements(), pending, connection, context);
+        }
+        // No snapshot or callback sees a graph whose later rows/relationships are still missing.
+        for (ManagedEntity entry : pending.keySet()) {
+            Object[] state = new Object[entry.type().model().attributes().size()];
+            entry.type().access().read(entry.instance(), state);
+            context.updated(entry, entry.type().state().snapshot(state));
+        }
+        for (ManagedEntity entry : pending.keySet()) context.postLoad(() -> entry.type().callback("PostLoad", entry.instance()));
+    }
+
+    private void completeRows(MappedEntity owner, int attribute, List<FetchedElement> elements,
+            Map<ManagedEntity, Row> pending, Connection connection, PersistenceContext context) {
         Map<Object, List<Indexed>> grouped = new LinkedHashMap<>();
         AttributeModel model = owner == null ? null : owner.model().attributes().get(attribute);
         MappedEntity target = model instanceof AssociationAttribute a ? entity(a.targetEntity()) : null;
@@ -214,15 +264,6 @@ public final class EntityLoader {
             Object element = target == null ? row.element()
                 : context.find(new EntityKey(target.root(), row.element())).orElseThrow().instance();
             group.add(new Indexed(element, index(index, row.index(), 0, connection, context)));
-        }
-        for (var item : pending.entrySet()) {
-            ManagedEntity entry = item.getKey();
-            MappedEntity type = entry.type();
-            Object[] state = new Object[type.model().attributes().size()];
-            type.access().read(entry.instance(), state);
-            relationships(type, entry.key().id(), entry.instance(), state, item.getValue(), connection, context,
-                null, type == owner && grouped.containsKey(entry.key().id()) ? attribute : -1);
-            type.deriveId(entry.instance());
         }
         for (var group : grouped.entrySet()) {
             ManagedEntity entry = context.find(new EntityKey(owner.root(), group.getKey())).orElseThrow();
@@ -248,13 +289,6 @@ public final class EntityLoader {
                 owner.access().set(entry.instance(), attribute, value);
             }
         }
-        // No snapshot or callback sees a graph whose later rows/relationships are still missing.
-        for (ManagedEntity entry : pending.keySet()) {
-            Object[] state = new Object[entry.type().model().attributes().size()];
-            entry.type().access().read(entry.instance(), state);
-            context.updated(entry, entry.type().state().snapshot(state));
-        }
-        for (ManagedEntity entry : pending.keySet()) context.postLoad(() -> entry.type().callback("PostLoad", entry.instance()));
     }
 
     /** Makes a new instance of {@code type} managed from its {@code row}, then resolves its relationships. */
@@ -427,15 +461,15 @@ public final class EntityLoader {
      */
     private void relationships(MappedEntity type, Object id, Object instance, Object[] state, Row row, Connection connection,
             PersistenceContext context, Object[] previous) {
-        relationships(type, id, instance, state, row, connection, context, previous, -1);
+        relationships(type, id, instance, state, row, connection, context, previous, java.util.Set.of());
     }
 
     private void relationships(MappedEntity type, Object id, Object instance, Object[] state, Row row, Connection connection,
-            PersistenceContext context, Object[] previous, int fetchedCollection) {
+            PersistenceContext context, Object[] previous, java.util.Set<Integer> fetchedCollections) {
         EntityStatements statements = type.statements();
         List<AttributeModel> attributes = type.model().attributes();
         for (int i = 0; i < attributes.size(); i++) {
-            if (i == fetchedCollection) continue;
+            if (fetchedCollections.contains(i)) continue;
             Object value;
             if (attributes.get(i) instanceof AssociationAttribute association && association.singleValued()) {
                 Optional<EntityStatements.Reference> owned = statements.reference(i);

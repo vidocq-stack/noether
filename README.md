@@ -279,6 +279,34 @@ and missing relational mappings (detailed backlog in the roadmaps). D5/D9–D17 
 BUG-20261016-01 above remain historical records. D18 verification is recorded in
 [`noether-persistence/TCK.md`](noether-persistence/TCK.md).
 
+Decision **D19 (2026-10-16)** adds **multiple graph-requested root collections**:
+`Order { lines { product { supplier } }, payments }`. Eligible JPQL/Criteria first
+select owner identities in SQL, then read each collection independently for bounded
+owner groups. Non-locking graph finds use the same collectors directly. This is split
+SQL loading, never a join between collections: bags are not Cartesian-amplified,
+lists/maps retain their indexes, and shared root/element targets retain managed identity.
+Root and element to-one subgraphs reuse D18's LEFT joins; mapped eager to-ones and root
+collections are included (permitted FETCH overfetch). Every branch is staged before
+relationships, snapshots and callbacks; dirty state and in-place wrappers/references
+survive. Fully complete managed/cache find hits need no SELECT and find never auto-flushes.
+
+With `C` collection branches, `N` owners, key width `W` and configured fetch batch size
+`S` (default 16, range 1–256), `B = min(S, floor(512 / W))`: an eligible query uses
+`1 + C * ceil(N / B)` SELECTs, independent of the number of elements; a database find
+uses `C` SELECTs. Size 1 disables owner grouping, not split collection assembly.
+Pagination applies the limit to distinct owner identities in SQL, then reads their
+complete collections. Mutable graph/hint plans are rebuilt each time.
+
+The D16–D18 query/mapping restrictions still apply: unsupported joins/locking/grouped
+or set queries, polymorphic/complex graph targets, unsupported map keys and **nested
+collection-valued subgraphs** retain complete ordinary loading or explicit refusal.
+Nested eager collections on non-root targets likewise retain fallback. Omitted
+unsupported lazy to-one shapes can still require the established eager fallback;
+the bounded count is not a universal claim for those shapes or dirty in-memory
+association changes. Existing explicit JOIN FETCH and single-collection SQL are unchanged.
+Remaining priorities are nested collection graphs, broader fetch eligibility, broader
+lazy/batch support and missing mappings. D5/D9–D18 and BUG-20261016-01 remain historical.
+
 The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;
 the bundled Jakarta ORM schema retains its original upstream licence.

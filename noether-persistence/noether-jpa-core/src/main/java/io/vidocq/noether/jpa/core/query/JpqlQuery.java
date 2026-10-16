@@ -20,6 +20,7 @@
 package io.vidocq.noether.jpa.core.query;
 
 import io.vidocq.noether.jpa.core.mapping.MappedEntity;
+import io.vidocq.noether.jpa.core.flush.EntityLoader;
 import io.vidocq.noether.jpa.core.query.jpql.Ast;
 import io.vidocq.noether.jpa.core.query.jpql.Parser;
 import io.vidocq.noether.jpa.core.session.NotYet;
@@ -72,6 +73,12 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
             FetchPlan graph, boolean load, Dialect dialect, Connection connection,
             io.vidocq.noether.jpa.core.flush.EntityLoader loader,
             io.vidocq.noether.jpa.core.context.PersistenceContext context) {
+        List<Compiled> split = Translator.splitGraph(Translator.graphRoot(type), unit, graph);
+        if (!split.isEmpty()) {
+            GraphRows rows = splitRows(split, List.of(id), loader.batchBound(type), dialect, connection);
+            loader.loadCollections(rows.entities(), rows.collections(), connection, context);
+            return true;
+        }
         Compiled compiled = Translator.graphFind(unit, type, id, graph, load);
         if (compiled == null) return false;
         Dialect.Rendered rendered = dialect.renderQuery(compiled.sql());
@@ -102,6 +109,55 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         loader.loadCollection(entities, collection == null ? null : collection.owner(),
             collection == null ? -1 : collection.attribute(), collectionRows, connection, context);
         return true;
+    }
+
+    private record GraphRows(List<EntityLoader.FetchedEntity> entities, List<EntityLoader.FetchedCollection> collections) {}
+
+    /** Completes unloaded branches of an already managed/cache-restored owner without replacing dirty state. */
+    public static void completeGraph(io.vidocq.noether.jpa.core.mapping.MappedUnit unit, MappedEntity type, Object instance,
+            FetchPlan graph, Dialect dialect, Connection connection, EntityLoader loader,
+            io.vidocq.noether.jpa.core.context.PersistenceContext context) {
+        List<Compiled> split = Translator.splitGraph(Translator.graphRoot(type), unit, graph);
+        if (split.isEmpty() || split.stream().noneMatch(c -> io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(
+                type.access().get(instance, c.collection().attribute())))) return;
+        GraphRows rows = splitRows(split, List.of(type.id(instance)), loader.batchBound(type), dialect, connection);
+        loader.loadCollections(rows.entities(), rows.collections(), connection, context);
+    }
+
+    /** Reads every branch before the loader registers identities, resolves relationships or dispatches callbacks. */
+    private static GraphRows splitRows(List<Compiled> templates, List<Object> ids, int bound, Dialect dialect,
+            Connection connection) {
+        List<EntityLoader.FetchedEntity> entities = new ArrayList<>();
+        List<EntityLoader.FetchedCollection> collections = new ArrayList<>();
+        for (Compiled template : templates) {
+            List<EntityLoader.FetchedElement> elements = new ArrayList<>();
+            for (int from = 0; from < ids.size(); from += bound) {
+                Compiled compiled = Translator.graphOwners(template, ids.subList(from, Math.min(ids.size(), from + bound)));
+                Dialect.Rendered rendered = dialect.renderQuery(compiled.sql());
+                try (PreparedStatement statement = connection.prepareStatement(rendered.sql())) {
+                    for (int i = 0; i < rendered.parameters().size(); i++) {
+                        Compiled.Slot slot = (Compiled.Slot) rendered.parameters().get(i).slot();
+                        slot.binder().bind(dialect, statement, i + 1, slot.constant());
+                    }
+                    try (ResultSet results = statement.executeQuery()) {
+                        while (results.next()) {
+                            int[] column = {compiled.items().getFirst().width() + 1};
+                            Fetched[] row = fetched(compiled.hydrations(), results, column);
+                            for (Fetched fetched : row) {
+                                if (fetched != null) entities.add(new EntityLoader.FetchedEntity(
+                                    fetched.type(), fetched.id(), fetched.values(), fetched.nulls()));
+                            }
+                            if (row[0] != null) elements.add(fetchedElement(compiled.collection(), row[0].id(), row, results, column));
+                        }
+                    }
+                } catch (SQLException failure) {
+                    throw new PersistenceException("The split graph read failed: " + failure.getMessage(), failure);
+                }
+            }
+            collections.add(new EntityLoader.FetchedCollection(
+                template.collection().owner(), template.collection().attribute(), elements));
+        }
+        return new GraphRows(entities, collections);
     }
 
     /** A parameter of the query: {@code :name}, or {@code ?position}, and the Java type it is compared with if known. */
@@ -294,7 +350,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     }
 
     private int executeMutations(Compiled compiled, Connection connection, Dialect dialect) {
-        List<Object> captured = execute(compiled, connection);
+        List<Object> captured = execute(compiled, List.of(), connection);
         for (Compiled.Mutation mutation : compiled.mutations()) {
             try (PreparedStatement statement = connection.prepareStatement(dialect.render(mutation.sql()))) {
                 if (getTimeout() != null) {
@@ -407,13 +463,19 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
             return new ArrayList<>();
         }
         Object graph = getHints().containsKey(FETCH_GRAPH) ? getHints().get(FETCH_GRAPH) : getHints().get(LOAD_GRAPH);
-        Ast.Statement execution = graph != null && lockMode == LockModeType.NONE && !collectionFetch
+        List<Compiled> split = graph != null && lockMode == LockModeType.NONE && !collectionFetch
+            ? Translator.splitGraph(statement, runtime.mapping(), runtime.plan(graph))
+            : List.of();
+        Ast.Statement execution = split.isEmpty() && graph != null && lockMode == LockModeType.NONE && !collectionFetch
             ? Translator.graphSelect(statement, runtime.mapping(), runtime.plan(graph), !getHints().containsKey(FETCH_GRAPH))
             : statement;
         boolean graphRows = execution != statement;
         Compiled compiled = Translator.translate(execution, runtime.mapping(), p -> values.get(key(p)),
             null, null, lockMode == LockModeType.NONE, graphRows);
-        if (compiled.collectionFetch() && (getFirstResult() > 0 || getMaxResults() < Integer.MAX_VALUE)) {
+        if (!split.isEmpty() && (getFirstResult() > 0 || getMaxResults() < Integer.MAX_VALUE)) {
+            compiled = Translator.paginateCollection(statement, runtime.mapping(), p -> values.get(key(p)),
+                getFirstResult() > 0 ? getFirstResult() : null, getMaxResults() < Integer.MAX_VALUE ? getMaxResults() : null);
+        } else if (compiled.collectionFetch() && (getFirstResult() > 0 || getMaxResults() < Integer.MAX_VALUE)) {
             // the owner page of a graph-synthesized collection needs none of its LEFT joins
             compiled = Translator.paginateCollection(graphRows ? statement : execution, runtime.mapping(), p -> values.get(key(p)),
                 getFirstResult() > 0 ? getFirstResult() : null, getMaxResults() < Integer.MAX_VALUE ? getMaxResults() : null);
@@ -423,7 +485,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
                 lockMode == LockModeType.NONE, graphRows);
         }
         Compiled read = compiled;
-        return (List<X>) runtime.read(getFlushMode(), connection -> execute(read, connection));
+        return (List<X>) runtime.read(getFlushMode(), connection -> execute(read, split, connection));
     }
 
     /** A collection fetch anywhere in the query must never receive a SQL row limit. */
@@ -438,7 +500,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         return unique;
     }
 
-    private List<Object> execute(Compiled compiled, Connection connection) {
+    private List<Object> execute(Compiled compiled, List<Compiled> split, Connection connection) {
         Dialect dialect = runtime.dialect(connection);
         boolean pessimistic = io.vidocq.noether.jpa.core.flush.Locks.pessimistic(lockMode);
         io.vidocq.noether.jpa.dialect.sql.Statement sql = compiled.sql();
@@ -492,6 +554,12 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         // entities found, and results constructed, once the rows are read: the loader runs statements of its own
         List<Object> resultList = new ArrayList<>(rows.size());
         FetchPlan[] plans = fetchPlans();
+        if (!split.isEmpty() && !rows.isEmpty()) {
+            List<Object> ids = rows.stream().map(r -> ((EntityKey) r).id()).distinct().toList();
+            MappedEntity owner = split.getFirst().collection().owner();
+            GraphRows collected = splitRows(split, ids, runtime.graphBatchBound(owner, connection), dialect, connection);
+            runtime.hydrateCollections(collected.entities(), collected.collections(), connection);
+        }
         if (compiled.collection() != null) {
             List<io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedEntity> entities = new ArrayList<>();
             for (Fetched[] row : fetchedRows) {

@@ -667,7 +667,7 @@ class CollectionFetchJoinTest {
         em.getTransaction().rollback();
     }
 
-    @Test void collectionGraphMultiplePathsKeepCompleteSecondaryFallbackWhileToOneSubgraphsJoin() {
+    @Test void collectionGraphMultiplePathsSplitWhileSingleToOneSubgraphsJoin() {
         for (boolean nested : List.of(false, true)) {
             cold();
             var graph = graph("children");
@@ -677,19 +677,19 @@ class CollectionFetchJoinTest {
                 .setHint("jakarta.persistence.loadgraph", graph).getSingleResult();
             assertThat(owner.children).extracting(c -> c.id).containsExactly(11L, 10L);
             assertThat(owner.children).allSatisfy(c -> assertThat(c.owner).isSameAs(owner));
-            // D17: a to-one subgraph of the single collection joins in the same select; two collections still fall back
+            // D17 keeps one collector; D19 reads an owner page followed by two independent collectors.
             if (nested) assertThat(sql.getFirst()).containsIgnoringCase(" join ");
             else assertThat(sql.getFirst()).doesNotContainIgnoringCase(" join ");
             if (nested) assertThat(selects()).isEqualTo(1);
-            else assertThat(selects()).isGreaterThan(1);
+            else assertThat(selects()).isEqualTo(3);
             if (!nested) assertThat(owner.labels).containsExactly("z", "a", "z");
             cold();
             Owner found = em.find(Owner.class, 1L, Map.of("jakarta.persistence.fetchgraph", graph));
             assertThat(found.children).extracting(c -> c.id).containsExactly(11L, 10L);
             assertThat(found.children).allSatisfy(c -> assertThat(c.owner).isSameAs(found));
             if (nested) assertThat(selects()).isEqualTo(1);
-            else assertThat(sql.getFirst()).doesNotContainIgnoringCase(" join ");
-            if (!nested) assertThat(selects()).isGreaterThan(1);
+            else assertThat(sql.getFirst()).containsIgnoringCase(" join ");
+            if (!nested) assertThat(selects()).isEqualTo(2);
             if (!nested) assertThat(found.labels).containsExactly("z", "a", "z");
         }
     }

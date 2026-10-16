@@ -41,6 +41,7 @@ class LazyBatchTest {
             .managedClass(Owner.class).managedClass(Target.class).managedClass(Child.class).managedClass(Part.class)
             .managedClass(CompositeOwner.class).managedClass(CompositeKey.class)
             .managedClass(BaseOwner.class).managedClass(SpecialOwner.class)
+            .managedClass(EagerOwner.class)
             .sharedCacheMode(SharedCacheMode.ALL)
             .property("jakarta.persistence.nonJtaDataSource", source)
             .property("jakarta.persistence.schema-generation.database.action", "create");
@@ -252,6 +253,67 @@ class LazyBatchTest {
         assertThat(sql).allMatch(s -> s.chars().filter(c -> c == '?').count() <= 512);
     }
 
+    @Test void splitGraphsUseCompositeOwnerTuplesWithinTheSameParameterCeiling() {
+        open(256);
+        em.getTransaction().begin();
+        for (long id = 1; id <= 173; id++) {
+            CompositeOwner owner = new CompositeOwner();
+            owner.id = new CompositeKey(id % 2, id);
+            owner.items.addAll(Arrays.asList("item-" + id, null, "item-" + id));
+            owner.labels.put("id", Long.toString(id));
+            em.persist(owner);
+        }
+        em.getTransaction().commit();
+        em.clear(); factory.getCache().evictAll(); sql.clear();
+        var graph = em.createEntityGraph(CompositeOwner.class);
+        graph.addAttributeNodes("items", "labels");
+        var owners = em.createQuery("select o from BatchCompositeOwner o order by o.id.part", CompositeOwner.class)
+            .setHint("jakarta.persistence.loadgraph", graph).getResultList();
+        assertThat(owners).hasSize(173);
+        for (CompositeOwner owner : owners) {
+            assertThat(owner.items).containsExactly("item-" + owner.id.part, null, "item-" + owner.id.part);
+            assertThat(owner.labels).containsEntry("id", Long.toString(owner.id.part)).hasSize(1);
+        }
+        assertThat(selects()).isEqualTo(5); // owner IDs + two collectors, each in 170 + 3 owner groups
+        assertThat(sql).allMatch(s -> s.chars().filter(c -> c == '?').count() <= 512);
+        em.clear(); factory.getCache().evictAll(); sql.clear();
+        var found = em.find(CompositeOwner.class, new CompositeKey(1, 173), Map.of("jakarta.persistence.fetchgraph", graph));
+        assertThat(found.items).containsExactly("item-173", null, "item-173");
+        assertThat(found.labels).containsEntry("id", "173");
+        assertThat(selects()).isEqualTo(2);
+    }
+
+    @Test void splitGraphsExpandMappedEagerCollectionsAndToOnesWithoutPerOwnerReads() {
+        open(2);
+        em.getTransaction().begin();
+        for (long id = 1; id <= 5; id++) {
+            var target = new Target();
+            target.setId(id); target.setName("target-" + id); em.persist(target);
+            var owner = new EagerOwner();
+            owner.id = id;
+            owner.target = target;
+            owner.first.add("first-" + id);
+            owner.second.addAll(Arrays.asList(null, "second-" + id));
+            owner.eager.add("eager-" + id);
+            em.persist(owner);
+        }
+        em.getTransaction().commit();
+        for (String hint : List.of("jakarta.persistence.fetchgraph", "jakarta.persistence.loadgraph")) {
+            em.clear(); factory.getCache().evictAll(); sql.clear();
+            var graph = em.createEntityGraph(EagerOwner.class);
+            graph.addAttributeNodes("first", "second");
+            var owners = em.createQuery("select o from BatchEagerOwner o order by o.id", EagerOwner.class)
+                .setHint(hint, graph).getResultList();
+            for (var owner : owners) {
+                assertThat(owner.first).containsExactly("first-" + owner.id);
+                assertThat(owner.second).containsExactly(null, "second-" + owner.id);
+                assertThat(owner.eager).containsExactly("eager-" + owner.id);
+                assertThat(owner.target.getName()).isEqualTo("target-" + owner.id);
+            }
+            assertThat(selects()).isEqualTo(10); // owner IDs + three collections in three groups
+        }
+    }
+
     @Test void sqlNullPrimitiveEntityColumnsRetainTheOrdinaryBindersDefault() {
         open(2); var owners = seed();
         em.getTransaction().begin();
@@ -403,7 +465,18 @@ class LazyBatchTest {
     public static class CompositeOwner {
         @EmbeddedId CompositeKey id;
         @ElementCollection @OrderColumn List<String> items = new ArrayList<>();
+        @ElementCollection @MapKeyColumn(name = "label_key") Map<String, String> labels = new LinkedHashMap<>();
         public CompositeOwner() {}
+    }
+
+    @Entity(name = "BatchEagerOwner")
+    public static class EagerOwner {
+        @Id long id;
+        @ManyToOne Target target;
+        @ElementCollection @OrderColumn @Column(name = "first_value") List<String> first = new ArrayList<>();
+        @ElementCollection @OrderColumn @Column(name = "second_value") List<String> second = new ArrayList<>();
+        @ElementCollection(fetch = FetchType.EAGER) @OrderColumn List<String> eager = new ArrayList<>();
+        public EagerOwner() {}
     }
 
     @Entity(name = "BatchBaseOwner")

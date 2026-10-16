@@ -172,6 +172,28 @@ the graph through secondary reads. Managed/cache find hits retain ordinary compl
 and find gains no auto-flush. There is no second planner, raw SQL, runtime entity
 reflection, new dependency, package, module or executor.
 
+== Split root collection collectors (D19, 2026-10-16)
+
+`Translator.splitGraph` validates each requested root collection using the existing
+single-collection planner/collector. The user query still selects only owner identities
+(including SQL distinct-owner pagination), and each synthetic collector receives
+bounded owner-key predicates through the dialect AST. D13's configured owner bound
+and 512-parameter ceiling are reused. Each statement has one collection join, plus
+the existing LEFT root/element to-one branches and cycle-guarded eager expansion.
+
+`JpqlQuery` captures all independent branch rows before hydration.
+`EntityLoader.loadCollections` registers all identities through `loadRows`, skips
+all collected attributes while resolving relationships, and assembles every complete
+collection with the existing assembler before taking snapshots or queuing callbacks.
+The BUG-20261016-01 scope also covers outer query/find graph completion, so callbacks
+cannot expose an unfinished sibling branch. Existing wrapper/reference completion,
+dirty state and cache-generation publication are retained.
+
+This extends D18, not a second mapping/hydration architecture. Unsupported nested
+collections, non-root eager collections, polymorphic/complex mappings and broader
+query shapes retain complete fallback. Explicit fetch joins and single-collection
+graphs retain their existing collectors.
+
 == Lazy read batches (D13, 2026-10-15)
 
 `EntityLoader` groups pending compatible persistence-context entries on first access.

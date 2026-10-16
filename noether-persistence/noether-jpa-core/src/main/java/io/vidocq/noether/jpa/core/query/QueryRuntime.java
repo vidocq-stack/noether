@@ -102,4 +102,15 @@ public interface QueryRuntime {
             List<io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedElement> elements, Connection connection) {
         throw new UnsupportedOperationException("SQL collection hydration is not available");
     }
+
+    /** D13's configured owner batch and parameter ceiling for split graph collectors. */
+    default int graphBatchBound(MappedEntity owner, Connection connection) {
+        return 1;
+    }
+
+    /** Completes all independent graph collectors in a single staged hydration scope. */
+    default void hydrateCollections(List<io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedEntity> rows,
+            List<io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedCollection> collections, Connection connection) {
+        throw new UnsupportedOperationException("Split graph hydration is not available");
+    }
 }

@@ -15,6 +15,34 @@ The official artifact checksums and TCK-BUG-001 byte-exact derived-jar fixture
 patch are unchanged; original artifacts are never edited. `TCK_FIXTURES=official`
 selects the untouched Persistence fixture. See the runner README for setup.
 
+== Multiple root collection split SQL verification (D19, 2026-10-16)
+
+D19 groups independent root-collection reads by owner identity rather than joining
+collections together. Mandatory pre-production red: *2 SQL-count failures* (14 → 4
+SELECTs for three owners/three collections; 62 → 7 for 19 owners). A further cache red
+proved that a partially cached root's callback could see unloaded graph-required
+collections; BUG-20261016-01's existing load scope now covers cache restore/completion.
+
+The focused D11–D19/cache/BUG01 gate passes *159/159*. The final clean reactor finished
+*14:36:01 CEST*: *977/977 tests* from *87 XML reports* (966 baseline plus eleven).
+Coverage includes JPQL/Criteria/find FETCH/LOAD, independent lines/product and payments
+branches, three collections, batches 1/2/16/256 and the composite-key 512-parameter
+ceiling, null/empty/bag/list/map/shared-identity state, mapped eager expansion,
+callbacks/dirty/in-place/cache/flush semantics, mutable graph/hints, complete SQL owner
+pagination and explicit nested-collection fallback.
+
+Historical D5/D9–D18 and BUG-20261016-01 evidence below remains unchanged.
+Exact commands and fixture provenance are in `noether-persistence/TCK.md`.
+
+The final full locally patched Persistence 3.2.1 TCK finished *14:37:25 CEST* on
+isolated Docker PostgreSQL 17-alpine, Temurin 25.0.4 and Maven 3.9.16:
+*2135 tests / 2131 passed / 0 failures / 0 errors / 4 unchanged official skips*.
+Independent verification checked *259 XML reports*, *2135 unique identities/outcomes*
+equal to D18, *518 effective classpath properties*, all *85 immutable input files*
+and both runner tools. Official/derived jar hashes remain `a6ad07d4…b364024` /
+`1f7e82ba…e4d9a4`; all 1126 entries differ only at the two authorized ORM resources.
+No shared service restart. This is *locally patched evidence, not certification*.
+
 == Mixed root collection and root to-one SQL verification (D18, 2026-10-16)
 
 D18 combines exactly one root collection with root to-one branches and D17 element
