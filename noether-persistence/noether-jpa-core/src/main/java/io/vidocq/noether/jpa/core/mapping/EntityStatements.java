@@ -815,7 +815,7 @@ public final class EntityStatements {
                         || target.id() instanceof IdModel.ByIdClass)
                         || inheritance != null && (inheritance.joined() || inheritance.tablePerClass()
                             || inheritance.hierarchy().size() != 1)
-                        || target.attributes().stream().anyMatch(a -> a instanceof AssociationAttribute r && r.mapsId() != null)) {
+                        || !eligibleElementTarget(target, models, inheritances)) {
                     throw new PersistenceException(problem + "requires an eligible primary-key target");
                 }
                 List<KeyColumn> keys = relationalKeys(target, models, binders, inheritances, delimited);
@@ -842,6 +842,23 @@ public final class EntityStatements {
                 }
             }
         }
+    }
+
+    private static boolean eligibleElementTarget(EntityModel target, Function<Class<?>, EntityModel> models,
+            Function<Class<?>, InheritanceMapping> inheritances) {
+        List<AssociationAttribute> mapsIds = target.attributes().stream()
+            .filter(AssociationAttribute.class::isInstance).map(AssociationAttribute.class::cast)
+            .filter(association -> association.mapsId() != null).toList();
+        if (mapsIds.isEmpty()) return true;
+        if (!(target.id() instanceof IdModel.Single) || mapsIds.size() != 1) return false;
+        AssociationAttribute derived = mapsIds.getFirst();
+        if (!derived.mapsId().isEmpty() || derived.kind() != AssociationAttribute.Kind.ONE_TO_ONE
+                || !derived.owning() || derived.joinTable() != null) return false;
+        EntityModel parent = models.apply(derived.targetEntity());
+        if (parent == null || !(parent.id() instanceof IdModel.Single)) return false;
+        InheritanceMapping inheritance = inheritances.apply(parent.javaType());
+        return inheritance == null || !inheritance.joined() && !inheritance.tablePerClass()
+            && inheritance.hierarchy().size() == 1;
     }
 
     private static boolean hasRelationships(EmbeddableModel model) {

@@ -305,6 +305,45 @@ class ElementCollectionRelationsTest {
         }
     }
 
+    // §2.4.2 and §2.7: an element-row FK may target a simple identity derived through MapsId.
+    @Test void derivedSimpleIdentityTargetIsPreservedInElementCollectionRowsAndQueries() throws Exception {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = configuration(false, MapsIdElementOwner.class, MapsIdElementValue.class,
+                MapsIdElementTarget.class, MapsIdElementParent.class);
+            if (xml) configuration.mappingFile("orm/element-collection-mapsid.xml");
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var target = new MapsIdElementTarget();
+                target.parent = new MapsIdElementParent("parent");
+                var owner = new MapsIdElementOwner();
+                owner.id = 6L;
+                owner.values = new ArrayList<>(List.of(new MapsIdElementValue(target)));
+
+                transaction(em, () -> {
+                    em.persist(target);
+                    em.persist(owner);
+                });
+                assertThat(target.id).isEqualTo(target.parent.id).isPositive();
+                assertThat(em.createNativeQuery(
+                    "select target_fk from derived_owner_values where owner_id = 6").getSingleResult())
+                    .isEqualTo(target.id);
+
+                em.clear();
+                var found = em.find(MapsIdElementOwner.class, 6L);
+                var managedTarget = em.find(MapsIdElementTarget.class, target.id);
+                assertThat(found.values).hasSize(1);
+                assertThat(found.values.getFirst().target).isSameAs(managedTarget);
+                assertThat(managedTarget.parent).isSameAs(em.find(MapsIdElementParent.class, target.id));
+                assertThat(em.createQuery(
+                    "select v.target from MapsIdElementOwner o join o.values v", MapsIdElementTarget.class).getSingleResult())
+                    .isSameAs(managedTarget);
+            }
+        }
+        assertThatThrownBy(() -> configuration(false, DerivedCompositeOwner.class, DerivedCompositeValue.class,
+            DerivedCompositeTarget.class, DerivedCompositeKey.class, MapsIdElementParent.class)
+            .createEntityManagerFactory())
+            .isInstanceOf(PersistenceException.class).hasMessageContaining("eligible primary-key target");
+    }
+
     @Test void inverseOneToOneIsRejectedAtBootstrap() {
         assertThatThrownBy(() -> factory(false, InvalidOwner.class, InverseValue.class))
             .hasStackTraceContaining("collection").hasStackTraceContaining("owning");
@@ -650,6 +689,53 @@ class ElementCollectionRelationsTest {
         @Override public int hashCode() { return java.util.Objects.hash(region, serial); }
     }
     @Embeddable public static class IdClassValue { @ManyToOne public IdClassTarget target; }
+    @Entity(name = "MapsIdElementParent")
+    public static class MapsIdElementParent {
+        @Id @GeneratedValue(strategy = GenerationType.IDENTITY) public long id;
+        public String name;
+        public MapsIdElementParent() {}
+        MapsIdElementParent(String name) { this.name = name; }
+    }
+    @Entity(name = "MapsIdElementTarget")
+    public static class MapsIdElementTarget {
+        @Id public long id;
+        @MapsId @OneToOne(cascade = CascadeType.PERSIST)
+        @JoinColumn(name = "parent_fk")
+        public MapsIdElementParent parent;
+    }
+    @Entity(name = "MapsIdElementOwner")
+    public static class MapsIdElementOwner {
+        @Id public Long id;
+        @ElementCollection @CollectionTable(name = "derived_owner_values", joinColumns = @JoinColumn(name = "owner_id"))
+        public List<MapsIdElementValue> values;
+    }
+    @Embeddable public static class MapsIdElementValue {
+        @ManyToOne @JoinColumn(name = "target_fk") public MapsIdElementTarget target;
+        public MapsIdElementValue() {}
+        MapsIdElementValue(MapsIdElementTarget target) { this.target = target; }
+    }
+    @Entity public static class DerivedCompositeOwner {
+        @Id public Long id;
+        @ElementCollection public List<DerivedCompositeValue> values;
+    }
+    @Embeddable public static class DerivedCompositeValue {
+        @ManyToOne public DerivedCompositeTarget target;
+    }
+    @Entity public static class DerivedCompositeTarget {
+        @EmbeddedId public DerivedCompositeKey id;
+        @MapsId("parentId") @ManyToOne @JoinColumn(name = "parent_fk")
+        public MapsIdElementParent parent;
+    }
+    @Embeddable public static class DerivedCompositeKey implements java.io.Serializable {
+        public long parentId;
+        public String code;
+        public DerivedCompositeKey() {}
+        @Override public boolean equals(Object other) {
+            return other instanceof DerivedCompositeKey key && parentId == key.parentId
+                && java.util.Objects.equals(code, key.code);
+        }
+        @Override public int hashCode() { return java.util.Objects.hash(parentId, code); }
+    }
     @Entity public static class BusinessOwner {
         @Id public Long id;
         @ElementCollection public List<BusinessValue> elements;

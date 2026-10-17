@@ -255,11 +255,27 @@ when read rather than treated as a valid composite identity. JPQL/Criteria
 association navigation and whole-value projections resolve the target's managed
 identity through the same tuple.
 
-Inverse `mappedBy`, orphan removal, to-many/nested collections, derived/MapsId
-keys, composite keys with non-BASIC components, business-key joins, join-table
-relationships, read-only/shared/other-table FK columns, polymorphic/JOINED/
-TABLE_PER_CLASS targets and unsupported owner keys/indexes remain unsupported.
+Composite keys containing non-BASIC components, derived composite keys,
+business-key joins, inverse `mappedBy`, orphan removal, to-many/nested
+collections, join-table relationships, read-only/shared/other-table FK columns,
+polymorphic/JOINED/TABLE_PER_CLASS targets and unsupported owner keys/indexes
+remain unsupported.
 Broader query and mapping support requires separate bounded lots.
+
+== Simple MapsId primary-key targets (D30, 2026-10-17)
+
+An element-value owning to-one may target an entity whose simple `@Id` is a
+shared primary key derived through one owning `@OneToOne @MapsId` to a
+non-polymorphic parent with a simple `@Id`. The element-row FK references the
+target's actual physical primary-key column, including when the parent join
+column supplies that column name. Annotation and metadata-complete ORM XML use
+the same mapping, schema, lifecycle and query paths; generated parent IDs are
+available to the collection row after ordinary persist ordering.
+
+Composite or nested derived identities, chained `@MapsId`, business-key,
+polymorphic and other unsupported target mappings remain outside this support.
+This does not widen collection fetching, graph hydration, lazy references or
+batching.
 
 == Inverse collection-element boundary (D25, 2026-10-17)
 

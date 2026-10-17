@@ -1937,10 +1937,11 @@ null association; a partially null tuple fails explicitly rather than creating
 a malformed composite identity. D27 navigation and D28 whole-value projections
 continue to use the same mapped columns and managed identity resolution.
 
-Derived/MapsId keys, composite keys containing non-BASIC relationship
+Composite/nested derived keys, composite keys containing non-BASIC relationship
 components, business-key joins, polymorphic/JOINED/TABLE_PER_CLASS targets and
-other previously refused shapes remain out of scope. No collection fetch,
-graph, row-hydration, lazy-reference or batching eligibility is widened.
+other previously refused shapes remain out of scope. D30 separately enables
+only the simple shared-identity MapsId shape. No collection fetch, graph,
+row-hydration, lazy-reference or batching eligibility is widened.
 
 Mandatory initial red: the focused test failed at bootstrap because D24 rejected
 the composite target key. Post-change `ElementCollectionRelationsTest`:
@@ -1950,19 +1951,44 @@ managed identity and JPQL whole-value projection. Full `./mvnw -ntp clean
 install`: **1108 tests, 0 failures, 0 errors, 0 skipped across 92 reports**.
 No TCK was run; these are unit-test results, not TCK or certification evidence.
 
-Prioritized backlog after D29, 2026-10-17. Each item needs its own approved, bounded lot; until then
+### D30 — Simple MapsId targets in element collections ✅ (2026-10-17)
+
+D30 extends D24 owning element-value to-ones to a target whose simple `@Id` is
+the shared identity of one owning `@OneToOne @MapsId` to a non-polymorphic
+parent with a simple `@Id`. Annotation and metadata-complete ORM XML use the
+existing D23 derived-identity metadata and D29 element-column mapping. The
+element-row FK references the target's actual physical primary-key column,
+including a PK column named by the target's parent join column.
+
+Persisting a target with a generated parent ID and an element collection that
+references it uses the existing D23 lifecycle ordering. Loading the collection
+and projecting the target through JPQL resolve the same managed identity.
+Composite/nested or chained derived identities, business-key joins,
+polymorphic targets and other unsupported mapping shapes remain refused. No
+collection fetch/graph, optimized hydration, lazy-reference or batching
+eligibility is widened.
+
+Mandatory initial red: the focused test failed at bootstrap because D24 refused
+a MapsId target. Post-change `ElementCollectionRelationsTest`: **27/27 passed**,
+including generated parent identity, the target's physical PK column, managed
+identity and JPQL projection for annotations/XML, plus continued refusal of a
+composite derived target. Full `./mvnw -ntp clean install`: **1109 tests, 0
+failures, 0 errors, 0 skipped across 92 reports**.
+No TCK was run; these are unit-test results, not TCK or certification evidence.
+
+Prioritized backlog after D30, 2026-10-17. Each item needs its own approved, bounded lot; until then
 the documented fallback (follow-up selects, eager loading, or an explicit refusal naming the
 milestone) stays in place.
 
 1. **Remaining relational mapping shapes** — derived/nested identity targets and
-   composite forms beyond D23 and D29's direct BASIC `@EmbeddedId`/`@IdClass`
-   contract; business joins
+   composite forms beyond D23, D29's direct BASIC `@EmbeddedId`/`@IdClass`,
+   and D30's simple shared `@MapsId` contract; business joins
    through join tables or inheritance, broader secondary-table business tuples/
    PK joins beyond D26, embedded business association paths,
    inverse collections and safely mutable referenced keys; inverse many-to-many
    indexes and broader relationships inside collection-table embeddable elements
-   beyond D24/D28/D29 (business/derived/join-table and other unsupported composite
-   forms). After D25,
+   beyond D24/D28/D29/D30 (business/join-table and unsupported composite or
+   derived forms). After D25,
    inverse entity-owner relationships need a
    separate normative/cardinality contract; illegal inverse collection embeddables
    and entity associations to embeddables are not future implementation targets.
@@ -1988,6 +2014,7 @@ Recorded before implementation; each entry: date, decision, reason.
 
 | # | Date | Decision | Status |
 |---|---|---|---|
+| D30 | 2026-10-17 | Extend D24 collection-element owning to-ones to target simple IDs that are shared through one owning `OneToOne @MapsId` to a non-polymorphic simple-ID parent. Reuse D23 physical-key and lifecycle metadata and D29 element-column handling; keep composite/nested/chained derived IDs, business keys, polymorphism, and collection-loading optimizations out of scope. | Actioned |
 | D28 | 2026-10-17 | Project entire D24 relationship-bearing element-collection embeddable values through JPQL/Criteria, reconstructing scalar/nested values and resolving each owning to-one by its actual FK identity into the persistence context; preserve nulls and repeated managed targets; cover annotations and metadata-complete XML. Keep whole-value relationship comparison, unsupported D24 mapping shapes, and collection fetch/lazy/batch optimization out of scope. | Actioned |
 | D27 | 2026-10-17 | Extend D24 query support for owning to-ones inside element-collection embeddables: JPQL/Criteria navigation to target attributes, entity identity comparison/projection, and explicit inner/left joins from element aliases, including nested values and metadata-complete XML. Bind direct entity projections from the existing collection FK; lower navigation/joins through mapped target identity. Keep whole relationship-bearing embeddable projection, inverse/composite/business/derived/join-table/polymorphic mappings, lazy/batch/fetch-graph optimization and broader nested query shapes out of scope. | Actioned |
 | D26 | 2026-10-17 | Extend D22's optional nonportable non-PK references to one immutable non-null unique BASIC column in a declared target secondary table, with a single target PK/secondary PK join. Resolve table/uniqueness/identity from existing metadata, emit the real secondary FK and retain generated access/binders, ordinary eager loading, lifecycle/cache and SQL AST query semantics. Reject ambiguous/composite/owner-secondary/inherited/derived and other unsupported shapes; do not reinterpret JoinColumn.table or broaden lazy/batch/cycle ordering. | Actioned |
