@@ -30,10 +30,12 @@ import io.vidocq.noether.jpa.dialect.sql.Identifier;
 import io.vidocq.noether.jpa.dialect.sql.Insert;
 import io.vidocq.noether.jpa.dialect.sql.Select;
 import io.vidocq.noether.jpa.dialect.sql.Table;
+import jakarta.persistence.PersistenceException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Collection;
+import java.util.Arrays;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 
@@ -96,7 +98,7 @@ public record ElementCollectionMapping(int attribute, ElementCollectionAttribute
                 value = column.accesses()[step].get(value, column.path()[step]);
             }
             values[c] = value != null && column.foreignKey() != null
-                ? keys.apply(value, column.foreignKey().target())[0] : value;
+                ? keys.apply(value, column.foreignKey().target())[column.foreignKey().part()] : value;
         }
         return values;
     }
@@ -108,11 +110,39 @@ public record ElementCollectionMapping(int attribute, ElementCollectionAttribute
         });
     }
 
-    public Object element(Object[] values, boolean[] nulls, BiFunction<Class<?>, Object, Object> resolve) {
+    public Object element(Object[] values, boolean[] nulls, BiFunction<Class<?>, Object[], Object> resolve) {
         values = values.clone();
+        boolean[] resolved = new boolean[values.length];
         for (int c = 0; c < values.length; c++) {
-            if (columns.get(c).foreignKey() != null && !nulls[c]) {
-                values[c] = resolve.apply(columns.get(c).foreignKey().target(), values[c]);
+            EntityStatements.Column column = columns.get(c);
+            if (column.foreignKey() == null || resolved[c]) continue;
+            var foreignKey = column.foreignKey();
+            List<Integer> parts = new ArrayList<>();
+            for (int part = 0; part < columns.size(); part++) {
+                var candidate = columns.get(part);
+                if (candidate.foreignKey() != null && candidate.foreignKey().target() == foreignKey.target()
+                        && Arrays.equals(candidate.path(), column.path())) parts.add(part);
+            }
+            parts.sort(java.util.Comparator.comparingInt(part -> columns.get(part).foreignKey().part()));
+            Object[] key = new Object[parts.size()];
+            boolean allNull = true;
+            boolean anyNull = false;
+            for (int part = 0; part < parts.size(); part++) {
+                int index = parts.get(part);
+                if (columns.get(index).foreignKey().part() != part) {
+                    throw new PersistenceException("The composite identity columns of " + model.name() + " are incomplete");
+                }
+                key[part] = values[index];
+                allNull &= nulls[index];
+                anyNull |= nulls[index];
+            }
+            if (!allNull && anyNull) {
+                throw new PersistenceException("The composite relationship key of " + model.name() + " is partially null");
+            }
+            Object target = allNull ? null : resolve.apply(foreignKey.target(), key);
+            for (int part : parts) {
+                values[part] = target;
+                resolved[part] = true;
             }
         }
         Object[] state = new Object[1];

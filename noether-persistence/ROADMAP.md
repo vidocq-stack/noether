@@ -1921,17 +1921,48 @@ whole-value projections. Post-change `ElementCollectionRelationsTest`:
 0 errors, 0 skipped across 92 reports**. No TCK was run; these results are not
 TCK or certification evidence.
 
-Prioritized backlog after D28, 2026-10-17. Each item needs its own approved, bounded lot; until then
+### D29 — Composite primary-key targets in element collections ✅ (2026-10-17)
+
+D29 extends D24 owning `ManyToOne`/`OneToOne` associations in element-collection
+values to direct composite primary keys represented by `@EmbeddedId` or
+`@IdClass`, when every key component is a supported BASIC attribute. Annotation
+and metadata-complete ORM XML mappings preserve the declared join-column order
+and resolve each referenced key component. Schema generation emits one FK
+constraint over the complete tuple, uses each referenced component's SQL type,
+and groups one-to-one uniqueness over the association tuple.
+
+Writes bind every key component; reads treat the FK tuple as one association
+identity and resolve the actual managed target. A fully null tuple represents a
+null association; a partially null tuple fails explicitly rather than creating
+a malformed composite identity. D27 navigation and D28 whole-value projections
+continue to use the same mapped columns and managed identity resolution.
+
+Derived/MapsId keys, composite keys containing non-BASIC relationship
+components, business-key joins, polymorphic/JOINED/TABLE_PER_CLASS targets and
+other previously refused shapes remain out of scope. No collection fetch,
+graph, row-hydration, lazy-reference or batching eligibility is widened.
+
+Mandatory initial red: the focused test failed at bootstrap because D24 rejected
+the composite target key. Post-change `ElementCollectionRelationsTest`:
+**26/26 passed**, including annotation/XML mappings, `@EmbeddedId`/`@IdClass`,
+reversed explicit join-column order, null and partially null associations,
+managed identity and JPQL whole-value projection. Full `./mvnw -ntp clean
+install`: **1108 tests, 0 failures, 0 errors, 0 skipped across 92 reports**.
+No TCK was run; these are unit-test results, not TCK or certification evidence.
+
+Prioritized backlog after D29, 2026-10-17. Each item needs its own approved, bounded lot; until then
 the documented fallback (follow-up selects, eager loading, or an explicit refusal naming the
 milestone) stays in place.
 
-1. **Remaining relational mapping shapes** — broader derived/composite/nested identity
-   targets beyond D23; business joins
+1. **Remaining relational mapping shapes** — derived/nested identity targets and
+   composite forms beyond D23 and D29's direct BASIC `@EmbeddedId`/`@IdClass`
+   contract; business joins
    through join tables or inheritance, broader secondary-table business tuples/
    PK joins beyond D26, embedded business association paths,
    inverse collections and safely mutable referenced keys; inverse many-to-many
    indexes and broader relationships inside collection-table embeddable elements
-   beyond D24/D28 (composite/business/derived/join-table support). After D25,
+   beyond D24/D28/D29 (business/derived/join-table and other unsupported composite
+   forms). After D25,
    inverse entity-owner relationships need a
    separate normative/cardinality contract; illegal inverse collection embeddables
    and entity associations to embeddables are not future implementation targets.

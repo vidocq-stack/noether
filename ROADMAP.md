@@ -288,16 +288,30 @@ targets, preserving nulls, repeated targets and duplicate values. Annotation and
 metadata-complete XML mappings are covered. Whole-value comparisons, unrelated
 entity-embedded projections and broader loading optimizations are not implied.
 
+Decision D29 (2026-10-17) extends D24 collection-element owning to-ones to
+direct composite primary-key targets using `@EmbeddedId` or `@IdClass` whose
+components are supported BASIC attributes. Annotation and metadata-complete XML
+preserve explicit join-column ordering; writes and reads handle the full key
+tuple, and schema generation creates grouped composite foreign keys and
+one-to-one uniqueness. Null tuples remain null associations; partial-null tuples
+fail explicitly. D27 navigation and D28 projections resolve managed target
+identity as before. Derived/MapsId, composite non-BASIC keys, business-key,
+polymorphic and unsupported mappings, as well as collection fetch/lazy/batch
+optimization, remain outside scope. Detailed evidence and exclusions are in the
+Persistence roadmap; no TCK or certification claim is made.
+
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
-1. Remaining relational mapping shapes beyond D23/D24's bounded contracts:
-   broader derived/composite/nested identity targets, business joins
+1. Remaining relational mapping shapes beyond D23/D24/D29's bounded contracts:
+   derived/nested identity targets and composite forms beyond D29's direct BASIC
+   `@EmbeddedId`/`@IdClass` contract, business joins
    through join tables or inheritance, broader secondary-table business tuples/
    PK joins beyond D26, inverse business collections,
    embedded business association paths and safely mutable referenced keys;
    inverse many-to-many indexes and broader collection-table embeddable relationships
-   (composite/business/derived/join-table mappings and broader query paths).
+   (business/derived/join-table mappings, unsupported composite forms and broader
+   query paths).
    Inverse entity-owner relationships need a separate normative/cardinality contract
    after D25; inverse collection embeddables and entity targets that are embeddables
    are not a feature backlog. Orphan removal remains separate.

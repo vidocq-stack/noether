@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entity-mappings xmlns="https://jakarta.ee/xml/ns/persistence/orm" version="3.2">
+  <entity class="io.vidocq.noether.jpa.core.session.ElementCollectionRelationsTest$CompositeOwner"
+      name="CompositeOwner" access="FIELD" metadata-complete="true">
+    <attributes>
+      <id name="id"/>
+      <element-collection name="elements">
+        <collection-table name="composite_target_elements"><join-column name="owner_id"/></collection-table>
+      </element-collection>
+      <element-collection name="idClassElements">
+        <collection-table name="id_class_target_elements"><join-column name="owner_id"/></collection-table>
+      </element-collection>
+    </attributes>
+  </entity>
+  <embeddable class="io.vidocq.noether.jpa.core.session.ElementCollectionRelationsTest$CompositeValue"
+      access="FIELD" metadata-complete="true">
+    <attributes>
+      <basic name="label"/>
+      <many-to-one name="target">
+        <join-column name="target_serial" referenced-column-name="serial"/>
+        <join-column name="target_region" referenced-column-name="region"/>
+      </many-to-one>
+      <one-to-one name="oneTarget">
+        <join-column name="one_target_serial" referenced-column-name="serial"/>
+        <join-column name="one_target_region" referenced-column-name="region"/>
+      </one-to-one>
+    </attributes>
+  </embeddable>
+</entity-mappings>

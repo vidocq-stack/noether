@@ -239,6 +239,72 @@ class ElementCollectionRelationsTest {
         }
     }
 
+    @Test void compositeTargetIdentityIsPreservedInElementCollectionRowsAndQueries() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = configuration(false, CompositeOwner.class, CompositeValue.class, CompositeTarget.class,
+                CompositeKey.class, IdClassTarget.class, IdClassKey.class, IdClassValue.class);
+            if (xml) configuration.mappingFile("orm/element-collection-composite.xml");
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var target = new CompositeTarget();
+                target.id = new CompositeKey(3, 19);
+                var idClassTarget = new IdClassTarget();
+                idClassTarget.region = 7;
+                idClassTarget.serial = 23;
+                var owner = new CompositeOwner();
+                owner.id = 5L;
+                var value = new CompositeValue();
+                value.label = "embedded";
+                value.target = target;
+                value.oneTarget = target;
+                var nullValue = new CompositeValue();
+                nullValue.label = "null";
+                owner.elements = new ArrayList<>(List.of(value, nullValue));
+                var idClassValue = new IdClassValue();
+                idClassValue.target = idClassTarget;
+                owner.idClassElements = new ArrayList<>(List.of(idClassValue));
+
+                transaction(em, () -> {
+                    em.persist(target);
+                    em.persist(idClassTarget);
+                    em.persist(owner);
+                });
+                em.clear();
+
+                var found = em.find(CompositeOwner.class, 5L);
+                var managedTarget = em.find(CompositeTarget.class, new CompositeKey(3, 19));
+                assertThat(found.elements).hasSize(2);
+                assertThat(found.elements.getFirst().target).isSameAs(managedTarget);
+                assertThat(found.elements.getFirst().oneTarget).isSameAs(managedTarget);
+                assertThat(found.elements.getLast().target).isNull();
+                assertThat(found.elements.getLast().oneTarget).isNull();
+                assertThat(em.createQuery(
+                    "select v.target from CompositeOwner o join o.elements v order by v.label", CompositeTarget.class)
+                    .getResultList()).containsExactly(managedTarget, null);
+                assertThat(em.createQuery(
+                    "select v.target.id.serial from CompositeOwner o join o.elements v", Long.class).getResultList())
+                    .containsExactly(19L);
+                var projection = em.createQuery(
+                    "select v from CompositeOwner o join o.elements v order by v.label", CompositeValue.class).getResultList();
+                assertThat(projection).hasSize(2);
+                assertThat(projection.getFirst().target).isSameAs(managedTarget);
+                assertThat(projection.getFirst().oneTarget).isSameAs(managedTarget);
+                assertThat(projection.getLast().target).isNull();
+                var managedIdClassTarget = em.find(IdClassTarget.class, new IdClassKey(7, 23));
+                assertThat(em.find(CompositeOwner.class, 5L).idClassElements.getFirst().target).isSameAs(managedIdClassTarget);
+                assertThat(em.createQuery(
+                    "select v.target from CompositeOwner o join o.idClassElements v", IdClassTarget.class).getSingleResult())
+                    .isSameAs(managedIdClassTarget);
+                if (xml) {
+                    transaction(em, () -> em.createNativeQuery(
+                        "UPDATE composite_target_elements SET target_serial = NULL WHERE owner_id = 5").executeUpdate());
+                    em.clear();
+                    assertThatThrownBy(() -> em.find(CompositeOwner.class, 5L).elements.size())
+                        .isInstanceOf(PersistenceException.class).hasMessageContaining("partially null");
+                }
+            }
+        }
+    }
+
     @Test void inverseOneToOneIsRejectedAtBootstrap() {
         assertThatThrownBy(() -> factory(false, InvalidOwner.class, InverseValue.class))
             .hasStackTraceContaining("collection").hasStackTraceContaining("owning");
@@ -362,8 +428,8 @@ class ElementCollectionRelationsTest {
         }
     }
 
-    @Test void unsupportedCompositeBusinessMapsIdOrphanAndCollectionMappingsAreExplicitlyRefused() {
-        for (Class<?> owner : List.of(CompositeOwner.class, BusinessOwner.class, MapsOwner.class,
+    @Test void unsupportedBusinessMapsIdOrphanAndCollectionMappingsAreExplicitlyRefused() {
+        for (Class<?> owner : List.of(BusinessOwner.class, MapsOwner.class,
                 OrphanOwner.class, NestedCollectionOwner.class, ReadOnlyOwner.class, ToManyOwner.class, JoinTableOwner.class)) {
             assertThatThrownBy(() -> factory(false, owner, CompositeTarget.class, CompositeKey.class))
                 .isInstanceOf(PersistenceException.class).hasStackTraceContaining("collection");
@@ -541,13 +607,49 @@ class ElementCollectionRelationsTest {
     @Entity public static class CompositeOwner {
         @Id public Long id;
         @ElementCollection public List<CompositeValue> elements;
+        @ElementCollection public List<IdClassValue> idClassElements;
     }
-    @Embeddable public static class CompositeValue { @ManyToOne public CompositeTarget target; }
+    @Embeddable public static class CompositeValue {
+        public String label;
+        @ManyToOne @JoinColumns({
+            @JoinColumn(name = "target_serial", referencedColumnName = "serial"),
+            @JoinColumn(name = "target_region", referencedColumnName = "region")
+        })
+        public CompositeTarget target;
+        @OneToOne @JoinColumns({
+            @JoinColumn(name = "one_target_serial", referencedColumnName = "serial"),
+            @JoinColumn(name = "one_target_region", referencedColumnName = "region")
+        })
+        public CompositeTarget oneTarget;
+    }
     @Entity public static class CompositeTarget { @EmbeddedId public CompositeKey id; }
     @Embeddable public static class CompositeKey implements java.io.Serializable {
-        public long first;
-        public long second;
+        public long region;
+        public long serial;
+        public CompositeKey() {}
+        CompositeKey(long region, long serial) { this.region = region; this.serial = serial; }
+        @Override public boolean equals(Object other) {
+            return other instanceof CompositeKey key && region == key.region && serial == key.serial;
+        }
+        @Override public int hashCode() { return java.util.Objects.hash(region, serial); }
     }
+    @Entity @IdClass(IdClassKey.class)
+    public static class IdClassTarget {
+        @Id public long region;
+        @Id public long serial;
+        public IdClassTarget() {}
+    }
+    public static class IdClassKey implements java.io.Serializable {
+        public long region;
+        public long serial;
+        public IdClassKey() {}
+        IdClassKey(long region, long serial) { this.region = region; this.serial = serial; }
+        @Override public boolean equals(Object other) {
+            return other instanceof IdClassKey key && region == key.region && serial == key.serial;
+        }
+        @Override public int hashCode() { return java.util.Objects.hash(region, serial); }
+    }
+    @Embeddable public static class IdClassValue { @ManyToOne public IdClassTarget target; }
     @Entity public static class BusinessOwner {
         @Id public Long id;
         @ElementCollection public List<BusinessValue> elements;

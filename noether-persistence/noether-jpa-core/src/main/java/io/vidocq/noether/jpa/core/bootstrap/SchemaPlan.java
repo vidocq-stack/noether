@@ -131,14 +131,30 @@ final class SchemaPlan {
                     } else {
                         var association = collection.association(column);
                         var target = unit.entity(column.foreignKey().target()).orElseThrow();
-                        var key = target.statements().keyColumns().getFirst();
+                        var key = target.statements().referencedColumn(column.foreignKey());
                         var definition = definition(column.name(), basic(target, key), false, false);
                         boolean nullable = association.optional()
                             && (association.joinColumns().isEmpty() || association.joinColumns().getFirst().nullable());
                         columnsByName.put(column.name(), new SchemaStatement.Column(column.name(), definition.type(),
                             definition.length(), definition.precision(), definition.scale(), nullable, false,
-                            association.kind() == AssociationAttribute.Kind.ONE_TO_ONE, null));
-                        foreignKey(collection.table(), List.of(column.name()), target, null);
+                            association.kind() == AssociationAttribute.Kind.ONE_TO_ONE
+                                && target.statements().keyColumns().size() == 1, null));
+                    }
+                }
+                Set<String> elementReferences = new HashSet<>();
+                for (var column : collection.columns()) {
+                    if (column.foreignKey() == null || !elementReferences.add(Arrays.toString(column.path()))) continue;
+                    var association = collection.association(column);
+                    var target = unit.entity(column.foreignKey().target()).orElseThrow();
+                    var reference = collection.columns().stream()
+                        .filter(candidate -> candidate.foreignKey() != null
+                            && candidate.foreignKey().target() == column.foreignKey().target()
+                            && Arrays.equals(candidate.path(), column.path()))
+                        .sorted(Comparator.comparingInt(candidate -> candidate.foreignKey().part())).toList();
+                    List<Identifier> names = reference.stream().map(EntityStatements.Column::name).toList();
+                    foreignKey(collection.table(), names, target, null);
+                    if (association.kind() == AssociationAttribute.Kind.ONE_TO_ONE && names.size() > 1) {
+                        unique(collection.table(), names, "_element_" + collection.attribute() + "_" + elementReferences.size());
                     }
                 }
                 foreignKey(collection.table(), collection.ownerColumns(), entity, null);

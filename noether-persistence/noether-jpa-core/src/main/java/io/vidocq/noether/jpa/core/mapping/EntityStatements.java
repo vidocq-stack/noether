@@ -811,25 +811,35 @@ public final class EntityStatements {
                 }
                 EntityModel target = models.apply(association.targetEntity());
                 InheritanceMapping inheritance = target == null ? null : inheritances.apply(target.javaType());
-                if (target == null || !(target.id() instanceof IdModel.Single)
+                if (target == null || !(target.id() instanceof IdModel.Single || target.id() instanceof IdModel.Embedded
+                        || target.id() instanceof IdModel.ByIdClass)
                         || inheritance != null && (inheritance.joined() || inheritance.tablePerClass()
                             || inheritance.hierarchy().size() != 1)
                         || target.attributes().stream().anyMatch(a -> a instanceof AssociationAttribute r && r.mapsId() != null)) {
-                    throw new PersistenceException(problem + "requires an eligible simple-ID target");
+                    throw new PersistenceException(problem + "requires an eligible primary-key target");
                 }
                 List<KeyColumn> keys = relationalKeys(target, models, binders, inheritances, delimited);
-                JoinColumnModel[] joins = keys == null ? null
+                JoinColumnModel[] joins = keys == null || keys.isEmpty() ? null
                     : byKeyPart(problem, association.joinColumns(), keys, target, delimited);
-                if (joins == null || joins.length != 1) {
-                    throw new PersistenceException(problem + "requires a single primary-key join column");
+                if (joins == null) {
+                    throw new PersistenceException(problem + "requires a complete join to its primary key");
                 }
-                JoinColumnModel join = joins[0];
-                if (!join.insertable() || !join.updatable() || join.table() != null && !join.table().isBlank()) {
-                    throw new PersistenceException(problem + "requires a writable collection-table join column");
+                JoinColumnModel first = joins[0];
+                for (JoinColumnModel join : joins) {
+                    if (join.nullable() != first.nullable() || join.insertable() != first.insertable()
+                            || join.updatable() != first.updatable()) {
+                        throw new PersistenceException(problem + "requires uniform composite join-column nullability and writeability");
+                    }
+                    if (!join.insertable() || !join.updatable() || join.table() != null && !join.table().isBlank()) {
+                        throw new PersistenceException(problem + "requires writable collection-table join columns");
+                    }
                 }
-                String name = join.name() == null ? association.name() + "_" + keys.getFirst().name() : join.name();
-                columns.add(new Column(Identifier.of(name, delimited), keys.getFirst().binder(), 0, nested, along,
-                    false, false, true, true, 0, new ForeignKey(association.targetEntity(), 0)));
+                for (int part = 0; part < keys.size(); part++) {
+                    JoinColumnModel join = joins[part];
+                    String name = join.name() == null ? association.name() + "_" + keys.get(part).name() : join.name();
+                    columns.add(new Column(Identifier.of(name, delimited), keys.get(part).binder(), 0, nested, along,
+                        false, false, true, true, 0, new ForeignKey(association.targetEntity(), part)));
+                }
             }
         }
     }

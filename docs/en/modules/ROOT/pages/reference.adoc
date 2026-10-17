@@ -208,7 +208,9 @@ fetch/lazy/batch/mapping eligibility remain separate backlog items.
 == To-one relationships in element-collection values (D24, 2026-10-16)
 
 Embeddable `@ElementCollection` values support owning `@ManyToOne` and
-`@OneToOne` to non-polymorphic, single-table, simple-ID targets. Annotation and
+`@OneToOne` to non-polymorphic, single-table targets with supported direct
+primary keys. Simple IDs and composite IDs represented by `@EmbeddedId` or
+`@IdClass` are supported when every key component is BASIC. Annotation and
 metadata-complete ORM XML share the existing builder, binders and generated
 accesses, including nested/record values and map association overrides named
 `value.target`.
@@ -238,10 +240,25 @@ projections; D28 adds whole relationship-bearing value projections. Collection
 fetch joins and fetch graphs use complete ordinary loading; owners with these
 values are not eligible for optimized row hydration or lazy batching.
 
-Inverse `mappedBy`, orphan removal, to-many/nested collections, composite/
-business/derived target joins, MapsId inside values, join-table relationships,
-read-only/shared/other-table FK columns, polymorphic/JOINED/TABLE_PER_CLASS
-targets and unsupported owner keys/indexes remain explicit bootstrap errors.
+== Composite primary-key targets (D29, 2026-10-17)
+
+Owning element-value to-ones may target direct composite primary keys represented
+by `@EmbeddedId` or `@IdClass` when every key component is BASIC. Explicit
+`@JoinColumns` resolve each referenced key component, including when declared in
+an order different from the target identifier. The collection row stores the
+complete key tuple; schema generation creates one composite FK and, for
+`@OneToOne`, a grouped uniqueness constraint. Metadata-complete ORM XML has the
+same behavior.
+
+An all-null FK tuple means a null association. A partially null tuple is rejected
+when read rather than treated as a valid composite identity. JPQL/Criteria
+association navigation and whole-value projections resolve the target's managed
+identity through the same tuple.
+
+Inverse `mappedBy`, orphan removal, to-many/nested collections, derived/MapsId
+keys, composite keys with non-BASIC components, business-key joins, join-table
+relationships, read-only/shared/other-table FK columns, polymorphic/JOINED/
+TABLE_PER_CLASS targets and unsupported owner keys/indexes remain unsupported.
 Broader query and mapping support requires separate bounded lots.
 
 == Inverse collection-element boundary (D25, 2026-10-17)

@@ -674,7 +674,7 @@ public final class EntityLoader {
                 int indexWidth = elements.indexColumns().size();
                 value = elements.element(Arrays.copyOfRange(row.values(), width + indexWidth, width + indexWidth + elementWidth),
                     Arrays.copyOfRange(row.nulls(), width + indexWidth, width + indexWidth + elementWidth),
-                    (targetType, targetId) -> load(unit.entity(targetType).orElseThrow(), targetId, connection, context));
+                    (targetType, targetId) -> loadElementTarget(targetType, targetId, connection, context));
                 indexes = nullableValues(row, width, width + indexWidth);
             } else {
                 Object[] id = nullableValues(row, width, width + elementWidth);
@@ -1039,7 +1039,7 @@ public final class EntityLoader {
                         nulls[c] = rows.wasNull();
                     }
                     elements.add(new Indexed(mapping.element(values, nulls,
-                        (targetType, targetId) -> load(unit.entity(targetType).orElseThrow(), targetId, connection, context)),
+                        (targetType, targetId) -> loadElementTarget(targetType, targetId, connection, context)),
                         index(index, indexValues, 0, connection, context)));
                 }
             }
@@ -1054,6 +1054,11 @@ public final class EntityLoader {
                 unit.access(embedded.embeddable()), Function.identity(), where);
         }
         return assemble(model.javaType(), index, elements, null, model.orderBy(), List.of(), null, Function.identity(), where);
+    }
+
+    private Object loadElementTarget(Class<?> targetType, Object[] key, Connection connection, PersistenceContext context) {
+        MappedEntity target = unit.entity(targetType).orElseThrow();
+        return load(target, target.statements().key(key), connection, context);
     }
 
     // ---- @OrderBy (§11.1.42) ------------------------------------------------------------------------------
