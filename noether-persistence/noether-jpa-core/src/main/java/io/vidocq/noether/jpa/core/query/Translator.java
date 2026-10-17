@@ -106,7 +106,14 @@ final class Translator {
     }
 
     /** The basic columns of one embeddable value and their paths through its generated access. */
-    private record Embedded(EmbeddableModel model, ManagedAccess access, List<Scalar> fields, List<int[]> paths) implements Value {
+    private record Embedded(EmbeddableModel model, ManagedAccess access, List<Scalar> fields, List<int[]> paths,
+            List<EmbeddedReference> references) implements Value {
+        Embedded(EmbeddableModel model, ManagedAccess access, List<Scalar> fields, List<int[]> paths) {
+            this(model, access, fields, paths, List.of());
+        }
+    }
+
+    private record EmbeddedReference(int[] path, Entity entity) {
     }
 
     private record MapEntry(Value key, Value value) implements Value {
@@ -1227,8 +1234,7 @@ final class Translator {
                 yield new Compiled.ValueItem(scalar.binder(), scalar.type());
             }
             case Embedded embedded -> {
-                sqlItems.addAll(embedded.fields().stream().map(Scalar::sql).toList());
-                yield embeddedItem(embedded);
+                yield embeddedItem(embedded, sqlItems);
             }
             case MapEntry entry -> new Compiled.MapEntryItem(selectItem(entry.key(), sqlItems), selectItem(entry.value(), sqlItems));
             case Constant constant -> {
@@ -1268,7 +1274,7 @@ final class Translator {
         return switch (value) {
             case Scalar scalar -> List.of(scalar.sql());
             case Entity entity -> entity.key();
-            case Embedded embedded -> embedded.fields().stream().map(Scalar::sql).toList();
+            case Embedded embedded -> embeddedExpressions(embedded);
             case MapEntry _ -> throw new IllegalArgumentException("ENTRY() is a select item (§4.6.17.2.3)");
             case Constant constant -> List.of(bound(constant, null).sql());
         };
@@ -2088,6 +2094,21 @@ final class Translator {
         throw new IllegalArgumentException("The element of " + mapping.model().name() + " has no value column");
     }
 
+    private static void flattenElement(EmbeddableModel model, int[] prefix, BasicField consumer) {
+        for (int i = 0; i < model.attributes().size(); i++) {
+            AttributeModel attribute = model.attributes().get(i);
+            int[] path = Arrays.copyOf(prefix, prefix.length + 1);
+            path[path.length - 1] = i;
+            if (attribute instanceof BasicAttribute basic) {
+                consumer.accept(basic, path);
+            } else if (attribute instanceof EmbeddedAttribute nested) {
+                flattenElement(nested.embeddable(), path, consumer);
+            } else if (!(attribute instanceof AssociationAttribute association && association.singleValued())) {
+                throw NotYet.milestone("P7", "relationships in an embeddable result");
+            }
+        }
+    }
+
     private Value entityPath(Variable variable, List<String> segments) {
         if (segments.isEmpty()) return entityValue(variable.alias(), variable.type());
         for (int s = 0; s < segments.size() - 1; s++) {
@@ -2171,19 +2192,30 @@ final class Translator {
         return new Embedded(model, unit.access(model), List.copyOf(fields), List.copyOf(paths));
     }
 
-    private Compiled.EmbeddedItem embeddedItem(Embedded embedded) {
+    private Compiled.EmbeddedItem embeddedItem(Embedded embedded, List<Expression> sqlItems) {
         int[] field = new int[1];
-        return embeddedItem(embedded.model(), embedded.fields(), field);
+        return embeddedItem(embedded.model(), embedded.fields(), embedded.references(), new int[0], field, sqlItems);
     }
 
-    private Compiled.EmbeddedItem embeddedItem(EmbeddableModel model, List<Scalar> fields, int[] field) {
+    private Compiled.EmbeddedItem embeddedItem(EmbeddableModel model, List<Scalar> fields, List<EmbeddedReference> references,
+            int[] prefix, int[] field, List<Expression> sqlItems) {
         List<Compiled.EmbeddedPart> parts = new ArrayList<>();
-        for (AttributeModel attribute : model.attributes()) {
+        for (int i = 0; i < model.attributes().size(); i++) {
+            AttributeModel attribute = model.attributes().get(i);
+            int[] path = Arrays.copyOf(prefix, prefix.length + 1);
+            path[path.length - 1] = i;
             if (attribute instanceof BasicAttribute) {
                 Scalar scalar = fields.get(field[0]++);
+                sqlItems.add(scalar.sql());
                 parts.add(new Compiled.ScalarEmbedded(scalar.binder(), scalar.type()));
             } else if (attribute instanceof EmbeddedAttribute embedded) {
-                parts.add(new Compiled.NestedEmbedded(embeddedItem(embedded.embeddable(), fields, field)));
+                parts.add(new Compiled.NestedEmbedded(embeddedItem(embedded.embeddable(), fields, references, path, field, sqlItems)));
+            } else if (attribute instanceof AssociationAttribute association && association.singleValued()) {
+                EmbeddedReference reference = references.stream().filter(candidate -> Arrays.equals(candidate.path(), path))
+                    .findFirst().orElseThrow(() -> new IllegalArgumentException("The embeddable projection has no mapped value for "
+                        + model.javaType().getName() + "." + association.name()));
+                sqlItems.addAll(reference.entity().key());
+                parts.add(new Compiled.EntityEmbedded(reference.entity().type(), reference.entity().binders()));
             } else {
                 throw NotYet.milestone("P7", "relationships in an embeddable result");
             }
@@ -2191,13 +2223,37 @@ final class Translator {
         return new Compiled.EmbeddedItem(model, unit.access(model), List.copyOf(parts));
     }
 
-    private Embedded embeddedElement(Variable variable, ElementCollectionMapping mapping, EmbeddableModel model, int[] prefix) {
-        if (mapping.hasReferences()) {
-            throw new IllegalArgumentException("Selecting an embeddable collection element containing relationships is not supported");
+    private List<Expression> embeddedExpressions(Embedded embedded) {
+        List<Expression> result = new ArrayList<>();
+        embeddedExpressions(embedded.model(), embedded.fields(), embedded.references(), new int[0], new int[1], result);
+        return List.copyOf(result);
+    }
+
+    private void embeddedExpressions(EmbeddableModel model, List<Scalar> fields, List<EmbeddedReference> references,
+            int[] prefix, int[] field, List<Expression> result) {
+        for (int i = 0; i < model.attributes().size(); i++) {
+            AttributeModel attribute = model.attributes().get(i);
+            int[] path = Arrays.copyOf(prefix, prefix.length + 1);
+            path[path.length - 1] = i;
+            if (attribute instanceof BasicAttribute) {
+                result.add(fields.get(field[0]++).sql());
+            } else if (attribute instanceof EmbeddedAttribute nested) {
+                embeddedExpressions(nested.embeddable(), fields, references, path, field, result);
+            } else if (attribute instanceof AssociationAttribute association && association.singleValued()) {
+                EmbeddedReference reference = references.stream().filter(candidate -> Arrays.equals(candidate.path(), path))
+                    .findFirst().orElseThrow(() -> new IllegalArgumentException("The embeddable projection has no mapped value for "
+                        + model.javaType().getName() + "." + association.name()));
+                result.addAll(reference.entity().key());
+            } else {
+                throw NotYet.milestone("P7", "relationships in an embeddable result");
+            }
         }
+    }
+
+    private Embedded embeddedElement(Variable variable, ElementCollectionMapping mapping, EmbeddableModel model, int[] prefix) {
         List<Scalar> fields = new ArrayList<>();
         List<int[]> paths = new ArrayList<>();
-        flatten(model, new int[0], (basic, path) -> {
+        flattenElement(model, new int[0], (basic, path) -> {
             int[] complete = Arrays.copyOf(prefix, prefix.length + path.length);
             System.arraycopy(path, 0, complete, prefix.length, path.length);
             for (EntityStatements.Column column : mapping.columns()) {
@@ -2210,7 +2266,17 @@ final class Translator {
             throw new IllegalArgumentException("The element of " + mapping.model().name() + " has no column for "
                 + Arrays.toString(complete));
         });
-        return new Embedded(model, unit.access(model), List.copyOf(fields), List.copyOf(paths));
+        List<EmbeddedReference> references = new ArrayList<>();
+        for (EntityStatements.Column column : mapping.columns()) {
+            if (column.foreignKey() == null || column.path().length < prefix.length
+                    || !Arrays.equals(prefix, Arrays.copyOf(column.path(), prefix.length))) continue;
+            int[] relative = Arrays.copyOfRange(column.path(), prefix.length, column.path().length);
+            if (references.stream().anyMatch(reference -> Arrays.equals(reference.path(), relative))) continue;
+            AssociationAttribute association = mapping.association(column);
+            ElementRelationship relationship = new ElementRelationship(association, column.path(), column.path().length);
+            references.add(new EmbeddedReference(relative, elementEntity(variable, relationship)));
+        }
+        return new Embedded(model, unit.access(model), List.copyOf(fields), List.copyOf(paths), List.copyOf(references));
     }
 
     @FunctionalInterface
@@ -2761,6 +2827,9 @@ final class Translator {
             if (!(left instanceof Embedded l) || !(right instanceof Embedded r) || l.fields().size() != r.fields().size()) {
                 throw new IllegalArgumentException("An embeddable is compared with a value of a different type (§4.6.11)");
             }
+            if (!l.references().isEmpty() || !r.references().isEmpty()) {
+                throw new IllegalArgumentException("Relationship-bearing embeddables cannot be compared as a whole (§4.6.11)");
+            }
             if (op != Operator.EQ && op != Operator.NE) {
                 throw new IllegalArgumentException("Embeddables are compared with = and <> only (§4.6.11)");
             }
@@ -2791,6 +2860,9 @@ final class Translator {
     /** {@code expr} where {@code like} is expected: a parameter or a literal takes its binder, or the key parts of its entity. */
     private Value boundValue(Ast.Expr expr, Value like) {
         if (like instanceof Embedded embedded) {
+            if (!embedded.references().isEmpty()) {
+                throw new IllegalArgumentException("Relationship-bearing embeddables cannot be compared as a whole (§4.6.11)");
+            }
             if (expr instanceof Ast.Parameter parameter) {
                 Object value = bindings == null ? null : bindings.apply(parameter);
                 if (value != null && !embedded.model().javaType().isInstance(value)) {

@@ -144,16 +144,23 @@ record Compiled(Statement sql, List<Item> items, Class<?> resultType, List<Slot>
     record EmbeddedItem(EmbeddableModel model, ManagedAccess access, List<EmbeddedPart> parts) implements Item {
         @Override
         public int width() {
-            return parts.stream().mapToInt(part -> part instanceof NestedEmbedded nested ? nested.item().width() : 1).sum();
+            return parts.stream().mapToInt(part -> switch (part) {
+                case NestedEmbedded nested -> nested.item().width();
+                case EntityEmbedded entity -> entity.keyBinders().size();
+                case ScalarEmbedded _ -> 1;
+            }).sum();
         }
     }
 
-    sealed interface EmbeddedPart permits ScalarEmbedded, NestedEmbedded {
+    sealed interface EmbeddedPart permits ScalarEmbedded, NestedEmbedded, EntityEmbedded {
     }
 
     record ScalarEmbedded(ValueBinder binder, Class<?> type) implements EmbeddedPart {
     }
 
     record NestedEmbedded(EmbeddedItem item) implements EmbeddedPart {
+    }
+
+    record EntityEmbedded(MappedEntity type, List<ValueBinder> keyBinders) implements EmbeddedPart {
     }
 }

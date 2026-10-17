@@ -197,9 +197,23 @@ class ElementCollectionRelationsTest {
                 var element = joinRoot.joinList("values");
                 explicitJoin.select(element.join("target").get("name"));
                 assertThat(em.createQuery(explicitJoin).getResultList()).containsExactly("first", "first");
-                assertThatThrownBy(() -> em.createQuery(
-                    "select v from ElementRelationOwner o join o.values v").getResultList())
-                    .isInstanceOf(IllegalArgumentException.class);
+                var projected = em.createQuery(
+                    "select v from ElementRelationOwner o join o.values v order by v.label", Value.class).getResultList();
+                assertThat(projected).extracting(value -> value.label).containsExactly("equal", "equal", "null");
+                assertThat(projected).extracting(value -> value.target == null ? null : value.target.id)
+                    .containsExactly(10L, 10L, null);
+                assertThat(projected.get(0)).isNotSameAs(projected.get(1));
+                assertThat(projected.get(0).target).isSameAs(projected.get(1).target).isSameAs(em.find(Target.class, 10L));
+                var embeddedProjection = cb.createQuery(Value.class);
+                var embeddedRoot = embeddedProjection.from(Owner.class);
+                embeddedProjection.select(embeddedRoot.joinList("values"));
+                var criteriaValues = em.createQuery(embeddedProjection).getResultList();
+                assertThat(criteriaValues).hasSize(3);
+                assertThat(criteriaValues.get(0).target).isSameAs(em.find(Target.class, 10L));
+                assertThat(criteriaValues.get(2).target).isNull();
+                assertThat(em.createQuery(
+                    "select v from ElementRelationOwner o join o.keyed v", Value.class).getResultList())
+                    .hasSize(2).allSatisfy(value -> assertThat(value.target).isSameAs(em.find(Target.class, 10L)));
             }
         }
     }
@@ -217,6 +231,11 @@ class ElementCollectionRelationsTest {
             assertThat(em.createQuery(
                 "select e.nested.target from RecordOwner r join r.elements e", Target.class).getResultList())
                 .containsExactly(em.find(Target.class, 70L));
+            var projected = em.createQuery(
+                "select e from RecordOwner r join r.elements e", RecordValue.class).getSingleResult();
+            assertThat(projected).isEqualTo(owner.elements.getFirst());
+            assertThat(projected).isNotSameAs(owner.elements.getFirst());
+            assertThat(projected.nested().target()).isSameAs(em.find(Target.class, 70L));
         }
     }
 

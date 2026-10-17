@@ -234,9 +234,9 @@ machinery. Removing a collection value is not orphan removal.
 
 Tested query support covers JPQL/Criteria basic collection-join attributes and
 JPQL `KEY`/`INDEX`. D27 adds bounded association navigation and to-one entity
-projections; projecting the whole relationship-bearing value remains refused.
-Collection fetch joins and fetch graphs use complete ordinary loading; owners
-with these values are not eligible for optimized row hydration or lazy batching.
+projections; D28 adds whole relationship-bearing value projections. Collection
+fetch joins and fetch graphs use complete ordinary loading; owners with these
+values are not eligible for optimized row hydration or lazy batching.
 
 Inverse `mappedBy`, orphan removal, to-many/nested collections, composite/
 business/derived target joins, MapsId inside values, join-table relationships,
@@ -354,10 +354,23 @@ and metadata-complete ORM XML as well as annotations.
 Selecting the association directly uses its collection-row FK as the target's
 actual simple identity, preserving null association rows. Navigating target
 attributes or declaring a join uses the mapped FK and target identity through the
-SQL AST. Whole relationship-bearing embeddable projections remain refused.
-No lazy-reference, collection-fetch, graph, or batching optimization is added;
-ordinary collection loading is unchanged. Broader mapping/query shapes remain
-separate work; see the D27 contract and test evidence in the Persistence roadmap.
+SQL AST. No lazy-reference, collection-fetch, graph, or batching optimization is
+added; ordinary collection loading is unchanged. Broader mapping/query shapes
+remain separate work; see the D27 contract and test evidence in the Persistence
+roadmap.
+
+== Projecting relationship-bearing element values (D28, 2026-10-17)
+
+JPQL and Criteria can select an entire supported collection embeddable value,
+including nested embeddables and owning to-one attributes. Each relationship is
+resolved from its collection-row FK to the actual managed target entity, so
+repeated references share persistence-context identity and nullable associations
+remain null. This covers list and map values with annotation and metadata-complete
+XML mappings.
+
+This enables value projection only: whole-value comparisons involving
+relationships, unsupported D24 mapping shapes, and collection fetch, graph,
+lazy-reference, or batching optimizations remain outside this support.
 
 == Unique business-key to-one joins (D22, 2026-10-16)
 

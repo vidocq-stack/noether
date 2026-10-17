@@ -237,9 +237,10 @@ inventing embeddable identity. Managed target resolution, cascades, reassignment
 snapshots, owner versions and caches share the existing machinery. Basic joined
 attributes, map keys and list indexes are tested. D27 adds bounded JPQL/Criteria
 navigation, identity comparison and projections for these to-ones, including
-explicit inner/left joins and nested embeddable values; projecting the whole
-relationship-bearing value remains refused. Graph/fetch/lazy-batch optimization
-is not widened; complete ordinary loading remains the fallback.
+explicit inner/left joins and nested embeddable values. D28 adds projections of
+whole relationship-bearing collection embeddables, resolving each to-one through
+the actual managed target identity. Graph/fetch/lazy-batch optimization is not
+widened; complete ordinary loading remains the fallback.
 Inverse/orphan/composite/business/derived/join-table and unsupported owner/index
 shapes remain explicit bootstrap errors. D5/D9–D23 and prior BUG/TCK records stay
 historical; D24 evidence is in the detailed roadmap and `TCK.md`.
@@ -274,9 +275,18 @@ for D24 owning to-ones inside element-collection embeddables. It supports target
 attribute paths, entity identity comparison/projection, and explicit inner/left
 joins, including nested value paths and metadata-complete XML. Direct entity
 projection reads the collection-row FK as the target identity; target navigation
-and joins use the existing SQL AST. Whole relationship-bearing value projections,
-broader mapping shapes, and collection fetch/lazy/batch optimization remain out
-of scope. Detailed test evidence and boundaries are in the Persistence roadmap.
+and joins use the existing SQL AST. D28 adds whole relationship-bearing value
+projections without widening mapping shapes or collection fetch/lazy/batch
+optimization. Detailed test evidence and boundaries are in the Persistence
+roadmap.
+
+Decision D28 (2026-10-17) allows JPQL/Criteria to project an entire D24 embeddable
+collection value containing owning to-one relationships. Basic and nested
+embeddable components are reconstructed through generated access; relationship
+components resolve through collection-row foreign-key identities to managed
+targets, preserving nulls, repeated targets and duplicate values. Annotation and
+metadata-complete XML mappings are covered. Whole-value comparisons, unrelated
+entity-embedded projections and broader loading optimizations are not implied.
 
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
@@ -287,7 +297,7 @@ detailed roadmap's "Remaining work"):
    PK joins beyond D26, inverse business collections,
    embedded business association paths and safely mutable referenced keys;
    inverse many-to-many indexes and broader collection-table embeddable relationships
-   (composite/business/derived/join-table mappings and whole-value projections).
+   (composite/business/derived/join-table mappings and broader query paths).
    Inverse entity-owner relationships need a separate normative/cardinality contract
    after D25; inverse collection embeddables and entity targets that are embeddables
    are not a feature backlog. Orphan removal remains separate.

@@ -773,6 +773,11 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
             case Compiled.EntityItem _ -> true;
             case Compiled.ConstructorItem constructor -> constructor.arguments().stream().anyMatch(JpqlQuery::entityItem);
             case Compiled.MapEntryItem entry -> entityItem(entry.key()) || entityItem(entry.value());
+            case Compiled.EmbeddedItem embedded -> embedded.parts().stream().anyMatch(part -> switch (part) {
+                case Compiled.EntityEmbedded _ -> true;
+                case Compiled.NestedEmbedded nested -> entityItem(nested.item());
+                case Compiled.ScalarEmbedded _ -> false;
+            });
             default -> false;
         };
     }
@@ -838,8 +843,11 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
                         Object value = scalar.binder() != null ? scalar.binder().read(results, column[0]) : results.getObject(column[0]);
                         column[0]++;
                         components[i] = results.wasNull() ? null : scalar.binder() != null ? value : convert(value, scalar.type());
+                    } else if (part instanceof Compiled.NestedEmbedded nested) {
+                        components[i] = read(nested.item(), results, column);
                     } else {
-                        components[i] = read(((Compiled.NestedEmbedded) part).item(), results, column);
+                        Compiled.EntityEmbedded entity = (Compiled.EntityEmbedded) part;
+                        components[i] = read(new Compiled.EntityItem(entity.type(), entity.keyBinders()), results, column);
                     }
                 }
                 yield new EmbeddedBuilt(embedded, components);
