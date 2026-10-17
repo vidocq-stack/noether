@@ -1439,10 +1439,17 @@ final class Translator {
         if (segments.size() < 2) {
             throw new IllegalArgumentException("A join names a relationship, not " + String.join(".", segments));
         }
-        AttributePath resolved = relationshipPath(from, segments.subList(start, segments.size()));
+        Query.Join.Kind sqlKind = kind == Ast.Join.Kind.LEFT ? Query.Join.Kind.LEFT : Query.Join.Kind.INNER;
+        List<String> relationship = segments.subList(start, segments.size());
+        if (from.element() != null) {
+            ElementRelationship elementRelationship = elementRelationship(from.element(), relationship);
+            from = elementAssociationJoin(from, elementRelationship, sqlKind);
+            relationship = relationship.subList(elementRelationship.consumed(), relationship.size());
+            if (relationship.isEmpty()) return from;
+        }
+        AttributePath resolved = relationshipPath(from, relationship);
         from = resolved.owner();
         int attribute = resolved.attribute();
-        Query.Join.Kind sqlKind = kind == Ast.Join.Kind.LEFT ? Query.Join.Kind.LEFT : Query.Join.Kind.INNER;
         AttributeModel model = from.type().model().attributes().get(attribute);
         return switch (model) {
             case AssociationAttribute association when association.singleValued() -> relationshipJoin(from, attribute, association, sqlKind);
@@ -1454,6 +1461,81 @@ final class Translator {
     }
 
     private record AttributePath(Variable owner, int attribute) {
+    }
+
+    private record ElementRelationship(AssociationAttribute association, int[] path, int consumed) {
+    }
+
+    private ElementRelationship elementRelationship(ElementCollectionMapping mapping, List<String> segments) {
+        AttributeModel element = mapping.model().element();
+        if (!(element instanceof EmbeddedAttribute embedded)) {
+            throw new IllegalArgumentException("An element of " + mapping.model().name() + " has no relationship " + segments);
+        }
+        EmbeddableModel model = embedded.embeddable();
+        int[] path = new int[0];
+        for (int p = 0; p < segments.size(); p++) {
+            int index = indexOf(model.attributes(), segments.get(p));
+            if (index < 0) {
+                throw new IllegalArgumentException(model.javaType().getName() + " has no attribute " + segments.get(p));
+            }
+            path = Arrays.copyOf(path, path.length + 1);
+            path[path.length - 1] = index;
+            AttributeModel attribute = model.attributes().get(index);
+            if (attribute instanceof AssociationAttribute association) {
+                if (!association.singleValued()) {
+                    throw new IllegalArgumentException("An element collection association path must be to-one");
+                }
+                return new ElementRelationship(association, path, p + 1);
+            }
+            if (attribute instanceof EmbeddedAttribute nested) {
+                model = nested.embeddable();
+            } else if (p < segments.size() - 1) {
+                throw new IllegalArgumentException("The path goes through " + segments.get(p) + ", which is not an embeddable");
+            }
+        }
+        throw new IllegalArgumentException("The path does not name a to-one relationship of " + mapping.model().name());
+    }
+
+    private List<EntityStatements.Column> elementReference(ElementCollectionMapping mapping, ElementRelationship relationship) {
+        MappedEntity target = entity(relationship.association().targetEntity());
+        List<EntityStatements.Column> columns = mapping.columns().stream()
+            .filter(column -> Arrays.equals(column.path(), relationship.path()) && column.foreignKey() != null)
+            .sorted(java.util.Comparator.comparingInt(column -> column.foreignKey().part()))
+            .toList();
+        if (columns.size() != target.statements().keyColumns().size()
+                || columns.stream().anyMatch(column -> column.foreignKey().target() != target.model().javaType()
+                    || column.foreignKey().targetAttribute() >= 0)) {
+            throw new IllegalArgumentException("The element collection relationship " + relationship.association().name()
+                + " does not have a supported target identity mapping");
+        }
+        for (int part = 0; part < columns.size(); part++) {
+            if (columns.get(part).foreignKey().part() != part) {
+                throw new IllegalArgumentException("The element collection relationship " + relationship.association().name()
+                    + " does not map the target identity in key order");
+            }
+        }
+        return columns;
+    }
+
+    private Entity elementEntity(Variable from, ElementRelationship relationship) {
+        MappedEntity target = entity(relationship.association().targetEntity());
+        List<EntityStatements.Column> columns = elementReference(from.element(), relationship);
+        return new Entity(target, columns.stream()
+            .map(column -> (Expression) new Expression.Column(from.alias(), column.name())).toList(),
+            columns.stream().map(EntityStatements.Column::binder).toList());
+    }
+
+    private Variable elementAssociationJoin(Variable from, ElementRelationship relationship, Query.Join.Kind kind) {
+        MappedEntity target = entity(relationship.association().targetEntity());
+        List<EntityStatements.Column> columns = elementReference(from.element(), relationship);
+        List<Expression> foreignKey = columns.stream()
+            .map(column -> (Expression) new Expression.Column(from.alias(), column.name())).toList();
+        String alias = alias();
+        Expression on = equal(foreignKey, key(alias, target));
+        Expression restriction = inheritanceRestriction(new Variable(target, alias, from.root(), this));
+        joins.get(from.root()).add(new Query.Join(kind, table(target), alias,
+            restriction == null ? on : new Binary(on, Operator.AND, restriction)));
+        return new Variable(target, alias, from.root(), this);
     }
 
     private AttributePath relationshipPath(Variable owner, List<String> segments) {
@@ -1964,6 +2046,14 @@ final class Translator {
                 prefix = Arrays.copyOf(prefix, prefix.length + 1);
                 prefix[prefix.length - 1] = index;
                 current = model.attributes().get(index);
+                if (current instanceof AssociationAttribute association) {
+                    ElementRelationship relationship = new ElementRelationship(association, prefix, p + 1);
+                    if (p + 1 == rest.size()) {
+                        return elementEntity(variable, relationship);
+                    }
+                    Variable target = elementAssociationJoin(variable, relationship, Query.Join.Kind.INNER);
+                    return entityPath(target, rest.subList(p + 1, rest.size()));
+                }
                 if (current instanceof EmbeddedAttribute nested) {
                     if (p == rest.size() - 1) {
                         return embeddedElement(variable, mapping, nested.embeddable(), prefix);
@@ -1977,7 +2067,7 @@ final class Translator {
                 return embeddedElement(variable, mapping, embedded.embeddable(), prefix);
             }
             if (!(current instanceof BasicAttribute basic)) {
-                throw new IllegalArgumentException("The path does not end at a basic embeddable attribute");
+                throw new IllegalArgumentException("The path does not end at a basic or to-one embeddable attribute");
             }
             for (EntityStatements.Column column : mapping.columns()) {
                 if (Arrays.equals(column.path(), prefix)) {
@@ -1996,6 +2086,31 @@ final class Translator {
             }
         }
         throw new IllegalArgumentException("The element of " + mapping.model().name() + " has no value column");
+    }
+
+    private Value entityPath(Variable variable, List<String> segments) {
+        if (segments.isEmpty()) return entityValue(variable.alias(), variable.type());
+        for (int s = 0; s < segments.size() - 1; s++) {
+            int attribute = attribute(variable, segments.get(s));
+            if (variable.type().model().attributes().get(attribute) instanceof EmbeddedAttribute) {
+                return embeddedPath(variable, attribute, segments.subList(s + 1, segments.size()));
+            }
+            if (inJoinCondition && variable.type().model().attributes().get(attribute) instanceof AssociationAttribute association
+                    && association.singleValued()) {
+                String name = "_noether_on_" + alias();
+                while (lookup(name) != null) name += "_";
+                List<String> remaining = new ArrayList<>(); remaining.add(name); remaining.addAll(segments.subList(s + 1, segments.size()));
+                List<String> correlatedPath = new ArrayList<>(); correlatedPath.add(variable.alias());
+                correlatedPath.addAll(segments.subList(0, s + 1));
+                var correlated = new Ast.Binary(new Ast.Path(correlatedPath), Ast.Op.EQ, new Ast.Path(List.of(name)));
+                var select = new Ast.Select(false, List.of(new Ast.Item(new Ast.Path(remaining), null)),
+                    List.of(new Ast.Range(entity(association.targetEntity()).model().entityName(), null, name, List.of())),
+                    correlated, List.of(), null, List.of());
+                return value(new Ast.Subquery(select));
+            }
+            variable = navigate(variable, attribute, Query.Join.Kind.INNER);
+        }
+        return attributeValue(variable, attribute(variable, segments.getLast()));
     }
 
     /** A path that ends in an embeddable: {@code e.address.city}. */

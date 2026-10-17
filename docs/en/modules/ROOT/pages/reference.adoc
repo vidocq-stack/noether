@@ -233,16 +233,16 @@ detach/remove cascades and shared-cache restoration use the existing lifecycle
 machinery. Removing a collection value is not orphan removal.
 
 Tested query support covers JPQL/Criteria basic collection-join attributes and
-JPQL `KEY`/`INDEX`. Association navigation and whole relationship-bearing value
-projections are explicitly refused. Collection fetch joins and fetch graphs use
-complete ordinary loading; owners with these values are not eligible for
-optimized row hydration or lazy batching.
+JPQL `KEY`/`INDEX`. D27 adds bounded association navigation and to-one entity
+projections; projecting the whole relationship-bearing value remains refused.
+Collection fetch joins and fetch graphs use complete ordinary loading; owners
+with these values are not eligible for optimized row hydration or lazy batching.
 
 Inverse `mappedBy`, orphan removal, to-many/nested collections, composite/
 business/derived target joins, MapsId inside values, join-table relationships,
 read-only/shared/other-table FK columns, polymorphic/JOINED/TABLE_PER_CLASS
 targets and unsupported owner keys/indexes remain explicit bootstrap errors.
-Broader query and mapping support requires a separate bounded lot.
+Broader query and mapping support requires separate bounded lots.
 
 == Inverse collection-element boundary (D25, 2026-10-17)
 
@@ -342,6 +342,22 @@ inheritance, join tables, embedded/derived business relationships, mutable/
 nullable/nonunique/ambiguous keys and inverse business collections stay refused.
 Ordinary primary-key references are unchanged. See the prioritized roadmap and
 xref:tck.adoc[D26 verification]; D5/D9–D25 evidence remains historical.
+
+== Querying to-one references in element collections (D27, 2026-10-17)
+
+JPQL and Criteria can navigate an owning to-one association inside a collection
+embeddable to target attributes, compare the entity by identity, and project the
+associated entity itself. Explicit joins from the element alias to the target
+support both inner and left joins. This works through nested embeddable values
+and metadata-complete ORM XML as well as annotations.
+
+Selecting the association directly uses its collection-row FK as the target's
+actual simple identity, preserving null association rows. Navigating target
+attributes or declaring a join uses the mapped FK and target identity through the
+SQL AST. Whole relationship-bearing embeddable projections remain refused.
+No lazy-reference, collection-fetch, graph, or batching optimization is added;
+ordinary collection loading is unchanged. Broader mapping/query shapes remain
+separate work; see the D27 contract and test evidence in the Persistence roadmap.
 
 == Unique business-key to-one joins (D22, 2026-10-16)
 

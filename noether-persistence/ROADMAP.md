@@ -1735,8 +1735,9 @@ restoration preserves distinct value occurrences and shared target identity.
 
 **Query and optimization boundaries.** Tested JPQL/Criteria basic collection-join
 attributes, JPQL stored-map `KEY` and ordered-list `INDEX` remain executable.
-Association navigation and projections of whole relationship-bearing embeddable
-values are explicitly refused, not partially hydrated. Collection fetch joins and
+Association navigation is now delivered by D27 for the bounded to-one query paths
+documented below; projections of whole relationship-bearing embeddable values
+remain explicitly refused, not partially hydrated. Collection fetch joins and
 fetch graphs use complete ordinary loading. Owners containing these values are
 excluded from optimized row hydration and batch loading; D10–D21 eligibility is
 not widened. No query-count or lazy-to-one proxy claim is made for this new shape.
@@ -1745,7 +1746,7 @@ not widened. No query-count or lazy-to-one proxy claim is made for this new shap
 orphan removal, target composite/derived/business keys, MapsId inside values,
 join-table relationships, read-only/shared/other-table FK columns, polymorphic/
 JOINED/TABLE_PER_CLASS targets, duplicate physical columns and unsupported owner
-keys/indexes are not accepted. Broader association query paths remain a separate lot.
+keys/indexes are not accepted. Broader mapping/query paths remain separate lots.
 Ordinary entity-owned embedded relationship behavior stays on `EmbeddedPaths`.
 
 **Evidence.** Mandatory initial red: 7 tests, 1 failure and 6 errors before production
@@ -1870,7 +1871,37 @@ This is a feature extension of an explicit unsupported boundary, not a new
 implementation defect; no BUG entry or certification claim is added.
 D5/D9–D25 and previous TCK/BUG evidence are preserved.
 
-Prioritized backlog after D26, 2026-10-17. Each item needs its own approved, bounded lot; until then
+### D27 — Query navigation and projections of element-collection to-ones ✅ (2026-10-17)
+
+Approved as the next bounded D24 follow-up. JPQL and Criteria paths can now
+navigate an owning to-one association inside a collection embeddable to target
+attributes, compare the associated entity by identity, and project the associated
+entity itself. Explicit JPQL/Criteria joins from the collection-element alias to
+the target are also supported, including `LEFT` joins. Nested embeddable paths and
+metadata-complete ORM XML use the same mapped collection FK columns.
+
+Projecting the to-one itself reads the FK as the target's actual simple identity,
+preserving null association rows without fabricating entity state. Navigating to
+target attributes or declaring a join uses the collection-row FK against the
+target's mapped identity in the SQL AST. Existing target entity loading and
+persistence-context identity resolve entity projections. No new lazy loading,
+collection fetch optimization, batching, or graph hydration is claimed.
+
+Whole relationship-bearing embeddable projections remain refused, as do D24's
+inverse, to-many, composite/business/derived, join-table, polymorphic and
+unsupported mapping shapes. Broader nested relationship-query shapes stay out of
+scope.
+
+Mandatory initial red: **24 focused tests, 1 error** at the first unsupported
+JPQL association path. Focused post-change suite: **25/25 passed**, covering
+annotation and metadata-complete XML, nested record values, JPQL/Criteria
+attribute and entity projections, identity comparison, and explicit inner/left
+joins. The complete core reactor gate is **818/818 across 60 reports**. No TCK
+was rerun for this query-only lot. The full clean reactor install passes
+**1107/1107 across 92 reports**. These are unit-test results, not TCK or
+certification evidence.
+
+Prioritized backlog after D27, 2026-10-17. Each item needs its own approved, bounded lot; until then
 the documented fallback (follow-up selects, eager loading, or an explicit refusal naming the
 milestone) stays in place.
 
@@ -1880,8 +1911,8 @@ milestone) stays in place.
    PK joins beyond D26, embedded business association paths,
    inverse collections and safely mutable referenced keys; inverse many-to-many
    indexes and broader relationships inside collection-table embeddable elements
-   beyond D24 (composite/business/derived/join-table support and association query
-   navigation/projections). After D25, inverse entity-owner relationships need a
+   beyond D24/D27 (composite/business/derived/join-table support and whole-value
+   projections). After D25, inverse entity-owner relationships need a
    separate normative/cardinality contract; illegal inverse collection embeddables
    and entity associations to embeddables are not future implementation targets.
    Orphan removal stays a separate, explicitly refused lot.
@@ -1906,9 +1937,10 @@ Recorded before implementation; each entry: date, decision, reason.
 
 | # | Date | Decision | Status |
 |---|---|---|---|
+| D27 | 2026-10-17 | Extend D24 query support for owning to-ones inside element-collection embeddables: JPQL/Criteria navigation to target attributes, entity identity comparison/projection, and explicit inner/left joins from element aliases, including nested values and metadata-complete XML. Bind direct entity projections from the existing collection FK; lower navigation/joins through mapped target identity. Keep whole relationship-bearing embeddable projection, inverse/composite/business/derived/join-table/polymorphic mappings, lazy/batch/fetch-graph optimization and broader nested query shapes out of scope. | Actioned |
 | D26 | 2026-10-17 | Extend D22's optional nonportable non-PK references to one immutable non-null unique BASIC column in a declared target secondary table, with a single target PK/secondary PK join. Resolve table/uniqueness/identity from existing metadata, emit the real secondary FK and retain generated access/binders, ordinary eager loading, lifecycle/cache and SQL AST query semantics. Reject ambiguous/composite/owner-secondary/inherited/derived and other unsupported shapes; do not reinterpret JoinColumn.table or broaden lazy/batch/cycle ordering. | Actioned |
 | D25 | 2026-10-17 | Gate the proposed inverse element-collection lot on Persistence 3.2 §2.7–2.8/§2.11/§11.1.31/§11.1.42. Implement bootstrap refusal of entity associations to embeddables and unsupported mappedBy paths traversing collection values, annotation/XML, preserving single-embedded inverse and D24 owning mappings. Do not invent element identity or infer entity one-to-one cardinality from row uniqueness; inverse entity-owner semantics and orphan removal require separate proof. | Actioned |
-| D24 | 2026-10-16 | Deliver owning ManyToOne/OneToOne inside embeddable element-collection values to eligible simple-ID targets, annotation/XML, with collection-row FKs and managed target identity. Preserve owner-key whole-collection rewrites, duplicate occurrences, positions/keys, cascades, snapshots, versions and caches through existing generated access. Refuse inverse/orphan/composite/business/derived/join-table/read-only/unsupported owner-index shapes and association query navigation/projections; keep complete ordinary fetch/graph loading rather than widening optimization/batching. | Actioned |
+| D24 | 2026-10-16 | Deliver owning ManyToOne/OneToOne inside embeddable element-collection values to eligible simple-ID targets, annotation/XML, with collection-row FKs and managed target identity. Preserve owner-key whole-collection rewrites, duplicate occurrences, positions/keys, cascades, snapshots, versions and caches through existing generated access. Refuse inverse/orphan/composite/business/derived/join-table/read-only/unsupported owner-index shapes; initially defer association query paths to a later bounded lot (D27). Keep complete ordinary fetch/graph loading rather than widening optimization/batching. | Actioned |
 | D23 | 2026-10-16 | Strengthen existing P5 MapsId support for simple-parent owning to-ones: unnamed shared simple ID and a named direct BASIC embedded-ID component, annotation/XML. Derive cascaded/generated IDs at the correct lifecycle stage, register actual identity, order required FK edges, propagate physical key names/types and reject identity mutation and unsupported nested/chained/partial mappings. Preserve legacy flat composite examples and safe eager graph/lazy fallbacks without widening optimization or claiming arbitrary composite support. | Actioned |
 | D22 | 2026-10-16 | Pause graph optimization and deliver bounded owning to-one joins to immutable, non-null, unique non-ID BASIC columns (single/composite, annotation/XML). Separate referenced tuple access/binders from JPA identity; resolve actual IDs before ordinary loading, preserve lifecycle/cache/query semantics and generate FKs to real unique constraints. Explicitly refuse invalid/mutable/unsupported shapes and non-null cycles; keep business owners on safe eager/ordinary graph/fetch loading rather than ID-assuming lazy/batch/optimized hydration. | Actioned |
 | D21 | 2026-10-16 | Extend D19/D20 to graph-requested collections reached through finite root to-one chains. Seed intermediate owners through D14–D18 LEFT hydration, then group distinct compatible owner identities with D13 key/parameter bounds and the existing collection collectors; merge shared owner-type requests at their latest collection depth. Preserve the two-collection-edge limit, independent branches, lifecycle/dirty/in-place/cache/flush/no-auto-flush contracts and SQL root-only pagination. Explicit cyclic paths, third edges and unsupported eager/mapping/query closures retain complete fallback/refusal; earlier graph eligibility and explicit fetch joins remain unchanged. | Actioned |

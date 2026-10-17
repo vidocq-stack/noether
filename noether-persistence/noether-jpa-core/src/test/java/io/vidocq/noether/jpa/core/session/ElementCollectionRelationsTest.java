@@ -158,22 +158,65 @@ class ElementCollectionRelationsTest {
         }
     }
 
-    @Test void basicCollectionJoinPathsRemainQueryableButAssociationNavigationIsExplicitlyRefused() {
-        try (var factory = factory(false); var em = factory.createEntityManager()) {
-            transaction(em, () -> em.persist(owner()));
-            assertThat(em.createQuery("select v.label from ElementRelationOwner o join o.values v order by v.label",
-                String.class).getResultList()).containsExactly("equal", "equal", "null");
-            var cb = em.getCriteriaBuilder();
-            var query = cb.createQuery(String.class);
-            var root = query.from(Owner.class);
-            query.select(root.joinList("values").get("label"));
-            assertThat(em.createQuery(query).getResultList()).hasSize(3);
-            assertThatThrownBy(() -> em.createQuery(
-                "select v.target.name from ElementRelationOwner o join o.values v").getResultList())
-                .isInstanceOf(IllegalArgumentException.class);
-            assertThatThrownBy(() -> em.createQuery(
-                "select v from ElementRelationOwner o join o.values v").getResultList())
-                .isInstanceOf(IllegalArgumentException.class);
+    @Test void associationNavigationAndProjectionsWorkFromCollectionEmbeddables() {
+        for (boolean xml : List.of(false, true)) {
+            try (var factory = factory(xml); var em = factory.createEntityManager()) {
+                transaction(em, () -> em.persist(owner()));
+                assertThat(em.createQuery("select v.label from ElementRelationOwner o join o.values v order by v.label",
+                    String.class).getResultList()).containsExactly("equal", "equal", "null");
+                var cb = em.getCriteriaBuilder();
+                var query = cb.createQuery(String.class);
+                var root = query.from(Owner.class);
+                query.select(root.joinList("values").get("label"));
+                assertThat(em.createQuery(query).getResultList()).hasSize(3);
+                assertThat(em.createQuery(
+                    "select v.target.name from ElementRelationOwner o join o.values v order by v.target.name", String.class)
+                    .getResultList()).containsExactly("first", "first");
+                assertThat(em.createQuery(
+                    "select v.target from ElementRelationOwner o join o.values v order by v.label", Target.class)
+                    .getResultList()).containsExactly(em.find(Target.class, 10L), em.find(Target.class, 10L), null);
+                assertThat(em.createQuery(
+                    "select t.name from ElementRelationOwner o join o.values v join v.target t order by t.name", String.class)
+                    .getResultList()).containsExactly("first", "first");
+                assertThat(em.createQuery(
+                    "select t.name from ElementRelationOwner o join o.values v left join v.target t", String.class)
+                    .getResultList()).containsExactlyInAnyOrder("first", "first", null);
+                assertThat(em.createQuery(
+                    "select v.label from ElementRelationOwner o join o.values v where v.target = :target", String.class)
+                    .setParameter("target", em.find(Target.class, 10L)).getResultList()).containsExactly("equal", "equal");
+                var targetProjection = cb.createQuery(Target.class);
+                var targetRoot = targetProjection.from(Owner.class);
+                targetProjection.select(targetRoot.joinList("values").get("target"));
+                assertThat(em.createQuery(targetProjection).getResultList()).hasSize(3).containsNull();
+                var navigation = cb.createQuery(String.class);
+                var navigationRoot = navigation.from(Owner.class);
+                navigation.select(navigationRoot.joinList("values").get("target").get("name"));
+                assertThat(em.createQuery(navigation).getResultList()).containsExactly("first", "first");
+                var explicitJoin = cb.createQuery(String.class);
+                var joinRoot = explicitJoin.from(Owner.class);
+                var element = joinRoot.joinList("values");
+                explicitJoin.select(element.join("target").get("name"));
+                assertThat(em.createQuery(explicitJoin).getResultList()).containsExactly("first", "first");
+                assertThatThrownBy(() -> em.createQuery(
+                    "select v from ElementRelationOwner o join o.values v").getResultList())
+                    .isInstanceOf(IllegalArgumentException.class);
+            }
+        }
+    }
+
+    @Test void associationNavigationSupportsNestedCollectionEmbeddables() {
+        try (var factory = factory(false, RecordOwner.class, RecordValue.class, NestedValue.class);
+                var em = factory.createEntityManager()) {
+            var owner = new RecordOwner();
+            owner.id = 2L;
+            owner.elements.add(new RecordValue("nested", new NestedValue(new Target(70L, "record target"))));
+            transaction(em, () -> em.persist(owner));
+            assertThat(em.createQuery(
+                "select e.nested.target.name from RecordOwner r join r.elements e", String.class).getResultList())
+                .containsExactly("record target");
+            assertThat(em.createQuery(
+                "select e.nested.target from RecordOwner r join r.elements e", Target.class).getResultList())
+                .containsExactly(em.find(Target.class, 70L));
         }
     }
 

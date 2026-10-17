@@ -235,9 +235,11 @@ to eligible simple-ID targets; owner-key deletion and complete collection rewrit
 preserve duplicate occurrences, list positions and stored map keys without
 inventing embeddable identity. Managed target resolution, cascades, reassignment,
 snapshots, owner versions and caches share the existing machinery. Basic joined
-attributes, map keys and list indexes are tested; association query paths and
-whole relationship-bearing value projections are refused. Graph/fetch/lazy-batch
-optimization is not widened; complete ordinary loading remains the fallback.
+attributes, map keys and list indexes are tested. D27 adds bounded JPQL/Criteria
+navigation, identity comparison and projections for these to-ones, including
+explicit inner/left joins and nested embeddable values; projecting the whole
+relationship-bearing value remains refused. Graph/fetch/lazy-batch optimization
+is not widened; complete ordinary loading remains the fallback.
 Inverse/orphan/composite/business/derived/join-table and unsupported owner/index
 shapes remain explicit bootstrap errors. D5/D9–D23 and prior BUG/TCK records stay
 historical; D24 evidence is in the detailed roadmap and `TCK.md`.
@@ -267,6 +269,15 @@ DDL. No wider lazy/batch/collector or cycle-ordering contract is introduced.
 Composite secondary references/PK joins, owner secondary FKs, inheritance and
 other D22 exclusions remain refused. D5/D9–D25 and BUG/TCK history remain intact.
 
+Decision D27 (2026-10-17) adds bounded JPQL/Criteria navigation and projections
+for D24 owning to-ones inside element-collection embeddables. It supports target
+attribute paths, entity identity comparison/projection, and explicit inner/left
+joins, including nested value paths and metadata-complete XML. Direct entity
+projection reads the collection-row FK as the target identity; target navigation
+and joins use the existing SQL AST. Whole relationship-bearing value projections,
+broader mapping shapes, and collection fetch/lazy/batch optimization remain out
+of scope. Detailed test evidence and boundaries are in the Persistence roadmap.
+
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
@@ -276,7 +287,7 @@ detailed roadmap's "Remaining work"):
    PK joins beyond D26, inverse business collections,
    embedded business association paths and safely mutable referenced keys;
    inverse many-to-many indexes and broader collection-table embeddable relationships
-   (composite/business/derived/join-table mappings and association query paths).
+   (composite/business/derived/join-table mappings and whole-value projections).
    Inverse entity-owner relationships need a separate normative/cardinality contract
    after D25; inverse collection embeddables and entity targets that are embeddables
    are not a feature backlog. Orphan removal remains separate.
