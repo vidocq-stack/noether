@@ -480,8 +480,9 @@ public final class EntityLoader {
                     MappedEntity target = entity(association.targetEntity());
                     if (tuple != null && owned.get().businessKey()) {
                         var referenced = statements.referencedColumns(owned.get());
-                        List<Object[]> found = keys(new Select(target.statements().select().table(),
-                            target.statements().keyColumns().stream().map(EntityStatements.Column::name).toList(),
+                        var referencedTable = statements.referencedTable(owned.get());
+                        List<Object[]> found = keys(new Select(referencedTable.select().table(),
+                            referencedTable.select().conditions(),
                             referenced.stream().map(EntityStatements.Column::name).toList()),
                             referenced.stream().map(EntityStatements.Column::binder).toList(), tuple,
                             target.statements().keyColumns().stream().map(EntityStatements.Column::binder).toList(),

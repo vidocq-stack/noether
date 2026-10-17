@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entity-mappings xmlns="https://jakarta.ee/xml/ns/persistence/orm" version="3.2">
+  <entity class="io.vidocq.noether.jpa.core.session.SecondaryBusinessKeyToOneTest$Invalid" metadata-complete="true">
+    <secondary-table name="xml_sb_invalid"/>
+    <attributes>
+      <id name="id"/>
+      <basic name="code"><column name="code" table="xml_sb_invalid" nullable="false" updatable="false"/></basic>
+    </attributes>
+  </entity>
+  <entity class="io.vidocq.noether.jpa.core.session.SecondaryBusinessKeyToOneTest$InvalidOwner" metadata-complete="true">
+    <attributes>
+      <id name="id"/>
+      <many-to-one name="target" target-entity="io.vidocq.noether.jpa.core.session.SecondaryBusinessKeyToOneTest$Invalid">
+        <join-column name="target_code" referenced-column-name="code"/>
+      </many-to-one>
+    </attributes>
+  </entity>
+</entity-mappings>

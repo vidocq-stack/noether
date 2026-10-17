@@ -48,6 +48,7 @@ import io.vidocq.noether.jpa.core.model.build.LazySubclassGenerator;
 import io.vidocq.noether.jpa.core.model.build.Types;
 import io.vidocq.noether.jpa.core.model.source.ClassFileSource;
 import io.vidocq.noether.jpa.core.model.source.ClassInfos;
+import io.vidocq.noether.jpa.core.model.source.AnnotationInfo;
 import io.vidocq.noether.jpa.core.spi.ManagedAccess;
 import io.vidocq.noether.jpa.core.spi.ManagedAccessProvider;
 import jakarta.persistence.FetchType;
@@ -119,7 +120,16 @@ public final class MappedUnit {
                     .addAll(columns.stream().map(EntityStatements.Column::attribute).toList());
                 boolean unique = columns.size() == 1
                     && ((BasicAttribute) target.model().attributes().get(columns.getFirst().attribute())).column().unique();
-                var table = source.read(target.model().javaType().getName()).orElseThrow().annotation("jakarta.persistence.Table").orElse(null);
+                var info = source.read(target.model().javaType().getName()).orElseThrow();
+                var table = info.annotation("jakarta.persistence.Table").orElse(null);
+                if (columns.getFirst().table() != 0) {
+                    var secondary = new ArrayList<AnnotationInfo>();
+                    info.annotation("jakarta.persistence.SecondaryTable").ifPresent(secondary::add);
+                    info.annotation("jakarta.persistence.SecondaryTables").ifPresent(a -> secondary.addAll(a.annotations("value")));
+                    var name = owner.statements().referencedTable(reference).select().table().name();
+                    table = secondary.stream().filter(a -> EntityStatements.sameColumn(identifier(a.string("name")), name))
+                        .findFirst().orElseThrow();
+                }
                 if (table != null) {
                     unique |= table.annotations("uniqueConstraints").stream().anyMatch(u -> {
                         var names = u.strings("columnNames").stream().map(this::identifier).toList();

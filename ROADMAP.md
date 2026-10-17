@@ -4,7 +4,7 @@ Noether owns the implementations extracted from Mansart on 2026-10-11.
 
 | Building block | Status | Detailed roadmap |
 | --- | --- | --- |
-| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D25); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
+| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D26); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
 | Jakarta Validation 3.1 | V0–V2 provisional local test/TCK stopgap; not published | [Validation](noether-validation/ROADMAP.md) |
 
 The extraction changes repository, artifact, package and provider names, not
@@ -254,12 +254,26 @@ illegal: a separately proven cardinality/mapping contract is required. No new FK
 inverse loading/cascade/query semantics or orphan removal is delivered.
 See BUG-20261017-01 and the detailed D25/TCK evidence; D5/D9–D24 stay historical.
 
+Decision D26 (2026-10-17) extends D22 to one immutable, non-null, declared unique
+BASIC column in a target secondary table, annotation/XML, with one target PK and
+one secondary PK join. Persistence 3.2 §11.1.26 makes non-PK references optional
+and nonportable; Table 24 and §11.1.47 allow unambiguous target-column/table
+resolution without reinterpreting the owner-side `JoinColumn.table`.
+DDL targets the real secondary unique constraint; reads resolve actual target
+identity through the secondary PK join. Generated field/property access,
+converters, lifecycle, JPQL/Criteria, bulk association SET, cache and complete
+ordinary eager graph/fetch fallback are verified, including actual PostgreSQL 17
+DDL. No wider lazy/batch/collector or cycle-ordering contract is introduced.
+Composite secondary references/PK joins, owner secondary FKs, inheritance and
+other D22 exclusions remain refused. D5/D9–D25 and BUG/TCK history remain intact.
+
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
 1. Remaining relational mapping shapes beyond D23/D24's bounded contracts:
    broader derived/composite/nested identity targets, business joins
-   through join/secondary tables or inheritance, inverse business collections,
+   through join tables or inheritance, broader secondary-table business tuples/
+   PK joins beyond D26, inverse business collections,
    embedded business association paths and safely mutable referenced keys;
    inverse many-to-many indexes and broader collection-table embeddable relationships
    (composite/business/derived/join-table mappings and association query paths).

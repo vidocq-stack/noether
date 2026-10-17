@@ -306,6 +306,43 @@ supported; D23 does not imply arbitrary nested/composite/partial key support,
 incoming joins to nested composite-derived keys or broader optimized loading.
 See the detailed Persistence roadmap and `TCK.md` for the exact evidence.
 
+== Secondary-table business-key to-one joins (D26, 2026-10-17)
+
+D26 extends the historical D22 boundary below to *one* immutable, non-null,
+insertable, unique non-ID BASIC column in a declared target secondary table.
+Owning `ManyToOne`/`OneToOne`, `SecondaryTable`/`SecondaryTables`,
+metadata-complete ORM XML and existing converters use the same mapping/access
+planner. The target primary key and secondary PK join must each have one
+column; a renamed secondary PK join is resolved from metadata.
+
+Persistence 3.2 §11.1.26 makes non-PK references optional and explicitly
+*nonportable between providers*. Table 24 places the referenced column in the
+target entity's table; §11.1.47 allows its state across primary/secondary tables.
+Noether requires an unambiguous column-to-table mapping.
+`JoinColumn.table` remains the *owner's FK table*, not a target-table selector.
+Duplicate target column names are refused, never guessed.
+
+The unique declaration must be `Column(unique=true)` or an exact
+`SecondaryTable.uniqueConstraints`/XML secondary-table constraint.
+A primary-table or other-secondary-table constraint does not qualify.
+Generated DDL references the actual secondary unique column. Reads resolve the
+secondary PK join back to the target's primary identity; writes and converted
+values use the existing generated accesses/binders. Persist/generated identity,
+reassignment/null, flush/delete, JPQL/Criteria joins/navigation/projections/
+identity comparisons, bulk association SET and cache identity retain ordinary
+semantics. A closed-module APT property-access regression needs no package opens.
+
+Fetch/load graphs and explicit fetch joins retain complete ordinary eager
+loading. D10 lazy-reference, D13 batching and D11–D21 optimized collectors are
+not widened. No new FK-cycle ordering is introduced.
+
+Composite secondary business tuples or target PK/secondary PK joins, owner
+secondary-table FKs, primary-table business references on multi-table targets,
+inheritance, join tables, embedded/derived business relationships, mutable/
+nullable/nonunique/ambiguous keys and inverse business collections stay refused.
+Ordinary primary-key references are unchanged. See the prioritized roadmap and
+xref:tck.adoc[D26 verification]; D5/D9–D25 evidence remains historical.
+
 == Unique business-key to-one joins (D22, 2026-10-16)
 
 D22 prioritizes relational mapping over further graph optimization.

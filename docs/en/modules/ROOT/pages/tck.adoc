@@ -15,6 +15,48 @@ The official artifact checksums and TCK-BUG-001 byte-exact derived-jar fixture
 patch are unchanged; original artifacts are never edited. `TCK_FIXTURES=official`
 selects the untouched Persistence fixture. See the runner README for setup.
 
+== Secondary-table business-key verification (D26, 2026-10-17)
+
+This lot extends D22's *optional, nonportable* non-PK association references to
+one declared unique, immutable, non-null BASIC column in a target secondary
+table, with one target PK/secondary PK join. Persistence 3.2 §11.1.26/Table 24
+and §11.1.47 support the bounded metadata-derived interpretation;
+`JoinColumn.table` still names the owner FK table. This is not a newly required
+portable JPA mapping or a certification claim.
+
+Pre-production red: *5 tests / 1 failure / 4 errors*, all blocked by the
+previous primary-table-only boundary. A further diagnostic red proves that
+`JoinColumn.table` cannot select the target table. Final focused green:
+*222/222*. Root `clean install`: *1106/1106*, *92 reports*, zero failures/
+errors/skips, including *10* new tests over D25.
+
+Annotation and metadata-complete XML exercise generated target identity,
+secondary-table unique/FK/PK-join metadata, writes/reassignment/null, flush/
+deletion, JPQL/Criteria association loading and identity comparison, bulk SET,
+cache identity, immutable-key protection and complete fetch/load graph/fetch
+join fallback. A closed-module APT property-access test needs no package opens;
+the `SecondaryTables` container and converted secondary values are covered.
+Nonunique annotation/XML mappings, ambiguous/mutable/composite/multicolumn
+references and a target-table-selector misuse fail before schema output.
+Ordinary target-primary-key references and all D22 tests remain green.
+
+An isolated PostgreSQL *17* database executes *2/2 annotation/XML lifecycle
+scenarios*, verifying the actual FK to the secondary unique column and its
+renamed secondary PK join to the primary table. No shared service was restarted;
+the owned container was removed.
+
+Full locally *PATCHED* TCK: *2135 tests / 2131 passed / 0 failures / 0 errors /
+4 unchanged official skips*, *259 reports*. Independent verification compares
+all *2135* unique identities/outcomes with D25, checks *518* effective fixture
+classpaths and *518* tested-core jar hashes, and verifies *49* unchanged input
+hashes/file sets. Only the two approved fixture resources differ; *1124* other
+jar entries remain byte-identical.
+
+Exact commands, skips and provenance are in `noether-persistence/TCK.md`.
+Session evidence uses `secondary-business-key-`, including specification
+excerpts, red/green/clean/TCK/PostgreSQL logs, probe source, independent verifier,
+copied reports and `verification.json`. D5/D9–D25 remain historical deliveries.
+
 == Inverse collection-element boundary verification (D25, 2026-10-17)
 
 This lot validates bootstrap boundaries, not inverse execution. Persistence 3.2

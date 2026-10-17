@@ -947,10 +947,12 @@ final class Translator {
         Entity identity = entityValue(alias, target);
         List<Expression> id = sql(value instanceof Ast.Parameter || value instanceof Ast.Literal
             ? boundValue(value, identity) : value(value));
-        Expression where = equal(key(alias, target), id);
+        var referencedTable = statements.referencedTable(reference);
+        Expression where = equal(names(alias, referencedTable.select().conditions()), id);
         return reference.referencedColumns().stream().<Expression>map(column -> new Expression.Subquery(
             new Query(false, List.of(new Expression.Column(alias, column)),
-                List.of(new Query.From(table(target), alias, List.of())), where, List.of(), null, List.of(), null, null))).toList();
+                List.of(new Query.From(referencedTable.select().table(), alias, List.of())),
+                where, List.of(), null, List.of(), null, null))).toList();
     }
 
     private DeleteQuery delete(Ast.Delete delete) {
@@ -972,6 +974,15 @@ final class Translator {
 
     private List<Expression> referencedKey(String alias, EntityStatements owner, EntityStatements.Reference reference) {
         if (!reference.businessKey()) return key(alias, entity(reference.target()));
+        var referencedTable = owner.referencedTable(reference);
+        if (owner.referencedColumns(reference).getFirst().table() != 0) {
+            String secondary = alias();
+            Expression where = equal(names(secondary, referencedTable.select().conditions()), key(alias, entity(reference.target())));
+            return reference.referencedColumns().stream().<Expression>map(c -> new Expression.Subquery(
+                new Query(false, List.of(new Expression.Column(secondary, c)),
+                    List.of(new Query.From(referencedTable.select().table(), secondary, List.of())),
+                    where, List.of(), null, List.of(), null, null))).toList();
+        }
         return owner.referencedColumns(reference).stream().<Expression>map(c -> new Expression.Column(alias, c.name())).toList();
     }
 

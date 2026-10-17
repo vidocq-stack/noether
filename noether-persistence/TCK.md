@@ -1,3 +1,93 @@
+## Noether secondary-table business-key verification (D26) — 2026-10-17
+
+Baseline: merged PR20, `6894891` (**1096** reactor tests). D26 extends D22 to
+one immutable, non-null, declared unique BASIC target secondary-table column,
+one target PK and one secondary PK join. Owning ManyToOne/OneToOne annotation/
+metadata-complete XML mappings, converters and existing generated accesses use
+the same model/planner. No new dependencies, modules, packages, reflection,
+executors or inline core SQL are introduced.
+
+Normative gate: [Persistence 3.2](https://jakarta.ee/specifications/persistence/3.2/jakarta-persistence-spec-3.2.html)
+§11.1.26 explicitly makes non-PK referenced-column support **optional** and
+calls applications using it **nonportable**. Table 24 locates the referenced
+column in the target entity's table; §11.1.47 allows that entity across primary/
+secondary tables and defines the secondary PK join. Noether resolves only an
+unambiguous BASIC column's declared secondary table. `JoinColumn.table` remains
+the source FK table, never a target-table selector. This optional mapping is not
+claimed as a portable cross-provider requirement.
+
+Mandatory red before production: **5 tests / 1 failure / 4 errors**, all exposing
+the former primary-table-only refusal. A follow-up **1/1 failure** refines the
+owner-table diagnostic without inventing a referenced-table annotation.
+Rejected mappings emit no schema script. Explicit unsupported mappings were
+already refused: this feature extension does not add a BUG entry.
+
+Commands from the Noether root, Temurin **25.0.4**, Maven **3.9.16**:
+
+```sh
+./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test \
+  -Dtest=SecondaryBusinessKeyToOneTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw -ntp -pl noether-persistence/noether-jpa-processor-module-it -am test \
+  '-Dtest=*BusinessKey*,*ToOne*,*Secondary*,*EntityGraph*,*LazyBatch*,*Fetch*,*Cache*,*Relationship*,GeneratedAccessModulePathTest' \
+  -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw -ntp clean install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+- Focused final gate: **222/222**, zero failures/errors/skips, including the
+  **21** original D22 business-key tests. New core coverage has **9** tests;
+  one additional closed-module APT property-access test covers `SecondaryTables`
+  without package opens. Class-File-generated field accesses and converters
+  retain existing identity/access paths.
+- Clean reactor: **1106/1106**, **92 XML reports**, zero failures/errors/skips;
+  baseline **1096** plus **10** provider-owned tests.
+- Separate isolated PostgreSQL **17** feature probe: **2/2 annotation/XML
+  lifecycle scenarios**. JDBC metadata verifies the FK targets the actual
+  secondary unique column and that the renamed secondary PK joins the primary
+  identity. Raw FK values, generated IDs, ordinary loading, JPQL/Criteria
+  joins/identity projections, reassignment/null, bulk association SET, flush/
+  deletion and fetch/load graph/fetch-join fallback pass on actual generated DDL.
+  The existing TCK JDBC driver is used only by the probe; no dependency is added.
+  Its owned container was removed; no shared service was restarted.
+- Full locally **PATCHED** TCK: **2135 tests / 2131 passed / 0 failures /
+  0 errors / 4 official skips**, **259 XML reports**. Execution 1:
+  **2134 / 2130 passed / 4 skips**; execution 2: **1 / 1 passed**.
+- Independent aggregation checks every **2135 unique execution/class/method
+  identity and outcome** against D25. Both effective fixture classpaths per
+  report use exactly the approved derived jar (**518 checks**), and both loaded
+  core jar paths match the clean-built/installed core SHA-256 (**518 checks**).
+- All **49** official/cache/derived inputs and file sets remain unchanged.
+  Official spec-tests SHA-256:
+  `a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`;
+  derived TCK-BUG-001 SHA-256:
+  `1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+  Exactly two approved resources differ; **1124** other jar entries are
+  byte-identical. No official input, DDL, fixture exclusion or runner changed.
+
+The four unchanged official `@Disabled` skips, relative to
+`ee.jakarta.tck.persistence`, are:
+
+- `core.metamodelapi.identifiabletype.Client#getDeclaredSingularAttributes`
+- `core.query.language.Client6#resultContainsFetchReference`
+- `se.entityManagerFactory.Client2#createEntityManagerFactoryStringMapTest`
+- `se.schemaGeneration.annotations.tableGenerator.Client#tableGeneratorTest`
+
+Composite secondary business tuples/PK joins, owner secondary FKs, inheritance,
+join tables, primary-table business references on multi-table targets, mutable/
+ambiguous/nonunique columns and other D22 exclusions remain refused. Ordinary PK
+references are unchanged; no new lazy/batch/collector or FK-cycle ordering is
+claimed. Complete ordinary eager loading is retained.
+
+Session artifacts use `secondary-business-key-`: normative snapshot/excerpts,
+red/targeted/clean/TCK/PostgreSQL logs, probe source/classes, copied reactor/TCK
+reports, identities/outcomes, immutable-input hashes, fixture provenance,
+independent verifier and `verification.json`. HEAD, branch and origin refs
+remain unchanged; no commit, push or publication was performed by the worker.
+This is local patched evidence, **not certification**. D5/D9–D25 and all older
+BUG/TCK evidence below remain historical.
+
 ## Noether inverse collection-element boundary verification (D25) — 2026-10-17
 
 Baseline: merged PR19, `11cdc38` (**1082** reactor tests). The normative

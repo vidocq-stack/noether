@@ -114,7 +114,8 @@ final class SchemaPlan {
                 foreignKey(statements.select().table(), names, unit.entity(reference.target()).orElseThrow(),
                     override != null && override.isWritten("foreignKey") ? override.annotation("foreignKey")
                         : annotation == null ? null : annotation.annotation("foreignKey"),
-                    statements.referencedColumns(reference).stream().map(EntityStatements.Column::name).toList());
+                    statements.referencedColumns(reference).stream().map(EntityStatements.Column::name).toList(),
+                    statements.referencedTable(reference).select().table());
                 if (reference.businessKey() && association.kind() == AssociationAttribute.Kind.ONE_TO_ONE) {
                     unique(statements.select().table(), names, "_business_" + reference.attribute());
                 }
@@ -469,6 +470,11 @@ final class SchemaPlan {
 
     private void foreignKey(Table table, List<Identifier> columns, MappedEntity target, AnnotationInfo annotation,
             List<Identifier> referencedColumns) {
+        foreignKey(table, columns, target, annotation, referencedColumns, target.statements().select().table());
+    }
+
+    private void foreignKey(Table table, List<Identifier> columns, MappedEntity target, AnnotationInfo annotation,
+            List<Identifier> referencedColumns, Table referencedTable) {
         var inheritance = unit.inheritance(target.model().javaType());
         // There is no single referenced table for a polymorphic table-per-class key.
         if (inheritance.tablePerClass() && (inheritance.abstractEntity(target.model())
@@ -477,7 +483,7 @@ final class SchemaPlan {
         if (annotation != null && "NO_CONSTRAINT".equals(annotation.enumConstant("value"))) return;
         String name = annotation == null ? null : annotation.string("name");
         Identifier constraint = identifier(name != null && !name.isBlank() ? name : table.name().name() + "_fk_" + foreignKeys.size());
-        var statement = new ForeignKeyStatement(table, constraint, columns, target.statements().select().table(),
+        var statement = new ForeignKeyStatement(table, constraint, columns, referencedTable,
             referencedColumns,
             annotation == null ? null : annotation.string("foreignKeyDefinition"), false);
         if (foreignKeys.stream().noneMatch(k -> k.table().equals(table) && k.columns().equals(columns))) foreignKeys.add(statement);

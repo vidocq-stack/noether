@@ -525,6 +525,36 @@ separate normative/cardinality analysis and tests; it is not claimed illegal
 merely because collection traversal is unsupported. D24 owning-side behavior and
 all earlier evidence remain unchanged. See D25 and `TCK.md` for verification.
 
+### Secondary-table business-key to-one joins (D26, 2026-10-17)
+
+D26 extends D22 to **one** immutable, non-null, unique BASIC column in a target's
+declared secondary table, for owning `ManyToOne` and `OneToOne`. Annotation
+(`SecondaryTable`/`SecondaryTables`) and metadata-complete ORM XML share the
+existing model, generated field/property accesses and converters.
+
+Persistence 3.2 §11.1.26 explicitly makes non-primary-key references optional
+and nonportable between providers. Table 24 locates the referenced column in
+the target entity's table; §11.1.47 allows that entity's state across primary
+and secondary tables. Noether resolves an unambiguous BASIC column's declared
+table; `JoinColumn.table` still names the **owner's FK table**, never the target.
+Ambiguous names are refused rather than guessing a table.
+
+The target has a single-column primary key and a single-column secondary PK
+join (explicitly renamed or defaulted). Uniqueness must be declared by
+`Column.unique` or that secondary table's exact `uniqueConstraints`; a primary
+table constraint cannot substitute. DDL references the actual secondary unique
+column. Reads resolve its secondary PK join back to actual JPA identity; writes,
+generated identities, reassignment/null, deletion, JPQL/Criteria, bulk association
+SET and cache identity retain the ordinary paths. Fetch graphs/joins remain
+complete eager fallbacks, not new lazy/batch/SQL-collector eligibility.
+
+Composite secondary business keys/PK joins, owner secondary-table FKs,
+inheritance, join tables, embedded/derived business associations, mutable or
+ambiguous keys and inverse business collections remain refused. D22's original
+primary-table scope and all D5/D9–D25 deliveries remain historical; the current
+prioritized backlog and independently checked evidence are in the roadmaps
+and `noether-persistence/TCK.md`.
+
 The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;
 the bundled Jakarta ORM schema retains its original upstream licence.

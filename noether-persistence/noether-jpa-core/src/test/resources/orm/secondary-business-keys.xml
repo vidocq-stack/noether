@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entity-mappings xmlns="https://jakarta.ee/xml/ns/persistence/orm" version="3.2">
+  <access>FIELD</access>
+  <entity class="io.vidocq.noether.jpa.core.session.SecondaryBusinessKeyToOneTest$Customer" name="SecondaryCustomer" metadata-complete="true">
+    <table name="sb_customer"/>
+    <secondary-table name="xml_sb_details">
+      <primary-key-join-column name="xml_customer_pk" referenced-column-name="id"/>
+      <unique-constraint><column-name>business_code</column-name></unique-constraint>
+    </secondary-table>
+    <attributes>
+      <id name="id"><generated-value strategy="IDENTITY"/></id>
+      <basic name="code"><column name="business_code" table="xml_sb_details" nullable="false" updatable="false"/></basic>
+      <basic name="label"/>
+    </attributes>
+  </entity>
+  <entity class="io.vidocq.noether.jpa.core.session.SecondaryBusinessKeyToOneTest$Order" name="SecondaryOrder" metadata-complete="true">
+    <table name="sb_order"/>
+    <attributes>
+      <id name="id"/>
+      <many-to-one name="customer" target-entity="io.vidocq.noether.jpa.core.session.SecondaryBusinessKeyToOneTest$Customer" fetch="LAZY">
+        <join-column name="customer_code" referenced-column-name="business_code"/>
+        <cascade><cascade-persist/></cascade>
+      </many-to-one>
+    </attributes>
+  </entity>
+  <entity class="io.vidocq.noether.jpa.core.session.SecondaryBusinessKeyToOneTest$Badge" name="SecondaryBadge" metadata-complete="true">
+    <table name="sb_badge"/>
+    <attributes>
+      <id name="id"/>
+      <one-to-one name="customer" target-entity="io.vidocq.noether.jpa.core.session.SecondaryBusinessKeyToOneTest$Customer">
+        <join-column name="customer_code" referenced-column-name="business_code"/>
+        <cascade><cascade-persist/></cascade>
+      </one-to-one>
+    </attributes>
+  </entity>
+</entity-mappings>

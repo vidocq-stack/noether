@@ -35,6 +35,26 @@ import org.junit.jupiter.api.Test;
 class GeneratedAccessModulePathTest {
 
     @Test
+    void secondaryBusinessKeyUsesGeneratedPropertyAccessInAClosedModule() { // §11.1.26, §11.1.47
+        var unit = new PersistenceConfiguration("processor-secondary-business")
+            .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
+            .managedClass(io.vidocq.noether.jpa.processorit.closed.SecondaryBusinessCustomer.class)
+            .managedClass(io.vidocq.noether.jpa.processorit.closed.SecondaryBusinessOwner.class)
+            .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:processor-secondary-business")
+            .property(PersistenceConfiguration.SCHEMAGEN_DATABASE_ACTION, "drop-and-create");
+        try (var factory = unit.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+            var customer = new io.vidocq.noether.jpa.processorit.closed.SecondaryBusinessCustomer(41, "CLOSED");
+            factory.runInTransaction(writer -> writer.persist(
+                new io.vidocq.noether.jpa.processorit.closed.SecondaryBusinessOwner(1, customer)));
+            var owner = em.find(io.vidocq.noether.jpa.processorit.closed.SecondaryBusinessOwner.class, 1L);
+            assertThat(owner.getCustomer()).isSameAs(em.find(customer.getClass(), 41L));
+            assertThat(owner.getCustomer().getCode()).isEqualTo("CLOSED");
+            assertThat(customer.getClass().getModule().isOpen(customer.getClass().getPackageName(),
+                io.vidocq.noether.jpa.core.spi.ManagedAccess.class.getModule())).isFalse();
+        }
+    }
+
+    @Test
     void lazyToOneUsesAClassFileGeneratedSubclassInAClosedApplicationModule() { // §2.10, §7.11
         var unit = new PersistenceConfiguration("processor-lazy-one")
             .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")

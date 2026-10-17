@@ -1818,13 +1818,66 @@ identities and independent evidence are in `TCK.md`.
 
 ## Remaining work
 
-Prioritized backlog after D25, 2026-10-17. Each item needs its own approved, bounded lot; until then
+### D26 — Single secondary-table business-key to-one references ✅ (2026-10-17)
+
+Approved after merged PR20 (`6894891`), building on D22 rather than inventing
+a second association mapping engine. Normative gate:
+[Persistence 3.2](https://jakarta.ee/specifications/persistence/3.2/jakarta-persistence-spec-3.2.html)
+§11.1.26 expressly permits optional non-PK references and calls applications
+using them nonportable. Table 24 says the referenced column belongs to the
+target entity's table; §11.1.47 maps one entity across primary/secondary tables.
+`JoinColumn.table` specifies the source FK table, not a referenced-table selector.
+This is bounded optional Noether support, not a required portable JPA feature.
+
+- One owning `ManyToOne`/`OneToOne` FK references one unambiguous immutable,
+  non-null, insertable non-ID BASIC column in a declared target secondary table.
+  The target has one PK column and one secondary PK join, renamed or defaulted.
+  `SecondaryTable`, `SecondaryTables`, metadata-complete XML and existing
+  annotation/XML overlays use the same model/access planner.
+- Uniqueness must be declared by `Column.unique` or the selected secondary
+  table's exact `uniqueConstraints`. Primary-table/other-table constraints
+  cannot qualify it; no target uniqueness is fabricated.
+- `EntityStatements` resolves the physical referenced table and its existing
+  PK-join metadata. Schema FKs target that secondary table and its real unique
+  column. The ordinary loader selects the secondary PK by the business value
+  and then loads/manages the entity under its actual primary identity.
+- Existing generated accesses/binders handle writes and converters. Generated
+  target identities, persist/flush, reassignment/null, secondary-row/entity
+  deletion, cache identity and immutable-key protection reuse the delivered
+  lifecycle paths. JPQL/Criteria association joins/navigation/projection/
+  identity comparison and bulk association SET use SQL AST scalar lookups of
+  the secondary key, not an invented target ID or a dangling secondary alias.
+- Business owners remain outside optimized hydration/graph collectors and
+  batching; to-one LAZY falls back to ordinary eager loading. Explicit fetch
+  joins and fetch/load graphs remain complete ordinary loads. A closed-module
+  APT property-access test verifies `SecondaryTables` without package opens;
+  core tests also exercise Class-File-generated field access.
+
+Explicitly unchanged boundaries: composite secondary business tuples, composite
+target PKs/secondary PK joins, owner secondary-table FKs, primary-table business
+joins on multi-table targets, join tables, inheritance, embedded/derived business
+associations, mutable/null/nonunique/ambiguous columns and inverse business
+collections. No additional FK-cycle ordering is delivered; ordinary PK references
+and the original D22 primary-table single/composite scope remain unchanged.
+
+Mandatory initial red: **5 tests / 1 failure / 4 errors**, all reaching the
+former primary-table-only refusal before production edits. Final focused gate
+**222/222**; clean reactor **1106/1106**, **92 reports** (baseline 1096 plus ten
+tests). An isolated PostgreSQL 17 probe executes both annotation/XML lifecycle
+scenarios with actual schema FK/PK-join metadata, generated IDs and association
+SQL. Exact full TCK/immutable-input verification is recorded in `TCK.md`.
+This is a feature extension of an explicit unsupported boundary, not a new
+implementation defect; no BUG entry or certification claim is added.
+D5/D9–D25 and previous TCK/BUG evidence are preserved.
+
+Prioritized backlog after D26, 2026-10-17. Each item needs its own approved, bounded lot; until then
 the documented fallback (follow-up selects, eager loading, or an explicit refusal naming the
 milestone) stays in place.
 
 1. **Remaining relational mapping shapes** — broader derived/composite/nested identity
    targets beyond D23; business joins
-   through join/secondary tables or inheritance, embedded business association paths,
+   through join tables or inheritance, broader secondary-table business tuples/
+   PK joins beyond D26, embedded business association paths,
    inverse collections and safely mutable referenced keys; inverse many-to-many
    indexes and broader relationships inside collection-table embeddable elements
    beyond D24 (composite/business/derived/join-table support and association query
@@ -1853,6 +1906,7 @@ Recorded before implementation; each entry: date, decision, reason.
 
 | # | Date | Decision | Status |
 |---|---|---|---|
+| D26 | 2026-10-17 | Extend D22's optional nonportable non-PK references to one immutable non-null unique BASIC column in a declared target secondary table, with a single target PK/secondary PK join. Resolve table/uniqueness/identity from existing metadata, emit the real secondary FK and retain generated access/binders, ordinary eager loading, lifecycle/cache and SQL AST query semantics. Reject ambiguous/composite/owner-secondary/inherited/derived and other unsupported shapes; do not reinterpret JoinColumn.table or broaden lazy/batch/cycle ordering. | Actioned |
 | D25 | 2026-10-17 | Gate the proposed inverse element-collection lot on Persistence 3.2 §2.7–2.8/§2.11/§11.1.31/§11.1.42. Implement bootstrap refusal of entity associations to embeddables and unsupported mappedBy paths traversing collection values, annotation/XML, preserving single-embedded inverse and D24 owning mappings. Do not invent element identity or infer entity one-to-one cardinality from row uniqueness; inverse entity-owner semantics and orphan removal require separate proof. | Actioned |
 | D24 | 2026-10-16 | Deliver owning ManyToOne/OneToOne inside embeddable element-collection values to eligible simple-ID targets, annotation/XML, with collection-row FKs and managed target identity. Preserve owner-key whole-collection rewrites, duplicate occurrences, positions/keys, cascades, snapshots, versions and caches through existing generated access. Refuse inverse/orphan/composite/business/derived/join-table/read-only/unsupported owner-index shapes and association query navigation/projections; keep complete ordinary fetch/graph loading rather than widening optimization/batching. | Actioned |
 | D23 | 2026-10-16 | Strengthen existing P5 MapsId support for simple-parent owning to-ones: unnamed shared simple ID and a named direct BASIC embedded-ID component, annotation/XML. Derive cascaded/generated IDs at the correct lifecycle stage, register actual identity, order required FK edges, propagate physical key names/types and reject identity mutation and unsupported nested/chained/partial mappings. Preserve legacy flat composite examples and safe eager graph/lazy fallbacks without widening optimization or claiming arbitrary composite support. | Actioned |

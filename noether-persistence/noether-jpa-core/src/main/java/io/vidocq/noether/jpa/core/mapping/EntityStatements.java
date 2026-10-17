@@ -394,11 +394,10 @@ public final class EntityStatements {
             && keys.stream().noneMatch(k -> sameColumn(k.identifier(delimited), Identifier.of(j.referencedColumnName(), delimited))));
         if (business) {
             if (id || association.mapsId() != null || association.name().contains(".")
-                    || !target.secondaryTables().isEmpty()
                     || inheritances.apply(target.javaType()) != null
                         && inheritances.apply(target.javaType()).hierarchy().size() != 1) {
                 throw new PersistenceException("Business-key join " + describe(association)
-                    + " requires a non-derived, primary-table target without inheritance or embedded relationships");
+                    + " requires a non-derived target without inheritance or embedded relationships");
             }
             List<BasicAttribute> referenced = new ArrayList<>();
             for (JoinColumnModel join : association.joinColumns()) {
@@ -417,11 +416,22 @@ public final class EntityStatements {
                     .findFirst().orElseThrow(() -> new PersistenceException("Business-key join " + describe(association)
                         + " must explicitly reference existing BASIC columns"));
                 if (basic.column().nullable() || basic.column().updatable() || !basic.column().insertable() || basic.version()
-                        || basic.column().table() != null
                         || referenced.contains(basic)
                         || keys.stream().anyMatch(k -> sameColumn(k.identifier(delimited), Identifier.of(basic.column().name(), delimited)))) {
                     throw new PersistenceException("Business-key join " + describe(association)
-                        + " requires distinct, non-null, immutable non-ID primary-table BASIC columns (nullable=false, updatable=false)");
+                        + " requires distinct, non-null, immutable non-ID BASIC columns (nullable=false, updatable=false)");
+                }
+                if (!target.secondaryTables().isEmpty()) {
+                    var secondary = target.secondaryTables().stream()
+                        .filter(t -> basic.column().table() != null && sameColumn(Identifier.of(t.table().name(), delimited),
+                            Identifier.of(basic.column().table(), delimited))).findFirst().orElse(null);
+                    if (association.joinColumns().size() != 1 || keys.size() != 1 || secondary == null
+                            || secondary.joinColumns().size() > 1) {
+                        throw new PersistenceException("Secondary-table business-key joins require one BASIC column in a declared "
+                            + "secondary table and a single-column target primary key");
+                    }
+                } else if (basic.column().table() != null) {
+                    throw new PersistenceException("Business-key column must belong to a declared secondary table");
                 }
                 if (target.attributes().stream().filter(a -> a instanceof BasicAttribute b
                         && sameColumn(Identifier.of(b.column().name(), delimited), Identifier.of(basic.column().name(), delimited))).count() != 1) {
@@ -433,7 +443,8 @@ public final class EntityStatements {
             for (int part = 0; part < referenced.size(); part++) {
                 BasicAttribute basic = referenced.get(part);
                 JoinColumnModel join = association.joinColumns().get(part);
-                if (join.table() != null) throw new PersistenceException("Business-key joins do not support secondary tables");
+                if (join.table() != null) throw new PersistenceException(
+                    "Business-key joins do not support owner secondary-table join columns; JoinColumn.table is not the target table");
                 indexes[part] = columns.size();
                 columns.add(new Column(Identifier.of(join.name() == null ? leaf(association.name()) + "_" + basic.column().name()
                     : join.name(), delimited), binders.apply(basic), attribute, new int[0], new ManagedAccess[0], false, false,
@@ -1163,6 +1174,12 @@ public final class EntityStatements {
         return reference.businessKey() ? reference.referencedColumns().stream()
             .map(n -> target.statements().columns().stream().filter(c -> sameColumn(c.name(), n)).findFirst().orElseThrow()).toList()
             : target.statements().keyColumns();
+    }
+
+    /** The physical target table and its PK join, not necessarily the target's primary table. */
+    public TableStatements referencedTable(Reference reference) {
+        var target = entities.apply(reference.target()).statements();
+        return target.tables().get(referencedColumns(reference).getFirst().table());
     }
 
     public Column referencedColumn(ForeignKey foreignKey) {
