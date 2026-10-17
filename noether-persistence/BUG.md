@@ -1085,3 +1085,40 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     locally patched TCK **2135 / 2131 passed / 0 failures / 0 errors / 4 skips**.
     Independent verification retains all 259 reports, identities/outcomes,
     518 effective classpaths and 49 official/derived input hashes.
+
+## BUG-20261017-01 — Unsupported inverse collection paths and embeddable targets pass bootstrap
+
+- **Date**: 2026-10-17
+- **Status**: FIXED (working tree; verification in `TCK.md`)
+- **Affected module**: `noether-jpa-core`, `mapping.MappedUnit`
+- **Symptom**: factory creation accepts `@OneToMany(mappedBy="values.target")`
+  when `values` is an element collection, the analogous inverse one-to-one,
+  and an entity association whose target is an embeddable. The inverse loader
+  cannot resolve a collection path as an owning entity attribute; no element
+  entity identity exists. Annotation and metadata-complete XML reproduce it.
+- **Minimal reproduction**:
+  ```sh
+  ./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test \
+    -Dtest=InverseElementCollectionTest -Dsurefire.failIfNoSpecifiedTests=false
+  ```
+- **Cause**: ordinary inverse plans defer owning-path resolution until load.
+  `EmbeddedPaths` lowers single embedded attributes only; collection elements
+  are not execution slots of the containing entity. Inverse associations also
+  bypass the owning-FK target check.
+- **Investigations**:
+  - 2026-10-17: normative §2.7–2.8/§2.11/§11.1.31/§11.1.42 gate stops inverse
+    element execution. Entity targets that are embeddables and inverse to-ones
+    inside collection values are illegal; inverse *containing-entity* paths across
+    collections remain explicitly unsupported, not universally declared illegal.
+  - 2026-10-17: failing-first annotation/XML gate: **14 tests / 10 failures /
+    0 errors / 4 passes**. An isolated repeat removes unrelated invalid mappings
+    from the embeddable-target case and retains exactly the same failures.
+  - 2026-10-17: semantic-model bootstrap validation rejects these mappings
+    before access/mapping/schema generation; focused gate **97/97**, including
+    D24 owning tests and positive single-embedded inverse entity identity checks.
+  - 2026-10-17: final clean reactor **1096/1096**, **91 reports**; isolated
+    PostgreSQL 17 annotation/XML probe **2 scenarios / 38 checks**; full locally
+    patched TCK **2135 / 2131 passed / 0 failures / 0 errors / 4 official skips**
+    across **259 reports**. All **2135** identities/outcomes, **518** effective
+    classpaths and **49** immutable input hashes checked independently; no
+    official fixture or exclusion change. Not a certification claim.

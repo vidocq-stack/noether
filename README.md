@@ -500,6 +500,31 @@ and polymorphic/`JOINED`/`TABLE_PER_CLASS` targets remain bootstrap errors.
 Unsupported owner keys/indexes are refused rather than silently dropping state.
 The detailed D24 roadmap and `TCK.md` record the exact tests and remaining backlog.
 
+### Inverse element-collection boundary (D25, 2026-10-17)
+
+This follow-up adds **bootstrap validation, not inverse relationship loading**.
+Jakarta Persistence 3.2 §2.7 gives embeddables no entity identity: a relationship
+back from a referenced entity targets the containing entity, never a collection
+element. §2.8 requires relationships *inside* collection embeddables to be owning
+many-to-one/one-to-one foreign-key mappings. `ManyToOne` itself has no `mappedBy`;
+its entity inverse would be `OneToMany`. The standard dotted `mappedBy` examples
+(§11.1.31, §11.1.42) navigate single embedded attributes, not collection elements.
+
+Noether now rejects entity `mappedBy` paths traversing a list/bag/map element
+collection (including one under an embedded attribute) **before schema generation**,
+and rejects entity relationships targeting an embeddable. Annotation and
+metadata-complete XML inverse declarations have the same diagnostics. Ordinary
+single-embedded inverse paths remain supported.
+
+Collection-row uniqueness does not prove one-to-one cardinality between containing
+entities: an owner can have several rows referencing different targets; bags can
+also repeat a target. Positions/map keys do not turn those values into entities.
+No inverse FK/column, invented element identity, inverse lifecycle/query behavior
+or orphan removal is introduced. A future inverse **entity-owner** contract needs
+separate normative/cardinality analysis and tests; it is not claimed illegal
+merely because collection traversal is unsupported. D24 owning-side behavior and
+all earlier evidence remain unchanged. See D25 and `TCK.md` for verification.
+
 The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;
 the bundled Jakarta ORM schema retains its original upstream licence.

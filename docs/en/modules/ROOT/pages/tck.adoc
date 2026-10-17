@@ -15,6 +15,40 @@ The official artifact checksums and TCK-BUG-001 byte-exact derived-jar fixture
 patch are unchanged; original artifacts are never edited. `TCK_FIXTURES=official`
 selects the untouched Persistence fixture. See the runner README for setup.
 
+== Inverse collection-element boundary verification (D25, 2026-10-17)
+
+This lot validates bootstrap boundaries, not inverse execution. Persistence 3.2
+§2.7–2.8/§2.11/§11.1.31/§11.1.42 prohibit invented embeddable entity targets and
+inverse to-ones inside collection values; collection-traversing inverse
+entity-owner paths remain explicitly unsupported pending separate proof.
+Annotation and metadata-complete XML inverse declarations are covered, alongside
+positive single-embedded inverse identity checks and all existing D24 tests.
+
+Mandatory red before production changes: *14 tests / 10 failures / 0 errors /
+4 passes*, repeated with the embeddable-target case isolated. Focused green:
+*97/97*. Full `clean install`: *1096/1096*, *91 XML reports*, no failures/errors/
+skips, including *14* new provider-owned tests.
+
+An isolated PostgreSQL *17* annotation/XML probe passes *2 scenarios / 38 checks*:
+exact collection-table FKs/types, no inverse target-table FK/column, duplicate
+occurrences, list/map tuples, shared entity identity and inverse rejection before
+schema changes. Two distinct unique to-one targets in one owner's collection
+demonstrate why row uniqueness does not establish inverse entity one-to-one.
+The dedicated database was removed; no shared service was restarted.
+
+Full locally *PATCHED* TCK: *2135 tests / 2131 passed / 0 failures / 0 errors /
+4 unchanged official skips*, *259 reports*. Independent aggregation verifies all
+*2135* unique execution/class/method identities/outcomes against D24, *518*
+effective classpaths, *49* unchanged official/cache/derived input hashes and
+unchanged cache/fixture file sets. Only the two approved TCK-BUG-001 resources
+differ; the other *1124* jar entries are byte-identical.
+
+Commands, skips, limitations and immutable-input hashes are in
+`noether-persistence/TCK.md`. Session artifacts use `inverse-element-relations-`,
+including copied reports, probe source, verifier and `verification.json`.
+This is not an untouched official result or certification. Earlier evidence below
+is historical and preserved.
+
 == Element-collection to-one verification (D24, 2026-10-16)
 
 Owning many-to-one/one-to-one references in embeddable collection values target

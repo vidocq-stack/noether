@@ -1762,9 +1762,63 @@ The full locally patched official TCK remains **2135 tests / 2131 passed /
 Independent identities, outcomes, effective classpaths and fixture/input hashes
 are recorded in `TCK.md`; D5/D9–D23 and prior BUG/TCK records remain historical.
 
+### D25 — Validate inverse collection-element boundaries ✅ (2026-10-17)
+
+Approved after merged PR19 (`11cdc38`), with a mandatory specification gate
+before attempting inverse execution. This lot delivers **validation only**;
+it does not implement an inverse relationship to collection elements.
+
+**Normative decision.** The [Persistence 3.2 specification](https://jakarta.ee/specifications/persistence/3.2/jakarta-persistence-spec-3.2.html)
+§2.7 gives an embeddable no persistent entity identity. A relationship back from
+a referenced entity goes to the entity containing the embeddable, not to the
+value itself. §2.8 explicitly requires a collection embeddable (including nested
+embeddables) to own its many-to-one/one-to-one FK; an inverse to-one inside such
+a value is illegal. §2.11 and §11.1.31 give `ManyToOne` no `mappedBy`: its inverse
+is `OneToMany` toward containing entities. §11.1.31/§11.1.42 describe dotted paths
+through embedded attributes, exemplified by a *single* embedded attribute.
+They do not supply element-row identity or list/map traversal semantics.
+
+**No invented multiplicity.** A collection row can refer to one entity, but one
+containing owner can have zero, one or many such rows, repeat a target, or refer
+to several different targets. An inverse singular embeddable target is not an
+entity association. A unique one-to-one FK constrains a target across collection
+rows, not the number of targets across all rows of a containing owner. Owner ID,
+list position and map key identify storage tuples, not embeddable entities.
+Therefore no inverse one-to-one is inferred. A potential inverse to *containing
+entities* is explicitly separate and unsupported, **not declared universally
+specification-invalid** without a stronger normative/cardinality contract.
+
+**Implemented validation.** The existing annotation/XML semantic model is checked
+before access generation, mapping or schema execution. An entity association to
+an embeddable is refused with the attribute and §2.7 diagnosis. A `mappedBy` path
+that reaches an element collection, including one below an ordinary embedded
+attribute, fails with the full inverse attribute/path and an explicit unsupported
+collection-table diagnostic. This fixes factories accepting mappings whose
+ordinary inverse loader cannot resolve their owning attribute (BUG-20261017-01).
+Single-embedded inverse paths still load actual managed containing entities.
+The existing owning-only collection-value validation remains in force.
+
+No second FK/column, row resolver, inverse dirty checking, cascade, query path or
+orphan-removal behavior is added. D24 owning collections retain their existing
+duplicates, owner-key rewrites, positions/keys, identity, generated IDs and lifecycle
+contracts. Composite/business/MapsId/inheritance and association-query expansion
+remain separate. Provider-owned annotation/XML regressions and the clean reactor/
+full patched-TCK verification are recorded in `TCK.md`; earlier D5/D9–D24 evidence
+and BUG/TCK history are preserved.
+
+**Verification.** Initial and isolated reds: **14 tests / 10 failures / 0 errors /
+4 passes**, before production edits. Focused final gate **97/97**; clean reactor
+**1096/1096** across **91 reports**. The isolated PostgreSQL 17 annotation/XML
+probe passes **2 scenarios / 38 checks**, including actual FK ownership,
+two distinct unique to-one targets per owner and refusals before schema changes.
+Full locally patched TCK: **2135 / 2131 passed / 0 failures / 0 errors / 4 skips**,
+**259 reports**, all identities/outcomes unchanged from D24, **518** effective
+classpath checks and **49** unchanged input hashes. Exact commands, skipped
+identities and independent evidence are in `TCK.md`.
+
 ## Remaining work
 
-Prioritized backlog after D24, 2026-10-16. Each item needs its own approved, bounded lot; until then
+Prioritized backlog after D25, 2026-10-17. Each item needs its own approved, bounded lot; until then
 the documented fallback (follow-up selects, eager loading, or an explicit refusal naming the
 milestone) stays in place.
 
@@ -1773,8 +1827,11 @@ milestone) stays in place.
    through join/secondary tables or inheritance, embedded business association paths,
    inverse collections and safely mutable referenced keys; inverse many-to-many
    indexes and broader relationships inside collection-table embeddable elements
-   beyond D24 (inverse/orphan/composite/business/derived/join-table support and
-   association query navigation/projections).
+   beyond D24 (composite/business/derived/join-table support and association query
+   navigation/projections). After D25, inverse entity-owner relationships need a
+   separate normative/cardinality contract; illegal inverse collection embeddables
+   and entity associations to embeddables are not future implementation targets.
+   Orphan removal stays a separate, explicitly refused lot.
    Null basic collection elements were fixed by D13 (BUG-20261015-09).
 2. **Deeper collection-valued graph subgraphs and broader SQL fetch eligibility** —
    more than two collection edges and broader cyclic graph optimization;
@@ -1796,6 +1853,7 @@ Recorded before implementation; each entry: date, decision, reason.
 
 | # | Date | Decision | Status |
 |---|---|---|---|
+| D25 | 2026-10-17 | Gate the proposed inverse element-collection lot on Persistence 3.2 §2.7–2.8/§2.11/§11.1.31/§11.1.42. Implement bootstrap refusal of entity associations to embeddables and unsupported mappedBy paths traversing collection values, annotation/XML, preserving single-embedded inverse and D24 owning mappings. Do not invent element identity or infer entity one-to-one cardinality from row uniqueness; inverse entity-owner semantics and orphan removal require separate proof. | Actioned |
 | D24 | 2026-10-16 | Deliver owning ManyToOne/OneToOne inside embeddable element-collection values to eligible simple-ID targets, annotation/XML, with collection-row FKs and managed target identity. Preserve owner-key whole-collection rewrites, duplicate occurrences, positions/keys, cascades, snapshots, versions and caches through existing generated access. Refuse inverse/orphan/composite/business/derived/join-table/read-only/unsupported owner-index shapes and association query navigation/projections; keep complete ordinary fetch/graph loading rather than widening optimization/batching. | Actioned |
 | D23 | 2026-10-16 | Strengthen existing P5 MapsId support for simple-parent owning to-ones: unnamed shared simple ID and a named direct BASIC embedded-ID component, annotation/XML. Derive cascaded/generated IDs at the correct lifecycle stage, register actual identity, order required FK edges, propagate physical key names/types and reject identity mutation and unsupported nested/chained/partial mappings. Preserve legacy flat composite examples and safe eager graph/lazy fallbacks without widening optimization or claiming arbitrary composite support. | Actioned |
 | D22 | 2026-10-16 | Pause graph optimization and deliver bounded owning to-one joins to immutable, non-null, unique non-ID BASIC columns (single/composite, annotation/XML). Separate referenced tuple access/binders from JPA identity; resolve actual IDs before ordinary loading, preserve lifecycle/cache/query semantics and generate FKs to real unique constraints. Explicitly refuse invalid/mutable/unsupported shapes and non-null cycles; keep business owners on safe eager/ordinary graph/fetch loading rather than ID-assuming lazy/batch/optimized hydration. | Actioned |

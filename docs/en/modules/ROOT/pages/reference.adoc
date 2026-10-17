@@ -244,6 +244,28 @@ read-only/shared/other-table FK columns, polymorphic/JOINED/TABLE_PER_CLASS
 targets and unsupported owner keys/indexes remain explicit bootstrap errors.
 Broader query and mapping support requires a separate bounded lot.
 
+== Inverse collection-element boundary (D25, 2026-10-17)
+
+This is a bootstrap-validation follow-up, not inverse relationship loading.
+Persistence 3.2 §2.7 gives embeddables no entity identity: an association back
+from a referenced entity must target the containing entity, never an element.
+§2.8 requires collection embeddables to own their many-to-one/one-to-one FKs.
+`ManyToOne` has no `mappedBy`; the corresponding inverse is an entity
+`OneToMany`. The standard dotted paths (§11.1.31, §11.1.42) describe single
+embedded attributes, not element-collection traversal.
+
+Annotation/XML associations targeting embeddables, and `mappedBy` paths crossing
+an element collection (list, bag, map, or below another embedded attribute), fail
+at bootstrap before schema generation. Ordinary single-embedded inverse paths
+remain supported. A possible inverse toward containing entities needs a separately
+proven contract and is unsupported, not declared universally illegal here.
+
+A unique FK in collection rows does not establish one-to-one cardinality between
+containing entities: one owner may reference several different targets through
+different rows. Duplicate values/targets and list/map positions do not create
+element identity. No inverse FK/column, lifecycle/query support or orphan removal
+is added. D24 owning behavior is unchanged; see the dated D25/TCK evidence.
+
 == Simple-parent MapsId derived identity (D23, 2026-10-16)
 
 The existing P5 mappings now have a strengthened bounded contract:

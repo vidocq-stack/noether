@@ -1,3 +1,84 @@
+## Noether inverse collection-element boundary verification (D25) — 2026-10-17
+
+Baseline: merged PR19, `11cdc38` (**1082** reactor tests). The normative
+Persistence 3.2 §2.7–2.8/§2.11/§11.1.31/§11.1.42 gate limits this lot to
+**bootstrap validation**, not inverse execution or a new conformance claim.
+Entity associations targeting embeddables are illegal; inverse to-ones inside
+collection values remain illegal. Entity `mappedBy` paths traversing collection
+values are explicitly unsupported, not universally declared illegal. Single
+embedded inverse paths continue to load actual containing-entity identities.
+No collection-element identity, second target FK/column, inverse lifecycle/query
+support or orphan removal was invented.
+
+Failing-first annotation/XML regression: **14 tests / 10 failures / 0 errors /
+4 passes**, repeated with an isolated embeddable-target mapping before production
+changes. Eight failures expose accepted list/map/nested/exclusive collection paths;
+two expose entity associations to embeddables. The four existing passes cover the
+required owning-only collection-value refusal and valid single-embedded inverses.
+The final tests also assert rejected collection paths emit no schema script.
+BUG-20261017-01 records the bootstrap defect and its fix.
+
+Commands from the Noether root, Temurin **25.0.4**, Maven **3.9.16**:
+
+```sh
+export JAVA_HOME=$HOME/.sdkman/candidates/java/25.0.4-tem
+export PATH="$JAVA_HOME/bin:$PATH"
+./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test \
+  -Dtest=InverseElementCollectionTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test \
+  -Dtest=InverseElementCollectionTest,ElementCollectionRelationsTest,ElementCollectionTest,ToOneTest,ToManyTest,OrmXmlTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw -ntp clean install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+- Focused final gate: **97/97**, zero failures/errors/skips, including all
+  **24** existing D24 owning-side tests and **14** new boundary regressions.
+- Clean reactor: **1096/1096**, **91 XML reports**, zero failures/errors/skips;
+  baseline **1082** plus **14** provider-owned tests.
+- Separate isolated PostgreSQL **17** annotation/XML probe: **2 scenarios /
+  38 checks**. JDBC metadata confirms exactly the owner FK and three element
+  relationship FKs in the collection table, BIGINT key types, and **no inverse
+  FK or column on the target entity table**. Two distinct unique one-to-one
+  targets can belong to the same containing owner, proving that unique row FKs
+  do not establish entity-level inverse one-to-one cardinality. Duplicate list/
+  bag occurrences, independent map keys and shared managed entity identity
+  remain intact. Invalid list/map/nested/exclusive inverse bootstraps leave
+  existing database rows unchanged. The dedicated container was removed; no
+  shared service was restarted.
+- Full locally **PATCHED** TCK: **2135 tests / 2131 passed / 0 failures /
+  0 errors / 4 official skips**, **259 XML reports**. Execution 1:
+  **2134 / 2130 passed / 4 skips**; execution 2: **1 / 1 passed**.
+- Independent aggregation checks every **2135 unique execution/class/method
+  identity and outcome** against D24, not only the wrapper's exit code.
+  Both effective classpaths in every report use exactly the approved derived
+  spec-tests jar (**518 checks**), with Validation off.
+- All **49** official/cache/derived inputs retain their SHA-256 hashes, with
+  unchanged official-cache and derived-fixture file sets. Official spec-tests
+  SHA-256 remains `a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`;
+  derived TCK-BUG-001 SHA-256 remains
+  `1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+  Exactly the two approved fixture resources differ; **1124** other jar entries
+  are byte-identical. No official input, DDL, exclusion or runner was edited.
+
+The four unchanged official `@Disabled` skips, relative to
+`ee.jakarta.tck.persistence`, are:
+
+- `core.metamodelapi.identifiabletype.Client#getDeclaredSingularAttributes`
+- `core.query.language.Client6#resultContainsFetchReference`
+- `se.entityManagerFactory.Client2#createEntityManagerFactoryStringMapTest`
+- `se.schemaGeneration.annotations.tableGenerator.Client#tableGeneratorTest`
+
+Session artifacts use `inverse-element-relations-`: official specification
+snapshot, red/focused/clean/TCK/PostgreSQL logs, probe source/classes, copied
+reactor/TCK reports, full identities/outcomes, immutable-input hashes, fixture
+provenance, independent verifier and `verification.json`. Branch/HEAD/origin
+refs remain unchanged; no commit, push or publication was performed.
+This is local patched evidence, **not certification**. D5/D9–D24 and all earlier
+BUG/TCK history below are retained.
+
 ## Noether element-collection to-one verification (D24) — 2026-10-16
 
 Baseline: merged PR18, `fbd1263` (1058 reactor tests). Owning ManyToOne/OneToOne

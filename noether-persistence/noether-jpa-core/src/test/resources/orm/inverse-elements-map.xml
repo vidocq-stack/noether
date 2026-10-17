@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entity-mappings xmlns="https://jakarta.ee/xml/ns/persistence/orm" version="3.2">
+  <entity class="io.vidocq.noether.jpa.core.session.InverseElementCollectionTest$MapTarget" access="FIELD" metadata-complete="true">
+    <attributes>
+      <id name="id"/>
+      <one-to-many name="owners" mapped-by="values.target"/>
+    </attributes>
+  </entity>
+</entity-mappings>

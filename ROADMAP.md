@@ -4,7 +4,7 @@ Noether owns the implementations extracted from Mansart on 2026-10-11.
 
 | Building block | Status | Detailed roadmap |
 | --- | --- | --- |
-| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D24); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
+| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D25); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
 | Jakarta Validation 3.1 | V0–V2 provisional local test/TCK stopgap; not published | [Validation](noether-validation/ROADMAP.md) |
 
 The extraction changes repository, artifact, package and provider names, not
@@ -242,6 +242,18 @@ Inverse/orphan/composite/business/derived/join-table and unsupported owner/index
 shapes remain explicit bootstrap errors. D5/D9–D23 and prior BUG/TCK records stay
 historical; D24 evidence is in the detailed roadmap and `TCK.md`.
 
+Decision D25 (2026-10-17) bounds the proposed inverse collection-element lot to
+bootstrap validation. Persistence 3.2 §2.7 forbids treating embeddables as entity
+targets; §2.8 requires owning to-ones inside collection values. `ManyToOne` has no
+`mappedBy`, and an inverse toward containing entities cannot be inferred from
+collection-row identity/uniqueness. Annotation/XML `mappedBy` paths crossing element
+collections now fail before schema generation, rather than bootstrap successfully
+and fail only when loaded. Ordinary single-embedded inverses and D24 owning values
+remain intact. This does not declare every possible inverse entity-owner contract
+illegal: a separately proven cardinality/mapping contract is required. No new FK,
+inverse loading/cascade/query semantics or orphan removal is delivered.
+See BUG-20261017-01 and the detailed D25/TCK evidence; D5/D9–D24 stay historical.
+
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
@@ -250,7 +262,10 @@ detailed roadmap's "Remaining work"):
    through join/secondary tables or inheritance, inverse business collections,
    embedded business association paths and safely mutable referenced keys;
    inverse many-to-many indexes and broader collection-table embeddable relationships
-   (inverse/orphan/composite/business/derived/join-table mappings and association query paths).
+   (composite/business/derived/join-table mappings and association query paths).
+   Inverse entity-owner relationships need a separate normative/cardinality contract
+   after D25; inverse collection embeddables and entity targets that are embeddables
+   are not a feature backlog. Orphan removal remains separate.
    Null basic collection elements were fixed by D13 (BUG-20261015-09).
 2. More than two collection edges and broader cyclic graph optimization remain
    separate bounded lots; D21 includes collections under finite root to-one branches.

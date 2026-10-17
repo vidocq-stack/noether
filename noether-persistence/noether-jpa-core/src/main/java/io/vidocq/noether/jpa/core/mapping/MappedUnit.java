@@ -207,6 +207,9 @@ public final class MappedUnit {
     public static MappedUnit of(Collection<String> classNames, ClassLoader loader, ClassInfos source,
             Iterable<ManagedAccessProvider> providers) {
         PersistenceUnitModel model = EntityModelBuilder.build(classNames, source, loader);
+        for (EntityModel entity : model.entities()) {
+            validateInverseElementPaths(entity.attributes(), entity.entityName(), model, source);
+        }
         validateMapsIds(model);
         Map<Class<?>, InheritanceMapping> inheritance = new IdentityHashMap<>();
         for (EntityModel entity : model.entities()) {
@@ -261,6 +264,36 @@ public final class MappedUnit {
             }
         }
         return new MappedUnit(model, entities, embeddables, binders, mapped, loader, source, inheritance);
+    }
+
+    private static void validateInverseElementPaths(List<AttributeModel> attributes, String path,
+            PersistenceUnitModel model, ClassInfos source) {
+        for (AttributeModel attribute : attributes) {
+            String name = path + "." + attribute.name();
+            if (attribute instanceof EmbeddedAttribute embedded) {
+                validateInverseElementPaths(embedded.embeddable().attributes(), name, model, source);
+            } else if (attribute instanceof AssociationAttribute association) {
+                EntityModel target = model.entity(association.targetEntity()).orElse(null);
+                if (target == null && source.read(association.targetEntity().getName())
+                        .map(info -> info.isAnnotated("jakarta.persistence.Embeddable")).orElse(false)) {
+                    throw new PersistenceException("The relationship " + name
+                        + " targets an embeddable, not an entity (§2.7): reference its containing entity instead");
+                }
+                if (target == null || association.mappedBy() == null) continue;
+                List<AttributeModel> current = target.attributes();
+                for (String segment : association.mappedBy().split("\\.")) {
+                    AttributeModel step = current.stream().filter(a -> a.name().equals(segment)).findFirst().orElse(null);
+                    if (step instanceof ElementCollectionAttribute) {
+                        throw new PersistenceException("The relationship " + name + " mappedBy="
+                            + association.mappedBy() + " traverses an element collection: Noether does not support"
+                            + " inverse collection-table relationships; an element has no entity identity (§2.7–2.8)"
+                            + " and a collection path is not a single-valued embedded path (§11.1.31, §11.1.42)");
+                    }
+                    if (!(step instanceof EmbeddedAttribute embedded)) break;
+                    current = embedded.embeddable().attributes();
+                }
+            }
+        }
     }
 
     private static void validateMapsIds(PersistenceUnitModel unit) {
