@@ -2101,20 +2101,54 @@ refusal. Separate cases retain composite/chained-parent bootstrap refusals.
 TCK remains **2135 / 2131 / 0 / 0 / 4**, with all execution/class/method/outcome
 identities identical to D26; provenance and commands are in `TCK.md`.
 
-Prioritized backlog after D35, 2026-10-18. Each item needs its own approved, bounded lot; until then
+### D36 — Composite IdClass parents in element collections ✅ (2026-10-18)
+
+D36 extends D32/D35 element-value owning to-one targets to identifier
+relationships whose parents use a direct all-BASIC `@EmbeddedId` or `@IdClass`.
+Simple and composite parents may coexist in the same target identifier.
+Persistence 3.2 §2.4.2.1 requires each relationship-named IdClass field to use
+the parent's embedded/id-class type; the physical collection FK flattens all
+parent key parts, plus any BASIC target identifier attributes.
+
+The existing `idClassKeyColumns` and generated identity access already implement
+that ordering and flattening. Only the element-target eligibility is extended;
+D30/D31 MapsId target guards, ordinary loading and fetch/lazy/batch eligibility
+remain unchanged. Explicit join columns may reorder both parent and element
+FK parts. Annotation and metadata-complete collection-owner/value XML share
+the existing pipeline; relationship-valued target identifiers remain
+annotation-mapped. Nested/non-BASIC parent keys, chained-derived parents beyond
+the existing legacy single-simple-parent behavior, business/join-table joins
+and polymorphic parents remain refused.
+
+The mandatory red failed at bootstrap with `requires an eligible primary-key
+target`. The main regression combines embedded-ID and IdClass parents in one
+five-column target key, checking physical tuples, grouped FK enforcement,
+duplicate/null references, managed parent/target identities, JPQL/Criteria
+projections and navigation, entity comparison, rewrites, detached merge,
+refresh, owner removal and partial-null refusal, for annotations and XML.
+Additional regressions cover mixed simple/composite parents with default join
+columns, shared-cache identity, and retained nested/chained/polymorphic parent
+refusals. The focused gate is **42/42** (35 element-relationship tests and 7
+derived-identity tests). Full clean install: **1119 tests / 0 failures /
+0 errors / 0 skipped**, across 92 reports. The full locally patched TCK remains
+**2135 / 2131 / 0 / 0 / 4**; all execution/class/method/outcome identities match
+both D26 and D35. Commands and fixture provenance are in `TCK.md`; this is not
+an official unmodified result or certification.
+
+Prioritized backlog after D36, 2026-10-18. Each item needs its own approved, bounded lot; until then
 the documented fallback (follow-up selects, eager loading, or an explicit refusal naming the
 milestone) stays in place.
 
 1. **Remaining relational mapping shapes** — derived/nested identity targets and
    composite forms beyond D23, D29's direct BASIC `@EmbeddedId`/`@IdClass`,
    D30's simple shared `@MapsId` contract, D31's single direct BASIC
-   `@EmbeddedId` component and D35's multiple simple-parent relationship
-   components in a direct `@IdClass`; business joins
+   `@EmbeddedId` component and D36's direct BASIC simple/composite-parent
+   relationship components in an `@IdClass`; business joins
    through join tables or inheritance, broader secondary-table business tuples/
    PK joins beyond D26, embedded business association paths,
    inverse collections and safely mutable referenced keys; inverse many-to-many
    indexes and broader relationships inside collection-table embeddable elements
-   beyond D24/D28/D29/D30/D31/D32/D35 (business/join-table and unsupported composite or
+   beyond D24/D28/D29/D30/D31/D32/D35/D36 (business/join-table and unsupported composite or
    derived forms). After D25,
    inverse entity-owner relationships need a
    separate normative/cardinality contract; illegal inverse collection embeddables
@@ -2141,6 +2175,7 @@ Recorded before implementation; each entry: date, decision, reason.
 
 | # | Date | Decision | Status |
 |---|---|---|---|
+| D36 | 2026-10-18 | Extend element-value to-one IdClass targets to owning identifier relationships with non-polymorphic parents using direct all-BASIC EmbeddedId/IdClass keys, alongside existing simple parents. Reuse flattened physical FK parts and generated identity access. Keep nested/non-BASIC/chained-derived parents, business/join-table/polymorphic mappings and loading optimizations out of scope. | Actioned |
 | D35 | 2026-10-18 | Extend D24 element-value owning to-ones to direct IdClass targets with multiple relationship-valued identifier parts, each an owning to-one FK to a non-polymorphic simple-ID parent; other parts remain BASIC. Reuse relational key ordering, physical FK columns and existing generated identity access. Keep composite/derived parents, nested identifiers, business/join-table/polymorphic mappings and collection-loading optimizations outside this lot. | Actioned |
 | D33 | 2026-10-18 | Extend D19/D20 root-collection graph staging to at most three collection edges along a nested graph path. Reuse independent bounded collectors and distinct intermediate owner identities for JPQL/Criteria and non-locking find FETCH/LOAD graphs; keep SQL root pagination, callbacks/cache/managed-state ordering and the existing loader. Preserve D21's two-edge root-to-one path, cyclic/type-revisiting paths, fourth edges, unsupported eager closures and complex mappings as complete fallbacks/refusals; do not add collection joins or widen unrelated eligibility. | Actioned |
 | D34 | 2026-10-18 | Extend D21's separate root-to-one staged collection graph route to at most three collection edges per path. Reuse the collection-free seed, existing bounded collectors, distinct intermediate owner identities, SQL root pagination and staged loader lifecycle for JPQL/Criteria and non-locking find FETCH/LOAD graphs. Preserve cyclic/type-revisiting paths, fourth edges, unsupported eager closures and complex mappings as complete fallbacks/refusals; do not add collection joins or widen unrelated eligibility. | Actioned |

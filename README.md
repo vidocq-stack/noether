@@ -576,6 +576,22 @@ chained parents, nested keys, business/join-table/polymorphic mappings and broad
 fetch/lazy/batch optimization remain outside this lot. Exact scope and regression
 evidence are in the roadmaps and `noether-persistence/TCK.md`.
 
+### Composite IdClass parents in element collections (D36, 2026-10-18)
+
+D36 extends D32/D35 target identifier relationships to non-polymorphic parents
+with direct all-BASIC `@EmbeddedId` or `@IdClass` keys. Simple and composite
+parents may coexist in the target's IdClass. Its relationship-named fields use
+the parent's key type; the collection-row FK flattens every physical parent
+key part plus the target's BASIC parts, preserving identity with reordered
+explicit joins or default join columns.
+
+Annotation and metadata-complete owner/value XML retain ordinary managed
+identity, query projection/navigation, merge/refresh, collection rewrites and
+shared-cache behavior. Relationship-valued target identifiers remain
+annotation-mapped. Nested/non-BASIC/chained-derived parents and broader
+business/join-table/polymorphic or fetch/lazy/batch support are not added.
+The roadmaps and `noether-persistence/TCK.md` record the exact regression scope.
+
 The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;
 the bundled Jakarta ORM schema retains its original upstream licence.

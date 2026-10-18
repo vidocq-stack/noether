@@ -1,3 +1,48 @@
+## Noether composite IdClass parents in element collections (D36) — 2026-10-18
+
+D36 extends D32/D35 element-value owning to-one IdClass targets to relationships
+with non-polymorphic direct all-BASIC EmbeddedId/IdClass parents. Existing
+flattened physical key columns, generated identity accesses and ordinary loading
+are reused; MapsId contracts and fetch/lazy/batch optimizations are unchanged.
+
+Commands from the Noether root:
+
+```sh
+./mvnw -ntp -pl noether-persistence/noether-jpa-core \
+  -Dtest=ElementCollectionRelationsTest#compositeIdClassParentsKeepFlattenedElementKeysAndManagedIdentity \
+  -Dsurefire.failIfNoSpecifiedTests=false test
+./mvnw -ntp -pl noether-persistence/noether-jpa-core \
+  -Dtest=ElementCollectionRelationsTest,DerivedIdentityTest \
+  -Dsurefire.failIfNoSpecifiedTests=false test
+./mvnw -ntp clean install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+- Mandatory red: the main regression failed at bootstrap before production
+  changes with `requires an eligible primary-key target`.
+- Focused gate: **42/42** (35 element-relationship and 7 derived-identity tests).
+  Annotation/XML cases combine embedded-ID and IdClass parents in a five-column
+  key, reordered parent/element joins, duplicate/null references, physical tuples
+  and grouped FK enforcement, JPQL/Criteria projection/navigation, identity
+  comparison, merge/refresh/rewrites/removal and partial-null refusal.
+  Other cases cover default joins with mixed simple/composite parents,
+  shared-cache identity and retained nested/chained/polymorphic parent refusals.
+- Full clean install: **1119 tests / 0 failures / 0 errors / 0 skips**, across
+  **92** reports; **BUILD SUCCESS**.
+- Full locally patched Persistence 3.2.1 TCK on PostgreSQL 17: **2135 tests /
+  2131 passed / 0 failures / 0 errors / 4 official skips**, across **259** reports.
+  All **2135** execution/class/method/outcome identities match both D26 and D35.
+- The runner verified every report used the derived TCK-BUG-001 jar.
+  Official SHA-256:
+  `a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`;
+  derived SHA-256:
+  `1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+
+This is **locally patched regression evidence**, not an untouched official TCK
+result or certification. The four unchanged official skips are listed in the
+D26 record below.
+
 ## Noether multiple IdClass parents in element collections (D35) — 2026-10-18
 
 D35 extends D32 element-value owning to-one targets to multiple relationship-valued

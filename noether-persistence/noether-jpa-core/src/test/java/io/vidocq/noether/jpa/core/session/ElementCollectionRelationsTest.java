@@ -536,11 +536,209 @@ class ElementCollectionRelationsTest {
         }
     }
 
-    @Test void multipleIdClassParentsDoNotAdmitCompositeOrChainedDerivedParents() {
-        assertThatThrownBy(() -> factory(false, CompositeParentsOwner.class, CompositeParentsValue.class,
-            CompositeParentsTarget.class, CompositeParentsKey.class, CompositeTarget.class, CompositeKey.class,
-            MapsIdElementParent.class))
+    // §2.4.2.1 and §2.8: relationship-named IdClass fields use the composite parent key types.
+    @Test void compositeIdClassParentsKeepFlattenedElementKeysAndManagedIdentity() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = configuration(false, CompositeLinkOwner.class, CompositeLinkValue.class,
+                CompositeLinkTarget.class, CompositeLinkKey.class, CompositeTarget.class, CompositeKey.class,
+                IdClassTarget.class, IdClassKey.class);
+            if (xml) configuration.mappingFile("orm/element-collection-idclass-composite-parents.xml");
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var embedded = new CompositeTarget();
+                embedded.id = new CompositeKey(3, 19);
+                var idClass = new IdClassTarget();
+                idClass.region = 7;
+                idClass.serial = 23;
+                var first = new CompositeLinkTarget(embedded, idClass, "first");
+                var second = new CompositeLinkTarget(embedded, idClass, "second");
+                var owner = new CompositeLinkOwner();
+                owner.id = 12L;
+                owner.values.add(new CompositeLinkValue("first", first));
+                owner.values.add(new CompositeLinkValue("duplicate", first));
+                owner.values.add(new CompositeLinkValue("null", null));
+                owner.values.add(new CompositeLinkValue("second", second));
+                transaction(em, () -> {
+                    em.persist(embedded);
+                    em.persist(idClass);
+                    em.persist(first);
+                    em.persist(second);
+                    em.persist(owner);
+                });
+                var firstKey = new CompositeLinkKey(embedded.id, new IdClassKey(7, 23), "first");
+                var secondKey = new CompositeLinkKey(embedded.id, new IdClassKey(7, 23), "second");
+                assertThat(factory.getPersistenceUnitUtil().getIdentifier(first)).isEqualTo(firstKey);
+                List<?> rows = em.createNativeQuery(
+                    "select element_embedded_region, element_embedded_serial, element_idclass_region,"
+                        + " element_idclass_serial, element_code from composite_link_values order by value_position")
+                    .getResultList();
+                assertThat((Object[]) rows.getFirst()).containsExactly(3L, 19L, 7L, 23L, "first");
+                assertThat((Object[]) rows.get(1)).containsExactly(3L, 19L, 7L, 23L, "first");
+                assertThat((Object[]) rows.get(2)).containsOnlyNulls();
+                assertThat((Object[]) rows.get(3)).containsExactly(3L, 19L, 7L, 23L, "second");
+                em.getTransaction().begin();
+                assertThatThrownBy(() -> em.createNativeQuery(
+                    "insert into composite_link_values (owner_id, value_position, element_embedded_region,"
+                        + " element_embedded_serial, element_idclass_region, element_idclass_serial, element_code)"
+                        + " values (12, 4, 3, 19, 7, 23, 'missing')").executeUpdate())
+                    .isInstanceOf(PersistenceException.class);
+                em.getTransaction().rollback();
+                em.clear();
+                factory.getCache().evictAll();
+
+                var found = em.find(CompositeLinkOwner.class, 12L);
+                var managedFirst = em.find(CompositeLinkTarget.class, firstKey);
+                var managedSecond = em.find(CompositeLinkTarget.class, secondKey);
+                assertThat(found.values).extracting(value -> value.target)
+                    .containsExactly(managedFirst, managedFirst, null, managedSecond);
+                assertThat(found.values.getFirst().target).isSameAs(found.values.get(1).target).isSameAs(managedFirst);
+                assertThat(managedFirst.embedded).isSameAs(em.find(CompositeTarget.class, embedded.id));
+                assertThat(managedFirst.idClass).isSameAs(em.find(IdClassTarget.class, new IdClassKey(7, 23)));
+                assertThat(managedSecond.embedded).isSameAs(managedFirst.embedded);
+                assertThat(managedSecond.idClass).isSameAs(managedFirst.idClass);
+                assertThat(em.createQuery(
+                    "select v.target from CompositeLinkOwner o join o.values v order by index(v)", CompositeLinkTarget.class)
+                    .getResultList()).containsExactly(managedFirst, managedFirst, null, managedSecond);
+                assertThat(em.createQuery(
+                    "select v.target.embedded.id.serial from CompositeLinkOwner o join o.values v order by index(v)", Long.class)
+                    .getResultList()).containsExactly(19L, 19L, 19L);
+                assertThat(em.createQuery(
+                    "select v.target.idClass.region from CompositeLinkOwner o join o.values v order by index(v)", Long.class)
+                    .getResultList()).containsExactly(7L, 7L, 7L);
+                assertThat(em.createQuery(
+                    "select v.label from CompositeLinkOwner o join o.values v where v.target = :target", String.class)
+                    .setParameter("target", managedSecond).getResultList()).containsExactly("second");
+                var cb = em.getCriteriaBuilder();
+                var query = cb.createQuery(CompositeLinkTarget.class);
+                var values = query.from(CompositeLinkOwner.class).joinList("values");
+                query.select(values.get("target")).orderBy(cb.asc(values.index()));
+                assertThat(em.createQuery(query).getResultList())
+                    .containsExactly(managedFirst, managedFirst, null, managedSecond);
+                var projected = em.createQuery(
+                    "select v from CompositeLinkOwner o join o.values v order by index(v)", CompositeLinkValue.class)
+                    .getResultList();
+                assertThat(projected.getFirst().target).isSameAs(managedFirst);
+                assertThat(projected.get(2).target).isNull();
+                transaction(em, () -> {
+                    found.values.remove(1);
+                    found.values.getFirst().target = managedSecond;
+                });
+                em.clear();
+                factory.getCache().evictAll();
+                var reloaded = em.find(CompositeLinkOwner.class, 12L);
+                assertThat(reloaded.values).extracting(value -> value.target == null ? null
+                    : factory.getPersistenceUnitUtil().getIdentifier(value.target))
+                    .containsExactly(secondKey, null, secondKey);
+                em.clear();
+                reloaded.values.getFirst().target = first;
+                transaction(em, () -> assertThat(em.merge(reloaded).values.getFirst().target)
+                    .isSameAs(em.find(CompositeLinkTarget.class, firstKey)));
+                em.clear();
+                factory.getCache().evictAll();
+                assertThat(factory.getPersistenceUnitUtil().getIdentifier(
+                    em.find(CompositeLinkOwner.class, 12L).values.getFirst().target)).isEqualTo(firstKey);
+                var refreshed = em.find(CompositeLinkOwner.class, 12L);
+                refreshed.values.getFirst().target = em.find(CompositeLinkTarget.class, secondKey);
+                em.refresh(refreshed);
+                assertThat(refreshed.values.getFirst().target).isSameAs(em.find(CompositeLinkTarget.class, firstKey));
+                transaction(em, () -> em.remove(em.find(CompositeLinkOwner.class, 12L)));
+                assertThat(em.find(CompositeLinkTarget.class, firstKey)).isNotNull();
+                assertThat(em.find(CompositeLinkTarget.class, secondKey)).isNotNull();
+                assertThat(em.createNativeQuery("select count(*) from composite_link_values").getSingleResult()).isEqualTo(0L);
+
+                var partial = new CompositeLinkOwner();
+                partial.id = 13L;
+                partial.values.add(new CompositeLinkValue("partial", em.find(CompositeLinkTarget.class, firstKey)));
+                transaction(em, () -> em.persist(partial));
+                transaction(em, () -> em.createNativeQuery(
+                    "update composite_link_values set element_embedded_serial = null where owner_id = 13").executeUpdate());
+                em.clear();
+                factory.getCache().evictAll();
+                assertThatThrownBy(() -> em.find(CompositeLinkOwner.class, 13L).values.size())
+                    .isInstanceOf(PersistenceException.class).hasMessageContaining("partially null");
+            }
+        }
+    }
+
+    @Test void compositeAndSimpleIdClassParentsCanCoexistWithDefaultJoinColumns() {
+        try (var factory = factory(false, CompositeParentsOwner.class, CompositeParentsValue.class,
+                CompositeParentsTarget.class, CompositeParentsKey.class, CompositeTarget.class, CompositeKey.class,
+                MapsIdElementParent.class); var em = factory.createEntityManager()) {
+            var composite = new CompositeTarget();
+            composite.id = new CompositeKey(3, 19);
+            var simple = new MapsIdElementParent("simple");
+            var target = new CompositeParentsTarget();
+            target.composite = composite;
+            target.simple = simple;
+            var value = new CompositeParentsValue();
+            value.target = target;
+            var owner = new CompositeParentsOwner();
+            owner.id = 14L;
+            owner.values = new ArrayList<>(List.of(value));
+            transaction(em, () -> {
+                em.persist(composite);
+                em.persist(simple);
+                em.persist(target);
+                em.persist(owner);
+            });
+            var key = new CompositeParentsKey();
+            key.composite = composite.id;
+            key.simple = simple.id;
+            assertThat(factory.getPersistenceUnitUtil().getIdentifier(target)).isEqualTo(key);
+            em.clear();
+            factory.getCache().evictAll();
+            assertThat(em.find(CompositeParentsOwner.class, 14L).values.getFirst().target)
+                .isSameAs(em.find(CompositeParentsTarget.class, key));
+        }
+    }
+
+    @Test void compositeParentTargetRetainsIdentityAcrossSharedCacheReads() {
+        try (var factory = configuration(false, CompositeLinkOwner.class, CompositeLinkValue.class,
+                CompositeLinkTarget.class, CompositeLinkKey.class, CompositeTarget.class, CompositeKey.class,
+                IdClassTarget.class, IdClassKey.class).sharedCacheMode(SharedCacheMode.ALL).createEntityManagerFactory()) {
+            var key = new CompositeLinkKey(new CompositeKey(3, 19), new IdClassKey(7, 23), "cached");
+            try (var em = factory.createEntityManager()) {
+                var embedded = new CompositeTarget();
+                embedded.id = key.embedded;
+                var idClass = new IdClassTarget();
+                idClass.region = 7;
+                idClass.serial = 23;
+                var target = new CompositeLinkTarget(embedded, idClass, "cached");
+                var owner = new CompositeLinkOwner();
+                owner.id = 15L;
+                owner.values.add(new CompositeLinkValue("first", target));
+                owner.values.add(new CompositeLinkValue("duplicate", target));
+                transaction(em, () -> {
+                    em.persist(embedded);
+                    em.persist(idClass);
+                    em.persist(target);
+                    em.persist(owner);
+                });
+                em.clear();
+                assertThat(em.find(CompositeLinkOwner.class, 15L).values).hasSize(2);
+            }
+            assertThat(factory.getCache().contains(CompositeLinkOwner.class, 15L)).isTrue();
+            try (var em = factory.createEntityManager()) {
+                var found = em.find(CompositeLinkOwner.class, 15L);
+                assertThat(found.values.getFirst().target).isSameAs(found.values.getLast().target)
+                    .isSameAs(em.find(CompositeLinkTarget.class, key));
+                assertThat(found.values.getFirst().target.embedded).isSameAs(em.find(CompositeTarget.class, key.embedded));
+                assertThat(found.values.getFirst().target.idClass).isSameAs(em.find(IdClassTarget.class, key.idClass));
+            }
+        }
+    }
+
+    @Test void idClassElementParentsKeepNestedKeysAndPolymorphicParentsRefused() {
+        assertThatThrownBy(() -> factory(false, NestedParentOwner.class, NestedParentValue.class,
+            NestedParentTarget.class, NestedParentTargetKey.class, NestedParent.class, NestedParentKey.class,
+            CompositeKey.class))
             .isInstanceOf(PersistenceException.class).hasMessageContaining("requires an eligible primary-key target");
+        assertThatThrownBy(() -> factory(false, CompositeLinkOwner.class, CompositeLinkValue.class,
+            CompositeLinkTarget.class, CompositeLinkKey.class, CompositeTarget.class, CompositeKey.class,
+            IdClassTarget.class, IdClassKey.class, CompositeParentSubtype.class))
+            .isInstanceOf(PersistenceException.class).hasMessageContaining("requires an eligible primary-key target");
+    }
+
+    @Test void idClassParentsKeepChainedDerivedParentsExplicitlyRefused() {
         assertThatThrownBy(() -> factory(false, ChainedParentsOwner.class, ChainedParentsValue.class,
             ChainedParentsTarget.class, ChainedParentsKey.class, MapsIdElementTarget.class, MapsIdElementParent.class))
             .isInstanceOf(PersistenceException.class).hasMessageContaining("requires an eligible primary-key target");
@@ -1016,6 +1214,58 @@ class ElementCollectionRelationsTest {
         }
         @Override public int hashCode() { return java.util.Objects.hash(source, destination, code); }
     }
+    @Entity(name = "CompositeLinkOwner") public static class CompositeLinkOwner {
+        @Id public Long id;
+        @ElementCollection @CollectionTable(name = "composite_link_values",
+            joinColumns = @JoinColumn(name = "owner_id"))
+        @OrderColumn(name = "value_position")
+        public List<CompositeLinkValue> values = new ArrayList<>();
+    }
+    @Embeddable public static class CompositeLinkValue {
+        public String label;
+        @ManyToOne @JoinColumns({
+            @JoinColumn(name = "element_idclass_serial", referencedColumnName = "idclass_serial_fk"),
+            @JoinColumn(name = "element_embedded_serial", referencedColumnName = "embedded_serial_fk"),
+            @JoinColumn(name = "element_code", referencedColumnName = "link_code"),
+            @JoinColumn(name = "element_embedded_region", referencedColumnName = "embedded_region_fk"),
+            @JoinColumn(name = "element_idclass_region", referencedColumnName = "idclass_region_fk")
+        })
+        public CompositeLinkTarget target;
+        public CompositeLinkValue() {}
+        CompositeLinkValue(String label, CompositeLinkTarget target) { this.label = label; this.target = target; }
+    }
+    @Entity(name = "CompositeLinkTarget") @IdClass(CompositeLinkKey.class)
+    public static class CompositeLinkTarget {
+        @Id @ManyToOne @JoinColumns({
+            @JoinColumn(name = "embedded_serial_fk", referencedColumnName = "serial"),
+            @JoinColumn(name = "embedded_region_fk", referencedColumnName = "region")
+        })
+        public CompositeTarget embedded;
+        @Id @ManyToOne @JoinColumns({
+            @JoinColumn(name = "idclass_serial_fk", referencedColumnName = "serial"),
+            @JoinColumn(name = "idclass_region_fk", referencedColumnName = "region")
+        })
+        public IdClassTarget idClass;
+        @Id @Column(name = "link_code") public String code;
+        public CompositeLinkTarget() {}
+        CompositeLinkTarget(CompositeTarget embedded, IdClassTarget idClass, String code) {
+            this.embedded = embedded; this.idClass = idClass; this.code = code;
+        }
+    }
+    public static class CompositeLinkKey implements java.io.Serializable {
+        public CompositeKey embedded;
+        public IdClassKey idClass;
+        public String code;
+        public CompositeLinkKey() {}
+        CompositeLinkKey(CompositeKey embedded, IdClassKey idClass, String code) {
+            this.embedded = embedded; this.idClass = idClass; this.code = code;
+        }
+        @Override public boolean equals(Object other) {
+            return other instanceof CompositeLinkKey key && java.util.Objects.equals(embedded, key.embedded)
+                && java.util.Objects.equals(idClass, key.idClass) && java.util.Objects.equals(code, key.code);
+        }
+        @Override public int hashCode() { return java.util.Objects.hash(embedded, idClass, code); }
+    }
     @Entity public static class CompositeParentsOwner {
         @Id public Long id;
         @ElementCollection public List<CompositeParentsValue> values;
@@ -1036,6 +1286,39 @@ class ElementCollectionRelationsTest {
                 && java.util.Objects.equals(composite, key.composite);
         }
         @Override public int hashCode() { return java.util.Objects.hash(composite, simple); }
+    }
+    @Entity public static class CompositeParentSubtype extends CompositeTarget {}
+    @Entity public static class NestedParentOwner {
+        @Id public Long id;
+        @ElementCollection public List<NestedParentValue> values;
+    }
+    @Embeddable public static class NestedParentValue {
+        @ManyToOne public NestedParentTarget target;
+    }
+    @Entity @IdClass(NestedParentTargetKey.class) public static class NestedParentTarget {
+        @Id @ManyToOne public NestedParent parent;
+        @Id public String code;
+    }
+    public static class NestedParentTargetKey implements java.io.Serializable {
+        public NestedParentKey parent;
+        public String code;
+        public NestedParentTargetKey() {}
+        @Override public boolean equals(Object other) {
+            return other instanceof NestedParentTargetKey key && java.util.Objects.equals(parent, key.parent)
+                && java.util.Objects.equals(code, key.code);
+        }
+        @Override public int hashCode() { return java.util.Objects.hash(parent, code); }
+    }
+    @Entity public static class NestedParent { @EmbeddedId public NestedParentKey id; }
+    @Embeddable public static class NestedParentKey implements java.io.Serializable {
+        @Embedded public CompositeKey nested;
+        public String code;
+        public NestedParentKey() {}
+        @Override public boolean equals(Object other) {
+            return other instanceof NestedParentKey key && java.util.Objects.equals(nested, key.nested)
+                && java.util.Objects.equals(code, key.code);
+        }
+        @Override public int hashCode() { return java.util.Objects.hash(nested, code); }
     }
     @Entity public static class ChainedParentsOwner {
         @Id public Long id;

@@ -858,9 +858,7 @@ public final class EntityStatements {
                     !(attribute instanceof BasicAttribute || attribute instanceof AssociationAttribute))) return false;
             return relationships.stream().allMatch(derived -> derived.mapsId() == null
                 && derived.singleValued() && derived.owning() && derived.joinTable() == null
-                && simpleNonPolymorphicParent(derived, models, inheritances)
-                && (relationships.size() == 1 || models.apply(derived.targetEntity()).attributes().stream()
-                    .noneMatch(attribute -> attribute instanceof AssociationAttribute a && a.mapsId() != null)));
+                && eligibleIdClassElementParent(derived, relationships.size() == 1, models, inheritances));
         }
         if (mapsIds.size() != 1) return false;
         AssociationAttribute derived = mapsIds.getFirst();
@@ -881,6 +879,26 @@ public final class EntityStatements {
             Function<Class<?>, EntityModel> models, Function<Class<?>, InheritanceMapping> inheritances) {
         EntityModel parent = models.apply(association.targetEntity());
         if (parent == null || !(parent.id() instanceof IdModel.Single)) return false;
+        InheritanceMapping inheritance = inheritances.apply(parent.javaType());
+        return inheritance == null || !inheritance.joined() && !inheritance.tablePerClass()
+            && inheritance.hierarchy().size() == 1;
+    }
+
+    private static boolean eligibleIdClassElementParent(AssociationAttribute association, boolean singleRelationship,
+            Function<Class<?>, EntityModel> models, Function<Class<?>, InheritanceMapping> inheritances) {
+        EntityModel parent = models.apply(association.targetEntity());
+        if (parent == null) return false;
+        boolean basicKey = switch (parent.id()) {
+            case IdModel.Single _ -> true;
+            case IdModel.Embedded embedded ->
+                embedded.attribute().embeddable().attributes().stream().allMatch(BasicAttribute.class::isInstance);
+            case IdModel.ByIdClass idClass -> idClass.attributes().stream().allMatch(BasicAttribute.class::isInstance);
+            case IdModel.Derived _ -> false;
+        };
+        if (!basicKey) return false;
+        if (!(singleRelationship && parent.id() instanceof IdModel.Single)
+                && parent.attributes().stream().anyMatch(attribute ->
+                    attribute instanceof AssociationAttribute derived && derived.mapsId() != null)) return false;
         InheritanceMapping inheritance = inheritances.apply(parent.javaType());
         return inheritance == null || !inheritance.joined() && !inheritance.tablePerClass()
             && inheritance.hierarchy().size() == 1;

@@ -363,14 +363,27 @@ The clean reactor passes 1115 tests; the full locally patched TCK remains
 2135 tests / 2131 passed / 0 failures / 0 errors / 4 official skips, identical
 to the D26 baseline. This is local regression evidence, not certification.
 
+Decision D36 (2026-10-18) extends those element-value IdClass targets to owning
+identifier relationships with non-polymorphic parents using direct all-BASIC
+`@EmbeddedId` or `@IdClass` keys. Composite and simple parents may coexist.
+The collection FK flattens their physical key parts through the existing
+planner and generated identity accesses. Annotation and owner/value XML cover
+five-column tuples, reordered joins, managed identity, JPQL/Criteria, rewrites,
+merge/refresh/removal, partial-null refusal and grouped FK enforcement.
+Default joins, cache identity and nested/chained/polymorphic parent refusals
+are covered separately. MapsId and fetch/lazy/batch eligibility are unchanged.
+Full clean install: 1119 tests passed. The locally patched TCK remains
+2135 / 2131 / 0 / 0 / 4, with all results identical to D26 and D35;
+this is local regression evidence, not certification.
+
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
-1. Remaining relational mapping shapes beyond D23/D24/D29/D30/D31/D32/D35's bounded contracts:
+1. Remaining relational mapping shapes beyond D23/D24/D29/D30/D31/D32/D35/D36's bounded contracts:
    derived/nested identity targets and composite forms beyond D29's direct BASIC
    `@EmbeddedId`/`@IdClass`, D30's simple shared `@MapsId` contract and D31's
-   direct BASIC `@EmbeddedId` with one derived component and D35's multiple
-   simple-parent relationship-valued `@IdClass` parts, business joins
+   direct BASIC `@EmbeddedId` with one derived component and D36's direct BASIC
+   simple/composite-parent relationship-valued `@IdClass` parts, business joins
    through join tables or inheritance, broader secondary-table business tuples/
    PK joins beyond D26, inverse business collections,
    embedded business association paths and safely mutable referenced keys;

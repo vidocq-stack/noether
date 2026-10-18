@@ -23,18 +23,20 @@ xref:modules/noether-persistence.adoc[the detailed Persistence guide].
 
 An embeddable element may hold an owning to-one to a target whose `@IdClass`
 contains multiple relationship-valued parts (D35). Give each target relationship
-an owning FK to a non-polymorphic simple-ID parent; use the parent's ID type for
+an owning FK to a non-polymorphic parent; use the parent's ID type for
 the corresponding field in the IdClass, not the parent entity type. Other parts
-remain BASIC. Explicit element `@JoinColumns` reference the target's physical
+remain BASIC. D36 adds parents with direct all-BASIC `@EmbeddedId` or `@IdClass`
+keys alongside simple IDs; use that parent key class for the relationship-named
+IdClass field. Explicit element `@JoinColumns` reference the target's physical
 FK/basic columns, not the IdClass field names.
 
 The collection row stores the full tuple and resolves the target's managed
 identity. JPQL/Criteria navigation, target/whole-value projection, duplicates
 and null references retain their ordinary semantics. Owner/value mappings may
 use metadata-complete ORM XML, but relationship-valued target identifiers remain
-annotation-mapped. Composite/chained parent identities and broader optimized
+annotation-mapped. Nested/non-BASIC/chained parent identities and broader optimized
 fetch/lazy/batch loading are not added. See xref:reference.adoc[Reference] for
-the exact D32/D35 mapping boundaries.
+the exact D32/D35/D36 mapping boundaries.
 
 == Query entity graphs
 

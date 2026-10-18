@@ -292,6 +292,15 @@ managed entity; no alternate key representation, runtime reflection, SQL AST,
 dependency or hydration path is introduced. Ordinary collection loading and
 all fetch/lazy/batch eligibility guards remain unchanged.
 
+D36 extends that guard through `eligibleIdClassElementParent` to direct all-BASIC
+EmbeddedId/IdClass parent keys. `idClassKeyColumns` already flattens each
+identifier relationship using the parent's physical key columns and binders;
+the existing generated `MappedEntity` identity access converts parent key
+objects to the same flat internal tuple and reconstructs the application IdClass.
+The guard excludes nested/non-BASIC keys, polymorphic parents and new
+chained-derived shapes, preserving the legacy single-simple-parent behavior.
+No production key extraction, SQL AST, schema, query or loader path changes.
+
 == Lazy read batches (D13, 2026-10-15)
 
 `EntityLoader` groups pending compatible persistence-context entries on first access.
