@@ -850,10 +850,18 @@ public final class EntityStatements {
             .filter(AssociationAttribute.class::isInstance).map(AssociationAttribute.class::cast)
             .filter(association -> association.mapsId() != null).toList();
         if (mapsIds.isEmpty()) return true;
-        if (!(target.id() instanceof IdModel.Single) || mapsIds.size() != 1) return false;
+        if (mapsIds.size() != 1) return false;
         AssociationAttribute derived = mapsIds.getFirst();
-        if (!derived.mapsId().isEmpty() || derived.kind() != AssociationAttribute.Kind.ONE_TO_ONE
-                || !derived.owning() || derived.joinTable() != null) return false;
+        if (!derived.singleValued() || !derived.owning() || derived.joinTable() != null) return false;
+        if (target.id() instanceof IdModel.Single) {
+            if (!derived.mapsId().isEmpty() || derived.kind() != AssociationAttribute.Kind.ONE_TO_ONE) return false;
+        } else if (target.id() instanceof IdModel.Embedded embedded) {
+            List<AttributeModel> parts = embedded.attribute().embeddable().attributes();
+            if (derived.mapsId().isEmpty() || parts.stream().anyMatch(attribute -> !(attribute instanceof BasicAttribute))
+                    || parts.stream().map(AttributeModel::name).noneMatch(derived.mapsId()::equals)) return false;
+        } else {
+            return false;
+        }
         EntityModel parent = models.apply(derived.targetEntity());
         if (parent == null || !(parent.id() instanceof IdModel.Single)) return false;
         InheritanceMapping inheritance = inheritances.apply(parent.javaType());

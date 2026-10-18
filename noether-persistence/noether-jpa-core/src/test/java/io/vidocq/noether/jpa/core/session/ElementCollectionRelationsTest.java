@@ -338,10 +338,49 @@ class ElementCollectionRelationsTest {
                     .isSameAs(managedTarget);
             }
         }
-        assertThatThrownBy(() -> configuration(false, DerivedCompositeOwner.class, DerivedCompositeValue.class,
-            DerivedCompositeTarget.class, DerivedCompositeKey.class, MapsIdElementParent.class)
-            .createEntityManagerFactory())
-            .isInstanceOf(PersistenceException.class).hasMessageContaining("eligible primary-key target");
+    }
+
+    // §2.4.2 and §2.7: a directly derived EmbeddedId component stays in the element FK tuple.
+    @Test void derivedEmbeddedIdentityTargetIsPreservedInElementCollectionRowsAndQueries() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = configuration(false, DerivedCompositeOwner.class, DerivedCompositeValue.class,
+                DerivedCompositeTarget.class, DerivedCompositeKey.class, MapsIdElementParent.class);
+            if (xml) configuration.mappingFile("orm/element-collection-composite-mapsid.xml");
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var target = new DerivedCompositeTarget();
+                target.id = new DerivedCompositeKey(0, "derived-key");
+                target.parent = new MapsIdElementParent("parent");
+                var owner = new DerivedCompositeOwner();
+                owner.id = 8L;
+                var value = new DerivedCompositeValue();
+                value.target = target;
+                owner.values = new ArrayList<>(List.of(value));
+
+                transaction(em, () -> {
+                    em.persist(target.parent);
+                    em.persist(target);
+                    em.persist(owner);
+                });
+                assertThat(target.id.parentId).isEqualTo(target.parent.id).isPositive();
+                Object[] row = (Object[]) em.createNativeQuery(
+                    "select derived_parent_fk, derived_code from derived_composite_values where owner_id = 8")
+                    .getSingleResult();
+                assertThat(row).containsExactly(target.parent.id, "derived-key");
+
+                em.clear();
+                var managedTarget = em.find(DerivedCompositeTarget.class,
+                    new DerivedCompositeKey(target.parent.id, "derived-key"));
+                var found = em.find(DerivedCompositeOwner.class, 8L);
+                assertThat(found.values.getFirst().target).isSameAs(managedTarget);
+                assertThat(managedTarget.parent).isSameAs(em.find(MapsIdElementParent.class, target.parent.id));
+                assertThat(em.createQuery(
+                    "select v.target.id.code from DerivedCompositeOwner o join o.values v", String.class)
+                    .getSingleResult()).isEqualTo("derived-key");
+                assertThat(em.createQuery(
+                    "select v.target from DerivedCompositeOwner o join o.values v", DerivedCompositeTarget.class)
+                    .getSingleResult()).isSameAs(managedTarget);
+            }
+        }
     }
 
     @Test void inverseOneToOneIsRejectedAtBootstrap() {
@@ -714,14 +753,20 @@ class ElementCollectionRelationsTest {
         public MapsIdElementValue() {}
         MapsIdElementValue(MapsIdElementTarget target) { this.target = target; }
     }
-    @Entity public static class DerivedCompositeOwner {
+    @Entity(name = "DerivedCompositeOwner") public static class DerivedCompositeOwner {
         @Id public Long id;
-        @ElementCollection public List<DerivedCompositeValue> values;
+        @ElementCollection @CollectionTable(name = "derived_composite_values",
+            joinColumns = @JoinColumn(name = "owner_id"))
+        public List<DerivedCompositeValue> values;
     }
     @Embeddable public static class DerivedCompositeValue {
-        @ManyToOne public DerivedCompositeTarget target;
+        @ManyToOne @JoinColumns({
+            @JoinColumn(name = "derived_parent_fk", referencedColumnName = "parent_fk"),
+            @JoinColumn(name = "derived_code", referencedColumnName = "code")
+        })
+        public DerivedCompositeTarget target;
     }
-    @Entity public static class DerivedCompositeTarget {
+    @Entity(name = "DerivedCompositeTarget") public static class DerivedCompositeTarget {
         @EmbeddedId public DerivedCompositeKey id;
         @MapsId("parentId") @ManyToOne @JoinColumn(name = "parent_fk")
         public MapsIdElementParent parent;
@@ -730,6 +775,7 @@ class ElementCollectionRelationsTest {
         public long parentId;
         public String code;
         public DerivedCompositeKey() {}
+        DerivedCompositeKey(long parentId, String code) { this.parentId = parentId; this.code = code; }
         @Override public boolean equals(Object other) {
             return other instanceof DerivedCompositeKey key && parentId == key.parentId
                 && java.util.Objects.equals(code, key.code);

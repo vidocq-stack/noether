@@ -295,11 +295,12 @@ preserve explicit join-column ordering; writes and reads handle the full key
 tuple, and schema generation creates grouped composite foreign keys and
 one-to-one uniqueness. Null tuples remain null associations; partial-null tuples
 fail explicitly. D27 navigation and D28 projections resolve managed target
-identity as before. Derived composite, composite non-BASIC keys, business-key,
-polymorphic and unsupported mappings, as well as collection fetch/lazy/batch
-optimization, remain outside scope; D30 separately adds only simple shared-ID
-MapsId targets. Detailed evidence and exclusions are in the Persistence
-roadmap; no TCK or certification claim is made.
+identity as before. Derived composite forms beyond D31's direct BASIC
+`@EmbeddedId` boundary, composite non-BASIC keys, business-key, polymorphic and
+unsupported mappings, as well as collection fetch/lazy/batch optimization,
+remain outside scope. D30 separately adds simple shared-ID MapsId targets.
+Detailed evidence and exclusions are in the Persistence roadmap; no TCK or
+certification claim is made.
 
 Decision D30 (2026-10-17) extends D24 element-value owning to-ones to targets
 whose simple `@Id` is shared through one owning `@OneToOne @MapsId` to a
@@ -310,12 +311,23 @@ business keys, polymorphism and loading optimizations remain outside scope.
 Detailed evidence and exclusions are in the Persistence roadmap; no TCK or
 certification claim is made.
 
+Decision D31 (2026-10-18) extends D24 element-value owning to-ones to a target
+with a direct BASIC `@EmbeddedId` containing one named component derived by
+`@MapsId` through an owning `@ManyToOne` or `@OneToOne` to a non-polymorphic
+simple-ID parent. It reuses D23 derived-identity and D29 tuple handling;
+annotation and metadata-complete XML are covered. Nested/non-BASIC/multiple or
+chained derived identities, composite parents, `@IdClass`, business keys,
+polymorphism and loading optimizations remain outside scope. Detailed evidence
+and exclusions are in the Persistence roadmap; no TCK or certification claim
+is made.
+
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
-1. Remaining relational mapping shapes beyond D23/D24/D29/D30's bounded contracts:
+1. Remaining relational mapping shapes beyond D23/D24/D29/D30/D31's bounded contracts:
    derived/nested identity targets and composite forms beyond D29's direct BASIC
-   `@EmbeddedId`/`@IdClass` and D30's simple shared `@MapsId` contracts, business joins
+   `@EmbeddedId`/`@IdClass`, D30's simple shared `@MapsId` contract and D31's
+   direct BASIC `@EmbeddedId` with one derived component, business joins
    through join tables or inheritance, broader secondary-table business tuples/
    PK joins beyond D26, inverse business collections,
    embedded business association paths and safely mutable referenced keys;

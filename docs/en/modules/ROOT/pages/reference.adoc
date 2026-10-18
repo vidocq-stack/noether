@@ -255,8 +255,9 @@ when read rather than treated as a valid composite identity. JPQL/Criteria
 association navigation and whole-value projections resolve the target's managed
 identity through the same tuple.
 
-Composite keys containing non-BASIC components, derived composite keys,
-business-key joins, inverse `mappedBy`, orphan removal, to-many/nested
+Composite keys containing non-BASIC components, derived composite keys beyond
+D31's direct BASIC `@EmbeddedId` boundary, business-key joins, inverse
+`mappedBy`, orphan removal, to-many/nested
 collections, join-table relationships, read-only/shared/other-table FK columns,
 polymorphic/JOINED/TABLE_PER_CLASS targets and unsupported owner keys/indexes
 remain unsupported.
@@ -272,10 +273,26 @@ column supplies that column name. Annotation and metadata-complete ORM XML use
 the same mapping, schema, lifecycle and query paths; generated parent IDs are
 available to the collection row after ordinary persist ordering.
 
-Composite or nested derived identities, chained `@MapsId`, business-key,
-polymorphic and other unsupported target mappings remain outside this support.
-This does not widen collection fetching, graph hydration, lazy references or
-batching.
+Composite derived identities beyond D31's direct BASIC `@EmbeddedId` boundary,
+nested or chained `@MapsId`, business-key, polymorphic and other unsupported
+target mappings remain outside this support. This does not widen collection
+fetching, graph hydration, lazy references or batching.
+
+== Direct composite MapsId targets (D31, 2026-10-18)
+
+An element-value owning to-one may target an entity with a direct `@EmbeddedId`
+made entirely of BASIC attributes, when exactly one named component is derived
+through `@MapsId` from an owning `@ManyToOne` or `@OneToOne` to a
+non-polymorphic parent with a simple `@Id`. Remaining key components are
+supplied by the application. The collection row stores the complete target key
+tuple and references the actual physical parent-key column for the derived
+component. Persist and load use the existing derived-identity lifecycle and
+managed identity paths. Annotation and metadata-complete ORM XML are covered.
+
+`@IdClass`, nested or non-BASIC identifiers, multiple derived components,
+chained or composite parent identities, business keys, polymorphism and other
+unsupported mappings remain refused. Collection fetch/graph hydration,
+optimized row loading, lazy references and batching are unchanged.
 
 == Inverse collection-element boundary (D25, 2026-10-17)
 

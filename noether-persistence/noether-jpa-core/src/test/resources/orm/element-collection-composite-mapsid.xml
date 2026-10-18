@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entity-mappings xmlns="https://jakarta.ee/xml/ns/persistence/orm" version="3.2">
+  <entity class="io.vidocq.noether.jpa.core.session.ElementCollectionRelationsTest$MapsIdElementParent"
+      name="MapsIdElementParent" access="FIELD" metadata-complete="true">
+    <attributes>
+      <id name="id"><generated-value strategy="IDENTITY"/></id>
+      <basic name="name"/>
+    </attributes>
+  </entity>
+  <entity class="io.vidocq.noether.jpa.core.session.ElementCollectionRelationsTest$DerivedCompositeOwner"
+      name="DerivedCompositeOwner" access="FIELD" metadata-complete="true">
+    <attributes>
+      <id name="id"/>
+      <element-collection name="values">
+        <collection-table name="derived_composite_values">
+          <join-column name="owner_id"/>
+        </collection-table>
+      </element-collection>
+    </attributes>
+  </entity>
+  <entity class="io.vidocq.noether.jpa.core.session.ElementCollectionRelationsTest$DerivedCompositeTarget"
+      name="DerivedCompositeTarget" access="FIELD" metadata-complete="true">
+    <attributes>
+      <embedded-id name="id"/>
+      <many-to-one name="parent" maps-id="parentId">
+        <join-column name="parent_fk"/>
+      </many-to-one>
+    </attributes>
+  </entity>
+  <embeddable class="io.vidocq.noether.jpa.core.session.ElementCollectionRelationsTest$DerivedCompositeValue"
+      access="FIELD" metadata-complete="true">
+    <attributes>
+      <many-to-one name="target">
+        <join-column name="derived_parent_fk" referenced-column-name="parent_fk"/>
+        <join-column name="derived_code" referenced-column-name="code"/>
+      </many-to-one>
+    </attributes>
+  </embeddable>
+  <embeddable class="io.vidocq.noether.jpa.core.session.ElementCollectionRelationsTest$DerivedCompositeKey"
+      access="FIELD" metadata-complete="true">
+    <attributes>
+      <basic name="parentId"/>
+      <basic name="code"/>
+    </attributes>
+  </embeddable>
+</entity-mappings>
