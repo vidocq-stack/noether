@@ -382,6 +382,27 @@ joins therefore use the same storage/query/lifecycle/cache paths. No generated
 access, loader, lifecycle or SQL AST implementation changes are required;
 broader nested/chained identity and fetch/lazy/batch boundaries remain unchanged.
 
+== Multiple composite MapsId element targets (D42, 2026-10-18)
+
+`eligibleElementTarget` checks every named component/parent instead of returning
+after the first composite component. Each embedded component must be directly
+mapped and contain only BASIC attributes; each composite parent remains
+non-polymorphic, non-derived and direct BASIC EmbeddedId/IdClass of the matching
+type. BASIC components may remain assigned or use the existing simple-parent
+MapsId path. `MappedUnit.validateMapsIds` retains overlap/type/chaining checks.
+Existing generated identity access and physical tuple planning handle each part.
+
+BUG-20261018-02 exposed record construction before primitive MapsId slots were
+populated, independently reproduced without a collection owner. A bootstrap
+`RecordIdentifier` plan maps scalar record-key components to ordinary columns
+or their parent-FK column. Entity row hydration defers generic embedded-key
+construction and calls generated record construction with those actual scalar
+values; composite component objects are derived after relationship resolution.
+No guessed primitive default, reflection or generator change is introduced.
+This also covers entirely scalar-derived record keys with no independent
+identifier columns. Mutable keys and whole-ID derivation keep their existing
+paths; broader fetch/lazy/batch and deeper/chained identity eligibility is unchanged.
+
 == Lazy read batches (D13, 2026-10-15)
 
 `EntityLoader` groups pending compatible persistence-context entries on first access.

@@ -67,26 +67,29 @@ Reference the dependent's physical PK/FK columns in the element's
 `@JoinColumns`, not necessarily the embedded key's default column names.
 Both annotations and metadata-complete XML use the normal persist, query,
 merge/refresh and cache paths. Named-component composite-parent derivation
-beyond D40/D41 below, general nested/chained keys and broader loading optimizations
+beyond D40/D41/D42 below, general nested/chained keys and broader loading optimizations
 are not included.
 
 == Named composite MapsId collection targets
 
-D40/D41 permit one named embedded component of a collection relation target's
-`@EmbeddedId` to derive from an owning `@ManyToOne` or `@OneToOne`
+D40/D41/D42 permit distinct named embedded components of a collection relation
+target's `@EmbeddedId` to derive from an owning `@ManyToOne` or `@OneToOne`
 `@MapsId("componentName")`. The parent must be non-polymorphic and have a
-direct all-BASIC `@EmbeddedId` or `@IdClass` of that component's Java type.
+direct all-BASIC `@EmbeddedId` or `@IdClass` of the corresponding component's
+Java type.
 Parent identifier declaration order need not match the component's attribute
-order. All other target key parts are BASIC. Supply those remaining parts and
-the parent before persist; normal cascade ordering derives the component before
-collection rows are bound.
+order. Other BASIC parts may be assigned or derived from simple-ID parents.
+Supply the assigned parts and parents before persist; normal cascade ordering
+derives each component before collection rows are bound.
 
 Element `@JoinColumns` reference the dependent's physical parent-FK columns
 and remaining BASIC key columns. Default joins also use that complete tuple.
 Annotations and metadata-complete ORM XML use the same generated access, query,
 merge/refresh and shared-cache paths; mutable and record outer key classes work.
-Multiple composite components, unmapped nested remainder,
-deeper/relationship-valued/chained parent keys and broader loading optimizations
+Record keys use actual parent-FK scalar values during construction, including
+primitive components mixed with composite ones (BUG-20261018-02).
+Unmapped nested remainder, deeper/relationship-valued/chained parent keys and
+broader loading optimizations
 are not included.
 
 == Query entity graphs

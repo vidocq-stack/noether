@@ -139,11 +139,14 @@ public final class EntityStatements {
     private final Select versionSelect;
     private final Object discriminatorValue;
     private final Function<Class<?>, InheritanceMapping> inheritances;
+    private final RecordIdentifier recordIdentifier;
+
+    private record RecordIdentifier(int attribute, ManagedAccess access, Map<Integer, Integer> scalarColumns) {}
 
     private EntityStatements(String entity, String unsupported, Function<Class<?>, MappedEntity> entities, List<Reference> references,
             List<CollectionMapping> collections, List<ElementCollectionMapping> elementCollections, List<Column> columns,
             List<TableStatements> tables, Integer version, Select versionSelect, Object discriminatorValue,
-            Function<Class<?>, InheritanceMapping> inheritances) {
+            Function<Class<?>, InheritanceMapping> inheritances, RecordIdentifier recordIdentifier) {
         this.entity = entity;
         this.unsupported = unsupported;
         this.entities = entities;
@@ -156,6 +159,7 @@ public final class EntityStatements {
         this.versionSelect = versionSelect;
         this.discriminatorValue = discriminatorValue;
         this.inheritances = inheritances;
+        this.recordIdentifier = recordIdentifier;
     }
 
     /**
@@ -287,7 +291,32 @@ public final class EntityStatements {
             primary.select().conditions());
         return new EntityStatements(model.entityName(), null, entities, List.copyOf(references), List.copyOf(collections),
             List.copyOf(elementCollections), List.copyOf(columns), List.copyOf(tables), version, versionSelect,
-            inheritance == null ? null : inheritance.value(), inheritances);
+            inheritance == null ? null : inheritance.value(), inheritances,
+            recordIdentifier(model, mapsIds, references, columns, embeddables));
+    }
+
+    private static RecordIdentifier recordIdentifier(EntityModel model, Map<String, Integer> mapsIds,
+            List<Reference> references, List<Column> columns, Function<EmbeddableModel, ManagedAccess> embeddables) {
+        if (!(model.id() instanceof IdModel.Embedded embedded) || !embedded.attribute().embeddable().isRecord()
+                || mapsIds.isEmpty() || mapsIds.containsKey("")) return null;
+        int attribute = model.attributes().indexOf(embedded.attribute());
+        Map<Integer, Integer> scalars = new HashMap<>();
+        List<AttributeModel> parts = embedded.attribute().embeddable().attributes();
+        for (int part = 0; part < parts.size(); part++) {
+            if (!(parts.get(part) instanceof BasicAttribute)) continue;
+            Integer relationship = mapsIds.get(parts.get(part).name());
+            if (relationship == null) {
+                scalars.put(part, columnOf(attribute, part, columns));
+            } else {
+                List<Integer> foreignKey = referenceColumns(relationship, references);
+                if (foreignKey == null || foreignKey.size() != 1) {
+                    throw new PersistenceException("Record MapsId scalar component " + parts.get(part).name()
+                        + " requires one mapped parent key column");
+                }
+                scalars.put(part, foreignKey.getFirst());
+            }
+        }
+        return new RecordIdentifier(attribute, embeddables.apply(embedded.attribute().embeddable()), Map.copyOf(scalars));
     }
 
     /**
@@ -874,14 +903,18 @@ public final class EntityStatements {
                     default -> null;
                 };
                 if (parts.stream().anyMatch(attribute -> !(attribute instanceof BasicAttribute))) {
-                    if (mapsIds.size() != 1 || derived.mapsId().isEmpty()) return false;
+                    boolean mappedComponents = parts.stream().allMatch(part -> part instanceof BasicAttribute
+                        || part instanceof EmbeddedAttribute nested
+                            && nested.embeddable().attributes().stream().allMatch(BasicAttribute.class::isInstance)
+                            && mapsIds.stream().anyMatch(mapping -> part.name().equals(mapping.mapsId())));
+                    if (derived.mapsId().isEmpty() || !mappedComponents) return false;
                     AttributeModel component = parts.stream().filter(part -> part.name().equals(derived.mapsId()))
                         .findFirst().orElse(null);
-                    return component instanceof EmbeddedAttribute nested
-                        && nested.embeddable().attributes().stream().allMatch(BasicAttribute.class::isInstance)
-                        && parts.stream().allMatch(part -> part == component || part instanceof BasicAttribute)
-                        && parentKey == nested.javaType()
-                        && eligibleBasicElementParent(derived, false, models, inheritances);
+                    if (component instanceof EmbeddedAttribute nested) {
+                        if (parentKey != nested.javaType()
+                                || !eligibleBasicElementParent(derived, false, models, inheritances)) return false;
+                        continue;
+                    }
                 }
                 if (derived.mapsId().isEmpty()) {
                     return mapsIds.size() == 1 && derived.kind() == AssociationAttribute.Kind.ONE_TO_ONE
@@ -1163,7 +1196,7 @@ public final class EntityStatements {
 
     private static EntityStatements unsupported(EntityModel model, String milestone, String feature) {
         return new EntityStatements(model.entityName(), milestone + ":" + feature, null, List.of(), List.of(), List.of(), List.of(),
-            List.of(), null, null, null, null);
+            List.of(), null, null, null, null, null);
     }
 
     /** Whether the entity's mapping can be read and written: otherwise its statements throw. */
@@ -1386,7 +1419,13 @@ public final class EntityStatements {
      */
     public void hydrate(Object[] values, boolean[] nulls, Object[] state) {
         check();
-        hydrate(columns, values, nulls, state);
+        hydrate(columns, values, nulls, state, false, recordIdentifier == null ? -1 : recordIdentifier.attribute());
+        if (recordIdentifier != null) {
+            // A derived primitive must be present before invoking the record constructor.
+            Object[] components = new Object[recordIdentifier.access().attributes().size()];
+            recordIdentifier.scalarColumns().forEach((component, column) -> components[component] = values[column]);
+            state[recordIdentifier.attribute()] = recordIdentifier.access().construct(components);
+        }
     }
 
     /** {@link #hydrate(Object[], boolean[], Object[])} for any list of columns: an entity's, or a collection table's. */
@@ -1396,11 +1435,17 @@ public final class EntityStatements {
 
     /** Collection FK values may already be resolved to managed instances before constructing their embeddable. */
     static void hydrate(List<Column> columns, Object[] values, boolean[] nulls, Object[] state, boolean referencesResolved) {
+        hydrate(columns, values, nulls, state, referencesResolved, -1);
+    }
+
+    private static void hydrate(List<Column> columns, Object[] values, boolean[] nulls, Object[] state,
+            boolean referencesResolved, int deferredIdentifier) {
         int c = 0;
         while (c < columns.size()) {
             Column column = columns.get(c);
-            if (column.foreignKey() != null && !referencesResolved || column.attribute() < 0) {
-                c++; // the loader resolves the instance it references
+            if (column.foreignKey() != null && !referencesResolved || column.attribute() < 0
+                    || column.attribute() == deferredIdentifier) {
+                c++; // relationships and deferred record identifiers are populated separately
                 continue;
             }
             if (column.path().length == 0) {

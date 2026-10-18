@@ -1153,3 +1153,37 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     **1129/1129**, 92 reports. Full locally patched TCK:
     **2135 / 2131 passed / 0 failures / 0 errors / 4 official skips**, 259 reports,
     with every case identity/outcome identical to D26 and D38. Not certification.
+
+## BUG-20261018-02 — Record MapsId hydration unboxes an unread derived primitive
+
+- **Date**: 2026-10-18
+- **Status**: FIXED (D42, 2026-10-18)
+- **Affected module**: `noether-jpa-core`, `mapping.EntityStatements.embeddable`
+- **Symptom**: reloading a record EmbeddedId with a named primitive MapsId
+  component fails with an unboxing NullPointerException. Persist and the
+  physical identifier tuple are correct; initial row hydration constructs the
+  record before the relationship-derived primitive has been populated.
+- **Minimal reproduction**:
+  ```sh
+  ./mvnw -ntp -pl noether-persistence/noether-jpa-core \
+    -Dtest=ElementCollectionRelationsTest#multipleCompositeMapsIdRecordAndSimpleComponentsKeepDefaultJoinOrder \
+    -Dsurefire.failIfNoSpecifiedTests=false test
+  ```
+- **Confirmed cause**: named MapsId components are omitted from embedded
+  scalar columns. Mutable keys can defer those slots, but a record constructor
+  must receive the primitive's value before relationship resolution.
+- **Investigations**:
+  - 2026-10-18: D42 mixed generated-simple/composite record-key regression
+    persists correctly and fails on find in `EntityStatements.embeddable`.
+  - 2026-10-18: isolated find without a collection owner reproduces the same
+    unboxing failure. A bootstrap record-identifier plan now maps scalar key
+    components to their own columns or their parent's FK column; row hydration
+    constructs the record with those actual values before relationships resolve.
+    Composite component objects are derived through existing generated access.
+    No guessed primitive defaults or reflection are introduced.
+  - Isolated and collection regressions pass, including refresh and an entirely
+    scalar-derived record key with no independent identifier columns.
+    Coupled gate **105/105**; full clean install **1143/1143**, 92 reports.
+    Full locally patched TCK **2135 / 2131 passed / 0 failures / 0 errors /
+    4 official skips**, 259 reports; all case identities/outcomes match D26
+    and D41. This is local regression evidence, not certification.

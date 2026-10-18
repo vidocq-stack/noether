@@ -1,3 +1,59 @@
+## Noether multiple composite MapsId element targets (D42) — 2026-10-18
+
+D42 admits multiple distinct named embedded MapsId components from matching
+non-polymorphic direct BASIC EmbeddedId/IdClass parents, alongside assigned or
+simple-parent-derived BASIC parts. BUG-20261018-02 also fixes primitive derived
+record-key hydration by reading actual scalar FK values before construction.
+Unmapped/deeper keys, overlap, whole-plus-named mappings, derived/polymorphic
+parents and broader loading remain excluded.
+
+Commands from the Noether root:
+
+```sh
+./mvnw -ntp -pl noether-persistence/noether-jpa-core \
+  -Dtest=ElementCollectionRelationsTest#multipleCompositeMapsIdKeepsIndependentParentTuplesAndManagedIdentity \
+  -Dsurefire.failIfNoSpecifiedTests=false test
+./mvnw -ntp -pl noether-persistence/noether-jpa-core \
+  -Dtest=ElementCollectionRelationsTest#recordMapsIdHydratesDerivedPrimitiveWithoutCollectionOwner \
+  -Dsurefire.failIfNoSpecifiedTests=false test
+./mvnw -ntp -pl noether-persistence/noether-jpa-core \
+  -Dtest=ElementCollectionRelationsTest,MapsIdToOneTest,DerivedIdentityTest \
+  -Dsurefire.failIfNoSpecifiedTests=false test
+./mvnw -ntp clean install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+- Mandatory red: bootstrap refused the new collection target before widening
+  eligibility. Mixed record-key loading then failed with a primitive unboxing
+  error, independently reproduced without a collection owner before its fix.
+- Focused gate: **105/105** (59 element-relationship, 39 MapsId and 7
+  derived-identity tests). Full annotation/metadata-complete XML checks mixed
+  EmbeddedId/IdClass parents, reversed key/relationship declaration order,
+  distinct parent tuples, reordered joins, cascade, physical/grouped FKs,
+  duplicate/null references, managed identity, JPQL/Criteria navigation/
+  projections/parameters, rewrites, detached merge, refresh, owner removal
+  and partial-null refusal. Shared-cache identity and mutation of either
+  parent or assigned BASIC key are checked. A record mixes both composite
+  parents with a generated-simple parent and default joins. Isolated record
+  regressions cover refresh and an entirely scalar-derived key.
+  Either polymorphic parent, overlap and unmapped nested remainder remain
+  explicit refusals; existing identity boundaries stay green.
+- Full clean install: **1143 tests / 0 failures / 0 errors / 0 skips**,
+  across **92** reports; **BUILD SUCCESS**.
+- Full locally patched Persistence 3.2.1 TCK on PostgreSQL 17: **2135 tests /
+  2131 passed / 0 failures / 0 errors / 4 official skips**, across **259** reports.
+  All **2135** execution/class/method/outcome identities match D26 and D41.
+- The runner verified every report used the derived TCK-BUG-001 jar.
+  Official SHA-256:
+  `a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`;
+  derived SHA-256:
+  `1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+
+This is **locally patched regression evidence**, not an untouched official TCK
+result or certification. The four unchanged official skips are listed in the
+D26 record below.
+
 ## Noether named MapsId element targets with IdClass parents (D41) — 2026-10-18
 
 D41 extends D40's single named embedded MapsId component to a non-polymorphic

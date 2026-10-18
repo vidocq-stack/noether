@@ -621,25 +621,29 @@ dependent key is copied by generated attribute access, independently of the
 parent's identifier declaration order.
 
 Annotations and metadata-complete ORM XML cover the full mapping. Named-component
-composite parents beyond D40/D41 below, general nested/non-BASIC/chained keys,
+composite parents beyond D40/D41/D42 below, general nested/non-BASIC/chained keys,
 relationship-valued parent keys, polymorphism and broader fetch/lazy/batch
 support remain outside the extension.
 See the roadmaps and `noether-persistence/TCK.md` for the exact regression scope.
 
-### Named composite MapsId element targets (D40/D41, 2026-10-18)
+### Named composite MapsId element targets (D40/D41/D42, 2026-10-18)
 
-An element-value owning to-one may reference an EmbeddedId target with one
-named embedded component derived by `@MapsId("componentName")` from a
+An element-value owning to-one may reference an EmbeddedId target with distinct
+named embedded components derived by `@MapsId("componentName")` from a
 non-polymorphic parent with a direct all-BASIC `@EmbeddedId` or `@IdClass`
 of the same component type. D41 adds IdClass parents, including when their
 identifier declaration order differs from the component's order.
-Other target key parts are BASIC. The collection FK expands
-the component into the parent's complete physical tuple, alongside those
-remaining parts; reordered explicit joins and default joins are supported.
+Other target key parts are BASIC, assigned or derived from simple-ID parents.
+D42 adds multiple composite components and their coexistence with simple ones.
+The collection FK expands each component into its parent's complete tuple,
+alongside those remaining parts; reordered explicit joins and default joins
+are supported.
 
 Annotations and metadata-complete XML use existing generated identity access,
 query, lifecycle and cache paths. Mutable and record outer keys are covered.
-This does not add multiple composite components, unmapped nested key parts,
+BUG-20261018-02 fixes record hydration of derived primitive components using
+their actual FK values before generated construction.
+This does not add unmapped or more deeply nested key parts,
 relationship-valued/chained/polymorphic parents or broader loading
 optimizations. See the roadmaps and `noether-persistence/TCK.md`.
 

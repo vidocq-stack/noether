@@ -427,14 +427,25 @@ records/default joins and explicit refusal boundaries. Full clean install:
 case identical to D26 and D40, not certification. Multiple composite components,
 unmapped nested remainder and relationship-valued/chained parents remain outside scope.
 
+Decision D42 (2026-10-18) extends named embedded MapsId element targets to
+multiple composite components, each from a non-polymorphic direct BASIC
+EmbeddedId/IdClass parent, alongside assigned or simple-parent-derived BASIC
+parts. Existing generated identity access and physical tuples are reused.
+BUG-20261018-02 fixes record-key hydration by reading derived scalar components
+from actual FK columns before construction. Full annotation/XML, mixed
+record/default joins, lifecycle/cache and refusal checks pass. Full clean
+install: 1143 tests passed; full locally patched TCK: 2135 / 2131 / 0 / 0 / 4,
+every case identical to D26 and D41, not certification. Unmapped/deeper keys
+and relationship-valued/chained/polymorphic parents remain outside scope.
+
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
-1. Remaining relational mapping shapes beyond D23/D24/D29/D30/D31/D32/D35/D36/D37/D38/D39/D40/D41's bounded contracts:
+1. Remaining relational mapping shapes beyond D23/D24/D29/D30/D31/D32/D35/D36/D37/D38/D39/D40/D41/D42's bounded contracts:
    derived/nested identity targets and composite forms beyond D29's direct BASIC
    `@EmbeddedId`/`@IdClass`, D38/D39's whole shared BASIC `@EmbeddedId`
    with EmbeddedId/IdClass parents,
-   D40/D41's single named embedded component from a BASIC EmbeddedId/IdClass parent,
+   D40/D41/D42's named embedded components from BASIC EmbeddedId/IdClass parents,
    D30's simple shared `@MapsId` contract and D37's
    direct BASIC `@EmbeddedId` with multiple derived components and D36's direct BASIC
    simple/composite-parent relationship-valued `@IdClass` parts, business joins
