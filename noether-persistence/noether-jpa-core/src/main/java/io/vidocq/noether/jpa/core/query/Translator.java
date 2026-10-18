@@ -67,6 +67,7 @@ import java.util.function.Function;
  * and joins it made.
  */
 final class Translator {
+    private static final int MAX_GRAPH_COLLECTION_DEPTH = 3;
     private boolean inJoinCondition;
 
     /**
@@ -263,18 +264,21 @@ final class Translator {
                 collections.put(node.getKey(), node.getValue());
             } else branches.attribute(node.getKey()).merge(node.getValue());
         }
-        Map<MappedEntity, FetchPlan> nested = new java.util.LinkedHashMap<>();
+        List<Map<MappedEntity, FetchPlan>> nested = new ArrayList<>(MAX_GRAPH_COLLECTION_DEPTH - 1);
+        for (int depth = 1; depth < MAX_GRAPH_COLLECTION_DEPTH; depth++) {
+            nested.add(new java.util.LinkedHashMap<>());
+        }
         Map<String, FetchPlan> pruned = new java.util.LinkedHashMap<>();
         for (var collection : collections.entrySet()) {
             FetchPlan elements = new FetchPlan();
             var attribute = root.model().attribute(collection.getKey()).orElseThrow();
             if (attribute instanceof AssociationAttribute association) {
                 if (!planner.nestedCollections(unit.entity(association.targetEntity()).orElse(null),
-                        collection.getValue(), elements, nested, new java.util.HashSet<>())) return List.of();
+                        collection.getValue(), elements, nested, 0, new java.util.HashSet<>())) return List.of();
             } else elements.merge(collection.getValue());
             pruned.put(collection.getKey(), elements);
         }
-        if (collections.size() < 2 && nested.isEmpty()) return List.of();
+        if (collections.size() < 2 && nested.stream().allMatch(Map::isEmpty)) return List.of();
         collections = pruned;
         // FETCH may overfetch mapped eager collections; never resolve those per owner during staged hydration.
         for (var attribute : root.model().attributes()) {
@@ -284,23 +288,29 @@ final class Translator {
                 collections.putIfAbsent(attribute.name(), new FetchPlan());
             }
         }
-        List<Compiled> result = planner.collectionCollectors(root, collections, branches, nested);
+        List<Compiled> result = planner.collectionCollectors(root, collections, branches, nested.getFirst());
         if (result.isEmpty()) return List.of();
-        List<Compiled> second = new ArrayList<>();
-        for (var owner : nested.entrySet()) {
-            Map<String, FetchPlan> leaves = new java.util.LinkedHashMap<>();
-            FetchPlan toOnes = new FetchPlan();
-            for (var node : owner.getValue().attributes().entrySet()) {
-                var attribute = owner.getKey().model().attribute(node.getKey()).orElse(null);
-                if (attribute instanceof ElementCollectionAttribute
-                        || attribute instanceof AssociationAttribute a && !a.singleValued()) leaves.put(node.getKey(), node.getValue());
-                else toOnes.attribute(node.getKey()).merge(node.getValue());
+        List<List<Compiled>> stages = new ArrayList<>();
+        stages.add(List.copyOf(result));
+        for (int depth = 0; depth < nested.size(); depth++) {
+            List<Compiled> collectors = new ArrayList<>();
+            Map<MappedEntity, FetchPlan> next = depth + 1 < nested.size() ? nested.get(depth + 1) : Map.of();
+            for (var owner : nested.get(depth).entrySet()) {
+                Map<String, FetchPlan> leaves = new java.util.LinkedHashMap<>();
+                FetchPlan toOnes = new FetchPlan();
+                for (var node : owner.getValue().attributes().entrySet()) {
+                    var attribute = owner.getKey().model().attribute(node.getKey()).orElse(null);
+                    if (attribute instanceof ElementCollectionAttribute
+                            || attribute instanceof AssociationAttribute a && !a.singleValued()) leaves.put(node.getKey(), node.getValue());
+                    else toOnes.attribute(node.getKey()).merge(node.getValue());
+                }
+                List<Compiled> compiled = planner.collectionCollectors(owner.getKey(), leaves, toOnes, next);
+                if (compiled.isEmpty()) return List.of();
+                collectors.addAll(compiled);
             }
-            List<Compiled> compiled = planner.collectionCollectors(owner.getKey(), leaves, toOnes, Map.of());
-            if (compiled.isEmpty()) return List.of();
-            second.addAll(compiled);
+            if (!collectors.isEmpty()) stages.add(List.copyOf(collectors));
         }
-        return second.isEmpty() ? List.of(result) : List.of(result, List.copyOf(second));
+        return List.copyOf(stages);
     }
 
     /**
@@ -390,10 +400,11 @@ final class Translator {
         return true;
     }
 
-    /** Cuts the second collection edge out of the first collector while retaining its joined to-one owners. */
+    /** Separates nested collection edges into bounded owner stages while retaining joined to-one branches. */
     private boolean nestedCollections(MappedEntity source, FetchPlan requested, FetchPlan pruned,
-            Map<MappedEntity, FetchPlan> nested, java.util.Set<Class<?>> eagerPath) {
+            List<Map<MappedEntity, FetchPlan>> nested, int depth, java.util.Set<Class<?>> eagerPath) {
         if (!hydratable(source) || source.statements().keyColumns().size() > 512) return false;
+        if (!requested.isEmpty() && eagerPath.contains(source.model().javaType())) return false;
         FetchPlan expanded = new FetchPlan();
         expanded.merge(requested);
         boolean expand = eagerPath.add(source.model().javaType());
@@ -410,20 +421,23 @@ final class Translator {
             var attribute = source.model().attribute(node.getKey()).orElse(null);
             if (attribute instanceof ElementCollectionAttribute
                     || attribute instanceof AssociationAttribute a && !a.singleValued()) {
+                FetchPlan elements = new FetchPlan();
                 if (attribute instanceof AssociationAttribute a) {
-                    if (!toOneSubgraph(unit.entity(a.targetEntity()).orElse(null), node.getValue())) return false;
+                    if (!nestedCollections(unit.entity(a.targetEntity()).orElse(null), node.getValue(),
+                            elements, nested, depth + 1, eagerPath)) return false;
                 } else if (!node.getValue().isEmpty()) return false;
-                leaves.attribute(node.getKey()).merge(node.getValue());
+                leaves.attribute(node.getKey()).merge(elements);
             } else if (attribute instanceof AssociationAttribute a) {
                 if (!nestedCollections(unit.entity(a.targetEntity()).orElse(null), node.getValue(),
-                        pruned.attribute(node.getKey()), nested, eagerPath)) return false;
+                        pruned.attribute(node.getKey()), nested, depth, eagerPath)) return false;
             } else {
                 if (attribute == null || !node.getValue().isEmpty()) return false;
                 pruned.attribute(node.getKey());
             }
         }
         if (!leaves.isEmpty()) {
-            FetchPlan merged = nested.computeIfAbsent(source, _ -> new FetchPlan());
+            if (depth >= nested.size()) return false;
+            FetchPlan merged = nested.get(depth).computeIfAbsent(source, _ -> new FetchPlan());
             merged.merge(leaves);
             merged.merge(pruned);
         }

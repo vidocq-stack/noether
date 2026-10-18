@@ -1,3 +1,37 @@
+## Noether three-level collection graphs (D33) — 2026-10-18
+
+D33 extends staged collection loading to three collection edges on graph paths
+that begin at a root collection. D21's separate root-to-one route retains its
+two-edge limit; cyclic and unsupported paths retain ordinary loading or refusal.
+
+Commands from the Noether root:
+
+```sh
+./mvnw -ntp -pl noether-persistence/noether-jpa-core \
+  -Dtest=CollectionSubgraphTest -Dsurefire.failIfNoSpecifiedTests=false test
+./mvnw -ntp clean install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+- Focused `CollectionSubgraphTest`: **48/48**. The added regression covers
+  JPQL, Criteria, `find`, FETCH/LOAD graphs, third-level state at `PostLoad`,
+  and SQL-root pagination; cycle fallbacks remain covered.
+- Full Noether clean install: **BUILD SUCCESS**.
+- Full locally patched Persistence 3.2.1 TCK, PostgreSQL 17: **2135 tests /
+  2131 passed / 0 failures / 0 errors / 4 official skips** across 259 XML
+  reports. A multiset comparison of all execution/class/method/outcome
+  identities with the D26 `secondary-business-key-tck-reports` baseline is
+  identical: **2135/2135**.
+- The reports used the derived TCK-BUG-001 fixture jar, SHA-256
+  `1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`;
+  the installed official spec-tests jar remains separately identified by
+  SHA-256 `a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`.
+
+This is **locally patched regression evidence**, not an untouched official TCK
+result or certification. The four unchanged official skips are listed in the
+D26 record below.
+
 ## Noether secondary-table business-key verification (D26) — 2026-10-17
 
 Baseline: merged PR20, `6894891` (**1096** reactor tests). D26 extends D22 to

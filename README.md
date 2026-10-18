@@ -304,8 +304,8 @@ Nested eager collections on non-root targets likewise retain fallback. Omitted
 unsupported lazy to-one shapes can still require the established eager fallback;
 the bounded count is not a universal claim for those shapes or dirty in-memory
 association changes. Existing explicit JOIN FETCH and single-collection SQL are unchanged.
-Remaining priorities are nested collection graphs, broader fetch eligibility, broader
-lazy/batch support and missing mappings. D5/D9–D18 and BUG-20261016-01 remain historical.
+Remaining priorities are deeper nested collection graphs, broader fetch eligibility,
+broader lazy/batch support and missing mappings. D5/D9–D18 and BUG-20261016-01 remain historical.
 
 Decision **D20 (2026-10-16)** extends D19 to **two collection edges per graph path**,
 for example `Order { lines { discounts { supplier }, notes } }`. The first edge
@@ -349,12 +349,14 @@ hydration, then D19/D20 collectors read distinct intermediate owners. Shared
 customers/products are not loaded once per order; compatible owner-type requests
 shared across collection depths are merged at the later stage.
 
-The bound remains **two collection edges per graph path**, not three. Independent
-root collections and element to-one subgraphs can coexist. Null to-ones retain
-their roots, empty collections stay complete, and the existing duplicate/null/
-list/map semantics remain unchanged. All graph branches precede callbacks;
-dirty managed state, lazy wrappers/references, snapshots, flush, L2 cache and
-JDBC-free complete find hits retain their existing contracts. Find never auto-flushes.
+At D21, the bound remained **two collection edges per graph path**. D33 separately
+extends nested paths that begin at a root collection to three edges; D21's
+root-to-one seed path still has its two-edge limit. Independent root collections
+and element to-one subgraphs can coexist. Null to-ones retain their roots, empty
+collections stay complete, and the existing duplicate/null/list/map semantics
+remain unchanged. All graph branches precede callbacks; dirty managed state, lazy
+wrappers/references, snapshots, flush, L2 cache and JDBC-free complete find hits
+retain their existing contracts. Find never auto-flushes.
 
 For this new path, a query uses `1 + ceil(Nroot / Broot) + sum(ceil(Nc / Bc))`
 SELECTs: root identities, root seed batches, then each distinct-owner collection
@@ -364,13 +366,16 @@ collection SELECT. Counts exclude ordinary completion of dirty reassigned
 relationships and unsupported lazy mappings. Root pagination remains SQL-only,
 followed by complete collection reads, never collection-row limits or in-memory paging.
 
-Explicit cyclic paths, third collection edges, unsupported mapped eager closures,
-polymorphic/non-hydratable targets, unsupported keys/embedded paths and the existing
-complex/joined/grouped/set/locking query boundaries keep complete ordinary loading
-or explicit refusal. Explicit fetch joins and earlier graph eligibility are unchanged.
-The remaining priorities are deeper/cyclic graphs, broader fetch/lazy/batch
-eligibility and missing mappings. D5/D9–D20 and BUG records above are historical;
-the exact D21 contract and verification are in the detailed roadmap and `TCK.md`.
+For D21's root-to-one route, explicit cyclic paths and a third collection edge,
+unsupported mapped eager closures, polymorphic/non-hydratable targets, unsupported
+keys/embedded paths and the existing complex/joined/grouped/set/locking query
+boundaries keep complete ordinary loading or explicit refusal. D33's separate
+root-collection route supports three edges. Explicit fetch joins and earlier graph
+eligibility are unchanged.
+The remaining priorities are deeper-than-three/cyclic graphs, broader
+fetch/lazy/batch eligibility and missing mappings. D5/D9–D20 and BUG records
+above are historical; the D21 contract, D33 extension and verification are in
+the detailed roadmap and `TCK.md`.
 
 Decision **D22 (2026-10-16)** pauses further graph optimization in favour of
 **owning to-one joins to unique non-ID business columns**, for example

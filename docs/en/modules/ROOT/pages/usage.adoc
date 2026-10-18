@@ -105,10 +105,24 @@ Shared customers are grouped by distinct identity, not read once per order.
 Null customers retain their orders; empty address collections remain complete.
 Independent root collection branches and element to-one subgraphs may coexist.
 The owner seed and every required collection stage complete before callbacks.
-Third collection edges, explicit cyclic paths and unsupported polymorphic/complex
-targets retain complete ordinary loading or established explicit refusal.
+D33 adds a third edge to nested collection paths that begin at a root collection:
+
+[source,java]
+----
+var deepGraph = em.createEntityGraph(Order.class);
+deepGraph.addSubgraph("lines").addSubgraph("discounts").addAttributeNodes("tags");
+var deepOrders = em.createQuery("select o from Order o order by o.id", Order.class)
+    .setHint("jakarta.persistence.fetchgraph", deepGraph).setMaxResults(20).getResultList();
+----
+
+Each collection edge is read separately after SQL-only root pagination; callbacks
+run after the third-level values are complete. D21's root-to-one path remains
+limited to two collection edges. Explicit type-revisiting cycles, a fourth edge
+and unsupported polymorphic/complex targets retain complete ordinary loading or
+established explicit refusal.
 See xref:reference.adoc#_two_collection_graph_edges_d20_2026_10_16[].
 See xref:reference.adoc#_root_to_one_collection_graphs_d21_2026_10_16[].
+See xref:reference.adoc#d33-three-collection-edges[].
 See xref:internals.adoc#_query_graph_sql_loading_d14_2026_10_15[].
 
 == Find entity graphs

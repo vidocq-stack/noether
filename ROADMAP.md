@@ -331,6 +331,16 @@ identities, multiple relationship parts, polymorphism and loading optimizations
 remain outside scope. Detailed evidence and exclusions are in the Persistence
 roadmap; no TCK or certification claim is made.
 
+Decision D33 (2026-10-18) extends D19/D20 staged collection graph reads to at
+most three collection edges along a nested path beginning at a root collection.
+JPQL, Criteria and non-locking `find` FETCH/LOAD graphs reuse separate bounded
+collectors, distinct intermediate owner identities and SQL-only root pagination.
+D21's root-to-one collection path keeps its two-edge limit; type-revisiting
+cycles, fourth edges, unsupported eager closures and complex mappings retain
+complete fallbacks. The existing loader, identity, callback and cache ordering
+are unchanged; this does not add collection joins or broaden unrelated graph
+eligibility. The TCK and certification claim are not changed.
+
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
@@ -349,8 +359,8 @@ detailed roadmap's "Remaining work"):
    after D25; inverse collection embeddables and entity targets that are embeddables
    are not a feature backlog. Orphan removal remains separate.
    Null basic collection elements were fixed by D13 (BUG-20261015-09).
-2. More than two collection edges and broader cyclic graph optimization remain
-   separate bounded lots; D21 includes collections under finite root to-one branches.
+2. More than three collection edges, a third edge on D21's root-to-one path and
+   broader cyclic graph optimization remain separate bounded lots.
    Broader SQL fetch eligibility: same-query owner pagination,
    entity/embeddable map keys; polymorphic/`JOINED`/`TABLE_PER_CLASS` targets,
    broader to-one `DISTINCT` and locking queries, embedded/treated graph paths and complex graph queries.

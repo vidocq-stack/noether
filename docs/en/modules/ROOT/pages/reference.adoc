@@ -205,6 +205,29 @@ changes and omitted unsupported lazy mappings. Explicit fetch joins and unnested
 single-collection graphs keep their existing collectors. Deeper graphs and broader
 fetch/lazy/batch/mapping eligibility remain separate backlog items.
 
+[[d33-three-collection-edges]]
+== Three collection edges in nested entity graphs (D33, 2026-10-18)
+
+D33 extends the staged D19/D20 collectors to at most three collection edges along
+a nested FETCH/LOAD graph path that begins at a root collection, for example
+`Order.lines.discounts.tags`. JPQL, Criteria and non-locking `find` use the same
+bounded collectors and existing entity loader; each collection edge is read
+separately, without a collection-to-collection join.
+
+Queries page root identities in SQL before reading the requested collections.
+Distinct intermediate owners are grouped under each owner's key-width and
+512-parameter bound. All rows from every stage are captured before relationship
+resolution, collection completion, snapshots, cache publication or callbacks.
+Find omits the root-selection query; managed/cache-complete graph hits keep their
+existing no-SQL behavior. FETCH/LOAD, empty owners, duplicates, shared identities
+and collection values retain the existing assembler and loader contracts.
+
+This does not widen D21's two-edge root-to-one collection path. Explicit
+type-revisiting cycles, paths with a fourth collection edge, unsupported eager
+closures, non-hydratable mappings and complex query shapes retain complete
+ordinary loading or established refusal. Broader polymorphic/map-key/locking
+eligibility and collection joins are not included.
+
 == To-one relationships in element-collection values (D24, 2026-10-16)
 
 Embeddable `@ElementCollection` values support owning `@ManyToOne` and

@@ -100,6 +100,7 @@ class CollectionSubgraphTest {
     @AfterEach void close() {
         Order.inspectRootBranch = Order.inspectRecommendations = false;
         Order.inspectNested = Line.inspectNested = false;
+        Product.inspectThirdLevel = false;
         Order.requireComplete = Payment.inspect = Order.inspectAll = Order.inspect = Order.inspectMixed = Line.inspectAll = Line.inspect = Product.fail = Product.mutate = false;
         if (factory != null) factory.close();
     }
@@ -147,6 +148,12 @@ class CollectionSubgraphTest {
         Subgraph<Line> lines = graph.addSubgraph(collection);
         lines.addSubgraph("discounts").addAttributeNodes("supplier", "category");
         lines.addAttributeNodes("notes", "codes");
+        return graph;
+    }
+
+    private EntityGraph<Order> threeCollectionGraph() {
+        var graph = em.createEntityGraph(Order.class);
+        graph.addSubgraph("lines").addSubgraph("discounts").addAttributeNodes("tags");
         return graph;
     }
 
@@ -504,6 +511,47 @@ class CollectionSubgraphTest {
         assertThat(selects()).isEqualTo(1);
     }
 
+    @Test void threeCollectionEdgesUseGroupedReadsForJpqlCriteriaAndFindBeforeCallbacks() {
+        for (String hint : List.of(FETCH, LOAD)) {
+            for (String operation : List.of("jpql", "criteria", "find")) {
+                cold();
+                Product.inspectThirdLevel = true;
+                List<Order> found;
+                if (operation.equals("find")) found = List.of(em.find(Order.class, 1L, Map.of(hint, threeCollectionGraph())));
+                else if (operation.equals("criteria")) {
+                    var cb = em.getCriteriaBuilder();
+                    var criteria = cb.createQuery(Order.class);
+                    var root = criteria.from(Order.class);
+                    criteria.select(root).orderBy(cb.asc(root.get("id")));
+                    found = em.createQuery(criteria).setHint(hint, threeCollectionGraph()).getResultList();
+                } else found = orders(hint, threeCollectionGraph());
+                assertThat(selects()).as(operation + "/" + hint + sql).isEqualTo(operation.equals("find") ? 3 : 4);
+                Order first = found.getFirst();
+                assertThat(first.getLines()).hasSize(4);
+                Line line = first.getLines().stream().filter(candidate -> candidate.getId() == 10).findFirst().orElseThrow();
+                assertThat(line.getDiscounts()).extracting(Product::getId).containsExactly(200L, 200L, 201L);
+                assertThat(line.getDiscounts()).allSatisfy(product ->
+                    assertThat(loaded(product, "tags")).isTrue());
+                assertThat(line.getDiscounts()).filteredOn(product -> product.getId() == 200)
+                    .allSatisfy(product -> assertThat(product.getTags()).containsExactlyInAnyOrder("steel", "wood"));
+                assertThat(line.getDiscounts()).filteredOn(product -> product.getId() == 201)
+                    .singleElement().satisfies(product -> assertThat(product.getTags()).isEmpty());
+                assertThat(Product.LOADS.get()).isEqualTo(2);
+                assertThat(selects()).isEqualTo(operation.equals("find") ? 3 : 4);
+            }
+            cold();
+            Product.inspectThirdLevel = true;
+            List<Order> page = em.createQuery("select o from CsOrder o order by o.id", Order.class)
+                .setHint(hint, threeCollectionGraph()).setFirstResult(2).setMaxResults(1).getResultList();
+            assertThat(page).extracting(Order::getId).containsExactly(3L);
+            assertThat(page.getFirst().getLines()).hasSize(2);
+            assertThat(page.getFirst().getLines().getFirst().getDiscounts()).singleElement()
+                .satisfies(product -> assertThat(product.getTags()).containsExactlyInAnyOrder("steel", "wood"));
+            assertThat(sql.getFirst()).containsIgnoringCase("fetch first").doesNotContainIgnoringCase("join");
+            assertThat(selects()).isEqualTo(4);
+        }
+    }
+
     @Test void nestedOwnerCountsAreIndependentlyBoundedAndSettingOneDisablesGrouping() {
         for (int batch : List.of(16, 1)) {
             if (batch == 1) { factory.close(); open(1); }
@@ -628,7 +676,7 @@ class CollectionSubgraphTest {
         em.getTransaction().rollback();
     }
 
-    @Test void nestedCollectionsThroughToOneOwnersAreGroupedAndThirdEdgesAndCyclesKeepCompleteFallbacks() {
+    @Test void nestedCollectionsThroughToOneOwnersAreGroupedAndCyclesKeepCompleteFallbacks() {
         var graph = graph("lines", "supplier", "category", "tags", "facts");
         var found = orders(LOAD, graph);
         assertThat(found.getFirst().getLines().get(1).getProduct().getTags()).containsExactlyInAnyOrder("steel", "wood");
@@ -641,7 +689,8 @@ class CollectionSubgraphTest {
         var first = em.find(Order.class, 1L, Map.of(LOAD, deep));
         assertThat(first.getLines().get(1).getDiscounts()).filteredOn(p -> p.getId() == 200)
             .allSatisfy(p -> assertThat(p.getTags()).containsExactlyInAnyOrder("steel", "wood"));
-        assertThat(sql.getFirst()).doesNotContainIgnoringCase("CS_LINE");
+        assertThat(sql.getFirst()).containsIgnoringCase("CS_LINE");
+        assertThat(selects()).isEqualTo(5);
         cold();
         var cyclic = em.createEntityGraph(Order.class);
         cyclic.addSubgraph("lines").addSubgraph("order").addSubgraph("lines")
@@ -1462,9 +1511,6 @@ class CollectionSubgraphTest {
         em.find(Line.class, 11L).setItem(em.find(Item.class, 601L));
         em.getTransaction().commit();
         Map<String, EntityGraph<Order>> graphs = new LinkedHashMap<>();
-        var deeper = graph("lines", "supplier", "category");
-        deeper.addSubgraph("lines").addSubgraph("discounts").addAttributeNodes("tags");
-        graphs.put("nested collection", deeper);
         var polymorphic = em.createEntityGraph(Order.class);
         polymorphic.addSubgraph("lines").addAttributeNodes("item");
         graphs.put("polymorphic target", polymorphic);
@@ -1480,8 +1526,6 @@ class CollectionSubgraphTest {
                 assertThat(selects()).as(entry.getKey()).isGreaterThan(1);
                 assertThat(first.getLines()).extracting(Line::getId).containsExactly(11L, 10L, 13L, 12L);
                 switch (entry.getKey()) {
-                    case "nested collection" -> assertThat(first.getLines().get(1).getProduct().getTags())
-                        .containsExactlyInAnyOrder("steel", "wood");
                     case "polymorphic target" -> {
                         assertThat(first.getLines().get(0).getItem()).isInstanceOf(SpecialItem.class);
                         assertThat(((SpecialItem) first.getLines().get(0).getItem()).getMetal()).isEqualTo("gold");
@@ -1673,7 +1717,7 @@ class CollectionSubgraphTest {
     @Entity(name = "CsProduct") @Table(name = "CS_PRODUCT")
     public static class Product {
         static final AtomicInteger LOADS = new AtomicInteger();
-        static boolean fail, mutate;
+        static boolean fail, mutate, inspectThirdLevel;
         private long id;
         private String name;
         private Supplier supplier;
@@ -1702,6 +1746,7 @@ class CollectionSubgraphTest {
         public void setFacts(Map<String, String> facts) { this.facts = facts; }
         @PostLoad void loaded() {
             LOADS.incrementAndGet();
+            if (inspectThirdLevel) assertThat(io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(tags)).isFalse();
             if (fail && name.startsWith("saw")) throw new IllegalStateException("product callback failed");
             if (mutate) name = name + "!";
         }

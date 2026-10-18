@@ -2030,7 +2030,29 @@ collection FK tuple. Post-change `ElementCollectionRelationsTest`:
 across 92 reports**. No TCK was run; these are unit-test results, not TCK or
 certification evidence.
 
-Prioritized backlog after D32, 2026-10-18. Each item needs its own approved, bounded lot; until then
+### D33 — Three collection edges in nested entity graphs ✅ (2026-10-18)
+
+D33 extends D19/D20 staged graph collection reads to a maximum of three collection
+edges on a path that begins at a root collection. Each edge is still read by a
+separate existing collection collector, with distinct intermediate owner identities,
+per-owner batch bounds and the same staged loader. JPQL, Criteria and non-locking
+`find` support FETCH/LOAD graphs; root-only SQL pagination remains ahead of complete
+collection reads. Requests are captured before identities, relationships, wrappers,
+snapshots, cache publication or callbacks are completed.
+
+This lot does not expand D21's root-to-one collection seed path, which retains its
+two-edge limit. Type-revisiting explicit graph paths, a fourth collection edge,
+unsupported eager closures, non-hydratable mappings and complex query shapes retain
+the complete ordinary fallback/refusal. No collection-to-collection SQL join or
+broader polymorphic, map-key, locking or lazy/batch eligibility is added.
+
+The mandatory failing-first regression demonstrated ordinary fallback at 14 SELECTs
+for an unpaged JPQL three-edge graph. The final `CollectionSubgraphTest` gate covers
+FETCH/LOAD JPQL, Criteria, `find`, SQL-only root pagination, complete values and
+the third-level collection's `PostLoad` state; exact build and TCK results are
+recorded in `TCK.md` when applicable.
+
+Prioritized backlog after D33, 2026-10-18. Each item needs its own approved, bounded lot; until then
 the documented fallback (follow-up selects, eager loading, or an explicit refusal naming the
 milestone) stays in place.
 
@@ -2051,7 +2073,8 @@ milestone) stays in place.
    Orphan removal stays a separate, explicitly refused lot.
    Null basic collection elements were fixed by D13 (BUG-20261015-09).
 2. **Deeper collection-valued graph subgraphs and broader SQL fetch eligibility** —
-   more than two collection edges and broader cyclic graph optimization;
+   more than three collection edges, the D21 root-to-one path's third edge, and
+   broader cyclic graph optimization;
    same-query owner pagination,
    entity/embeddable map keys; polymorphic, `JOINED` and `TABLE_PER_CLASS` targets
    (type resolution from the row), broader to-one `DISTINCT` and locking queries, `TREAT`/embedded paths, and entity
@@ -2070,6 +2093,7 @@ Recorded before implementation; each entry: date, decision, reason.
 
 | # | Date | Decision | Status |
 |---|---|---|---|
+| D33 | 2026-10-18 | Extend D19/D20 root-collection graph staging to at most three collection edges along a nested graph path. Reuse independent bounded collectors and distinct intermediate owner identities for JPQL/Criteria and non-locking find FETCH/LOAD graphs; keep SQL root pagination, callbacks/cache/managed-state ordering and the existing loader. Preserve D21's two-edge root-to-one path, cyclic/type-revisiting paths, fourth edges, unsupported eager closures and complex mappings as complete fallbacks/refusals; do not add collection joins or widen unrelated eligibility. | Actioned |
 | D32 | 2026-10-18 | Extend D24 element-value owning to-ones to a direct BASIC `IdClass` target with exactly one relationship-valued `@Id` part targeting a non-polymorphic simple-ID parent. Reuse the actual association FK column and the existing IdClass identity order; keep composite parents, multiple/non-BASIC relationship parts, nested keys, polymorphism, business keys and collection-loading optimizations out of scope. | Actioned |
 | D31 | 2026-10-18 | Extend D24 element-value owning to-ones to a direct BASIC `EmbeddedId` target with exactly one named component derived through an owning `ManyToOne`/`OneToOne @MapsId` to a non-polymorphic simple-ID parent. Reuse D23 derived-identity and D29 tuple handling; keep nested/non-BASIC/multiple/chained/composite-parent identities, `IdClass`, polymorphism, business keys and loading optimizations out of scope. | Actioned |
 | D30 | 2026-10-17 | Extend D24 collection-element owning to-ones to target simple IDs that are shared through one owning `OneToOne @MapsId` to a non-polymorphic simple-ID parent. Reuse D23 physical-key and lifecycle metadata and D29 element-column handling; keep composite/nested/chained derived IDs, business keys, polymorphism, and collection-loading optimizations out of scope. | Actioned |

@@ -243,6 +243,27 @@ complete fallback/refusal to the established loader. Automatic eager expansion
 is still cycle guarded. D14–D20's earlier eligible paths and explicit fetch joins
 are unchanged; the preceding sections remain their historical records.
 
+[[d33-three-collection-stages]]
+== Three nested collection stages (D33, 2026-10-18)
+
+D33 extends the root-collection split route to at most three collection edges on
+one nested graph path. The planner separates nested collection requests into
+owner stages while retaining eligible to-one branches in each collector. A
+stage's distinct entity identities constrain the next stage, and each collector
+uses that owner's existing key-width and 512-parameter batch bound.
+
+The query still selects/pages root identities before the complete collection
+stages; non-locking finds start from the requested root identity. All stage rows
+are captured before the existing loader registers entities, resolves links,
+completes wrappers, snapshots, publishes cache entries or dispatches callbacks.
+No new loader or SQL join is introduced.
+
+This extension applies only to nested collection paths beginning at a root
+collection. D21's root-to-one seed path remains bounded to two collection edges.
+Type-revisiting explicit cycles, a fourth edge, unsupported eager closures and
+non-hydratable or complex mappings reject split execution before SQL and retain
+the complete established fallback/refusal.
+
 == Lazy read batches (D13, 2026-10-15)
 
 `EntityLoader` groups pending compatible persistence-context entries on first access.
