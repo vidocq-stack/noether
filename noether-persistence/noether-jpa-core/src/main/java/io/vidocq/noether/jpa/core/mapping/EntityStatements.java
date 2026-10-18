@@ -854,12 +854,13 @@ public final class EntityStatements {
             List<AssociationAttribute> relationships = idClass.attributes().stream()
                 .filter(AssociationAttribute.class::isInstance).map(AssociationAttribute.class::cast).toList();
             if (relationships.isEmpty()) return true;
-            if (relationships.size() != 1 || idClass.attributes().stream()
-                    .anyMatch(attribute -> !(attribute instanceof BasicAttribute)
-                        && attribute != relationships.getFirst())) return false;
-            AssociationAttribute derived = relationships.getFirst();
-            return derived.mapsId() == null && derived.singleValued() && derived.owning()
-                && derived.joinTable() == null && simpleNonPolymorphicParent(derived, models, inheritances);
+            if (idClass.attributes().stream().anyMatch(attribute ->
+                    !(attribute instanceof BasicAttribute || attribute instanceof AssociationAttribute))) return false;
+            return relationships.stream().allMatch(derived -> derived.mapsId() == null
+                && derived.singleValued() && derived.owning() && derived.joinTable() == null
+                && simpleNonPolymorphicParent(derived, models, inheritances)
+                && (relationships.size() == 1 || models.apply(derived.targetEntity()).attributes().stream()
+                    .noneMatch(attribute -> attribute instanceof AssociationAttribute a && a.mapsId() != null)));
         }
         if (mapsIds.size() != 1) return false;
         AssociationAttribute derived = mapsIds.getFirst();

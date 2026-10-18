@@ -425,6 +425,127 @@ class ElementCollectionRelationsTest {
         }
     }
 
+    // §2.4.2 and §2.7: each relationship-valued IdClass part contributes its parent's identity to the element FK.
+    @Test void multipleIdClassParentIdentitiesKeepPhysicalTuplesAndManagedIdentity() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = configuration(false, MultiParentOwner.class, MultiParentValue.class,
+                MultiParentTarget.class, MultiParentKey.class, MapsIdElementParent.class);
+            if (xml) configuration.mappingFile("orm/element-collection-multiple-idclass-parents.xml");
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var source = new MapsIdElementParent("source");
+                var destination = new MapsIdElementParent("destination");
+                var outward = new MultiParentTarget(source, destination, "route");
+                var inward = new MultiParentTarget(destination, source, "route");
+                var owner = new MultiParentOwner();
+                owner.id = 10L;
+                owner.values.add(new MultiParentValue("first", outward));
+                owner.values.add(new MultiParentValue("duplicate", outward));
+                owner.values.add(new MultiParentValue("null", null));
+                owner.values.add(new MultiParentValue("reverse", inward));
+                transaction(em, () -> {
+                    em.persist(source);
+                    em.persist(destination);
+                    em.persist(outward);
+                    em.persist(inward);
+                    em.persist(owner);
+                });
+                assertThat(source.id).isPositive().isNotEqualTo(destination.id);
+                var outwardKey = new MultiParentKey(source.id, destination.id, "route");
+                var inwardKey = new MultiParentKey(destination.id, source.id, "route");
+                assertThat(factory.getPersistenceUnitUtil().getIdentifier(outward)).isEqualTo(outwardKey);
+                List<?> rows = em.createNativeQuery(
+                    "select element_source, element_destination, element_code from multi_parent_values order by value_position")
+                    .getResultList();
+                assertThat((Object[]) rows.get(0)).containsExactly(source.id, destination.id, "route");
+                assertThat((Object[]) rows.get(1)).containsExactly(source.id, destination.id, "route");
+                assertThat((Object[]) rows.get(2)).containsOnlyNulls();
+                assertThat((Object[]) rows.get(3)).containsExactly(destination.id, source.id, "route");
+                em.getTransaction().begin();
+                assertThatThrownBy(() -> em.createNativeQuery(
+                    "insert into multi_parent_values (owner_id, value_position, element_source, element_destination, element_code)"
+                        + " values (10, 4, ?, ?, 'missing')")
+                    .setParameter(1, source.id).setParameter(2, destination.id).executeUpdate())
+                    .isInstanceOf(PersistenceException.class);
+                em.getTransaction().rollback();
+
+                em.clear();
+                factory.getCache().evictAll();
+                var found = em.find(MultiParentOwner.class, 10L);
+                var managedOutward = em.find(MultiParentTarget.class, outwardKey);
+                var managedInward = em.find(MultiParentTarget.class, inwardKey);
+                assertThat(found.values).extracting(value -> value.target)
+                    .containsExactly(managedOutward, managedOutward, null, managedInward);
+                assertThat(found.values.get(0).target).isSameAs(found.values.get(1).target).isSameAs(managedOutward);
+                assertThat(managedOutward.source).isSameAs(managedInward.destination);
+                assertThat(managedOutward.destination).isSameAs(managedInward.source);
+                assertThat(em.createQuery(
+                    "select v.target from MultiParentOwner o join o.values v order by index(v)", MultiParentTarget.class)
+                    .getResultList()).containsExactly(managedOutward, managedOutward, null, managedInward);
+                assertThat(em.createQuery(
+                    "select v.target.source.name from MultiParentOwner o join o.values v order by index(v)", String.class)
+                    .getResultList()).containsExactly("source", "source", "destination");
+                assertThat(em.createQuery(
+                    "select v.label from MultiParentOwner o join o.values v where v.target = :target", String.class)
+                    .setParameter("target", managedInward).getResultList()).containsExactly("reverse");
+                var cb = em.getCriteriaBuilder();
+                var criteria = cb.createQuery(MultiParentTarget.class);
+                var values = criteria.from(MultiParentOwner.class).joinList("values");
+                criteria.select(values.get("target")).orderBy(cb.asc(values.index()));
+                assertThat(em.createQuery(criteria).getResultList())
+                    .containsExactly(managedOutward, managedOutward, null, managedInward);
+                var projected = em.createQuery(
+                    "select v from MultiParentOwner o join o.values v order by index(v)", MultiParentValue.class)
+                    .getResultList();
+                assertThat(projected.getFirst().target).isSameAs(managedOutward);
+                assertThat(projected.get(2).target).isNull();
+                transaction(em, () -> {
+                    found.values.remove(1);
+                    found.values.getFirst().target = managedInward;
+                });
+                em.clear();
+                factory.getCache().evictAll();
+                var reloaded = em.find(MultiParentOwner.class, 10L);
+                assertThat(reloaded.values).extracting(value -> value.target == null ? null
+                    : factory.getPersistenceUnitUtil().getIdentifier(value.target))
+                    .containsExactly(inwardKey, null, inwardKey);
+                em.clear();
+                reloaded.values.getFirst().target = outward;
+                transaction(em, () -> {
+                    var merged = em.merge(reloaded);
+                    assertThat(merged.values.getFirst().target).isSameAs(em.find(MultiParentTarget.class, outwardKey));
+                });
+                em.clear();
+                transaction(em, () -> em.remove(em.find(MultiParentOwner.class, 10L)));
+                assertThat(em.find(MultiParentTarget.class, outwardKey)).isNotNull();
+                assertThat(em.find(MultiParentTarget.class, inwardKey)).isNotNull();
+                assertThat(em.createNativeQuery("select count(*) from multi_parent_values").getSingleResult())
+                    .isEqualTo(0L);
+
+                var partial = new MultiParentOwner();
+                partial.id = 11L;
+                partial.values.add(new MultiParentValue("partial", em.find(MultiParentTarget.class, outwardKey)));
+                transaction(em, () -> em.persist(partial));
+                transaction(em, () -> em.createNativeQuery(
+                    "update multi_parent_values set element_destination = null where owner_id = 11")
+                    .executeUpdate());
+                em.clear();
+                factory.getCache().evictAll();
+                assertThatThrownBy(() -> em.find(MultiParentOwner.class, 11L).values.size())
+                    .isInstanceOf(PersistenceException.class).hasMessageContaining("partially null");
+            }
+        }
+    }
+
+    @Test void multipleIdClassParentsDoNotAdmitCompositeOrChainedDerivedParents() {
+        assertThatThrownBy(() -> factory(false, CompositeParentsOwner.class, CompositeParentsValue.class,
+            CompositeParentsTarget.class, CompositeParentsKey.class, CompositeTarget.class, CompositeKey.class,
+            MapsIdElementParent.class))
+            .isInstanceOf(PersistenceException.class).hasMessageContaining("requires an eligible primary-key target");
+        assertThatThrownBy(() -> factory(false, ChainedParentsOwner.class, ChainedParentsValue.class,
+            ChainedParentsTarget.class, ChainedParentsKey.class, MapsIdElementTarget.class, MapsIdElementParent.class))
+            .isInstanceOf(PersistenceException.class).hasMessageContaining("requires an eligible primary-key target");
+    }
+
     @Test void inverseOneToOneIsRejectedAtBootstrap() {
         assertThatThrownBy(() -> factory(false, InvalidOwner.class, InverseValue.class))
             .hasStackTraceContaining("collection").hasStackTraceContaining("owning");
@@ -852,6 +973,89 @@ class ElementCollectionRelationsTest {
                 && java.util.Objects.equals(code, key.code);
         }
         @Override public int hashCode() { return java.util.Objects.hash(parent, code); }
+    }
+    @Entity(name = "MultiParentOwner") public static class MultiParentOwner {
+        @Id public Long id;
+        @ElementCollection @CollectionTable(name = "multi_parent_values",
+            joinColumns = @JoinColumn(name = "owner_id"))
+        @OrderColumn(name = "value_position")
+        public List<MultiParentValue> values = new ArrayList<>();
+    }
+    @Embeddable public static class MultiParentValue {
+        public String label;
+        @ManyToOne @JoinColumns({
+            @JoinColumn(name = "element_destination", referencedColumnName = "destination_fk"),
+            @JoinColumn(name = "element_code", referencedColumnName = "route_code"),
+            @JoinColumn(name = "element_source", referencedColumnName = "source_fk")
+        })
+        public MultiParentTarget target;
+        public MultiParentValue() {}
+        MultiParentValue(String label, MultiParentTarget target) { this.label = label; this.target = target; }
+    }
+    @Entity(name = "MultiParentTarget") @IdClass(MultiParentKey.class)
+    public static class MultiParentTarget {
+        @Id @ManyToOne @JoinColumn(name = "source_fk") public MapsIdElementParent source;
+        @Id @ManyToOne @JoinColumn(name = "destination_fk") public MapsIdElementParent destination;
+        @Id @Column(name = "route_code") public String code;
+        public MultiParentTarget() {}
+        MultiParentTarget(MapsIdElementParent source, MapsIdElementParent destination, String code) {
+            this.source = source; this.destination = destination; this.code = code;
+        }
+    }
+    public static class MultiParentKey implements java.io.Serializable {
+        public long source;
+        public long destination;
+        public String code;
+        public MultiParentKey() {}
+        MultiParentKey(long source, long destination, String code) {
+            this.source = source; this.destination = destination; this.code = code;
+        }
+        @Override public boolean equals(Object other) {
+            return other instanceof MultiParentKey key && source == key.source && destination == key.destination
+                && java.util.Objects.equals(code, key.code);
+        }
+        @Override public int hashCode() { return java.util.Objects.hash(source, destination, code); }
+    }
+    @Entity public static class CompositeParentsOwner {
+        @Id public Long id;
+        @ElementCollection public List<CompositeParentsValue> values;
+    }
+    @Embeddable public static class CompositeParentsValue {
+        @ManyToOne public CompositeParentsTarget target;
+    }
+    @Entity @IdClass(CompositeParentsKey.class) public static class CompositeParentsTarget {
+        @Id @ManyToOne public CompositeTarget composite;
+        @Id @ManyToOne public MapsIdElementParent simple;
+    }
+    public static class CompositeParentsKey implements java.io.Serializable {
+        public CompositeKey composite;
+        public long simple;
+        public CompositeParentsKey() {}
+        @Override public boolean equals(Object other) {
+            return other instanceof CompositeParentsKey key && simple == key.simple
+                && java.util.Objects.equals(composite, key.composite);
+        }
+        @Override public int hashCode() { return java.util.Objects.hash(composite, simple); }
+    }
+    @Entity public static class ChainedParentsOwner {
+        @Id public Long id;
+        @ElementCollection public List<ChainedParentsValue> values;
+    }
+    @Embeddable public static class ChainedParentsValue {
+        @ManyToOne public ChainedParentsTarget target;
+    }
+    @Entity @IdClass(ChainedParentsKey.class) public static class ChainedParentsTarget {
+        @Id @ManyToOne public MapsIdElementTarget derived;
+        @Id @ManyToOne public MapsIdElementParent simple;
+    }
+    public static class ChainedParentsKey implements java.io.Serializable {
+        public long derived;
+        public long simple;
+        public ChainedParentsKey() {}
+        @Override public boolean equals(Object other) {
+            return other instanceof ChainedParentsKey key && derived == key.derived && simple == key.simple;
+        }
+        @Override public int hashCode() { return java.util.Objects.hash(derived, simple); }
     }
     @Entity public static class BusinessOwner {
         @Id public Long id;

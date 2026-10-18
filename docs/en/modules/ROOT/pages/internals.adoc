@@ -279,6 +279,19 @@ The fourth collection edge, type-revisiting explicit paths, unsupported eager
 closures and unsupported query/mapping shapes still select complete fallback
 or refusal before split SQL runs.
 
+== Multiple IdClass parents in element values (D35, 2026-10-18)
+
+`EntityStatements.eligibleElementTarget` admits multiple owning relationship
+parts of an IdClass when every parent has a non-polymorphic simple, non-derived
+ID and all remaining parts are BASIC. `relationalKeys`/`idClassKeyColumns`
+already flatten those relationship parts to their actual FK columns and JDBC
+binders, preserving identifier order independently of explicit join-column order.
+`elementReferences` reuses that tuple for storage, schema FKs and query identity.
+The existing generated accesses and loader resolve repeated references to one
+managed entity; no alternate key representation, runtime reflection, SQL AST,
+dependency or hydration path is introduced. Ordinary collection loading and
+all fetch/lazy/batch eligibility guards remain unchanged.
+
 == Lazy read batches (D13, 2026-10-15)
 
 `EntityLoader` groups pending compatible persistence-context entries on first access.

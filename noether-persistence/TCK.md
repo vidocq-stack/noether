@@ -1,3 +1,48 @@
+## Noether multiple IdClass parents in element collections (D35) — 2026-10-18
+
+D35 extends D32 element-value owning to-one targets to multiple relationship-valued
+IdClass parts, each referencing a non-polymorphic parent with a simple, non-derived
+ID. It widens only the mapping eligibility guard; existing physical tuples,
+generated access, managed identity and ordinary loading are reused. Composite/
+chained-derived parents and broader fetch/lazy/batch eligibility remain excluded.
+
+Commands from the Noether root:
+
+```sh
+./mvnw -ntp -pl noether-persistence/noether-jpa-core \
+  -Dtest=ElementCollectionRelationsTest#multipleIdClassParentIdentitiesKeepPhysicalTuplesAndManagedIdentity \
+  -Dsurefire.failIfNoSpecifiedTests=false test
+./mvnw -ntp -pl noether-persistence/noether-jpa-core \
+  -Dtest=ElementCollectionRelationsTest,DerivedIdentityTest \
+  -Dsurefire.failIfNoSpecifiedTests=false test
+./mvnw -ntp clean install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+- Mandatory red: the new scenario failed before production changes at bootstrap
+  with `requires an eligible primary-key target`.
+- Focused gate: **38/38**, comprising **31** element-collection relationship tests
+  and **7** derived-identity tests.
+  Annotation/XML cases cover reversed parent roles, reordered explicit FKs,
+  duplicate/null targets, physical tuples and FK enforcement, JPQL/Criteria,
+  projections, identity comparison, merge/rewrites/removal, partial-null refusal
+  and composite/chained-parent bootstrap refusals.
+- Full Noether clean install: **1115 tests / 0 failures / 0 errors / 0 skips**,
+  across **92** XML reports; **BUILD SUCCESS**.
+- Full locally patched Persistence 3.2.1 TCK on PostgreSQL 17: **2135 tests /
+  2131 passed / 0 failures / 0 errors / 4 official skips**, across **259** reports.
+  All **2135** execution/class/method/outcome identities equal the D26 baseline.
+- The runner verified every report used the derived TCK-BUG-001 jar.
+  Official SHA-256:
+  `a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`;
+  derived SHA-256:
+  `1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+
+This is **locally patched regression evidence**, not an untouched official TCK
+result or certification. The four unchanged official skips are listed in the
+D26 record below.
+
 ## Noether three collection edges through root to-one graphs (D34) — 2026-10-18
 
 D34 extends the D21 collection-free root-to-one seed route to a third nested

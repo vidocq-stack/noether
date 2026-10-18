@@ -329,7 +329,7 @@ itself is the identifier component, not a `@MapsId` mapping. Annotations cover
 the full target identity; metadata-complete ORM XML covers the collection
 owner/value while leaving that target identifier annotation-mapped, because
 the ORM 3.2 XML `id` element cannot contain a relationship. Composite parent
-identities, multiple relationship parts, polymorphism and loading optimizations
+identities, multiple relationship parts (extended separately by D35), polymorphism and loading optimizations
 remain outside scope. Detailed evidence and exclusions are in the Persistence
 roadmap; no TCK or certification claim is made.
 
@@ -351,14 +351,26 @@ find FETCH/LOAD graphs. Type-revisiting cycles, a fourth edge, unsupported eager
 closures and complex mappings keep their established fallbacks. No collection
 joins or unrelated graph eligibility are added.
 
+Decision D35 (2026-10-18) extends D32 element-value to-one targets to multiple
+relationship-valued IdClass parts, each an owning FK to a non-polymorphic parent
+with a simple, non-derived ID; remaining parts are BASIC. Existing physical-key
+ordering, generated access and managed identity handle the complete tuple.
+Annotation and owner/value XML cover reversed parent roles, duplicate/null
+references, JPQL/Criteria, collection rewrites, merge, removal, FK enforcement
+and partial-null refusal. Composite/chained-derived parents, business/join-table/
+polymorphic mappings and loading optimizations remain outside scope.
+The clean reactor passes 1115 tests; the full locally patched TCK remains
+2135 tests / 2131 passed / 0 failures / 0 errors / 4 official skips, identical
+to the D26 baseline. This is local regression evidence, not certification.
+
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
-1. Remaining relational mapping shapes beyond D23/D24/D29/D30/D31/D32's bounded contracts:
+1. Remaining relational mapping shapes beyond D23/D24/D29/D30/D31/D32/D35's bounded contracts:
    derived/nested identity targets and composite forms beyond D29's direct BASIC
    `@EmbeddedId`/`@IdClass`, D30's simple shared `@MapsId` contract and D31's
-   direct BASIC `@EmbeddedId` with one derived component and D32's single
-   relationship-valued `@IdClass` part, business joins
+   direct BASIC `@EmbeddedId` with one derived component and D35's multiple
+   simple-parent relationship-valued `@IdClass` parts, business joins
    through join tables or inheritance, broader secondary-table business tuples/
    PK joins beyond D26, inverse business collections,
    embedded business association paths and safely mutable referenced keys;

@@ -2019,7 +2019,7 @@ covers the full target identity; metadata-complete ORM XML covers the
 collection owner and value relationship while the target's relationship-valued
 identifier remains annotation-mapped, since the ORM 3.2 XML `id` element does
 not contain relationship mappings. Composite parent IDs, multiple
-relationship-valued IdClass parts, nested/non-BASIC parts, polymorphism,
+relationship-valued IdClass parts (extended separately by D35), nested/non-BASIC parts, polymorphism,
 business keys and collection-loading optimizations remain out of scope.
 
 The focused annotation/XML regression test failed before the production change
@@ -2070,20 +2070,51 @@ and complex query shapes retain the established fallback/refusal. D34 adds no
 collection joins and does not widen unrelated eligibility. Build and TCK evidence
 is recorded in `TCK.md`.
 
-Prioritized backlog after D34, 2026-10-18. Each item needs its own approved, bounded lot; until then
+### D35 — Multiple IdClass parents in element collections ✅ (2026-10-18)
+
+D35 extends D32 to multiple relationship-valued `@IdClass` parts, each an owning
+to-one FK to a non-polymorphic parent with a simple, non-derived ID; other parts
+remain BASIC. Persistence 3.2 §2.4.2 explicitly permits more than one parent
+entity, and §2.4.2.1 requires each relationship-named IdClass attribute to use
+its parent's identifier type. Collection elements still have no entity identity
+(§2.7–2.8): their owning FK references the target's complete identity.
+
+The existing relational-key planner already flattens all these parts into
+physical columns and binders. This lot widens only its element-target eligibility
+guard and preserves generated access, FK-part ordering and ordinary loading.
+Annotation and metadata-complete owner/value XML are covered; the target's
+relationship-valued identifier remains annotation-mapped, as at D32.
+Composite/chained-derived parents, nested/non-BASIC parts, business/join-table
+and polymorphic mappings remain outside the extension. Fetch/graph optimization,
+lazy references and batching are unchanged.
+
+The mandatory red failed at bootstrap with `requires an eligible primary-key
+target`. The regression uses two generated simple parent IDs in reversed roles,
+reordered explicit join columns, duplicate references and a null association.
+It verifies physical tuples and grouped FK enforcement, managed identity,
+JPQL/Criteria projections and navigation, entity-parameter comparison, collection
+rewrites, detached merge, owner removal without target removal and partial-null
+refusal. Separate cases retain composite/chained-parent bootstrap refusals.
+`ElementCollectionRelationsTest`: **31/31 passed**; coupled
+`DerivedIdentityTest`: **7/7 passed**. Full clean install: **1115 tests /
+0 failures / 0 errors / 0 skipped**, across 92 reports. The full locally patched
+TCK remains **2135 / 2131 / 0 / 0 / 4**, with all execution/class/method/outcome
+identities identical to D26; provenance and commands are in `TCK.md`.
+
+Prioritized backlog after D35, 2026-10-18. Each item needs its own approved, bounded lot; until then
 the documented fallback (follow-up selects, eager loading, or an explicit refusal naming the
 milestone) stays in place.
 
 1. **Remaining relational mapping shapes** — derived/nested identity targets and
    composite forms beyond D23, D29's direct BASIC `@EmbeddedId`/`@IdClass`,
    D30's simple shared `@MapsId` contract, D31's single direct BASIC
-   `@EmbeddedId` component and D32's single relationship component in a direct
-   BASIC `@IdClass`; business joins
+   `@EmbeddedId` component and D35's multiple simple-parent relationship
+   components in a direct `@IdClass`; business joins
    through join tables or inheritance, broader secondary-table business tuples/
    PK joins beyond D26, embedded business association paths,
    inverse collections and safely mutable referenced keys; inverse many-to-many
    indexes and broader relationships inside collection-table embeddable elements
-   beyond D24/D28/D29/D30/D31/D32 (business/join-table and unsupported composite or
+   beyond D24/D28/D29/D30/D31/D32/D35 (business/join-table and unsupported composite or
    derived forms). After D25,
    inverse entity-owner relationships need a
    separate normative/cardinality contract; illegal inverse collection embeddables
@@ -2110,6 +2141,7 @@ Recorded before implementation; each entry: date, decision, reason.
 
 | # | Date | Decision | Status |
 |---|---|---|---|
+| D35 | 2026-10-18 | Extend D24 element-value owning to-ones to direct IdClass targets with multiple relationship-valued identifier parts, each an owning to-one FK to a non-polymorphic simple-ID parent; other parts remain BASIC. Reuse relational key ordering, physical FK columns and existing generated identity access. Keep composite/derived parents, nested identifiers, business/join-table/polymorphic mappings and collection-loading optimizations outside this lot. | Actioned |
 | D33 | 2026-10-18 | Extend D19/D20 root-collection graph staging to at most three collection edges along a nested graph path. Reuse independent bounded collectors and distinct intermediate owner identities for JPQL/Criteria and non-locking find FETCH/LOAD graphs; keep SQL root pagination, callbacks/cache/managed-state ordering and the existing loader. Preserve D21's two-edge root-to-one path, cyclic/type-revisiting paths, fourth edges, unsupported eager closures and complex mappings as complete fallbacks/refusals; do not add collection joins or widen unrelated eligibility. | Actioned |
 | D34 | 2026-10-18 | Extend D21's separate root-to-one staged collection graph route to at most three collection edges per path. Reuse the collection-free seed, existing bounded collectors, distinct intermediate owner identities, SQL root pagination and staged loader lifecycle for JPQL/Criteria and non-locking find FETCH/LOAD graphs. Preserve cyclic/type-revisiting paths, fourth edges, unsupported eager closures and complex mappings as complete fallbacks/refusals; do not add collection joins or widen unrelated eligibility. | Actioned |
 | D32 | 2026-10-18 | Extend D24 element-value owning to-ones to a direct BASIC `IdClass` target with exactly one relationship-valued `@Id` part targeting a non-polymorphic simple-ID parent. Reuse the actual association FK column and the existing IdClass identity order; keep composite parents, multiple/non-BASIC relationship parts, nested keys, polymorphism, business keys and collection-loading optimizations out of scope. | Actioned |

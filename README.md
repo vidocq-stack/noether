@@ -560,6 +560,22 @@ primary-table scope and all D5/D9–D25 deliveries remain historical; the curren
 prioritized backlog and independently checked evidence are in the roadmaps
 and `noether-persistence/TCK.md`.
 
+### Multiple IdClass parents in element collections (D35, 2026-10-18)
+
+Following D29–D32's composite/derived target extensions, element-value owning
+to-ones can now reference an `@IdClass` target with multiple relationship-valued
+identifier parts. Each parent has a simple, non-derived ID and is non-polymorphic;
+other identifier parts are BASIC. The collection-row FK preserves the complete
+physical tuple and resolves one managed target identity, even when two parent
+roles point to the same entity type. Annotation and metadata-complete owner/value
+XML share the existing planner; relationship-valued target IDs remain annotation-mapped.
+
+JPQL/Criteria navigation and projections, duplicate/null references, collection
+rewrites, merge and owner removal retain ordinary loading semantics. Composite/
+chained parents, nested keys, business/join-table/polymorphic mappings and broader
+fetch/lazy/batch optimization remain outside this lot. Exact scope and regression
+evidence are in the roadmaps and `noether-persistence/TCK.md`.
+
 The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;
 the bundled Jakarta ORM schema retains its original upstream licence.
