@@ -68,6 +68,7 @@ import java.util.function.Function;
  */
 final class Translator {
     private static final int MAX_GRAPH_COLLECTION_DEPTH = 3;
+    private static final int MAX_ROOT_TO_ONE_COLLECTION_DEPTH = 3;
     private boolean inJoinCondition;
 
     /**
@@ -314,20 +315,24 @@ final class Translator {
     }
 
     /**
-     * D21: seed finite root to-one paths, then reuse the collection collectors at each of the two
-     * collection depths. A collection requested at both depths is read once, after all its owners are known.
+     * D21/D34: seed finite root to-one paths, then reuse the collection collectors at each bounded
+     * collection depth. A collection requested at multiple depths is read once after all its owners are known.
      */
     private List<List<Compiled>> rootToOneCollections(MappedEntity root, FetchPlan graph) {
-        List<Map<MappedEntity, FetchPlan>> owners = List.of(new java.util.LinkedHashMap<>(), new java.util.LinkedHashMap<>());
+        List<Map<MappedEntity, FetchPlan>> owners = new ArrayList<>(MAX_ROOT_TO_ONE_COLLECTION_DEPTH);
+        for (int depth = 0; depth < MAX_ROOT_TO_ONE_COLLECTION_DEPTH; depth++) {
+            owners.add(new java.util.LinkedHashMap<>());
+        }
         FetchPlan seed = new FetchPlan();
         if (!stagedCollections(root, graph, seed, owners, 0, new java.util.HashSet<>())) return List.of();
         if (owners.stream().allMatch(Map::isEmpty)) return List.of();
-        for (var later : owners.get(1).entrySet()) {
-            FetchPlan earlier = owners.get(0).get(later.getKey());
-            if (earlier == null) continue;
-            // Move compatible requests together; no shared owner/collection is read once per root branch.
-            later.getValue().merge(earlier);
-            owners.get(0).remove(later.getKey());
+        for (int depth = 1; depth < owners.size(); depth++) {
+            for (var later : owners.get(depth).entrySet()) {
+                for (int earlierDepth = depth - 1; earlierDepth >= 0; earlierDepth--) {
+                    FetchPlan earlier = owners.get(earlierDepth).remove(later.getKey());
+                    if (earlier != null) later.getValue().merge(earlier);
+                }
+            }
         }
         Map<MappedEntity, FetchPlan> scheduled = new java.util.LinkedHashMap<>();
         owners.forEach(stage -> stage.forEach((type, plan) -> scheduled.computeIfAbsent(type, _ -> new FetchPlan()).merge(plan)));

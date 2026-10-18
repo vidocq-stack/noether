@@ -258,11 +258,26 @@ are captured before the existing loader registers entities, resolves links,
 completes wrappers, snapshots, publishes cache entries or dispatches callbacks.
 No new loader or SQL join is introduced.
 
-This extension applies only to nested collection paths beginning at a root
-collection. D21's root-to-one seed path remains bounded to two collection edges.
-Type-revisiting explicit cycles, a fourth edge, unsupported eager closures and
-non-hydratable or complex mappings reject split execution before SQL and retain
-the complete established fallback/refusal.
+This extension applies to nested collection paths beginning at a root
+collection. At D33, D21's separate root-to-one seed path still had its original
+two-edge limit; D34 extends that route to three edges too. Type-revisiting
+explicit cycles, a fourth edge, unsupported eager closures and non-hydratable or
+complex mappings reject split execution before SQL and retain the complete
+established fallback/refusal.
+
+== Three collection stages through root to-one paths (D34, 2026-10-18)
+
+D34 expands the root-to-one route's owner-stage plan to three collection levels.
+Compatible requests for the same mapped owner type are merged into the latest
+stage, whose input includes identities captured by earlier stages; this keeps
+one grouped collection read after the available distinct owners have been
+discovered. The existing `splitRows` pipeline collects every stage before
+relationship registration and callbacks. Root-only SQL pagination and each
+collector's parameter bound are unchanged.
+
+The fourth collection edge, type-revisiting explicit paths, unsupported eager
+closures and unsupported query/mapping shapes still select complete fallback
+or refusal before split SQL runs.
 
 == Lazy read batches (D13, 2026-10-15)
 

@@ -49,7 +49,8 @@ class CollectionSubgraphTest {
         factory = new PersistenceConfiguration("collection-subgraph")
             .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
             .managedClass(Order.class).managedClass(Line.class).managedClass(Product.class).managedClass(Supplier.class)
-            .managedClass(Category.class).managedClass(Customer.class).managedClass(Item.class).managedClass(SpecialItem.class)
+            .managedClass(Category.class).managedClass(Customer.class).managedClass(Bundle.class)
+            .managedClass(Item.class).managedClass(SpecialItem.class)
             .managedClass(Payment.class)
             .sharedCacheMode(SharedCacheMode.ALL)
             .property("io.vidocq.noether.jpa.fetch.batch-size", batchSize)
@@ -62,6 +63,11 @@ class CollectionSubgraphTest {
         Product hammer = new Product(200, "hammer", acme, tools), saw = new Product(201, "saw", globex, tools);
         Product drill = new Product(202, "drill", null, tools);
         hammer.getTags().addAll(List.of("steel", "wood"));
+        Bundle hammerBundle = new Bundle(800), sawBundle = new Bundle(801);
+        hammerBundle.getLabels().addAll(List.of("heavy", "hand-tool"));
+        sawBundle.getLabels().add("cutting-tool");
+        hammer.getBundles().add(hammerBundle);
+        saw.getBundles().add(sawBundle);
         Customer alice = new Customer(500, "alice");
         alice.setFavorite(hammer);
         alice.getRecommendations().addAll(List.of(hammer, hammer, saw));
@@ -91,7 +97,7 @@ class CollectionSubgraphTest {
         first.getPayments().addAll(List.of(noTarget, payment));
         em.persist(payment);
         em.persist(noTarget);
-        for (Object entity : List.of(tools, acme, globex, hammer, saw, drill, alice, plain, special, first, empty, third,
+        for (Object entity : List.of(tools, acme, globex, hammer, saw, drill, hammerBundle, sawBundle, alice, plain, special, first, empty, third,
                 l10, l11, l12, l13, l20, l21)) em.persist(entity);
         em.getTransaction().commit();
         cold();
@@ -100,7 +106,7 @@ class CollectionSubgraphTest {
     @AfterEach void close() {
         Order.inspectRootBranch = Order.inspectRecommendations = false;
         Order.inspectNested = Line.inspectNested = false;
-        Product.inspectThirdLevel = false;
+        Product.inspectThirdLevel = Bundle.inspectThirdLevel = false;
         Order.requireComplete = Payment.inspect = Order.inspectAll = Order.inspect = Order.inspectMixed = Line.inspectAll = Line.inspect = Product.fail = Product.mutate = false;
         if (factory != null) factory.close();
     }
@@ -113,7 +119,8 @@ class CollectionSubgraphTest {
         em.clear();
         factory.getCache().evictAll();
         sql.clear();
-        for (AtomicInteger counter : List.of(Order.LOADS, Line.LOADS, Product.LOADS, Supplier.LOADS, Category.LOADS, Customer.LOADS)) counter.set(0);
+        for (AtomicInteger counter : List.of(Order.LOADS, Line.LOADS, Product.LOADS, Supplier.LOADS, Category.LOADS,
+                Customer.LOADS, Bundle.LOADS)) counter.set(0);
     }
 
     /** {@code collection{product{nested...}}}. */
@@ -162,6 +169,72 @@ class CollectionSubgraphTest {
         graph.addSubgraph("customer").addSubgraph("favorite").addAttributeNodes("tags", "facts", "supplier");
         graph.addSubgraph("featured").addAttributeNodes("tags", "facts", "supplier");
         return graph;
+    }
+
+    private EntityGraph<Order> rootToOneThreeCollectionGraph() {
+        var graph = em.createEntityGraph(Order.class);
+        graph.addSubgraph("customer").addSubgraph("recommendations")
+            .addSubgraph("bundles").addAttributeNodes("labels");
+        return graph;
+    }
+
+    @Test void threeCollectionEdgesUnderRootToOneOwnersUseGroupedReadsForJpqlCriteriaAndFindBeforeCallbacks() {
+        for (String hint : List.of(FETCH, LOAD)) {
+            for (String operation : List.of("jpql", "criteria", "find")) {
+                cold();
+                Bundle.inspectThirdLevel = true;
+                List<Order> found;
+                if (operation.equals("find")) {
+                    found = List.of(em.find(Order.class, 1L, Map.of(hint, rootToOneThreeCollectionGraph())));
+                } else if (operation.equals("criteria")) {
+                    var cb = em.getCriteriaBuilder();
+                    var criteria = cb.createQuery(Order.class);
+                    var root = criteria.from(Order.class);
+                    criteria.select(root).distinct(true).orderBy(cb.asc(root.get("id")));
+                    found = em.createQuery(criteria).setHint(hint, rootToOneThreeCollectionGraph()).getResultList();
+                } else found = orders(hint, rootToOneThreeCollectionGraph());
+                assertThat(selects()).as(operation + "/" + hint + sql).isEqualTo(operation.equals("find") ? 4 : 5);
+                var recommendations = found.getFirst().getCustomer().getRecommendations();
+                assertThat(recommendations).extracting(Product::getId).containsExactlyInAnyOrder(200L, 200L, 201L);
+                Product hammer = recommendations.stream().filter(product -> product.getId() == 200L).findFirst().orElseThrow();
+                Product saw = recommendations.stream().filter(product -> product.getId() == 201L).findFirst().orElseThrow();
+                assertThat(hammer.getBundles()).singleElement().satisfies(bundle ->
+                    assertThat(bundle.getLabels()).containsExactlyInAnyOrder("heavy", "hand-tool"));
+                assertThat(saw.getBundles()).singleElement().satisfies(bundle ->
+                    assertThat(bundle.getLabels()).containsExactly("cutting-tool"));
+                assertThat(Bundle.LOADS.get()).isEqualTo(2);
+                assertThat(selects()).isEqualTo(operation.equals("find") ? 4 : 5);
+            }
+            cold();
+            Bundle.inspectThirdLevel = true;
+            List<Order> page = em.createQuery("select o from CsOrder o order by o.id", Order.class)
+                .setHint(hint, rootToOneThreeCollectionGraph()).setFirstResult(0).setMaxResults(2).getResultList();
+            assertThat(page).extracting(Order::getId).containsExactly(1L, 2L);
+            assertThat(page.getFirst().getCustomer().getRecommendations()).allSatisfy(product ->
+                assertThat(product.getBundles()).allSatisfy(bundle ->
+                    assertThat(bundle.getLabels()).isNotEmpty()));
+            assertThat(sql.getFirst()).containsIgnoringCase("fetch first").doesNotContainIgnoringCase("join");
+            assertThat(selects()).isEqualTo(5);
+        }
+    }
+
+    @Entity(name = "CsBundle") @Table(name = "CS_BUNDLE")
+    public static class Bundle {
+        static final AtomicInteger LOADS = new AtomicInteger();
+        static boolean inspectThirdLevel;
+        private long id;
+        private List<String> labels = new ArrayList<>();
+        public Bundle() {}
+        Bundle(long id) { this.id = id; }
+        @Id public long getId() { return id; }
+        public void setId(long id) { this.id = id; }
+        @ElementCollection @CollectionTable(name = "CS_BUNDLE_LABEL")
+        public List<String> getLabels() { return labels; }
+        public void setLabels(List<String> labels) { this.labels = labels; }
+        @PostLoad void loaded() {
+            LOADS.incrementAndGet();
+            if (inspectThirdLevel) assertThat(io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(labels)).isFalse();
+        }
     }
 
     /** §3.7.4: root to-one paths share distinct collection owners, before any lifecycle callback. */
@@ -1724,6 +1797,7 @@ class CollectionSubgraphTest {
         private Category category;
         private List<String> tags = new ArrayList<>();
         private Map<String, String> facts = new LinkedHashMap<>();
+        private Collection<Bundle> bundles = new ArrayList<>();
         public Product() {}
         Product(long id, String name, Supplier supplier, Category category) {
             this.id = id; this.name = name; this.supplier = supplier; this.category = category;
@@ -1744,6 +1818,9 @@ class CollectionSubgraphTest {
         @ElementCollection @CollectionTable(name = "CS_PRODUCT_FACT") @MapKeyColumn(name = "fact_key")
         public Map<String, String> getFacts() { return facts; }
         public void setFacts(Map<String, String> facts) { this.facts = facts; }
+        @ManyToMany @JoinTable(name = "CS_PRODUCT_BUNDLE")
+        public Collection<Bundle> getBundles() { return bundles; }
+        public void setBundles(Collection<Bundle> bundles) { this.bundles = bundles; }
         @PostLoad void loaded() {
             LOADS.incrementAndGet();
             if (inspectThirdLevel) assertThat(io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(tags)).isFalse();

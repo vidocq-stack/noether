@@ -222,11 +222,29 @@ Find omits the root-selection query; managed/cache-complete graph hits keep thei
 existing no-SQL behavior. FETCH/LOAD, empty owners, duplicates, shared identities
 and collection values retain the existing assembler and loader contracts.
 
-This does not widen D21's two-edge root-to-one collection path. Explicit
+At D33, the separate D21 root-to-one collection path still had its original
+two-edge limit; D34 extends that route to three edges too. Explicit
 type-revisiting cycles, paths with a fourth collection edge, unsupported eager
 closures, non-hydratable mappings and complex query shapes retain complete
 ordinary loading or established refusal. Broader polymorphic/map-key/locking
 eligibility and collection joins are not included.
+
+[[d34-root-to-one-three-collection-edges]]
+== Three collection edges through root to-one paths (D34, 2026-10-18)
+
+D34 extends D21's root-to-one seed route to at most three collection edges along
+one FETCH/LOAD graph path, for example
+`Order.customer.recommendations.bundles.labels`. JPQL, Criteria and non-locking
+`find` continue to use a collection-free LEFT to-one seed followed by the
+existing distinct-owner, key-bounded collection collectors. Root identities are
+still selected and paginated in SQL before collection loading, and every stage
+completes before the loader resolves relationships, snapshots, publishes cache
+entries or dispatches callbacks.
+
+The fourth edge, explicit type-revisiting cycles, unsupported eager closures,
+non-hydratable owners/targets and complex query shapes retain complete ordinary
+loading or established explicit refusal. This does not add collection joins or
+change D33's separate root-collection route and other graph eligibility.
 
 == To-one relationships in element-collection values (D24, 2026-10-16)
 
@@ -523,7 +541,8 @@ or `customer.favorite.tags`. The D19/D20 eligible JPQL/Criteria query shapes
 (one concrete root, optional DISTINCT, no explicit joins/grouping/having/set/
 additional selections or locking) and non-locking find retain their boundaries.
 FETCH and LOAD graphs, independent root collections, element to-one subgraphs
-and at most *two collection edges per graph path* are supported.
+and, at D21, at most *two collection edges per graph path* were supported. D34
+later extends this root-to-one route to three collection edges.
 
 A bounded collection-free LEFT to-one seed discovers intermediate owners before
 the existing collectors run. Compatible requests shared between collection
@@ -542,12 +561,14 @@ duplicate/list/map contents, flush and no find auto-flush are retained.
 Complete managed/cache finds need neither SELECT nor a new JDBC connection.
 Mutable graphs and hint replacement are planned per execution.
 
-Explicit cyclic/type-revisiting paths, a third collection edge, unsupported mapped
-eager closures, polymorphic/non-hydratable owners or targets, unsupported keys and
-embedded paths and the earlier complex/locking query/find shapes retain complete
-fallback or explicit refusal. Existing pagination guards, explicit fetch joins and
-earlier graph eligibility are unchanged. Deeper/cyclic graph optimization, broader
-fetch/lazy/batch eligibility and missing mappings remain separate priorities.
+At D21, explicit cyclic/type-revisiting paths and a third collection edge retained
+complete fallback or explicit refusal; D34 later extends the staged route to three
+edges. Unsupported mapped eager closures, polymorphic/non-hydratable owners or
+targets, unsupported keys and embedded paths and the earlier complex/locking
+query/find shapes retain complete fallback or explicit refusal. Existing pagination
+guards, explicit fetch joins and earlier graph eligibility are unchanged.
+Deeper-than-three/cyclic graph optimization, broader fetch/lazy/batch eligibility
+and missing mappings remain separate priorities.
 
 == Lazy read batching
 

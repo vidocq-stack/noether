@@ -116,10 +116,11 @@ var deepOrders = em.createQuery("select o from Order o order by o.id", Order.cla
 ----
 
 Each collection edge is read separately after SQL-only root pagination; callbacks
-run after the third-level values are complete. D21's root-to-one path remains
-limited to two collection edges. Explicit type-revisiting cycles, a fourth edge
-and unsupported polymorphic/complex targets retain complete ordinary loading or
-established explicit refusal.
+run after the third-level values are complete. D34 also supports three collection
+edges on paths reached through a root to-one, such as
+`Order.customer.recommendations.bundles.labels`. Explicit type-revisiting cycles,
+a fourth edge and unsupported polymorphic/complex targets retain complete
+ordinary loading or established explicit refusal.
 See xref:reference.adoc#_two_collection_graph_edges_d20_2026_10_16[].
 See xref:reference.adoc#_root_to_one_collection_graphs_d21_2026_10_16[].
 See xref:reference.adoc#d33-three-collection-edges[].

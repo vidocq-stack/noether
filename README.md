@@ -329,11 +329,12 @@ or auto-flush (the connection-count regression is tracked as BUG-20261016-03).
 BUG-20261016-02, exposed by removing one duplicate from a nested managed bag, is
 fixed by reusing whole-owner join-row rewriting when a bag snapshot has duplicates.
 
-This is not arbitrary-depth graph SQL: third collection edges, collections under
-root to-one branches, unsupported eager closures, polymorphic/complex mappings,
-entity/embeddable map keys and broader joins/grouped/locked/set queries retain
-complete ordinary loading or established explicit refusal. Eager to-one expansion
-is cycle-guarded; deeper finite cyclic graphs fall back. Counts exclude ordinary
+At D20, third collection edges, collections under root to-one branches,
+unsupported eager closures, polymorphic/complex mappings, entity/embeddable map
+keys and broader joins/grouped/locked/set queries retained complete ordinary
+loading or explicit refusal. D21, D33 and D34 separately extend nested collection
+graphs while preserving those other boundaries. Eager to-one expansion is
+cycle-guarded; deeper finite cyclic graphs fall back. Counts exclude ordinary
 completion for dirty in-memory relationship changes and omitted unsupported lazy
 mappings. Existing explicit fetch joins and unnested single-collection collectors
 are unchanged. D5/D9–D19 and BUG-20261016-01 above are historical delivery records.
@@ -349,10 +350,10 @@ hydration, then D19/D20 collectors read distinct intermediate owners. Shared
 customers/products are not loaded once per order; compatible owner-type requests
 shared across collection depths are merged at the later stage.
 
-At D21, the bound remained **two collection edges per graph path**. D33 separately
-extends nested paths that begin at a root collection to three edges; D21's
-root-to-one seed path still has its two-edge limit. Independent root collections
-and element to-one subgraphs can coexist. Null to-ones retain their roots, empty
+At D21, the bound was **two collection edges per graph path**. D33 extends nested
+paths beginning at a root collection to three edges, and D34 extends the
+root-to-one seed path to three edges as well. Independent root collections and
+element to-one subgraphs can coexist. Null to-ones retain their roots, empty
 collections stay complete, and the existing duplicate/null/list/map semantics
 remain unchanged. All graph branches precede callbacks; dirty managed state, lazy
 wrappers/references, snapshots, flush, L2 cache and JDBC-free complete find hits
@@ -366,15 +367,14 @@ collection SELECT. Counts exclude ordinary completion of dirty reassigned
 relationships and unsupported lazy mappings. Root pagination remains SQL-only,
 followed by complete collection reads, never collection-row limits or in-memory paging.
 
-For D21's root-to-one route, explicit cyclic paths and a third collection edge,
-unsupported mapped eager closures, polymorphic/non-hydratable targets, unsupported
-keys/embedded paths and the existing complex/joined/grouped/set/locking query
-boundaries keep complete ordinary loading or explicit refusal. D33's separate
-root-collection route supports three edges. Explicit fetch joins and earlier graph
-eligibility are unchanged.
+For both supported staged routes, explicit cyclic paths and a fourth collection
+edge, unsupported mapped eager closures, polymorphic/non-hydratable targets,
+unsupported keys/embedded paths and the existing complex/joined/grouped/set/locking
+query boundaries keep complete ordinary loading or explicit refusal. Explicit
+fetch joins and earlier graph eligibility are unchanged.
 The remaining priorities are deeper-than-three/cyclic graphs, broader
-fetch/lazy/batch eligibility and missing mappings. D5/D9–D20 and BUG records
-above are historical; the D21 contract, D33 extension and verification are in
+fetch/lazy/batch eligibility and missing mappings. D5/D9–D21 and BUG records
+above are historical; the D21 contract, D33/D34 extensions and verification are in
 the detailed roadmap and `TCK.md`.
 
 Decision **D22 (2026-10-16)** pauses further graph optimization in favour of

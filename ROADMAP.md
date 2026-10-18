@@ -196,10 +196,12 @@ Eligible JPQL/Criteria and non-locking find, FETCH/LOAD, preserve dirty state,
 in-place wrappers/references, complete managed/cache fast hits and no find
 auto-flush. Null to-ones retain roots without inventing collection owners. Queries
 still page root identities only in SQL and complete every requested collection.
-Explicit cyclic paths, a third collection edge, unsupported eager closures,
-polymorphic/complex mappings and broader query shapes retain complete fallback
-or established refusal. Existing explicit fetch joins and D14–D20 eligibility
-remain unchanged. Exact count bounds and independently verified evidence are in
+At D21, explicit cyclic paths and a third collection edge retained complete
+fallback or established refusal; D33 and D34 later raise the separate staged
+routes to three collection edges. Unsupported eager closures, polymorphic/
+complex mappings and broader query shapes retain their existing boundaries.
+Explicit fetch joins and D14–D20 eligibility remain unchanged. Exact count bounds
+and independently verified evidence are in
 the detailed roadmap and `noether-persistence/TCK.md`; D5/D9–D20 and BUG records
 above remain historical.
 
@@ -341,6 +343,14 @@ complete fallbacks. The existing loader, identity, callback and cache ordering
 are unchanged; this does not add collection joins or broaden unrelated graph
 eligibility. The TCK and certification claim are not changed.
 
+Decision D34 (2026-10-18) extends the separate D21 root-to-one staged route to at
+most three collection edges per graph path. Its collection-free to-one seed and
+bounded collection collectors retain root-only SQL pagination, distinct-owner
+grouping and staged lifecycle ordering for JPQL, Criteria and non-locking
+find FETCH/LOAD graphs. Type-revisiting cycles, a fourth edge, unsupported eager
+closures and complex mappings keep their established fallbacks. No collection
+joins or unrelated graph eligibility are added.
+
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
@@ -359,8 +369,8 @@ detailed roadmap's "Remaining work"):
    after D25; inverse collection embeddables and entity targets that are embeddables
    are not a feature backlog. Orphan removal remains separate.
    Null basic collection elements were fixed by D13 (BUG-20261015-09).
-2. More than three collection edges, a third edge on D21's root-to-one path and
-   broader cyclic graph optimization remain separate bounded lots.
+2. More than three collection edges and broader cyclic graph optimization remain
+   separate bounded lots.
    Broader SQL fetch eligibility: same-query owner pagination,
    entity/embeddable map keys; polymorphic/`JOINED`/`TABLE_PER_CLASS` targets,
    broader to-one `DISTINCT` and locking queries, embedded/treated graph paths and complex graph queries.
