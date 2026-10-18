@@ -1140,6 +1140,221 @@ class ElementCollectionRelationsTest {
             .isInstanceOf(PersistenceException.class).hasMessageContaining("identifier types must match");
     }
 
+    // §2.4.2.1 and §2.8: a named embedded component carries the composite parent's identity.
+    @Test void namedCompositeMapsIdKeepsElementTuplesAndManagedIdentity() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = namedCompositeConfiguration(xml);
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var firstParent = new CompositeTarget();
+                firstParent.id = new CompositeKey(3, 19);
+                var secondParent = new CompositeTarget();
+                secondParent.id = new CompositeKey(19, 3);
+                var first = new NamedCompositeTarget("same", firstParent);
+                var second = new NamedCompositeTarget("same", secondParent);
+                var third = new NamedCompositeTarget("other", firstParent);
+                var firstKey = new NamedCompositeKey("same", new CompositeKey(3, 19));
+                var secondKey = new NamedCompositeKey("same", new CompositeKey(19, 3));
+                var thirdKey = new NamedCompositeKey("other", new CompositeKey(3, 19));
+                var owner = new NamedCompositeOwner();
+                owner.id = 25L;
+                owner.values.add(new NamedCompositeValue("first", first));
+                owner.values.add(new NamedCompositeValue("duplicate", first));
+                owner.values.add(new NamedCompositeValue("null", null));
+                owner.values.add(new NamedCompositeValue("second", second));
+                owner.values.add(new NamedCompositeValue("third", third));
+                transaction(em, () -> { em.persist(first); em.persist(second); em.persist(third); em.persist(owner); });
+                assertThat(first.id).isEqualTo(firstKey);
+                assertThat(second.id).isEqualTo(secondKey);
+                assertThat(third.id).isEqualTo(thirdKey);
+                assertThat(factory.getPersistenceUnitUtil().getIdentifier(first)).isEqualTo(firstKey);
+                List<?> rows = em.createNativeQuery(
+                    "select element_code, element_region, element_serial from named_composite_values order by value_position")
+                    .getResultList();
+                assertThat((Object[]) rows.getFirst()).containsExactly("same", 3L, 19L);
+                assertThat((Object[]) rows.get(1)).containsExactly("same", 3L, 19L);
+                assertThat((Object[]) rows.get(2)).containsOnlyNulls();
+                assertThat((Object[]) rows.get(3)).containsExactly("same", 19L, 3L);
+                assertThat((Object[]) rows.get(4)).containsExactly("other", 3L, 19L);
+                em.getTransaction().begin();
+                assertThatThrownBy(() -> em.createNativeQuery(
+                    "insert into named_composite_values (owner_id, value_position, element_code, element_region, element_serial)"
+                        + " values (25, 5, 'same', 3, 3)").executeUpdate()).isInstanceOf(PersistenceException.class);
+                em.getTransaction().rollback();
+                em.clear();
+                factory.getCache().evictAll();
+                var found = em.find(NamedCompositeOwner.class, 25L);
+                var managedFirst = em.find(NamedCompositeTarget.class, firstKey);
+                var managedSecond = em.find(NamedCompositeTarget.class, secondKey);
+                var managedThird = em.find(NamedCompositeTarget.class, thirdKey);
+                assertThat(found.values).extracting(value -> value.target)
+                    .containsExactly(managedFirst, managedFirst, null, managedSecond, managedThird);
+                assertThat(found.values.getFirst().target).isSameAs(found.values.get(1).target).isSameAs(managedFirst);
+                assertThat(managedFirst.parent).isSameAs(managedThird.parent)
+                    .isSameAs(em.find(CompositeTarget.class, firstParent.id));
+                assertThat(em.createQuery(
+                    "select v.target from NamedCompositeOwner o join o.values v order by index(v)", NamedCompositeTarget.class)
+                    .getResultList()).containsExactly(managedFirst, managedFirst, null, managedSecond, managedThird);
+                assertThat(em.createQuery(
+                    "select v.target.parent.id.region from NamedCompositeOwner o join o.values v order by index(v)", Long.class)
+                    .getResultList()).containsExactly(3L, 3L, 19L, 3L);
+                assertThat(em.createQuery(
+                    "select v.target.id.parentKey.serial from NamedCompositeOwner o join o.values v order by index(v)", Long.class)
+                    .getResultList()).containsExactly(19L, 19L, 3L, 19L);
+                assertThat(em.createQuery(
+                    "select v.label from NamedCompositeOwner o join o.values v where v.target = :target", String.class)
+                    .setParameter("target", managedSecond).getResultList()).containsExactly("second");
+                var cb = em.getCriteriaBuilder();
+                var query = cb.createQuery(NamedCompositeTarget.class);
+                var values = query.from(NamedCompositeOwner.class).joinList("values");
+                query.select(values.get("target")).orderBy(cb.asc(values.index()));
+                assertThat(em.createQuery(query).getResultList())
+                    .containsExactly(managedFirst, managedFirst, null, managedSecond, managedThird);
+                var scalarQuery = cb.createQuery(Long.class);
+                var scalarValues = scalarQuery.from(NamedCompositeOwner.class).joinList("values");
+                scalarQuery.select(scalarValues.get("target").get("id").get("parentKey").get("region"))
+                    .orderBy(cb.asc(scalarValues.index()));
+                assertThat(em.createQuery(scalarQuery).getResultList()).containsExactly(3L, 3L, 19L, 3L);
+                var projected = em.createQuery(
+                    "select v from NamedCompositeOwner o join o.values v order by index(v)", NamedCompositeValue.class)
+                    .getResultList();
+                assertThat(projected.getFirst().target).isSameAs(managedFirst);
+                assertThat(projected.get(2).target).isNull();
+                transaction(em, () -> {
+                    found.values.remove(1);
+                    found.values.getFirst().target = managedSecond;
+                });
+                em.clear();
+                factory.getCache().evictAll();
+                var reloaded = em.find(NamedCompositeOwner.class, 25L);
+                assertThat(reloaded.values).extracting(value -> value.target == null ? null : value.target.id)
+                    .containsExactly(secondKey, null, secondKey, thirdKey);
+                em.clear();
+                reloaded.values.getFirst().target = first;
+                transaction(em, () -> assertThat(em.merge(reloaded).values.getFirst().target)
+                    .isSameAs(em.find(NamedCompositeTarget.class, firstKey)));
+                em.clear();
+                factory.getCache().evictAll();
+                var refreshed = em.find(NamedCompositeOwner.class, 25L);
+                assertThat(refreshed.values.getFirst().target.id).isEqualTo(firstKey);
+                refreshed.values.getFirst().target = em.find(NamedCompositeTarget.class, secondKey);
+                em.refresh(refreshed);
+                assertThat(refreshed.values.getFirst().target).isSameAs(em.find(NamedCompositeTarget.class, firstKey));
+                transaction(em, () -> em.remove(refreshed));
+                assertThat(em.find(NamedCompositeTarget.class, firstKey)).isNotNull();
+                assertThat(em.find(NamedCompositeTarget.class, secondKey)).isNotNull();
+                assertThat(em.createNativeQuery("select count(*) from named_composite_values").getSingleResult()).isEqualTo(0L);
+                var partial = new NamedCompositeOwner();
+                partial.id = 26L;
+                partial.values.add(new NamedCompositeValue("partial", em.find(NamedCompositeTarget.class, firstKey)));
+                transaction(em, () -> em.persist(partial));
+                transaction(em, () -> em.createNativeQuery(
+                    "update named_composite_values set element_serial = null where owner_id = 26").executeUpdate());
+                em.clear();
+                factory.getCache().evictAll();
+                assertThatThrownBy(() -> em.find(NamedCompositeOwner.class, 26L).values.size())
+                    .isInstanceOf(PersistenceException.class).hasMessageContaining("partially null");
+            }
+        }
+    }
+
+    private PersistenceConfiguration namedCompositeConfiguration(boolean xml) {
+        var configuration = configuration(false, NamedCompositeOwner.class, NamedCompositeValue.class,
+            NamedCompositeTarget.class, NamedCompositeKey.class, CompositeTarget.class, CompositeKey.class);
+        if (xml) configuration.mappingFile("orm/element-collection-named-composite-mapsid.xml");
+        return configuration;
+    }
+
+    @Test void namedCompositeMapsIdKeepsCacheIdentityAndRefusesParentOrBasicKeyChanges() {
+        for (boolean xml : List.of(false, true)) {
+            try (var factory = namedCompositeConfiguration(xml).sharedCacheMode(SharedCacheMode.ALL)
+                    .createEntityManagerFactory()) {
+                var key = new NamedCompositeKey("cached", new CompositeKey(7, 31));
+                try (var em = factory.createEntityManager()) {
+                    var parent = new CompositeTarget();
+                    parent.id = new CompositeKey(7, 31);
+                    var target = new NamedCompositeTarget("cached", parent);
+                    var owner = new NamedCompositeOwner();
+                    owner.id = 27L;
+                    owner.values.add(new NamedCompositeValue("first", target));
+                    owner.values.add(new NamedCompositeValue("duplicate", target));
+                    transaction(em, () -> { em.persist(target); em.persist(owner); });
+                    em.clear();
+                    assertThat(em.find(NamedCompositeOwner.class, 27L).values).hasSize(2);
+                }
+                assertThat(factory.getCache().contains(NamedCompositeOwner.class, 27L)).isTrue();
+                try (var em = factory.createEntityManager()) {
+                    var owner = em.find(NamedCompositeOwner.class, 27L);
+                    var target = em.find(NamedCompositeTarget.class, key);
+                    assertThat(owner.values.getFirst().target).isSameAs(owner.values.getLast().target).isSameAs(target);
+                    assertThat(target.parent).isSameAs(em.find(CompositeTarget.class, key.parentKey));
+                    var other = new CompositeTarget();
+                    other.id = new CompositeKey(31, 7);
+                    em.getTransaction().begin();
+                    em.persist(other);
+                    target.parent = other;
+                    assertThatThrownBy(em::flush).isInstanceOf(PersistenceException.class).hasMessageContaining("MapsId");
+                    em.getTransaction().rollback();
+                }
+                try (var em = factory.createEntityManager()) {
+                    var target = em.find(NamedCompositeTarget.class, key);
+                    em.getTransaction().begin();
+                    target.id.code = "changed";
+                    assertThatThrownBy(em::flush).isInstanceOf(PersistenceException.class).hasMessageContaining("MapsId");
+                    em.getTransaction().rollback();
+                }
+            }
+        }
+    }
+
+    @Test void namedCompositeMapsIdDefaultsAndRecordKeysRetainCompleteIdentity() {
+        try (var factory = configuration(false, DefaultNamedCompositeTarget.class, RecordNamedCompositeKey.class,
+                DefaultNamedCompositeOwner.class, DefaultNamedCompositeValue.class,
+                CompositeTarget.class, CompositeKey.class).createEntityManagerFactory();
+                var em = factory.createEntityManager()) {
+            var parent = new CompositeTarget();
+            parent.id = new CompositeKey(13, 29);
+            var first = new DefaultNamedCompositeTarget();
+            first.id = new RecordNamedCompositeKey(5, null, "first");
+            first.parent = parent;
+            var second = new DefaultNamedCompositeTarget();
+            second.id = new RecordNamedCompositeKey(6, null, "second");
+            second.parent = parent;
+            var owner = new DefaultNamedCompositeOwner();
+            owner.id = 28L;
+            owner.values.add(new DefaultNamedCompositeValue(first));
+            owner.values.add(new DefaultNamedCompositeValue(second));
+            transaction(em, () -> { em.persist(first); em.persist(second); em.persist(owner); });
+            var firstKey = new RecordNamedCompositeKey(5, new CompositeKey(13, 29), "first");
+            var secondKey = new RecordNamedCompositeKey(6, new CompositeKey(13, 29), "second");
+            assertThat(first.id).isEqualTo(firstKey);
+            assertThat(second.id).isEqualTo(secondKey);
+            List<?> rows = em.createNativeQuery(
+                "select sequence, parent_region, parent_serial, code from DefaultNamedCompositeTarget order by sequence")
+                .getResultList();
+            assertThat((Object[]) rows.getFirst()).containsExactly(5, 13L, 29L, "first");
+            em.clear();
+            factory.getCache().evictAll();
+            var found = em.find(DefaultNamedCompositeTarget.class, firstKey);
+            assertThat(found.id).isEqualTo(firstKey);
+            assertThat(found.parent).isSameAs(em.find(DefaultNamedCompositeTarget.class, secondKey).parent);
+            assertThat(em.find(DefaultNamedCompositeOwner.class, 28L).values).extracting(value -> value.target.id)
+                .containsExactly(firstKey, secondKey);
+            assertThat(em.find(DefaultNamedCompositeOwner.class, 28L).values.getFirst().target).isSameAs(found);
+        }
+    }
+
+    @Test void namedCompositeMapsIdTargetsKeepBroaderIdentityShapesRefused() {
+        assertThatThrownBy(() -> namedCompositeConfiguration(false).managedClass(CompositeParentSubtype.class)
+            .createEntityManagerFactory()).isInstanceOf(PersistenceException.class)
+            .hasMessageContaining("requires an eligible primary-key target");
+        assertThatThrownBy(() -> factory(false, NamedClassCompositeOwner.class, NamedClassCompositeValue.class,
+            NamedClassCompositeTarget.class, NamedClassCompositeKey.class, SharedClassParent.class, IdClassKey.class))
+            .isInstanceOf(PersistenceException.class).hasMessageContaining("requires an eligible primary-key target");
+        assertThatThrownBy(() -> factory(false, MultipleCompositeOwner.class, MultipleCompositeValue.class,
+            MultipleCompositeTarget.class, MultipleCompositeKey.class, CompositeTarget.class, CompositeKey.class))
+            .isInstanceOf(PersistenceException.class).hasMessageContaining("requires an eligible primary-key target");
+    }
+
     @Test void compositeAndSimpleIdClassParentsCanCoexistWithDefaultJoinColumns() {
         try (var factory = factory(false, CompositeParentsOwner.class, CompositeParentsValue.class,
                 CompositeParentsTarget.class, CompositeParentsKey.class, CompositeTarget.class, CompositeKey.class,
@@ -1694,6 +1909,94 @@ class ElementCollectionRelationsTest {
                 && java.util.Objects.equals(code, key.code);
         }
         @Override public int hashCode() { return java.util.Objects.hash(source, destination, code); }
+    }
+    @Embeddable public static class NamedCompositeKey implements java.io.Serializable {
+        public String code;
+        @Embedded public CompositeKey parentKey;
+        public NamedCompositeKey() {}
+        NamedCompositeKey(String code, CompositeKey parentKey) { this.code = code; this.parentKey = parentKey; }
+        @Override public boolean equals(Object other) {
+            return other instanceof NamedCompositeKey key && java.util.Objects.equals(code, key.code)
+                && java.util.Objects.equals(parentKey, key.parentKey);
+        }
+        @Override public int hashCode() { return java.util.Objects.hash(code, parentKey); }
+    }
+    @Entity(name = "NamedCompositeTarget") public static class NamedCompositeTarget {
+        @EmbeddedId public NamedCompositeKey id;
+        @MapsId("parentKey") @ManyToOne(cascade = CascadeType.PERSIST) @JoinColumns({
+            @JoinColumn(name = "named_serial_fk", referencedColumnName = "serial"),
+            @JoinColumn(name = "named_region_fk", referencedColumnName = "region")
+        })
+        public CompositeTarget parent;
+        public NamedCompositeTarget() {}
+        NamedCompositeTarget(String code, CompositeTarget parent) {
+            id = new NamedCompositeKey(code, null);
+            this.parent = parent;
+        }
+    }
+    @Entity(name = "NamedCompositeOwner") public static class NamedCompositeOwner {
+        @Id public Long id;
+        @ElementCollection @CollectionTable(name = "named_composite_values",
+            joinColumns = @JoinColumn(name = "owner_id"))
+        @OrderColumn(name = "value_position")
+        public List<NamedCompositeValue> values = new ArrayList<>();
+    }
+    @Embeddable public static class NamedCompositeValue {
+        public String label;
+        @ManyToOne @JoinColumns({
+            @JoinColumn(name = "element_serial", referencedColumnName = "named_serial_fk"),
+            @JoinColumn(name = "element_code", referencedColumnName = "code"),
+            @JoinColumn(name = "element_region", referencedColumnName = "named_region_fk")
+        })
+        public NamedCompositeTarget target;
+        public NamedCompositeValue() {}
+        NamedCompositeValue(String label, NamedCompositeTarget target) { this.label = label; this.target = target; }
+    }
+    @Embeddable public record RecordNamedCompositeKey(
+        int sequence, @Embedded CompositeKey parentKey, String code) implements java.io.Serializable {}
+    @Entity public static class DefaultNamedCompositeTarget {
+        @EmbeddedId public RecordNamedCompositeKey id;
+        @MapsId("parentKey") @ManyToOne(cascade = CascadeType.PERSIST) public CompositeTarget parent;
+    }
+    @Entity public static class DefaultNamedCompositeOwner {
+        @Id public Long id;
+        @ElementCollection @OrderColumn public List<DefaultNamedCompositeValue> values = new ArrayList<>();
+    }
+    @Embeddable public static class DefaultNamedCompositeValue {
+        @ManyToOne public DefaultNamedCompositeTarget target;
+        public DefaultNamedCompositeValue() {}
+        DefaultNamedCompositeValue(DefaultNamedCompositeTarget target) { this.target = target; }
+    }
+    @Embeddable public static class NamedClassCompositeKey implements java.io.Serializable {
+        public String code;
+        @Embedded public IdClassKey parentKey;
+    }
+    @Entity public static class NamedClassCompositeTarget {
+        @EmbeddedId public NamedClassCompositeKey id;
+        @MapsId("parentKey") @ManyToOne public SharedClassParent parent;
+    }
+    @Embeddable public static class NamedClassCompositeValue {
+        @ManyToOne public NamedClassCompositeTarget target;
+    }
+    @Entity public static class NamedClassCompositeOwner {
+        @Id public Long id;
+        @ElementCollection public List<NamedClassCompositeValue> values;
+    }
+    @Embeddable public static class MultipleCompositeKey implements java.io.Serializable {
+        @Embedded public CompositeKey first;
+        @Embedded public CompositeKey second;
+    }
+    @Entity public static class MultipleCompositeTarget {
+        @EmbeddedId public MultipleCompositeKey id;
+        @MapsId("first") @ManyToOne public CompositeTarget first;
+        @MapsId("second") @ManyToOne public CompositeTarget second;
+    }
+    @Embeddable public static class MultipleCompositeValue {
+        @ManyToOne public MultipleCompositeTarget target;
+    }
+    @Entity public static class MultipleCompositeOwner {
+        @Id public Long id;
+        @ElementCollection public List<MultipleCompositeValue> values;
     }
     @Entity(name = "SharedIdClassOwner") public static class SharedIdClassOwner {
         @Id public Long id;

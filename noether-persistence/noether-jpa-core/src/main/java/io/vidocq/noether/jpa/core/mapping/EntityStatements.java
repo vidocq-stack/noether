@@ -867,7 +867,18 @@ public final class EntityStatements {
                         || derived.kind() != AssociationAttribute.Kind.ONE_TO_ONE) return false;
             } else if (target.id() instanceof IdModel.Embedded embedded) {
                 List<AttributeModel> parts = embedded.attribute().embeddable().attributes();
-                if (parts.stream().anyMatch(attribute -> !(attribute instanceof BasicAttribute))) return false;
+                if (parts.stream().anyMatch(attribute -> !(attribute instanceof BasicAttribute))) {
+                    if (mapsIds.size() != 1 || derived.mapsId().isEmpty()) return false;
+                    AttributeModel component = parts.stream().filter(part -> part.name().equals(derived.mapsId()))
+                        .findFirst().orElse(null);
+                    EntityModel parent = models.apply(derived.targetEntity());
+                    return component instanceof EmbeddedAttribute nested
+                        && nested.embeddable().attributes().stream().allMatch(BasicAttribute.class::isInstance)
+                        && parts.stream().allMatch(part -> part == component || part instanceof BasicAttribute)
+                        && parent != null && parent.id() instanceof IdModel.Embedded parentId
+                        && parentId.attribute().javaType() == nested.javaType()
+                        && eligibleBasicElementParent(derived, false, models, inheritances);
+                }
                 if (derived.mapsId().isEmpty()) {
                     EntityModel parent = models.apply(derived.targetEntity());
                     Class<?> parentKey = parent == null ? null : switch (parent.id()) {
@@ -942,32 +953,17 @@ public final class EntityStatements {
     private static List<KeyColumn> relationalKeys(EntityModel entity, Function<Class<?>, EntityModel> models,
             Function<BasicAttribute, ValueBinder> binders,
             Function<Class<?>, InheritanceMapping> inheritances, boolean delimited) {
-        List<KeyColumn> keys = entity.id() instanceof IdModel.ByIdClass idClass
-            ? idClassKeyColumns(idClass, models, binders, delimited) : keyColumns(entity, binders);
+        List<KeyColumn> keys = switch (entity.id()) {
+            case IdModel.ByIdClass idClass -> idClassKeyColumns(idClass, models, binders, delimited);
+            case IdModel.Embedded embedded -> embeddedRelationalKeys(entity, embedded.attribute(), models, binders, delimited);
+            default -> keyColumns(entity, binders);
+        };
         if (keys == null) return null;
         for (AttributeModel attribute : entity.attributes()) {
             if (!(attribute instanceof AssociationAttribute association) || association.mapsId() == null) continue;
-            EntityModel target = models.apply(association.targetEntity());
-            List<KeyColumn> parent = keyColumns(target, binders);
-            if (parent == null) return null;
-            JoinColumnModel[] joins = byKeyPart(describe(association), association.joinColumns(), parent, target, delimited);
-            if (joins == null) return null;
-            List<KeyColumn> derived = new ArrayList<>();
-            for (int k = 0; k < parent.size(); k++) {
-                String name = joins[k].name() == null ? leaf(association.name()) + "_" + parent.get(k).name() : joins[k].name();
-                derived.add(new KeyColumn(name, parent.get(k).binder()));
-            }
-            if (association.mapsId().isEmpty()) {
-                keys = derived;
-            } else if (keys != null && entity.id() instanceof IdModel.Embedded embedded && derived.size() == 1) {
-                keys = new ArrayList<>(keys);
-                var components = embedded.attribute().embeddable().attributes();
-                for (int c = 0; c < components.size(); c++) {
-                    if (components.get(c).name().equals(association.mapsId())) keys.set(c, derived.getFirst());
-                }
-            } else {
-                return null;
-            }
+            if (!association.mapsId().isEmpty()) continue;
+            keys = associationKeyColumns(association, models, binders, delimited);
+            if (keys == null) return null;
         }
         InheritanceMapping mapping = inheritances.apply(entity.javaType());
         if (keys == null || mapping == null || !mapping.joined()) {
@@ -982,6 +978,27 @@ public final class EntityStatements {
         return relational;
     }
 
+    private static List<KeyColumn> embeddedRelationalKeys(EntityModel entity, EmbeddedAttribute embedded,
+            Function<Class<?>, EntityModel> models, Function<BasicAttribute, ValueBinder> binders, boolean delimited) {
+        List<KeyColumn> keys = new ArrayList<>();
+        for (AttributeModel component : embedded.embeddable().attributes()) {
+            AssociationAttribute derived = entity.attributes().stream()
+                .filter(AssociationAttribute.class::isInstance).map(AssociationAttribute.class::cast)
+                .filter(association -> component.name().equals(association.mapsId())).findFirst().orElse(null);
+            if (derived != null) {
+                List<KeyColumn> parentKeys = associationKeyColumns(derived, models, binders, delimited);
+                if (parentKeys == null) return null;
+                keys.addAll(parentKeys);
+            } else if (component instanceof BasicAttribute basic) {
+                ColumnModel column = embedded.column(basic.name()).orElse(basic.column());
+                keys.add(new KeyColumn(column.name(), binders.apply(basic)));
+            } else {
+                return null;
+            }
+        }
+        return keys;
+    }
+
     private static List<KeyColumn> idClassKeyColumns(IdModel.ByIdClass idClass,
             Function<Class<?>, EntityModel> models, Function<BasicAttribute, ValueBinder> binders, boolean delimited) {
         List<KeyColumn> keys = new ArrayList<>();
@@ -989,20 +1006,28 @@ public final class EntityStatements {
             if (attribute instanceof BasicAttribute basic) {
                 keys.add(new KeyColumn(basic.column().name(), binders.apply(basic)));
             } else if (attribute instanceof AssociationAttribute association) {
-                EntityModel parent = models.apply(association.targetEntity());
-                List<KeyColumn> parentKeys = parent == null ? null : keyColumns(parent, binders);
+                List<KeyColumn> parentKeys = associationKeyColumns(association, models, binders, delimited);
                 if (parentKeys == null) return null;
-                JoinColumnModel[] joins = byKeyPart(describe(association), association.joinColumns(),
-                    parentKeys, parent, delimited);
-                if (joins == null) return null;
-                for (int part = 0; part < parentKeys.size(); part++) {
-                    String name = joins[part].name() == null
-                        ? leaf(association.name()) + "_" + parentKeys.get(part).name() : joins[part].name();
-                    keys.add(new KeyColumn(name, parentKeys.get(part).binder()));
-                }
+                keys.addAll(parentKeys);
             } else {
                 return null;
             }
+        }
+        return keys;
+    }
+
+    private static List<KeyColumn> associationKeyColumns(AssociationAttribute association,
+            Function<Class<?>, EntityModel> models, Function<BasicAttribute, ValueBinder> binders, boolean delimited) {
+        EntityModel parent = models.apply(association.targetEntity());
+        List<KeyColumn> parentKeys = parent == null ? null : keyColumns(parent, binders);
+        if (parentKeys == null) return null;
+        JoinColumnModel[] joins = byKeyPart(describe(association), association.joinColumns(), parentKeys, parent, delimited);
+        if (joins == null) return null;
+        List<KeyColumn> keys = new ArrayList<>();
+        for (int part = 0; part < parentKeys.size(); part++) {
+            String name = joins[part].name() == null
+                ? leaf(association.name()) + "_" + parentKeys.get(part).name() : joins[part].name();
+            keys.add(new KeyColumn(name, parentKeys.get(part).binder()));
         }
         return keys;
     }

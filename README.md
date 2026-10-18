@@ -613,17 +613,33 @@ Scope and regression evidence are in the roadmaps and `noether-persistence/TCK.m
 An element-value owning to-one can reference a dependent whose whole direct
 all-BASIC `@EmbeddedId` is shared through one owning `@OneToOne @MapsId`
 with a non-polymorphic parent using the same key type as a direct all-BASIC
-`@EmbeddedId` or `@IdClass`. The collection
-FK uses the dependent's physical PK/FK column names, including reordered
+`@EmbeddedId` or `@IdClass`. The collection FK uses the dependent's physical
+PK/FK column names, including reordered
 explicit joins. Existing whole-key derivation, managed identity and ordinary
 query/lifecycle/cache behavior are reused. D39 fixes BUG-20261018-01: the
 dependent key is copied by generated attribute access, independently of the
 parent's identifier declaration order.
 
 Annotations and metadata-complete ORM XML cover the full mapping. Named-component
-composite parents, nested/non-BASIC/chained keys, relationship-valued parent keys,
-polymorphism and broader fetch/lazy/batch support remain outside the extension.
+composite parents beyond D40 below, general nested/non-BASIC/chained keys,
+relationship-valued parent keys, polymorphism and broader fetch/lazy/batch
+support remain outside the extension.
 See the roadmaps and `noether-persistence/TCK.md` for the exact regression scope.
+
+### Named composite MapsId element targets (D40, 2026-10-18)
+
+An element-value owning to-one may reference an EmbeddedId target with one
+named embedded component derived by `@MapsId("componentName")` from a
+non-polymorphic parent with a direct all-BASIC `@EmbeddedId` of the same
+component type. Other target key parts are BASIC. The collection FK expands
+the component into the parent's complete physical tuple, alongside those
+remaining parts; reordered explicit joins and default joins are supported.
+
+Annotations and metadata-complete XML use existing generated identity access,
+query, lifecycle and cache paths. Mutable and record outer keys are covered.
+This does not add named IdClass parents, multiple composite components,
+unmapped nested key parts, chained/polymorphic parents or broader loading
+optimizations. See the roadmaps and `noether-persistence/TCK.md`.
 
 The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;

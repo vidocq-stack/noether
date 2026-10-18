@@ -348,6 +348,23 @@ without changing the parent's physical SQL tuple ordering or introducing
 reflection. The failure is reproduced both with and without a collection owner.
 Broader fetch/lazy/batch and nested/chained identity eligibility is unchanged.
 
+== Named composite MapsId element targets (D40, 2026-10-18)
+
+`eligibleElementTarget` admits exactly one named embedded component mapped by
+an owning to-one MapsId to a non-polymorphic direct BASIC EmbeddedId parent
+of the same component type. Other components must be BASIC. Multiple composite
+components, named IdClass parents and unmapped nested remainder remain excluded.
+
+`embeddedRelationalKeys` visits identifier components in model order, retaining
+BASIC column overrides and replacing each mapped component with the complete
+physical parent FK tuple. `associationKeyColumns` shares default/reordered join
+resolution and binders with whole MapsId and relationship-valued IdClass keys.
+This avoids treating a composite derived component as a single scalar column.
+Existing generated access and MapsId lifecycle already derive and load that
+component; schema, queries and collection storage consume the same flattened
+identity. No loader, SQL AST, reflection or dependency change is introduced;
+broader fetch/lazy/batch eligibility remains unchanged.
+
 == Lazy read batches (D13, 2026-10-15)
 
 `EntityLoader` groups pending compatible persistence-context entries on first access.

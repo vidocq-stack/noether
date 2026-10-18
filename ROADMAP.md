@@ -406,13 +406,25 @@ preserve key values. Annotation/XML lifecycle, query, cache and explicit refusal
 checks pass. Full clean install: 1129 tests passed; full locally patched TCK:
 2135 / 2131 / 0 / 0 / 4, every case identical to D26 and D38, not certification.
 
+Decision D40 (2026-10-18) adds element-value to-one targets with one named
+embedded MapsId component derived from a non-polymorphic direct BASIC
+EmbeddedId parent, with remaining BASIC key parts. Physical FK planning now
+expands that component to the complete parent tuple; generated lifecycle and
+ordinary query/loading paths are reused. Annotation/XML scenarios cover nested
+identifier navigation, lifecycle/cache and explicit refusals; record keys and
+default joins are covered. Full clean install: 1133 tests passed; full locally
+patched TCK: 2135 / 2131 / 0 / 0 / 4, every case identical to D26 and D39,
+not certification. Multiple composite components, named IdClass parents and
+general nested/chained identities remain separate lots.
+
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
-1. Remaining relational mapping shapes beyond D23/D24/D29/D30/D31/D32/D35/D36/D37/D38/D39's bounded contracts:
+1. Remaining relational mapping shapes beyond D23/D24/D29/D30/D31/D32/D35/D36/D37/D38/D39/D40's bounded contracts:
    derived/nested identity targets and composite forms beyond D29's direct BASIC
    `@EmbeddedId`/`@IdClass`, D38/D39's whole shared BASIC `@EmbeddedId`
    with EmbeddedId/IdClass parents,
+   D40's single named embedded component from a BASIC EmbeddedId parent,
    D30's simple shared `@MapsId` contract and D37's
    direct BASIC `@EmbeddedId` with multiple derived components and D36's direct BASIC
    simple/composite-parent relationship-valued `@IdClass` parts, business joins
