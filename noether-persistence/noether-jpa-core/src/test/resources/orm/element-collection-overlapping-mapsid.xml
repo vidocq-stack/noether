@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entity-mappings xmlns="https://jakarta.ee/xml/ns/persistence/orm" version="3.2">
+  <entity class="io.vidocq.noether.jpa.core.session.ElementCollectionRelationsTest$MultiMapsTarget"
+      access="FIELD">
+    <attributes>
+      <many-to-one name="destination" maps-id="sourceId">
+        <join-column name="destination_fk"/>
+      </many-to-one>
+    </attributes>
+  </entity>
+</entity-mappings>

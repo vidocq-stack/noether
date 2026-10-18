@@ -659,6 +659,160 @@ class ElementCollectionRelationsTest {
         }
     }
 
+    // §2.4.2.1 and §2.8: distinct MapsId relationships derive separate BASIC embedded key components.
+    @Test void multipleMapsIdComponentsKeepDerivedElementTuplesAndManagedIdentity() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = configuration(false, MultiMapsOwner.class, MultiMapsValue.class,
+                MultiMapsTarget.class, MultiMapsKey.class, MapsIdElementParent.class);
+            if (xml) configuration.mappingFile("orm/element-collection-multiple-mapsid.xml");
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var source = new MapsIdElementParent("source");
+                var destination = new MapsIdElementParent("destination");
+                var outward = new MultiMapsTarget(source, destination, "route");
+                var inward = new MultiMapsTarget(destination, source, "route");
+                var owner = new MultiMapsOwner();
+                owner.id = 16L;
+                owner.values.add(new MultiMapsValue("first", outward));
+                owner.values.add(new MultiMapsValue("duplicate", outward));
+                owner.values.add(new MultiMapsValue("null", null));
+                owner.values.add(new MultiMapsValue("reverse", inward));
+                transaction(em, () -> {
+                    em.persist(outward);
+                    em.persist(inward);
+                    em.persist(owner);
+                });
+                assertThat(source.id).isPositive().isNotEqualTo(destination.id);
+                var outwardKey = new MultiMapsKey(source.id, destination.id, "route");
+                var inwardKey = new MultiMapsKey(destination.id, source.id, "route");
+                assertThat(outward.id).isEqualTo(outwardKey);
+                assertThat(inward.id).isEqualTo(inwardKey);
+                assertThat(factory.getPersistenceUnitUtil().getIdentifier(outward)).isEqualTo(outwardKey);
+                List<?> rows = em.createNativeQuery(
+                    "select element_source, element_destination, element_code from multi_maps_values order by value_position")
+                    .getResultList();
+                assertThat((Object[]) rows.getFirst()).containsExactly(source.id, destination.id, "route");
+                assertThat((Object[]) rows.get(1)).containsExactly(source.id, destination.id, "route");
+                assertThat((Object[]) rows.get(2)).containsOnlyNulls();
+                assertThat((Object[]) rows.get(3)).containsExactly(destination.id, source.id, "route");
+                em.getTransaction().begin();
+                assertThatThrownBy(() -> em.createNativeQuery(
+                    "insert into multi_maps_values (owner_id, value_position, element_source, element_destination, element_code)"
+                        + " values (16, 4, ?, ?, 'missing')")
+                    .setParameter(1, source.id).setParameter(2, destination.id).executeUpdate())
+                    .isInstanceOf(PersistenceException.class);
+                em.getTransaction().rollback();
+                em.clear();
+                factory.getCache().evictAll();
+                var found = em.find(MultiMapsOwner.class, 16L);
+                var managedOutward = em.find(MultiMapsTarget.class, outwardKey);
+                var managedInward = em.find(MultiMapsTarget.class, inwardKey);
+                assertThat(found.values).extracting(value -> value.target)
+                    .containsExactly(managedOutward, managedOutward, null, managedInward);
+                assertThat(found.values.getFirst().target).isSameAs(found.values.get(1).target).isSameAs(managedOutward);
+                assertThat(managedOutward.source).isSameAs(managedInward.destination);
+                assertThat(managedOutward.destination).isSameAs(managedInward.source);
+                assertThat(em.createQuery(
+                    "select v.target from MultiMapsOwner o join o.values v order by index(v)", MultiMapsTarget.class)
+                    .getResultList()).containsExactly(managedOutward, managedOutward, null, managedInward);
+                assertThat(em.createQuery(
+                    "select v.target.id.sourceId from MultiMapsOwner o join o.values v order by index(v)", Long.class)
+                    .getResultList()).containsExactly(source.id, source.id, destination.id);
+                assertThat(em.createQuery(
+                    "select v.target.destination.name from MultiMapsOwner o join o.values v order by index(v)", String.class)
+                    .getResultList()).containsExactly("destination", "destination", "source");
+                assertThat(em.createQuery(
+                    "select v.label from MultiMapsOwner o join o.values v where v.target = :target", String.class)
+                    .setParameter("target", managedInward).getResultList()).containsExactly("reverse");
+                var cb = em.getCriteriaBuilder();
+                var criteria = cb.createQuery(MultiMapsTarget.class);
+                var values = criteria.from(MultiMapsOwner.class).joinList("values");
+                criteria.select(values.get("target")).orderBy(cb.asc(values.index()));
+                assertThat(em.createQuery(criteria).getResultList())
+                    .containsExactly(managedOutward, managedOutward, null, managedInward);
+                var projected = em.createQuery(
+                    "select v from MultiMapsOwner o join o.values v order by index(v)", MultiMapsValue.class)
+                    .getResultList();
+                assertThat(projected.getFirst().target).isSameAs(managedOutward);
+                assertThat(projected.get(2).target).isNull();
+                transaction(em, () -> {
+                    found.values.remove(1);
+                    found.values.getFirst().target = managedInward;
+                });
+                em.clear();
+                factory.getCache().evictAll();
+                var reloaded = em.find(MultiMapsOwner.class, 16L);
+                assertThat(reloaded.values).extracting(value -> value.target == null ? null : value.target.id)
+                    .containsExactly(inwardKey, null, inwardKey);
+                em.clear();
+                reloaded.values.getFirst().target = outward;
+                transaction(em, () -> assertThat(em.merge(reloaded).values.getFirst().target)
+                    .isSameAs(em.find(MultiMapsTarget.class, outwardKey)));
+                em.clear();
+                factory.getCache().evictAll();
+                var refreshed = em.find(MultiMapsOwner.class, 16L);
+                assertThat(refreshed.values.getFirst().target.id).isEqualTo(outwardKey);
+                refreshed.values.getFirst().target = em.find(MultiMapsTarget.class, inwardKey);
+                em.refresh(refreshed);
+                assertThat(refreshed.values.getFirst().target).isSameAs(em.find(MultiMapsTarget.class, outwardKey));
+                transaction(em, () -> em.remove(refreshed));
+                assertThat(em.find(MultiMapsTarget.class, outwardKey)).isNotNull();
+                assertThat(em.find(MultiMapsTarget.class, inwardKey)).isNotNull();
+                assertThat(em.createNativeQuery("select count(*) from multi_maps_values").getSingleResult()).isEqualTo(0L);
+                var partial = new MultiMapsOwner();
+                partial.id = 17L;
+                partial.values.add(new MultiMapsValue("partial", em.find(MultiMapsTarget.class, outwardKey)));
+                transaction(em, () -> em.persist(partial));
+                transaction(em, () -> em.createNativeQuery(
+                    "update multi_maps_values set element_destination = null where owner_id = 17").executeUpdate());
+                em.clear();
+                factory.getCache().evictAll();
+                assertThatThrownBy(() -> em.find(MultiMapsOwner.class, 17L).values.size())
+                    .isInstanceOf(PersistenceException.class).hasMessageContaining("partially null");
+            }
+        }
+    }
+
+    @Test void multipleMapsIdTargetsKeepSharedCacheIdentity() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = configuration(false, MultiMapsOwner.class, MultiMapsValue.class,
+                MultiMapsTarget.class, MultiMapsKey.class, MapsIdElementParent.class).sharedCacheMode(SharedCacheMode.ALL);
+            if (xml) configuration.mappingFile("orm/element-collection-multiple-mapsid.xml");
+            try (var factory = configuration.createEntityManagerFactory()) {
+                MultiMapsKey key;
+                try (var em = factory.createEntityManager()) {
+                    var target = new MultiMapsTarget(new MapsIdElementParent("source"),
+                        new MapsIdElementParent("destination"), "cached");
+                    var owner = new MultiMapsOwner();
+                    owner.id = 18L;
+                    owner.values.add(new MultiMapsValue("first", target));
+                    owner.values.add(new MultiMapsValue("duplicate", target));
+                    transaction(em, () -> { em.persist(target); em.persist(owner); });
+                    key = target.id;
+                    em.clear();
+                    assertThat(em.find(MultiMapsOwner.class, 18L).values).hasSize(2);
+                }
+                assertThat(factory.getCache().contains(MultiMapsOwner.class, 18L)).isTrue();
+                try (var em = factory.createEntityManager()) {
+                    var found = em.find(MultiMapsOwner.class, 18L);
+                    var target = em.find(MultiMapsTarget.class, key);
+                    assertThat(found.values.getFirst().target).isSameAs(found.values.getLast().target).isSameAs(target);
+                    assertThat(target.source).isSameAs(em.find(MapsIdElementParent.class, key.sourceId));
+                    assertThat(target.destination).isSameAs(em.find(MapsIdElementParent.class, key.destinationId));
+                }
+            }
+        }
+    }
+
+    @Test void multipleMapsIdElementTargetsKeepOverlapAndPolymorphicParentRefusals() {
+        assertThatThrownBy(() -> configuration(false, MultiMapsOwner.class, MultiMapsValue.class,
+            MultiMapsTarget.class, MultiMapsKey.class, MapsIdElementParent.class)
+            .mappingFile("orm/element-collection-overlapping-mapsid.xml").createEntityManagerFactory())
+            .isInstanceOf(PersistenceException.class).hasMessageContaining("overlapping identifier mappings");
+        assertThatThrownBy(() -> factory(false, MultiMapsOwner.class, MultiMapsValue.class,
+            MultiMapsTarget.class, MultiMapsKey.class, MapsIdElementParent.class, MapsParentSubtype.class))
+            .isInstanceOf(PersistenceException.class).hasMessageContaining("requires an eligible primary-key target");
+    }
+
     @Test void compositeAndSimpleIdClassParentsCanCoexistWithDefaultJoinColumns() {
         try (var factory = factory(false, CompositeParentsOwner.class, CompositeParentsValue.class,
                 CompositeParentsTarget.class, CompositeParentsKey.class, CompositeTarget.class, CompositeKey.class,
@@ -1213,6 +1367,50 @@ class ElementCollectionRelationsTest {
                 && java.util.Objects.equals(code, key.code);
         }
         @Override public int hashCode() { return java.util.Objects.hash(source, destination, code); }
+    }
+    @Entity public static class MapsParentSubtype extends MapsIdElementParent {}
+    @Entity(name = "MultiMapsOwner") public static class MultiMapsOwner {
+        @Id public Long id;
+        @ElementCollection @CollectionTable(name = "multi_maps_values",
+            joinColumns = @JoinColumn(name = "owner_id"))
+        @OrderColumn(name = "value_position")
+        public List<MultiMapsValue> values = new ArrayList<>();
+    }
+    @Embeddable public static class MultiMapsValue {
+        public String label;
+        @ManyToOne @JoinColumns({
+            @JoinColumn(name = "element_destination", referencedColumnName = "destination_fk"),
+            @JoinColumn(name = "element_code", referencedColumnName = "route_code"),
+            @JoinColumn(name = "element_source", referencedColumnName = "source_fk")
+        })
+        public MultiMapsTarget target;
+        public MultiMapsValue() {}
+        MultiMapsValue(String label, MultiMapsTarget target) { this.label = label; this.target = target; }
+    }
+    @Entity(name = "MultiMapsTarget") public static class MultiMapsTarget {
+        @EmbeddedId public MultiMapsKey id;
+        @MapsId("sourceId") @ManyToOne(cascade = CascadeType.PERSIST)
+        @JoinColumn(name = "source_fk") public MapsIdElementParent source;
+        @MapsId("destinationId") @ManyToOne(cascade = CascadeType.PERSIST)
+        @JoinColumn(name = "destination_fk") public MapsIdElementParent destination;
+        public MultiMapsTarget() {}
+        MultiMapsTarget(MapsIdElementParent source, MapsIdElementParent destination, String code) {
+            this.source = source; this.destination = destination; this.id = new MultiMapsKey(0, 0, code);
+        }
+    }
+    @Embeddable public static class MultiMapsKey implements java.io.Serializable {
+        public long sourceId;
+        public long destinationId;
+        @Column(name = "route_code") public String code;
+        public MultiMapsKey() {}
+        MultiMapsKey(long sourceId, long destinationId, String code) {
+            this.sourceId = sourceId; this.destinationId = destinationId; this.code = code;
+        }
+        @Override public boolean equals(Object other) {
+            return other instanceof MultiMapsKey key && sourceId == key.sourceId && destinationId == key.destinationId
+                && java.util.Objects.equals(code, key.code);
+        }
+        @Override public int hashCode() { return java.util.Objects.hash(sourceId, destinationId, code); }
     }
     @Entity(name = "CompositeLinkOwner") public static class CompositeLinkOwner {
         @Id public Long id;

@@ -38,6 +38,22 @@ annotation-mapped. Nested/non-BASIC/chained parent identities and broader optimi
 fetch/lazy/batch loading are not added. See xref:reference.adoc[Reference] for
 the exact D32/D35/D36 mapping boundaries.
 
+== Multiple MapsId components in collection targets
+
+An element-value owning to-one may target an entity with a direct all-BASIC
+`@EmbeddedId` whose distinct components are derived by separate
+`@MapsId("componentName")` owning to-one relationships (D37).
+Each parent must have a simple ID and be non-polymorphic; the named component
+must use that ID's Java type. Other key parts remain application-supplied.
+Generated parent IDs are propagated by the normal persist lifecycle before
+collection rows bind the target's complete physical FK tuple.
+
+The full mapping may use annotations or metadata-complete ORM XML. Repeated
+references resolve one managed target; query projections/navigation and normal
+collection rewrites, merge, refresh and shared-cache reads retain their semantics.
+Overlapping mappings, nested/non-BASIC keys and composite/chained parents are
+not included, and no fetch/lazy/batch optimization is widened.
+
 == Query entity graphs
 
 Both JPQL and Criteria entity queries accept standard graph hints:

@@ -592,6 +592,22 @@ annotation-mapped. Nested/non-BASIC/chained-derived parents and broader
 business/join-table/polymorphic or fetch/lazy/batch support are not added.
 The roadmaps and `noether-persistence/TCK.md` record the exact regression scope.
 
+### Multiple MapsId components in element targets (D37, 2026-10-18)
+
+D37 extends D31 element-value to-one targets with a direct all-BASIC
+`@EmbeddedId` to multiple distinct named `@MapsId` components. Each derives
+its value from an owning to-one FK to a non-polymorphic simple-ID parent;
+remaining BASIC key parts are application-supplied. Cascaded generated parent
+IDs populate the matching components before the collection FK is stored.
+The existing planner keeps the complete physical tuple and managed identity.
+
+Annotations and metadata-complete XML cover the full target/owner/value mapping.
+Query projections/navigation, duplicate/null references, rewrites, merge/refresh,
+removal and shared-cache identity retain ordinary behavior. Overlapping/whole-ID
+combinations, nested/non-BASIC keys, composite/chained parents and broader
+business/join-table/polymorphic or fetch/lazy/batch support are not added.
+Scope and regression evidence are in the roadmaps and `noether-persistence/TCK.md`.
+
 The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;
 the bundled Jakarta ORM schema retains its original upstream licence.

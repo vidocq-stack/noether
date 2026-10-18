@@ -860,19 +860,21 @@ public final class EntityStatements {
                 && derived.singleValued() && derived.owning() && derived.joinTable() == null
                 && eligibleIdClassElementParent(derived, relationships.size() == 1, models, inheritances));
         }
-        if (mapsIds.size() != 1) return false;
-        AssociationAttribute derived = mapsIds.getFirst();
-        if (!derived.singleValued() || !derived.owning() || derived.joinTable() != null) return false;
-        if (target.id() instanceof IdModel.Single) {
-            if (!derived.mapsId().isEmpty() || derived.kind() != AssociationAttribute.Kind.ONE_TO_ONE) return false;
-        } else if (target.id() instanceof IdModel.Embedded embedded) {
-            List<AttributeModel> parts = embedded.attribute().embeddable().attributes();
-            if (derived.mapsId().isEmpty() || parts.stream().anyMatch(attribute -> !(attribute instanceof BasicAttribute))
-                    || parts.stream().map(AttributeModel::name).noneMatch(derived.mapsId()::equals)) return false;
-        } else {
-            return false;
+        for (AssociationAttribute derived : mapsIds) {
+            if (!derived.singleValued() || !derived.owning() || derived.joinTable() != null) return false;
+            if (target.id() instanceof IdModel.Single) {
+                if (mapsIds.size() != 1 || !derived.mapsId().isEmpty()
+                        || derived.kind() != AssociationAttribute.Kind.ONE_TO_ONE) return false;
+            } else if (target.id() instanceof IdModel.Embedded embedded) {
+                List<AttributeModel> parts = embedded.attribute().embeddable().attributes();
+                if (derived.mapsId().isEmpty() || parts.stream().anyMatch(attribute -> !(attribute instanceof BasicAttribute))
+                        || parts.stream().map(AttributeModel::name).noneMatch(derived.mapsId()::equals)) return false;
+            } else {
+                return false;
+            }
+            if (!simpleNonPolymorphicParent(derived, models, inheritances)) return false;
         }
-        return simpleNonPolymorphicParent(derived, models, inheritances);
+        return true;
     }
 
     private static boolean simpleNonPolymorphicParent(AssociationAttribute association,
