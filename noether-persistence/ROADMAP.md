@@ -1943,7 +1943,8 @@ other previously refused shapes remain out of scope. D30 separately enables
 simple shared-identity MapsId targets; D31 adds only a direct BASIC
 `@EmbeddedId` with one named component derived from a simple-ID parent. No
 collection fetch, graph, row-hydration, lazy-reference or batching eligibility
-is widened.
+is widened. D32 separately supports one relationship-valued `@IdClass` part
+with a simple-ID parent.
 
 Mandatory initial red: the focused test failed at bootstrap because D24 rejected
 the composite target key. Post-change `ElementCollectionRelationsTest`:
@@ -1992,9 +1993,10 @@ The collection row stores the complete target identifier tuple, using the
 parent association's actual physical key column for the derived component.
 Persisting the parent before the dependent target follows D23's generated-ID
 lifecycle; loading the element association and projecting it through JPQL
-resolve the same managed identity. `@IdClass`, nested/non-BASIC identifiers,
-multiple derived components, chained/composite parent IDs, polymorphism,
-business keys and collection-loading optimizations remain outside the boundary.
+resolve the same managed identity. Relationship-valued `@IdClass` parts beyond
+D32's single simple-parent component, nested/non-BASIC identifiers, multiple
+derived components, chained/composite parent IDs, polymorphism, business keys
+and collection-loading optimizations remain outside the boundary.
 
 Mandatory initial red: the focused test failed at bootstrap because D24 rejected
 the MapsId target. `ElementCollectionRelationsTest`: **27/27 passed**,
@@ -2002,19 +2004,46 @@ including annotation and metadata-complete XML. Full `./mvnw -ntp clean
 install`: **1110 tests, 0 failures, 0 errors, 0 skipped across 92 reports**.
 No TCK was run; these are unit-test results, not TCK or certification evidence.
 
-Prioritized backlog after D31, 2026-10-18. Each item needs its own approved, bounded lot; until then
+### D32 — Relationship-valued IdClass targets in element collections ✅ (2026-10-18)
+
+D32 covers the distinct §2.4.1.3 derived-identity form where an entity uses
+`@IdClass` and one `@Id` attribute is an owning to-one relationship to a
+simple-ID parent. The remaining identifier components are direct BASIC
+attributes, and the corresponding relationship-typed IdClass field uses the
+parent identifier's Java type. This is not `@MapsId`: the association itself
+is the identifier component.
+
+Element-row FK tuples include the relationship's actual physical join column
+and the other IdClass BASIC columns in identifier order. Annotation mapping
+covers the full target identity; metadata-complete ORM XML covers the
+collection owner and value relationship while the target's relationship-valued
+identifier remains annotation-mapped, since the ORM 3.2 XML `id` element does
+not contain relationship mappings. Composite parent IDs, multiple
+relationship-valued IdClass parts, nested/non-BASIC parts, polymorphism,
+business keys and collection-loading optimizations remain out of scope.
+
+The focused annotation/XML regression test failed before the production change
+at bootstrap because the composite key's relationship part had no resolvable
+collection FK tuple. Post-change `ElementCollectionRelationsTest`:
+**29/29 passed**, including D31's annotation/XML scenarios. Full
+`./mvnw -ntp clean install`: **1111 tests, 0 failures, 0 errors, 0 skipped
+across 92 reports**. No TCK was run; these are unit-test results, not TCK or
+certification evidence.
+
+Prioritized backlog after D32, 2026-10-18. Each item needs its own approved, bounded lot; until then
 the documented fallback (follow-up selects, eager loading, or an explicit refusal naming the
 milestone) stays in place.
 
 1. **Remaining relational mapping shapes** — derived/nested identity targets and
    composite forms beyond D23, D29's direct BASIC `@EmbeddedId`/`@IdClass`,
-   D30's simple shared `@MapsId` contract and D31's single direct BASIC
-   `@EmbeddedId` component; business joins
+   D30's simple shared `@MapsId` contract, D31's single direct BASIC
+   `@EmbeddedId` component and D32's single relationship component in a direct
+   BASIC `@IdClass`; business joins
    through join tables or inheritance, broader secondary-table business tuples/
    PK joins beyond D26, embedded business association paths,
    inverse collections and safely mutable referenced keys; inverse many-to-many
    indexes and broader relationships inside collection-table embeddable elements
-   beyond D24/D28/D29/D30/D31 (business/join-table and unsupported composite or
+   beyond D24/D28/D29/D30/D31/D32 (business/join-table and unsupported composite or
    derived forms). After D25,
    inverse entity-owner relationships need a
    separate normative/cardinality contract; illegal inverse collection embeddables
@@ -2041,6 +2070,7 @@ Recorded before implementation; each entry: date, decision, reason.
 
 | # | Date | Decision | Status |
 |---|---|---|---|
+| D32 | 2026-10-18 | Extend D24 element-value owning to-ones to a direct BASIC `IdClass` target with exactly one relationship-valued `@Id` part targeting a non-polymorphic simple-ID parent. Reuse the actual association FK column and the existing IdClass identity order; keep composite parents, multiple/non-BASIC relationship parts, nested keys, polymorphism, business keys and collection-loading optimizations out of scope. | Actioned |
 | D31 | 2026-10-18 | Extend D24 element-value owning to-ones to a direct BASIC `EmbeddedId` target with exactly one named component derived through an owning `ManyToOne`/`OneToOne @MapsId` to a non-polymorphic simple-ID parent. Reuse D23 derived-identity and D29 tuple handling; keep nested/non-BASIC/multiple/chained/composite-parent identities, `IdClass`, polymorphism, business keys and loading optimizations out of scope. | Actioned |
 | D30 | 2026-10-17 | Extend D24 collection-element owning to-ones to target simple IDs that are shared through one owning `OneToOne @MapsId` to a non-polymorphic simple-ID parent. Reuse D23 physical-key and lifecycle metadata and D29 element-column handling; keep composite/nested/chained derived IDs, business keys, polymorphism, and collection-loading optimizations out of scope. | Actioned |
 | D28 | 2026-10-17 | Project entire D24 relationship-bearing element-collection embeddable values through JPQL/Criteria, reconstructing scalar/nested values and resolving each owning to-one by its actual FK identity into the persistence context; preserve nulls and repeated managed targets; cover annotations and metadata-complete XML. Keep whole-value relationship comparison, unsupported D24 mapping shapes, and collection fetch/lazy/batch optimization out of scope. | Actioned |

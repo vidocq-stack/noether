@@ -256,8 +256,9 @@ association navigation and whole-value projections resolve the target's managed
 identity through the same tuple.
 
 Composite keys containing non-BASIC components, derived composite keys beyond
-D31's direct BASIC `@EmbeddedId` boundary, business-key joins, inverse
-`mappedBy`, orphan removal, to-many/nested
+D31's direct BASIC `@EmbeddedId` and D32's single relationship-valued
+`@IdClass` part boundaries, business-key joins, inverse `mappedBy`,
+orphan removal, to-many/nested
 collections, join-table relationships, read-only/shared/other-table FK columns,
 polymorphic/JOINED/TABLE_PER_CLASS targets and unsupported owner keys/indexes
 remain unsupported.
@@ -289,10 +290,29 @@ tuple and references the actual physical parent-key column for the derived
 component. Persist and load use the existing derived-identity lifecycle and
 managed identity paths. Annotation and metadata-complete ORM XML are covered.
 
-`@IdClass`, nested or non-BASIC identifiers, multiple derived components,
-chained or composite parent identities, business keys, polymorphism and other
+Nested or non-BASIC identifiers, multiple derived components, chained or
+composite parent identities, business keys, polymorphism and other
 unsupported mappings remain refused. Collection fetch/graph hydration,
 optimized row loading, lazy references and batching are unchanged.
+
+== Relationship-valued IdClass targets (D32, 2026-10-18)
+
+An element-value owning to-one may target an entity using `@IdClass` when
+exactly one `@Id` component is an owning `@ManyToOne` or `@OneToOne` to a
+non-polymorphic parent with a simple `@Id`; all other identifier attributes
+must be BASIC. The relationship itself is the identifier component (not
+`@MapsId`), and the corresponding relationship-named IdClass field has the
+Java type of the parent's identifier. The element-row FK tuple preserves the
+target's identity-part order, and JPQL association navigation/projection
+resolves the managed target identity.
+
+The ORM XML mapping can define the collection owner and embeddable value; the
+target's relationship-valued identifier remains annotation-mapped because the
+ORM 3.2 XML `id` element cannot contain a relationship. Composite parent IDs,
+multiple relationship identifier components, nested/non-BASIC keys,
+polymorphism and other unsupported mappings remain refused. Collection
+fetch/graph hydration, optimized row loading, lazy references and batching are
+unchanged.
 
 == Inverse collection-element boundary (D25, 2026-10-17)
 

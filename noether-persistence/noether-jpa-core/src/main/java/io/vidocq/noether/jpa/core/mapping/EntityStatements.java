@@ -849,7 +849,18 @@ public final class EntityStatements {
         List<AssociationAttribute> mapsIds = target.attributes().stream()
             .filter(AssociationAttribute.class::isInstance).map(AssociationAttribute.class::cast)
             .filter(association -> association.mapsId() != null).toList();
-        if (mapsIds.isEmpty()) return true;
+        if (mapsIds.isEmpty()) {
+            if (!(target.id() instanceof IdModel.ByIdClass idClass)) return true;
+            List<AssociationAttribute> relationships = idClass.attributes().stream()
+                .filter(AssociationAttribute.class::isInstance).map(AssociationAttribute.class::cast).toList();
+            if (relationships.isEmpty()) return true;
+            if (relationships.size() != 1 || idClass.attributes().stream()
+                    .anyMatch(attribute -> !(attribute instanceof BasicAttribute)
+                        && attribute != relationships.getFirst())) return false;
+            AssociationAttribute derived = relationships.getFirst();
+            return derived.mapsId() == null && derived.singleValued() && derived.owning()
+                && derived.joinTable() == null && simpleNonPolymorphicParent(derived, models, inheritances);
+        }
         if (mapsIds.size() != 1) return false;
         AssociationAttribute derived = mapsIds.getFirst();
         if (!derived.singleValued() || !derived.owning() || derived.joinTable() != null) return false;
@@ -862,7 +873,12 @@ public final class EntityStatements {
         } else {
             return false;
         }
-        EntityModel parent = models.apply(derived.targetEntity());
+        return simpleNonPolymorphicParent(derived, models, inheritances);
+    }
+
+    private static boolean simpleNonPolymorphicParent(AssociationAttribute association,
+            Function<Class<?>, EntityModel> models, Function<Class<?>, InheritanceMapping> inheritances) {
+        EntityModel parent = models.apply(association.targetEntity());
         if (parent == null || !(parent.id() instanceof IdModel.Single)) return false;
         InheritanceMapping inheritance = inheritances.apply(parent.javaType());
         return inheritance == null || !inheritance.joined() && !inheritance.tablePerClass()
@@ -894,7 +910,9 @@ public final class EntityStatements {
     private static List<KeyColumn> relationalKeys(EntityModel entity, Function<Class<?>, EntityModel> models,
             Function<BasicAttribute, ValueBinder> binders,
             Function<Class<?>, InheritanceMapping> inheritances, boolean delimited) {
-        List<KeyColumn> keys = keyColumns(entity, binders);
+        List<KeyColumn> keys = entity.id() instanceof IdModel.ByIdClass idClass
+            ? idClassKeyColumns(idClass, models, binders, delimited) : keyColumns(entity, binders);
+        if (keys == null) return null;
         for (AttributeModel attribute : entity.attributes()) {
             if (!(attribute instanceof AssociationAttribute association) || association.mapsId() == null) continue;
             EntityModel target = models.apply(association.targetEntity());
@@ -930,6 +948,31 @@ public final class EntityStatements {
             relational.add(new KeyColumn(names.get(k).name(), keys.get(k).binder(), names.get(k).quoted()));
         }
         return relational;
+    }
+
+    private static List<KeyColumn> idClassKeyColumns(IdModel.ByIdClass idClass,
+            Function<Class<?>, EntityModel> models, Function<BasicAttribute, ValueBinder> binders, boolean delimited) {
+        List<KeyColumn> keys = new ArrayList<>();
+        for (AttributeModel attribute : idClass.attributes()) {
+            if (attribute instanceof BasicAttribute basic) {
+                keys.add(new KeyColumn(basic.column().name(), binders.apply(basic)));
+            } else if (attribute instanceof AssociationAttribute association) {
+                EntityModel parent = models.apply(association.targetEntity());
+                List<KeyColumn> parentKeys = parent == null ? null : keyColumns(parent, binders);
+                if (parentKeys == null) return null;
+                JoinColumnModel[] joins = byKeyPart(describe(association), association.joinColumns(),
+                    parentKeys, parent, delimited);
+                if (joins == null) return null;
+                for (int part = 0; part < parentKeys.size(); part++) {
+                    String name = joins[part].name() == null
+                        ? leaf(association.name()) + "_" + parentKeys.get(part).name() : joins[part].name();
+                    keys.add(new KeyColumn(name, parentKeys.get(part).binder()));
+                }
+            } else {
+                return null;
+            }
+        }
+        return keys;
     }
 
     private static List<KeyColumn> keyColumns(EntityModel entity, Function<BasicAttribute, ValueBinder> binders) {

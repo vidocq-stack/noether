@@ -316,18 +316,29 @@ with a direct BASIC `@EmbeddedId` containing one named component derived by
 `@MapsId` through an owning `@ManyToOne` or `@OneToOne` to a non-polymorphic
 simple-ID parent. It reuses D23 derived-identity and D29 tuple handling;
 annotation and metadata-complete XML are covered. Nested/non-BASIC/multiple or
-chained derived identities, composite parents, `@IdClass`, business keys,
-polymorphism and loading optimizations remain outside scope. Detailed evidence
-and exclusions are in the Persistence roadmap; no TCK or certification claim
-is made.
+chained derived identities, composite parents, business keys, polymorphism and
+loading optimizations remain outside scope. Detailed evidence and exclusions
+are in the Persistence roadmap; no TCK or certification claim is made.
+
+Decision D32 (2026-10-18) extends D24 element-value owning to-ones to an
+`@IdClass` target with exactly one relationship-valued `@Id` part pointing to a
+non-polymorphic simple-ID parent; other key parts are BASIC. The association
+itself is the identifier component, not a `@MapsId` mapping. Annotations cover
+the full target identity; metadata-complete ORM XML covers the collection
+owner/value while leaving that target identifier annotation-mapped, because
+the ORM 3.2 XML `id` element cannot contain a relationship. Composite parent
+identities, multiple relationship parts, polymorphism and loading optimizations
+remain outside scope. Detailed evidence and exclusions are in the Persistence
+roadmap; no TCK or certification claim is made.
 
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
-1. Remaining relational mapping shapes beyond D23/D24/D29/D30/D31's bounded contracts:
+1. Remaining relational mapping shapes beyond D23/D24/D29/D30/D31/D32's bounded contracts:
    derived/nested identity targets and composite forms beyond D29's direct BASIC
    `@EmbeddedId`/`@IdClass`, D30's simple shared `@MapsId` contract and D31's
-   direct BASIC `@EmbeddedId` with one derived component, business joins
+   direct BASIC `@EmbeddedId` with one derived component and D32's single
+   relationship-valued `@IdClass` part, business joins
    through join tables or inheritance, broader secondary-table business tuples/
    PK joins beyond D26, inverse business collections,
    embedded business association paths and safely mutable referenced keys;

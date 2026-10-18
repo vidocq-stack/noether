@@ -383,6 +383,48 @@ class ElementCollectionRelationsTest {
         }
     }
 
+    // §2.4.1.3 example 1a and §2.7: an IdClass relationship identifier is part of the row FK tuple.
+    @Test void derivedIdClassIdentityTargetIsPreservedInElementCollectionRowsAndQueries() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = configuration(false, IdClassDerivedOwner.class, IdClassDerivedValue.class,
+                IdClassDerivedTarget.class, IdClassDerivedKey.class, MapsIdElementParent.class);
+            if (xml) configuration.mappingFile("orm/element-collection-idclass-derived.xml");
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var parent = new MapsIdElementParent("parent");
+                var target = new IdClassDerivedTarget();
+                target.parent = parent;
+                target.code = "idclass-key";
+                var owner = new IdClassDerivedOwner();
+                owner.id = 9L;
+                var value = new IdClassDerivedValue();
+                value.target = target;
+                owner.values = new ArrayList<>(List.of(value));
+
+                transaction(em, () -> {
+                    em.persist(parent);
+                    em.persist(target);
+                    em.persist(owner);
+                });
+                Object[] row = (Object[]) em.createNativeQuery(
+                    "select derived_parent_fk, derived_code from idclass_derived_values where owner_id = 9")
+                    .getSingleResult();
+                assertThat(row).containsExactly(parent.id, "idclass-key");
+
+                em.clear();
+                var managedTarget = em.find(IdClassDerivedTarget.class, new IdClassDerivedKey(parent.id, "idclass-key"));
+                var found = em.find(IdClassDerivedOwner.class, 9L);
+                assertThat(found.values.getFirst().target).isSameAs(managedTarget);
+                assertThat(managedTarget.parent).isSameAs(em.find(MapsIdElementParent.class, parent.id));
+                assertThat(em.createQuery(
+                    "select v.target.code from IdClassDerivedOwner o join o.values v", String.class)
+                    .getSingleResult()).isEqualTo("idclass-key");
+                assertThat(em.createQuery(
+                    "select v.target from IdClassDerivedOwner o join o.values v", IdClassDerivedTarget.class)
+                    .getSingleResult()).isSameAs(managedTarget);
+            }
+        }
+    }
+
     @Test void inverseOneToOneIsRejectedAtBootstrap() {
         assertThatThrownBy(() -> factory(false, InvalidOwner.class, InverseValue.class))
             .hasStackTraceContaining("collection").hasStackTraceContaining("owning");
@@ -781,6 +823,35 @@ class ElementCollectionRelationsTest {
                 && java.util.Objects.equals(code, key.code);
         }
         @Override public int hashCode() { return java.util.Objects.hash(parentId, code); }
+    }
+    @Entity(name = "IdClassDerivedOwner") public static class IdClassDerivedOwner {
+        @Id public Long id;
+        @ElementCollection @CollectionTable(name = "idclass_derived_values",
+            joinColumns = @JoinColumn(name = "owner_id"))
+        public List<IdClassDerivedValue> values;
+    }
+    @Embeddable public static class IdClassDerivedValue {
+        @ManyToOne @JoinColumns({
+            @JoinColumn(name = "derived_parent_fk", referencedColumnName = "parent_fk"),
+            @JoinColumn(name = "derived_code", referencedColumnName = "code")
+        })
+        public IdClassDerivedTarget target;
+    }
+    @Entity(name = "IdClassDerivedTarget") @IdClass(IdClassDerivedKey.class)
+    public static class IdClassDerivedTarget {
+        @Id @ManyToOne @JoinColumn(name = "parent_fk") public MapsIdElementParent parent;
+        @Id @Column(name = "code") public String code;
+    }
+    public static class IdClassDerivedKey implements java.io.Serializable {
+        public long parent;
+        public String code;
+        public IdClassDerivedKey() {}
+        IdClassDerivedKey(long parent, String code) { this.parent = parent; this.code = code; }
+        @Override public boolean equals(Object other) {
+            return other instanceof IdClassDerivedKey key && parent == key.parent
+                && java.util.Objects.equals(code, key.code);
+        }
+        @Override public int hashCode() { return java.util.Objects.hash(parent, code); }
     }
     @Entity public static class BusinessOwner {
         @Id public Long id;
