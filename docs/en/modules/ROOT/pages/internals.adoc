@@ -292,7 +292,8 @@ managed entity; no alternate key representation, runtime reflection, SQL AST,
 dependency or hydration path is introduced. Ordinary collection loading and
 all fetch/lazy/batch eligibility guards remain unchanged.
 
-D36 extends that guard through `eligibleIdClassElementParent` to direct all-BASIC
+D36 extends that guard through `eligibleIdClassElementParent` (renamed
+`eligibleBasicElementParent` at D38) to direct all-BASIC
 EmbeddedId/IdClass parent keys. `idClassKeyColumns` already flattens each
 identifier relationship using the parent's physical key columns and binders;
 the existing generated `MappedEntity` identity access converts parent key
@@ -316,6 +317,21 @@ with the association's actual physical FK name and binder. Collection storage,
 query identity and schema constraints therefore reuse the complete ordered tuple.
 No identity/lifecycle/loader/SQL AST path, dependency or reflection is added;
 fetch/lazy/batch eligibility is unchanged.
+
+== Whole composite MapsId element targets (D38, 2026-10-18)
+
+For a whole EmbeddedId MapsId target, `eligibleElementTarget` now admits exactly
+one owning OneToOne relationship to a non-polymorphic parent with the same
+direct all-BASIC EmbeddedId type. The shared `eligibleBasicElementParent`
+guard retains the no-derived-parent boundary. `MappedUnit.validateMapsIds`
+still rejects overlapping and mismatched identifiers before statement planning.
+
+The existing `relationalKeys` whole-ID branch replaces the dependent key columns
+with the relationship's physical PK/FK names and parent binders. Existing
+`MappedEntity` whole-key derivation and generated identity access provide the same
+flat tuple to storage, schema constraints, loading and queries. No identity,
+loader, SQL AST or lifecycle implementation changes; broader fetch/lazy/batch
+eligibility is unchanged.
 
 == Lazy read batches (D13, 2026-10-15)
 

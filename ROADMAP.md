@@ -387,12 +387,24 @@ and fetch/lazy/batch extensions remain outside this lot. Full clean install:
 1122 tests passed; the full locally patched TCK remains 2135 / 2131 / 0 / 0 / 4,
 identical to D26 and D36. This is local regression evidence, not certification.
 
+Decision D38 (2026-10-18) adds element-value to-one targets sharing their whole
+direct all-BASIC `@EmbeddedId` with a non-polymorphic parent of the same key
+type through one owning `@OneToOne @MapsId`. Existing whole-key derivation,
+physical PK/FK tuples, generated access and ordinary loading are reused.
+Full annotation/XML scenarios cover physical/reordered FKs, identity,
+JPQL/Criteria, lifecycle/cache and partial-null semantics; parent reassignment
+and polymorphic parents remain refused. Named-component composite parents,
+nested/chained keys and unrelated fetch/lazy/batch eligibility stay outside scope.
+Full clean install: 1125 tests passed; full locally patched TCK:
+2135 / 2131 / 0 / 0 / 4, identical to D26 and D37, not certification.
+
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
-1. Remaining relational mapping shapes beyond D23/D24/D29/D30/D31/D32/D35/D36/D37's bounded contracts:
+1. Remaining relational mapping shapes beyond D23/D24/D29/D30/D31/D32/D35/D36/D37/D38's bounded contracts:
    derived/nested identity targets and composite forms beyond D29's direct BASIC
-   `@EmbeddedId`/`@IdClass`, D30's simple shared `@MapsId` contract and D37's
+   `@EmbeddedId`/`@IdClass`, D38's whole shared BASIC `@EmbeddedId`,
+   D30's simple shared `@MapsId` contract and D37's
    direct BASIC `@EmbeddedId` with multiple derived components and D36's direct BASIC
    simple/composite-parent relationship-valued `@IdClass` parts, business joins
    through join tables or inheritance, broader secondary-table business tuples/

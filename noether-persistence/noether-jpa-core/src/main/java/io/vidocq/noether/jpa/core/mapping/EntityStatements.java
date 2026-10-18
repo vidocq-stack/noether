@@ -858,7 +858,7 @@ public final class EntityStatements {
                     !(attribute instanceof BasicAttribute || attribute instanceof AssociationAttribute))) return false;
             return relationships.stream().allMatch(derived -> derived.mapsId() == null
                 && derived.singleValued() && derived.owning() && derived.joinTable() == null
-                && eligibleIdClassElementParent(derived, relationships.size() == 1, models, inheritances));
+                && eligibleBasicElementParent(derived, relationships.size() == 1, models, inheritances));
         }
         for (AssociationAttribute derived : mapsIds) {
             if (!derived.singleValued() || !derived.owning() || derived.joinTable() != null) return false;
@@ -867,8 +867,15 @@ public final class EntityStatements {
                         || derived.kind() != AssociationAttribute.Kind.ONE_TO_ONE) return false;
             } else if (target.id() instanceof IdModel.Embedded embedded) {
                 List<AttributeModel> parts = embedded.attribute().embeddable().attributes();
-                if (derived.mapsId().isEmpty() || parts.stream().anyMatch(attribute -> !(attribute instanceof BasicAttribute))
-                        || parts.stream().map(AttributeModel::name).noneMatch(derived.mapsId()::equals)) return false;
+                if (parts.stream().anyMatch(attribute -> !(attribute instanceof BasicAttribute))) return false;
+                if (derived.mapsId().isEmpty()) {
+                    EntityModel parent = models.apply(derived.targetEntity());
+                    return mapsIds.size() == 1 && derived.kind() == AssociationAttribute.Kind.ONE_TO_ONE
+                        && parent != null && parent.id() instanceof IdModel.Embedded parentId
+                        && parentId.attribute().javaType() == embedded.attribute().javaType()
+                        && eligibleBasicElementParent(derived, false, models, inheritances);
+                }
+                if (parts.stream().map(AttributeModel::name).noneMatch(derived.mapsId()::equals)) return false;
             } else {
                 return false;
             }
@@ -886,7 +893,7 @@ public final class EntityStatements {
             && inheritance.hierarchy().size() == 1;
     }
 
-    private static boolean eligibleIdClassElementParent(AssociationAttribute association, boolean singleRelationship,
+    private static boolean eligibleBasicElementParent(AssociationAttribute association, boolean singleRelationship,
             Function<Class<?>, EntityModel> models, Function<Class<?>, InheritanceMapping> inheritances) {
         EntityModel parent = models.apply(association.targetEntity());
         if (parent == null) return false;

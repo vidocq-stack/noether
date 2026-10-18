@@ -315,7 +315,7 @@ column supplies that column name. Annotation and metadata-complete ORM XML use
 the same mapping, schema, lifecycle and query paths; generated parent IDs are
 available to the collection row after ordinary persist ordering.
 
-Composite derived identities beyond D37's direct BASIC `@EmbeddedId` boundary,
+Composite derived identities beyond D37/D38's direct BASIC `@EmbeddedId` boundaries,
 nested or chained `@MapsId`, business-key, polymorphic and other unsupported
 target mappings remain outside this support. This does not widen collection
 fetching, graph hydration, lazy references or batching.
@@ -336,6 +336,26 @@ Overlapping components or mixed whole-ID/named derivation, nested or non-BASIC i
 composite parent identities, business keys, polymorphism and other
 unsupported mappings remain refused. Collection fetch/graph hydration,
 optimized row loading, lazy references and batching are unchanged.
+
+== Whole composite MapsId element targets (D38, 2026-10-18)
+
+An element-value owning to-one may reference a dependent whose whole direct
+all-BASIC `@EmbeddedId` is shared through exactly one owning
+`@OneToOne @MapsId` (no component name). Its non-polymorphic parent must use
+the same direct all-BASIC EmbeddedId type without derived identity. Cascaded
+parent persistence propagates that complete key through the existing lifecycle.
+The collection-row join references the dependent's physical PK/FK names;
+reordered explicit parent and element join columns retain key-part ordering.
+
+Annotations and metadata-complete XML cover the owner, value, target, parent
+and key. Duplicate references resolve one managed target and parent; all-null
+FK tuples mean no target and partial-null tuples fail explicitly. Rewrites,
+merge, refresh and cache reads preserve that identity; changing a persisted
+target's MapsId parent is refused.
+
+Named-component composite parents, nested/non-BASIC/chained keys, whole-key
+IdClass parents, overlapping derivation, polymorphic/business/join-table mappings
+and broader collection fetch/lazy/batch support are not added.
 
 == Relationship-valued IdClass targets (D32/D35/D36, 2026-10-18)
 

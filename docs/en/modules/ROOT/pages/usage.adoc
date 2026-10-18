@@ -54,6 +54,18 @@ collection rewrites, merge, refresh and shared-cache reads retain their semantic
 Overlapping mappings, nested/non-BASIC keys and composite/chained parents are
 not included, and no fetch/lazy/batch optimization is widened.
 
+== Whole composite MapsId collection targets
+
+D38 also permits an element-value owning to-one to reference a dependent with
+a whole direct all-BASIC `@EmbeddedId` shared through an owning
+`@OneToOne @MapsId` without a component name. The parent must use the same
+direct BASIC embedded key type and be non-polymorphic, without derived identity.
+Reference the dependent's physical PK/FK columns in the element's
+`@JoinColumns`, not necessarily the embedded key's default column names.
+Both annotations and metadata-complete XML use the normal persist, query,
+merge/refresh and cache paths. Named-component composite-parent derivation,
+nested/chained keys and broader loading optimizations are not included.
+
 == Query entity graphs
 
 Both JPQL and Criteria entity queries accept standard graph hints:

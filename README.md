@@ -608,6 +608,20 @@ combinations, nested/non-BASIC keys, composite/chained parents and broader
 business/join-table/polymorphic or fetch/lazy/batch support are not added.
 Scope and regression evidence are in the roadmaps and `noether-persistence/TCK.md`.
 
+### Whole composite MapsId element targets (D38, 2026-10-18)
+
+An element-value owning to-one can reference a dependent whose whole direct
+all-BASIC `@EmbeddedId` is shared through one owning `@OneToOne @MapsId`
+with a non-polymorphic parent using the same embedded key type. The collection
+FK uses the dependent's physical PK/FK column names, including reordered
+explicit joins. Existing whole-key derivation, managed identity and ordinary
+query/lifecycle/cache behavior are reused.
+
+Annotations and metadata-complete ORM XML cover the full mapping. Named-component
+composite parents, nested/non-BASIC/chained keys, IdClass parents for this shape,
+polymorphism and broader fetch/lazy/batch support remain outside the extension.
+See the roadmaps and `noether-persistence/TCK.md` for the exact regression scope.
+
 The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;
 the bundled Jakarta ORM schema retains its original upstream licence.

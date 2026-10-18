@@ -1,3 +1,50 @@
+## Noether whole composite MapsId element targets (D38) — 2026-10-18
+
+D38 admits element-value owning to-one targets with a whole direct all-BASIC
+EmbeddedId shared through one owning OneToOne MapsId with a non-polymorphic
+parent using the same embedded key type. Existing whole-key derivation,
+physical PK/FK tuple mapping and ordinary loading are reused. Named-component
+composite parents, nested/chained identities and broader loading remain excluded.
+
+Commands from the Noether root:
+
+```sh
+./mvnw -ntp -pl noether-persistence/noether-jpa-core \
+  -Dtest=ElementCollectionRelationsTest#wholeCompositeMapsIdTargetKeepsPhysicalElementKeysAndManagedIdentity \
+  -Dsurefire.failIfNoSpecifiedTests=false test
+./mvnw -ntp -pl noether-persistence/noether-jpa-core \
+  -Dtest=ElementCollectionRelationsTest,MapsIdToOneTest,DerivedIdentityTest \
+  -Dsurefire.failIfNoSpecifiedTests=false test
+./mvnw -ntp clean install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+- Mandatory red: bootstrap refused the target with
+  `requires an eligible primary-key target` before production changes.
+- Focused gate: **87/87** (41 element-relationship, 39 MapsId and 7
+  derived-identity tests). New annotation/metadata-complete XML scenarios
+  cover cascaded parent persistence, whole-key propagation, reversed key
+  values, reordered physical parent/element joins, duplicate/null references,
+  grouped FK enforcement, managed target/parent identity, JPQL/Criteria
+  projections/navigation/comparison, rewrites, detached merge, refresh, removal
+  and partial-null refusal. Additional cache reads across contexts retain one
+  identity; parent reassignment and polymorphic-parent mappings fail explicitly.
+- Full clean install: **1125 tests / 0 failures / 0 errors / 0 skips**,
+  across **92** reports; **BUILD SUCCESS**.
+- Full locally patched Persistence 3.2.1 TCK on PostgreSQL 17: **2135 tests /
+  2131 passed / 0 failures / 0 errors / 4 official skips**, across **259** reports.
+  All **2135** execution/class/method/outcome identities match D26 and D37.
+- The runner verified every report used the derived TCK-BUG-001 jar.
+  Official SHA-256:
+  `a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`;
+  derived SHA-256:
+  `1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+
+This is **locally patched regression evidence**, not an untouched official TCK
+result or certification. The four unchanged official skips are listed in the
+D26 record below.
+
 ## Noether multiple MapsId components in element targets (D37) — 2026-10-18
 
 D37 extends D31 element-value owning to-one targets with direct all-BASIC

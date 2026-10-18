@@ -813,6 +813,156 @@ class ElementCollectionRelationsTest {
             .isInstanceOf(PersistenceException.class).hasMessageContaining("requires an eligible primary-key target");
     }
 
+    // §2.4.2.1 and §2.8: a whole embedded identity may be shared through OneToOne MapsId.
+    @Test void wholeCompositeMapsIdTargetKeepsPhysicalElementKeysAndManagedIdentity() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = configuration(false, SharedCompositeOwner.class, SharedCompositeValue.class,
+                SharedCompositeTarget.class, CompositeTarget.class, CompositeKey.class);
+            if (xml) configuration.mappingFile("orm/element-collection-shared-composite-mapsid.xml");
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var firstParent = new CompositeTarget();
+                firstParent.id = new CompositeKey(3, 19);
+                var secondParent = new CompositeTarget();
+                secondParent.id = new CompositeKey(19, 3);
+                var first = new SharedCompositeTarget(firstParent);
+                var second = new SharedCompositeTarget(secondParent);
+                var owner = new SharedCompositeOwner();
+                owner.id = 19L;
+                owner.values.add(new SharedCompositeValue("first", first));
+                owner.values.add(new SharedCompositeValue("duplicate", first));
+                owner.values.add(new SharedCompositeValue("null", null));
+                owner.values.add(new SharedCompositeValue("second", second));
+                transaction(em, () -> { em.persist(first); em.persist(second); em.persist(owner); });
+                assertThat(first.id).isEqualTo(firstParent.id);
+                assertThat(second.id).isEqualTo(secondParent.id);
+                assertThat(factory.getPersistenceUnitUtil().getIdentifier(first)).isEqualTo(firstParent.id);
+                List<?> rows = em.createNativeQuery(
+                    "select element_region, element_serial from shared_composite_values order by value_position")
+                    .getResultList();
+                assertThat((Object[]) rows.getFirst()).containsExactly(3L, 19L);
+                assertThat((Object[]) rows.get(1)).containsExactly(3L, 19L);
+                assertThat((Object[]) rows.get(2)).containsOnlyNulls();
+                assertThat((Object[]) rows.get(3)).containsExactly(19L, 3L);
+                em.getTransaction().begin();
+                assertThatThrownBy(() -> em.createNativeQuery(
+                    "insert into shared_composite_values (owner_id, value_position, element_region, element_serial)"
+                        + " values (19, 4, 3, 3)").executeUpdate())
+                    .isInstanceOf(PersistenceException.class);
+                em.getTransaction().rollback();
+                em.clear();
+                factory.getCache().evictAll();
+                var found = em.find(SharedCompositeOwner.class, 19L);
+                var managedFirst = em.find(SharedCompositeTarget.class, firstParent.id);
+                var managedSecond = em.find(SharedCompositeTarget.class, secondParent.id);
+                assertThat(found.values).extracting(value -> value.target)
+                    .containsExactly(managedFirst, managedFirst, null, managedSecond);
+                assertThat(found.values.getFirst().target).isSameAs(found.values.get(1).target).isSameAs(managedFirst);
+                assertThat(managedFirst.parent).isSameAs(em.find(CompositeTarget.class, firstParent.id));
+                assertThat(managedSecond.parent).isSameAs(em.find(CompositeTarget.class, secondParent.id));
+                assertThat(em.createQuery(
+                    "select v.target from SharedCompositeOwner o join o.values v order by index(v)", SharedCompositeTarget.class)
+                    .getResultList()).containsExactly(managedFirst, managedFirst, null, managedSecond);
+                assertThat(em.createQuery(
+                    "select v.target.id.serial from SharedCompositeOwner o join o.values v order by index(v)", Long.class)
+                    .getResultList()).containsExactly(19L, 19L, 3L);
+                assertThat(em.createQuery(
+                    "select v.target.parent.id.region from SharedCompositeOwner o join o.values v order by index(v)", Long.class)
+                    .getResultList()).containsExactly(3L, 3L, 19L);
+                assertThat(em.createQuery(
+                    "select v.label from SharedCompositeOwner o join o.values v where v.target = :target", String.class)
+                    .setParameter("target", managedSecond).getResultList()).containsExactly("second");
+                var cb = em.getCriteriaBuilder();
+                var query = cb.createQuery(SharedCompositeTarget.class);
+                var values = query.from(SharedCompositeOwner.class).joinList("values");
+                query.select(values.get("target")).orderBy(cb.asc(values.index()));
+                assertThat(em.createQuery(query).getResultList())
+                    .containsExactly(managedFirst, managedFirst, null, managedSecond);
+                var projected = em.createQuery(
+                    "select v from SharedCompositeOwner o join o.values v order by index(v)", SharedCompositeValue.class)
+                    .getResultList();
+                assertThat(projected.getFirst().target).isSameAs(managedFirst);
+                assertThat(projected.get(2).target).isNull();
+                transaction(em, () -> {
+                    found.values.remove(1);
+                    found.values.getFirst().target = managedSecond;
+                });
+                em.clear();
+                factory.getCache().evictAll();
+                var reloaded = em.find(SharedCompositeOwner.class, 19L);
+                assertThat(reloaded.values).extracting(value -> value.target == null ? null : value.target.id)
+                    .containsExactly(secondParent.id, null, secondParent.id);
+                em.clear();
+                reloaded.values.getFirst().target = first;
+                transaction(em, () -> assertThat(em.merge(reloaded).values.getFirst().target)
+                    .isSameAs(em.find(SharedCompositeTarget.class, firstParent.id)));
+                em.clear();
+                factory.getCache().evictAll();
+                var refreshed = em.find(SharedCompositeOwner.class, 19L);
+                assertThat(refreshed.values.getFirst().target.id).isEqualTo(firstParent.id);
+                refreshed.values.getFirst().target = em.find(SharedCompositeTarget.class, secondParent.id);
+                em.refresh(refreshed);
+                assertThat(refreshed.values.getFirst().target).isSameAs(em.find(SharedCompositeTarget.class, firstParent.id));
+                transaction(em, () -> em.remove(refreshed));
+                assertThat(em.find(SharedCompositeTarget.class, firstParent.id)).isNotNull();
+                assertThat(em.find(SharedCompositeTarget.class, secondParent.id)).isNotNull();
+                assertThat(em.createNativeQuery("select count(*) from shared_composite_values").getSingleResult()).isEqualTo(0L);
+                var partial = new SharedCompositeOwner();
+                partial.id = 20L;
+                partial.values.add(new SharedCompositeValue("partial", em.find(SharedCompositeTarget.class, firstParent.id)));
+                transaction(em, () -> em.persist(partial));
+                transaction(em, () -> em.createNativeQuery(
+                    "update shared_composite_values set element_serial = null where owner_id = 20").executeUpdate());
+                em.clear();
+                factory.getCache().evictAll();
+                assertThatThrownBy(() -> em.find(SharedCompositeOwner.class, 20L).values.size())
+                    .isInstanceOf(PersistenceException.class).hasMessageContaining("partially null");
+            }
+        }
+    }
+
+    @Test void wholeCompositeMapsIdTargetsKeepSharedCacheIdentityAndRejectParentReassignment() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = configuration(false, SharedCompositeOwner.class, SharedCompositeValue.class,
+                SharedCompositeTarget.class, CompositeTarget.class, CompositeKey.class).sharedCacheMode(SharedCacheMode.ALL);
+            if (xml) configuration.mappingFile("orm/element-collection-shared-composite-mapsid.xml");
+            try (var factory = configuration.createEntityManagerFactory()) {
+                var key = new CompositeKey(3, 19);
+                try (var em = factory.createEntityManager()) {
+                    var parent = new CompositeTarget();
+                    parent.id = key;
+                    var target = new SharedCompositeTarget(parent);
+                    var owner = new SharedCompositeOwner();
+                    owner.id = 21L;
+                    owner.values.add(new SharedCompositeValue("first", target));
+                    owner.values.add(new SharedCompositeValue("duplicate", target));
+                    transaction(em, () -> { em.persist(target); em.persist(owner); });
+                    em.clear();
+                    assertThat(em.find(SharedCompositeOwner.class, 21L).values).hasSize(2);
+                }
+                assertThat(factory.getCache().contains(SharedCompositeOwner.class, 21L)).isTrue();
+                try (var em = factory.createEntityManager()) {
+                    var found = em.find(SharedCompositeOwner.class, 21L);
+                    var target = em.find(SharedCompositeTarget.class, key);
+                    assertThat(found.values.getFirst().target).isSameAs(found.values.getLast().target).isSameAs(target);
+                    assertThat(target.parent).isSameAs(em.find(CompositeTarget.class, key));
+                    var different = new CompositeTarget();
+                    different.id = new CompositeKey(19, 3);
+                    em.getTransaction().begin();
+                    em.persist(different);
+                    target.parent = different;
+                    assertThatThrownBy(em::flush).isInstanceOf(PersistenceException.class).hasMessageContaining("MapsId");
+                    em.getTransaction().rollback();
+                }
+            }
+        }
+    }
+
+    @Test void wholeCompositeMapsIdElementTargetsKeepPolymorphicParentsRefused() {
+        assertThatThrownBy(() -> factory(false, SharedCompositeOwner.class, SharedCompositeValue.class,
+            SharedCompositeTarget.class, CompositeTarget.class, CompositeKey.class, CompositeParentSubtype.class))
+            .isInstanceOf(PersistenceException.class).hasMessageContaining("requires an eligible primary-key target");
+    }
+
     @Test void compositeAndSimpleIdClassParentsCanCoexistWithDefaultJoinColumns() {
         try (var factory = factory(false, CompositeParentsOwner.class, CompositeParentsValue.class,
                 CompositeParentsTarget.class, CompositeParentsKey.class, CompositeTarget.class, CompositeKey.class,
@@ -1367,6 +1517,33 @@ class ElementCollectionRelationsTest {
                 && java.util.Objects.equals(code, key.code);
         }
         @Override public int hashCode() { return java.util.Objects.hash(source, destination, code); }
+    }
+    @Entity(name = "SharedCompositeOwner") public static class SharedCompositeOwner {
+        @Id public Long id;
+        @ElementCollection @CollectionTable(name = "shared_composite_values",
+            joinColumns = @JoinColumn(name = "owner_id"))
+        @OrderColumn(name = "value_position")
+        public List<SharedCompositeValue> values = new ArrayList<>();
+    }
+    @Embeddable public static class SharedCompositeValue {
+        public String label;
+        @ManyToOne @JoinColumns({
+            @JoinColumn(name = "element_serial", referencedColumnName = "shared_serial_fk"),
+            @JoinColumn(name = "element_region", referencedColumnName = "shared_region_fk")
+        })
+        public SharedCompositeTarget target;
+        public SharedCompositeValue() {}
+        SharedCompositeValue(String label, SharedCompositeTarget target) { this.label = label; this.target = target; }
+    }
+    @Entity(name = "SharedCompositeTarget") public static class SharedCompositeTarget {
+        @EmbeddedId public CompositeKey id;
+        @MapsId @OneToOne(cascade = CascadeType.PERSIST) @JoinColumns({
+            @JoinColumn(name = "shared_serial_fk", referencedColumnName = "serial"),
+            @JoinColumn(name = "shared_region_fk", referencedColumnName = "region")
+        })
+        public CompositeTarget parent;
+        public SharedCompositeTarget() {}
+        SharedCompositeTarget(CompositeTarget parent) { this.parent = parent; }
     }
     @Entity public static class MapsParentSubtype extends MapsIdElementParent {}
     @Entity(name = "MultiMapsOwner") public static class MultiMapsOwner {
