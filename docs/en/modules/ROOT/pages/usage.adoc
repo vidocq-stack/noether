@@ -67,24 +67,27 @@ Reference the dependent's physical PK/FK columns in the element's
 `@JoinColumns`, not necessarily the embedded key's default column names.
 Both annotations and metadata-complete XML use the normal persist, query,
 merge/refresh and cache paths. Named-component composite-parent derivation
-beyond D40 below, general nested/chained keys and broader loading optimizations
+beyond D40/D41 below, general nested/chained keys and broader loading optimizations
 are not included.
 
 == Named composite MapsId collection targets
 
-D40 permits one named embedded component of a collection relation target's
+D40/D41 permit one named embedded component of a collection relation target's
 `@EmbeddedId` to derive from an owning `@ManyToOne` or `@OneToOne`
 `@MapsId("componentName")`. The parent must be non-polymorphic and have a
-direct all-BASIC `@EmbeddedId` of that component's Java type. All other target
-key parts are BASIC. Supply those remaining parts and the parent before persist;
-normal cascade ordering derives the component before collection rows are bound.
+direct all-BASIC `@EmbeddedId` or `@IdClass` of that component's Java type.
+Parent identifier declaration order need not match the component's attribute
+order. All other target key parts are BASIC. Supply those remaining parts and
+the parent before persist; normal cascade ordering derives the component before
+collection rows are bound.
 
 Element `@JoinColumns` reference the dependent's physical parent-FK columns
 and remaining BASIC key columns. Default joins also use that complete tuple.
 Annotations and metadata-complete ORM XML use the same generated access, query,
 merge/refresh and shared-cache paths; mutable and record outer key classes work.
-Named IdClass parents, multiple composite components, unmapped nested remainder,
-deeper/chained parent keys and broader loading optimizations are not included.
+Multiple composite components, unmapped nested remainder,
+deeper/relationship-valued/chained parent keys and broader loading optimizations
+are not included.
 
 == Query entity graphs
 

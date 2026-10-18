@@ -296,8 +296,8 @@ when read rather than treated as a valid composite identity. JPQL/Criteria
 association navigation and whole-value projections resolve the target's managed
 identity through the same tuple.
 
-Composite keys containing non-BASIC components beyond D40's named embedded
-MapsId component, derived composite keys beyond D37/D38/D39/D40's EmbeddedId
+Composite keys containing non-BASIC components beyond D40/D41's named embedded
+MapsId component, derived composite keys beyond D37/D38/D39/D40/D41's EmbeddedId
 and D36's direct BASIC parent relationship-valued `@IdClass` part boundaries,
 business-key joins, inverse `mappedBy`,
 orphan removal, to-many/nested
@@ -316,7 +316,7 @@ column supplies that column name. Annotation and metadata-complete ORM XML use
 the same mapping, schema, lifecycle and query paths; generated parent IDs are
 available to the collection row after ordinary persist ordering.
 
-Composite derived identities beyond D37/D38/D39/D40's bounded `@EmbeddedId` contracts,
+Composite derived identities beyond D37/D38/D39/D40/D41's bounded `@EmbeddedId` contracts,
 nested or chained `@MapsId`, business-key, polymorphic and other unsupported
 target mappings remain outside this support. This does not widen collection
 fetching, graph hydration, lazy references or batching.
@@ -334,7 +334,7 @@ Persist and load use the existing derived-identity lifecycle and
 managed identity paths. Annotation and metadata-complete ORM XML are covered.
 
 Overlapping components or mixed whole-ID/named derivation, nested or non-BASIC
-identifiers beyond D40 below, chained or unsupported composite parent identities,
+identifiers beyond D40/D41 below, chained or unsupported composite parent identities,
 business keys, polymorphism and other
 unsupported mappings remain refused. Collection fetch/graph hydration,
 optimized row loading, lazy references and batching are unchanged.
@@ -358,17 +358,19 @@ FK tuples mean no target and partial-null tuples fail explicitly. Rewrites,
 merge, refresh and cache reads preserve that identity; changing a persisted
 target's MapsId parent is refused.
 
-Named-component composite parents beyond D40 below, nested/non-BASIC/chained keys,
+Named-component composite parents beyond D40/D41 below, nested/non-BASIC/chained keys,
 relationship-valued parent keys, overlapping derivation, polymorphic/business/
 join-table mappings and broader collection fetch/lazy/batch support are not added.
 
-== Named composite MapsId element targets (D40, 2026-10-18)
+== Named composite MapsId element targets (D40/D41, 2026-10-18)
 
 An element-value owning to-one may target an entity with an `@EmbeddedId`
 containing exactly one embedded component mapped by a named owning to-one
 `@MapsId`. Its non-polymorphic parent must have a direct all-BASIC EmbeddedId
-of the same component type; the target's remaining identifier components are
-BASIC. This permits the mapped composite component, not general nested keys.
+or IdClass of the same component type; the target's remaining identifier
+components are BASIC. D41 adds IdClass parents and preserves key values when
+parent declaration order differs from the component's attribute order.
+This permits the mapped composite component, not general nested keys.
 
 The physical collection FK combines remaining BASIC columns with the parent's
 full PK/FK tuple in identifier order. Explicit reordered joins and default
@@ -380,8 +382,8 @@ Duplicate references resolve one managed identity; all-null target tuples are
 null and partial-null tuples fail. Parent or remaining BASIC key mutation is
 refused after persist; owner removal does not remove the target.
 
-Named IdClass parents, multiple composite components, unmapped nested remainder,
-deeper/non-BASIC/chained parent identities, polymorphic/business/join-table
+Multiple composite components, unmapped nested remainder, deeper/non-BASIC/
+relationship-valued/chained parent identities, polymorphic/business/join-table
 mappings and broader collection fetch/lazy/batch support remain outside this lot.
 
 == Relationship-valued IdClass targets (D32/D35/D36, 2026-10-18)
@@ -469,8 +471,8 @@ inverse/collection/join-table mappings, overlapping key
 parts, independently generated dependent IDs, noninsertable/secondary-table
 join columns, chained targets and unsupported nested target/remaining key
 shapes. Existing P5 exact matching flat composite-parent examples remain
-supported; D40 adds incoming joins for its single named embedded component
-derived from a BASIC EmbeddedId parent. This does not imply arbitrary nested/
+supported; D40/D41 add incoming joins for a single named embedded component
+derived from a BASIC EmbeddedId/IdClass parent. This does not imply arbitrary nested/
 composite/partial key support or broader optimized loading.
 See the detailed Persistence roadmap and `TCK.md` for the exact evidence.
 

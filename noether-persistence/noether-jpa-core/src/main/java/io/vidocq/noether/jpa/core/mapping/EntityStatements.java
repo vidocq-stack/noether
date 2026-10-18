@@ -867,25 +867,23 @@ public final class EntityStatements {
                         || derived.kind() != AssociationAttribute.Kind.ONE_TO_ONE) return false;
             } else if (target.id() instanceof IdModel.Embedded embedded) {
                 List<AttributeModel> parts = embedded.attribute().embeddable().attributes();
+                EntityModel parent = models.apply(derived.targetEntity());
+                Class<?> parentKey = parent == null ? null : switch (parent.id()) {
+                    case IdModel.Embedded parentId -> parentId.attribute().javaType();
+                    case IdModel.ByIdClass parentId -> parentId.idClass();
+                    default -> null;
+                };
                 if (parts.stream().anyMatch(attribute -> !(attribute instanceof BasicAttribute))) {
                     if (mapsIds.size() != 1 || derived.mapsId().isEmpty()) return false;
                     AttributeModel component = parts.stream().filter(part -> part.name().equals(derived.mapsId()))
                         .findFirst().orElse(null);
-                    EntityModel parent = models.apply(derived.targetEntity());
                     return component instanceof EmbeddedAttribute nested
                         && nested.embeddable().attributes().stream().allMatch(BasicAttribute.class::isInstance)
                         && parts.stream().allMatch(part -> part == component || part instanceof BasicAttribute)
-                        && parent != null && parent.id() instanceof IdModel.Embedded parentId
-                        && parentId.attribute().javaType() == nested.javaType()
+                        && parentKey == nested.javaType()
                         && eligibleBasicElementParent(derived, false, models, inheritances);
                 }
                 if (derived.mapsId().isEmpty()) {
-                    EntityModel parent = models.apply(derived.targetEntity());
-                    Class<?> parentKey = parent == null ? null : switch (parent.id()) {
-                        case IdModel.Embedded parentId -> parentId.attribute().javaType();
-                        case IdModel.ByIdClass parentId -> parentId.idClass();
-                        default -> null;
-                    };
                     return mapsIds.size() == 1 && derived.kind() == AssociationAttribute.Kind.ONE_TO_ONE
                         && parentKey == embedded.attribute().javaType()
                         && eligibleBasicElementParent(derived, false, models, inheritances);

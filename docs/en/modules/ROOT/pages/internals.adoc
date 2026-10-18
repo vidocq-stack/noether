@@ -353,7 +353,8 @@ Broader fetch/lazy/batch and nested/chained identity eligibility is unchanged.
 `eligibleElementTarget` admits exactly one named embedded component mapped by
 an owning to-one MapsId to a non-polymorphic direct BASIC EmbeddedId parent
 of the same component type. Other components must be BASIC. Multiple composite
-components, named IdClass parents and unmapped nested remainder remain excluded.
+components and unmapped nested remainder remain excluded. Named IdClass parents
+were excluded at D40 and are added by D41 below.
 
 `embeddedRelationalKeys` visits identifier components in model order, retaining
 BASIC column overrides and replacing each mapped component with the complete
@@ -364,6 +365,22 @@ Existing generated access and MapsId lifecycle already derive and load that
 component; schema, queries and collection storage consume the same flattened
 identity. No loader, SQL AST, reflection or dependency change is introduced;
 broader fetch/lazy/batch eligibility remains unchanged.
+
+== Named MapsId with IdClass parents (D41, 2026-10-18)
+
+`eligibleElementTarget` now compares the component's Java type against either
+the parent's EmbeddedId type or its IdClass type, just as it does for whole-key
+derivation. `eligibleBasicElementParent` still rejects relationship-valued,
+derived or polymorphic parent keys. Exactly one composite component is admitted,
+with all remaining target key parts BASIC.
+
+Existing generated parent `idObject` and dependent embedded-component access
+align values by key attributes; the parent's entity declaration order may differ.
+D40's `embeddedRelationalKeys` and `associationKeyColumns` keep the physical FK
+tuple in parent identity order. Annotation/XML, record outer keys and default
+joins therefore use the same storage/query/lifecycle/cache paths. No generated
+access, loader, lifecycle or SQL AST implementation changes are required;
+broader nested/chained identity and fetch/lazy/batch boundaries remain unchanged.
 
 == Lazy read batches (D13, 2026-10-15)
 
