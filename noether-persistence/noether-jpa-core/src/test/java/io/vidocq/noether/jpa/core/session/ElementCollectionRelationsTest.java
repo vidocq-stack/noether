@@ -963,6 +963,183 @@ class ElementCollectionRelationsTest {
             .isInstanceOf(PersistenceException.class).hasMessageContaining("requires an eligible primary-key target");
     }
 
+    // §2.4.2.1 and §2.8: the dependent EmbeddedId has the same Java type as its parent's IdClass.
+    @Test void wholeMapsIdFromIdClassParentKeepsElementTuplesAndManagedIdentity() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = configuration(false, SharedIdClassOwner.class, SharedIdClassValue.class,
+                SharedIdClassTarget.class, SharedClassParent.class, IdClassKey.class);
+            if (xml) configuration.mappingFile("orm/element-collection-shared-idclass-parent.xml");
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var firstParent = new SharedClassParent();
+                firstParent.region = 3;
+                firstParent.serial = 19;
+                var secondParent = new SharedClassParent();
+                secondParent.region = 19;
+                secondParent.serial = 3;
+                var first = new SharedIdClassTarget(firstParent);
+                var second = new SharedIdClassTarget(secondParent);
+                var firstKey = new IdClassKey(3, 19);
+                var secondKey = new IdClassKey(19, 3);
+                var owner = new SharedIdClassOwner();
+                owner.id = 22L;
+                owner.values.add(new SharedIdClassValue("first", first));
+                owner.values.add(new SharedIdClassValue("duplicate", first));
+                owner.values.add(new SharedIdClassValue("null", null));
+                owner.values.add(new SharedIdClassValue("second", second));
+                transaction(em, () -> { em.persist(first); em.persist(second); em.persist(owner); });
+                assertThat(first.id).isEqualTo(firstKey);
+                assertThat(second.id).isEqualTo(secondKey);
+                assertThat(factory.getPersistenceUnitUtil().getIdentifier(first)).isEqualTo(firstKey);
+                List<?> rows = em.createNativeQuery(
+                    "select element_region, element_serial from shared_idclass_values order by value_position")
+                    .getResultList();
+                assertThat((Object[]) rows.getFirst()).containsExactly(3L, 19L);
+                assertThat((Object[]) rows.get(1)).containsExactly(3L, 19L);
+                assertThat((Object[]) rows.get(2)).containsOnlyNulls();
+                assertThat((Object[]) rows.get(3)).containsExactly(19L, 3L);
+                em.getTransaction().begin();
+                assertThatThrownBy(() -> em.createNativeQuery(
+                    "insert into shared_idclass_values (owner_id, value_position, element_region, element_serial)"
+                        + " values (22, 4, 3, 3)").executeUpdate())
+                    .isInstanceOf(PersistenceException.class);
+                em.getTransaction().rollback();
+                em.clear();
+                factory.getCache().evictAll();
+                var found = em.find(SharedIdClassOwner.class, 22L);
+                var managedFirst = em.find(SharedIdClassTarget.class, firstKey);
+                var managedSecond = em.find(SharedIdClassTarget.class, secondKey);
+                assertThat(found.values).extracting(value -> value.target)
+                    .containsExactly(managedFirst, managedFirst, null, managedSecond);
+                assertThat(found.values.getFirst().target).isSameAs(found.values.get(1).target).isSameAs(managedFirst);
+                assertThat(managedFirst.parent).isSameAs(em.find(SharedClassParent.class, firstKey));
+                assertThat(managedSecond.parent).isSameAs(em.find(SharedClassParent.class, secondKey));
+                assertThat(em.createQuery(
+                    "select v.target from SharedIdClassOwner o join o.values v order by index(v)", SharedIdClassTarget.class)
+                    .getResultList()).containsExactly(managedFirst, managedFirst, null, managedSecond);
+                assertThat(em.createQuery(
+                    "select v.target.id.serial from SharedIdClassOwner o join o.values v order by index(v)", Long.class)
+                    .getResultList()).containsExactly(19L, 19L, 3L);
+                assertThat(em.createQuery(
+                    "select v.target.parent.region from SharedIdClassOwner o join o.values v order by index(v)", Long.class)
+                    .getResultList()).containsExactly(3L, 3L, 19L);
+                assertThat(em.createQuery(
+                    "select v.label from SharedIdClassOwner o join o.values v where v.target = :target", String.class)
+                    .setParameter("target", managedSecond).getResultList()).containsExactly("second");
+                var cb = em.getCriteriaBuilder();
+                var query = cb.createQuery(SharedIdClassTarget.class);
+                var values = query.from(SharedIdClassOwner.class).joinList("values");
+                query.select(values.get("target")).orderBy(cb.asc(values.index()));
+                assertThat(em.createQuery(query).getResultList())
+                    .containsExactly(managedFirst, managedFirst, null, managedSecond);
+                var projected = em.createQuery(
+                    "select v from SharedIdClassOwner o join o.values v order by index(v)", SharedIdClassValue.class)
+                    .getResultList();
+                assertThat(projected.getFirst().target).isSameAs(managedFirst);
+                assertThat(projected.get(2).target).isNull();
+                transaction(em, () -> {
+                    found.values.remove(1);
+                    found.values.getFirst().target = managedSecond;
+                });
+                em.clear();
+                factory.getCache().evictAll();
+                var reloaded = em.find(SharedIdClassOwner.class, 22L);
+                assertThat(reloaded.values).extracting(value -> value.target == null ? null : value.target.id)
+                    .containsExactly(secondKey, null, secondKey);
+                em.clear();
+                reloaded.values.getFirst().target = first;
+                transaction(em, () -> assertThat(em.merge(reloaded).values.getFirst().target)
+                    .isSameAs(em.find(SharedIdClassTarget.class, firstKey)));
+                em.clear();
+                factory.getCache().evictAll();
+                var refreshed = em.find(SharedIdClassOwner.class, 22L);
+                assertThat(refreshed.values.getFirst().target.id).isEqualTo(firstKey);
+                refreshed.values.getFirst().target = em.find(SharedIdClassTarget.class, secondKey);
+                em.refresh(refreshed);
+                assertThat(refreshed.values.getFirst().target).isSameAs(em.find(SharedIdClassTarget.class, firstKey));
+                transaction(em, () -> em.remove(refreshed));
+                assertThat(em.find(SharedIdClassTarget.class, firstKey)).isNotNull();
+                assertThat(em.find(SharedIdClassTarget.class, secondKey)).isNotNull();
+                assertThat(em.createNativeQuery("select count(*) from shared_idclass_values").getSingleResult()).isEqualTo(0L);
+                var partial = new SharedIdClassOwner();
+                partial.id = 23L;
+                partial.values.add(new SharedIdClassValue("partial", em.find(SharedIdClassTarget.class, firstKey)));
+                transaction(em, () -> em.persist(partial));
+                transaction(em, () -> em.createNativeQuery(
+                    "update shared_idclass_values set element_serial = null where owner_id = 23").executeUpdate());
+                em.clear();
+                factory.getCache().evictAll();
+                assertThatThrownBy(() -> em.find(SharedIdClassOwner.class, 23L).values.size())
+                    .isInstanceOf(PersistenceException.class).hasMessageContaining("partially null");
+            }
+        }
+    }
+
+    @Test void wholeMapsIdCopiesParentKeyByAttributeRatherThanDeclarationOrder() {
+        try (var factory = configuration(false, SharedIdClassTarget.class, SharedClassParent.class,
+                IdClassKey.class).createEntityManagerFactory(); var em = factory.createEntityManager()) {
+            var parent = new SharedClassParent();
+            parent.region = 3;
+            parent.serial = 19;
+            var target = new SharedIdClassTarget(parent);
+            transaction(em, () -> em.persist(target));
+            var key = new IdClassKey(3, 19);
+            assertThat(target.id).isEqualTo(key);
+            em.clear();
+            factory.getCache().evictAll();
+            var found = em.find(SharedIdClassTarget.class, key);
+            assertThat(found.id).isEqualTo(key);
+            assertThat(found.parent).isSameAs(em.find(SharedClassParent.class, key));
+        }
+    }
+
+    @Test void sharedIdClassParentTargetsKeepCacheIdentityAndRejectParentReassignment() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = configuration(false, SharedIdClassOwner.class, SharedIdClassValue.class,
+                SharedIdClassTarget.class, SharedClassParent.class, IdClassKey.class).sharedCacheMode(SharedCacheMode.ALL);
+            if (xml) configuration.mappingFile("orm/element-collection-shared-idclass-parent.xml");
+            try (var factory = configuration.createEntityManagerFactory()) {
+                var key = new IdClassKey(3, 19);
+                try (var em = factory.createEntityManager()) {
+                    var parent = new SharedClassParent();
+                    parent.region = 3;
+                    parent.serial = 19;
+                    var target = new SharedIdClassTarget(parent);
+                    var owner = new SharedIdClassOwner();
+                    owner.id = 24L;
+                    owner.values.add(new SharedIdClassValue("first", target));
+                    owner.values.add(new SharedIdClassValue("duplicate", target));
+                    transaction(em, () -> { em.persist(target); em.persist(owner); });
+                    em.clear();
+                    assertThat(em.find(SharedIdClassOwner.class, 24L).values).hasSize(2);
+                }
+                assertThat(factory.getCache().contains(SharedIdClassOwner.class, 24L)).isTrue();
+                try (var em = factory.createEntityManager()) {
+                    var found = em.find(SharedIdClassOwner.class, 24L);
+                    var target = em.find(SharedIdClassTarget.class, key);
+                    assertThat(found.values.getFirst().target).isSameAs(found.values.getLast().target).isSameAs(target);
+                    assertThat(target.parent).isSameAs(em.find(SharedClassParent.class, key));
+                    var different = new SharedClassParent();
+                    different.region = 19;
+                    different.serial = 3;
+                    em.getTransaction().begin();
+                    em.persist(different);
+                    target.parent = different;
+                    assertThatThrownBy(em::flush).isInstanceOf(PersistenceException.class).hasMessageContaining("MapsId");
+                    em.getTransaction().rollback();
+                }
+            }
+        }
+    }
+
+    @Test void sharedIdClassParentTargetsKeepPolymorphicAndMismatchedParentsRefused() {
+        assertThatThrownBy(() -> factory(false, SharedIdClassOwner.class, SharedIdClassValue.class,
+            SharedIdClassTarget.class, SharedClassParent.class, IdClassKey.class, SharedClassParentSubtype.class))
+            .isInstanceOf(PersistenceException.class).hasMessageContaining("requires an eligible primary-key target");
+        assertThatThrownBy(() -> configuration(false, MismatchedSharedClassTarget.class,
+            SharedClassParent.class, IdClassKey.class, CompositeKey.class).createEntityManagerFactory())
+            .isInstanceOf(PersistenceException.class).hasMessageContaining("identifier types must match");
+    }
+
     @Test void compositeAndSimpleIdClassParentsCanCoexistWithDefaultJoinColumns() {
         try (var factory = factory(false, CompositeParentsOwner.class, CompositeParentsValue.class,
                 CompositeParentsTarget.class, CompositeParentsKey.class, CompositeTarget.class, CompositeKey.class,
@@ -1382,7 +1559,7 @@ class ElementCollectionRelationsTest {
         @Id public long serial;
         public IdClassTarget() {}
     }
-    public static class IdClassKey implements java.io.Serializable {
+    @Embeddable public static class IdClassKey implements java.io.Serializable {
         public long region;
         public long serial;
         public IdClassKey() {}
@@ -1517,6 +1694,42 @@ class ElementCollectionRelationsTest {
                 && java.util.Objects.equals(code, key.code);
         }
         @Override public int hashCode() { return java.util.Objects.hash(source, destination, code); }
+    }
+    @Entity(name = "SharedIdClassOwner") public static class SharedIdClassOwner {
+        @Id public Long id;
+        @ElementCollection @CollectionTable(name = "shared_idclass_values",
+            joinColumns = @JoinColumn(name = "owner_id"))
+        @OrderColumn(name = "value_position")
+        public List<SharedIdClassValue> values = new ArrayList<>();
+    }
+    @Embeddable public static class SharedIdClassValue {
+        public String label;
+        @ManyToOne @JoinColumns({
+            @JoinColumn(name = "element_serial", referencedColumnName = "class_serial_fk"),
+            @JoinColumn(name = "element_region", referencedColumnName = "class_region_fk")
+        })
+        public SharedIdClassTarget target;
+        public SharedIdClassValue() {}
+        SharedIdClassValue(String label, SharedIdClassTarget target) { this.label = label; this.target = target; }
+    }
+    @Entity @IdClass(IdClassKey.class) public static class SharedClassParent {
+        @Id public long serial;
+        @Id public long region;
+    }
+    @Entity public static class SharedClassParentSubtype extends SharedClassParent {}
+    @Entity public static class MismatchedSharedClassTarget {
+        @EmbeddedId public CompositeKey id;
+        @MapsId @OneToOne public SharedClassParent parent;
+    }
+    @Entity(name = "SharedIdClassTarget") public static class SharedIdClassTarget {
+        @EmbeddedId public IdClassKey id;
+        @MapsId @OneToOne(cascade = CascadeType.PERSIST) @JoinColumns({
+            @JoinColumn(name = "class_serial_fk", referencedColumnName = "serial"),
+            @JoinColumn(name = "class_region_fk", referencedColumnName = "region")
+        })
+        public SharedClassParent parent;
+        public SharedIdClassTarget() {}
+        SharedIdClassTarget(SharedClassParent parent) { this.parent = parent; }
     }
     @Entity(name = "SharedCompositeOwner") public static class SharedCompositeOwner {
         @Id public Long id;

@@ -290,8 +290,9 @@ public final class MappedEntity {
                 Object target = access.get(instance, parts.getFirst().attribute());
                 Object parentId = target == null ? null : parent(parts.getFirst(), target).id(target);
                 if (parentId != null) {
-                    // a copy of the parent's key, component by component, never the parent's own embeddable
-                    Object[] components = parent(parts.getFirst(), target).statements().keyValues(parentId);
+                    // Copy key attributes, not the parent's potentially differently ordered physical tuple.
+                    Object[] components = new Object[embedded.attribute().embeddable().attributes().size()];
+                    embeddedId.read(parent(parts.getFirst(), target).idObject(target), components);
                     Object key = embeddedId.type().isRecord() ? embeddedId.construct(components) : embeddedId.instantiate();
                     if (!embeddedId.type().isRecord()) {
                         embeddedId.write(key, components);

@@ -870,9 +870,13 @@ public final class EntityStatements {
                 if (parts.stream().anyMatch(attribute -> !(attribute instanceof BasicAttribute))) return false;
                 if (derived.mapsId().isEmpty()) {
                     EntityModel parent = models.apply(derived.targetEntity());
+                    Class<?> parentKey = parent == null ? null : switch (parent.id()) {
+                        case IdModel.Embedded parentId -> parentId.attribute().javaType();
+                        case IdModel.ByIdClass parentId -> parentId.idClass();
+                        default -> null;
+                    };
                     return mapsIds.size() == 1 && derived.kind() == AssociationAttribute.Kind.ONE_TO_ONE
-                        && parent != null && parent.id() instanceof IdModel.Embedded parentId
-                        && parentId.attribute().javaType() == embedded.attribute().javaType()
+                        && parentKey == embedded.attribute().javaType()
                         && eligibleBasicElementParent(derived, false, models, inheritances);
                 }
                 if (parts.stream().map(AttributeModel::name).noneMatch(derived.mapsId()::equals)) return false;

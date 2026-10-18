@@ -333,6 +333,21 @@ flat tuple to storage, schema constraints, loading and queries. No identity,
 loader, SQL AST or lifecycle implementation changes; broader fetch/lazy/batch
 eligibility is unchanged.
 
+== Whole MapsId with IdClass parents (D39, 2026-10-18)
+
+`eligibleElementTarget` also accepts a direct all-BASIC IdClass parent when
+its key class is the dependent's EmbeddedId type. The existing parent guard,
+physical whole-key mapping and ordinary loader remain in use.
+
+BUG-20261018-01 exposed positional copying in `MappedEntity.deriveId`: a parent
+declaring its IDs in a different order from the key class produced swapped
+dependent key values. Whole EmbeddedId derivation now obtains the parent's
+identifier object and reads it with the dependent's generated key access before
+constructing an independent mutable or record key. This aligns attributes
+without changing the parent's physical SQL tuple ordering or introducing
+reflection. The failure is reproduced both with and without a collection owner.
+Broader fetch/lazy/batch and nested/chained identity eligibility is unchanged.
+
 == Lazy read batches (D13, 2026-10-15)
 
 `EntityLoader` groups pending compatible persistence-context entries on first access.

@@ -1,3 +1,51 @@
+## Noether whole MapsId element targets with IdClass parents (D39) — 2026-10-18
+
+D39 admits a whole direct all-BASIC EmbeddedId element target whose parent
+uses the same key class through a direct all-BASIC IdClass. BUG-20261018-01
+also corrects whole-key copying through generated attribute access, independently
+of the parent's identifier declaration order. Nested/relationship-valued/chained
+parent keys, polymorphism and broader loading remain excluded.
+
+Commands from the Noether root:
+
+```sh
+./mvnw -ntp -pl noether-persistence/noether-jpa-core \
+  '-Dtest=ElementCollectionRelationsTest#wholeMapsIdCopiesParentKeyByAttributeRatherThanDeclarationOrder+wholeMapsIdFromIdClassParentKeepsElementTuplesAndManagedIdentity' \
+  -Dsurefire.failIfNoSpecifiedTests=false test
+./mvnw -ntp -pl noether-persistence/noether-jpa-core \
+  -Dtest=ElementCollectionRelationsTest,MapsIdToOneTest,DerivedIdentityTest \
+  -Dsurefire.failIfNoSpecifiedTests=false test
+./mvnw -ntp clean install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+- Mandatory red: bootstrap first refused the element target; reversed parent
+  declaration order then reproduced incorrect key copying even without a
+  collection owner. Both independent and collection regressions pass after
+  aligning key attributes.
+- Focused gate: **91/91** (45 element-relationship, 39 MapsId and 7
+  derived-identity tests). Full annotation/metadata-complete XML covers
+  reversed key values and parent declaration order, reordered joins, cascade,
+  physical tuples/grouped FKs, duplicate/null references, managed identity,
+  JPQL/Criteria projection/navigation/comparison, rewrites, detached merge,
+  refresh, removal and partial-null refusal. Cache reads retain one identity;
+  parent reassignment, polymorphic parents and mismatched key types fail explicitly.
+- Full clean install: **1129 tests / 0 failures / 0 errors / 0 skips**,
+  across **92** reports; **BUILD SUCCESS**.
+- Full locally patched Persistence 3.2.1 TCK on PostgreSQL 17: **2135 tests /
+  2131 passed / 0 failures / 0 errors / 4 official skips**, across **259** reports.
+  All **2135** execution/class/method/outcome identities match D26 and D38.
+- The runner verified every report used the derived TCK-BUG-001 jar.
+  Official SHA-256:
+  `a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`;
+  derived SHA-256:
+  `1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+
+This is **locally patched regression evidence**, not an untouched official TCK
+result or certification. The four unchanged official skips are listed in the
+D26 record below.
+
 ## Noether whole composite MapsId element targets (D38) — 2026-10-18
 
 D38 admits element-value owning to-one targets with a whole direct all-BASIC

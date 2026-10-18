@@ -2200,20 +2200,48 @@ Full clean install: **1125 tests / 0 failures / 0 errors / 0 skips**, across
 execution/class/method/outcome identities match D26 and D37. Commands and fixture
 provenance are in `TCK.md`; this is local evidence, not certification.
 
-Prioritized backlog after D38, 2026-10-18. Each item needs its own approved, bounded lot; until then
+### D39 — Whole MapsId element targets with IdClass parents ✅ (2026-10-18)
+
+D39 extends D38 to a non-polymorphic parent with a direct all-BASIC `@IdClass`
+whose key class is the dependent's EmbeddedId type (Persistence 3.2 §2.4.2.1).
+The eligibility guard reuses the existing BASIC-parent checks and whole-key
+physical mapping; named-component composite parents, nested/relationship-valued/
+chained keys, polymorphism and broader loading remain outside this lot.
+
+The mandatory red first rejected the element target at bootstrap. Reversing
+the parent's identifier declaration order then exposed BUG-20261018-01,
+independently reproduced without a collection: whole-key derivation copied a
+physical tuple into a differently ordered key object. `MappedEntity.deriveId`
+now reads the parent's identifier object through the dependent key's generated
+access before constructing an independent copy. No reflection or new mapping
+engine is introduced.
+
+Focused gate: **91/91** (45 element-relationship, 39 MapsId and 7 derived-identity
+tests). Full annotation/metadata-complete XML scenarios cover reversed key
+values and parent declaration order, reordered physical joins, cascade,
+grouped FKs, duplicate/null references, managed identity, JPQL/Criteria,
+rewrites, merge, refresh, removal, cache and partial-null refusal. Parent
+reassignment, polymorphic parents and mismatched key types fail explicitly.
+Full clean install: **1129 tests / 0 failures / 0 errors / 0 skips**, 92 reports.
+Full locally patched TCK: **2135 / 2131 / 0 / 0 / 4**, 259 reports; every
+execution/class/method/outcome identity matches D26 and D38. Commands and fixture
+provenance are in `TCK.md`; this is local regression evidence, not certification.
+
+Prioritized backlog after D39, 2026-10-18. Each item needs its own approved, bounded lot; until then
 the documented fallback (follow-up selects, eager loading, or an explicit refusal naming the
 milestone) stays in place.
 
 1. **Remaining relational mapping shapes** — derived/nested identity targets and
    composite forms beyond D23, D29's direct BASIC `@EmbeddedId`/`@IdClass`,
-   D38's whole shared BASIC `@EmbeddedId`, D30's simple shared `@MapsId` contract, D37's multiple direct BASIC
+   D38/D39's whole shared BASIC `@EmbeddedId` with EmbeddedId/IdClass parents,
+   D30's simple shared `@MapsId` contract, D37's multiple direct BASIC
    `@EmbeddedId` components and D36's direct BASIC simple/composite-parent
    relationship components in an `@IdClass`; business joins
    through join tables or inheritance, broader secondary-table business tuples/
    PK joins beyond D26, embedded business association paths,
    inverse collections and safely mutable referenced keys; inverse many-to-many
    indexes and broader relationships inside collection-table embeddable elements
-   beyond D24/D28/D29/D30/D31/D32/D35/D36/D37/D38 (business/join-table and unsupported composite or
+   beyond D24/D28/D29/D30/D31/D32/D35/D36/D37/D38/D39 (business/join-table and unsupported composite or
    derived forms). After D25,
    inverse entity-owner relationships need a
    separate normative/cardinality contract; illegal inverse collection embeddables
@@ -2240,6 +2268,7 @@ Recorded before implementation; each entry: date, decision, reason.
 
 | # | Date | Decision | Status |
 |---|---|---|---|
+| D39 | 2026-10-18 | Extend D38 whole EmbeddedId element targets to a non-polymorphic parent using the same key type via a direct all-BASIC IdClass. Reuse physical FK ordering and generated access; fix whole-key copying to align attributes independently of parent declaration order (BUG-20261018-01). Retain nested/relationship-valued/chained-parent, mismatched-key and unrelated loading boundaries. | Actioned |
 | D38 | 2026-10-18 | Extend element-value owning to-one targets to a whole direct all-BASIC EmbeddedId shared through a single owning OneToOne MapsId with a non-polymorphic parent using the same direct all-BASIC EmbeddedId type. Reuse whole-key derivation and physical tuple mapping; preserve named-component composite-parent, nested/chained, overlap and unrelated loading boundaries. | Actioned |
 | D37 | 2026-10-18 | Extend D31 element-value to-one targets with direct all-BASIC EmbeddedId keys to multiple distinct named MapsId components, each derived through an owning to-one FK to a non-polymorphic simple-ID parent. Reuse existing per-component derivation and physical tuple mapping; preserve whole-ID, overlap, nested/composite/chained-parent and unrelated loading boundaries. | Actioned |
 | D36 | 2026-10-18 | Extend element-value to-one IdClass targets to owning identifier relationships with non-polymorphic parents using direct all-BASIC EmbeddedId/IdClass keys, alongside existing simple parents. Reuse flattened physical FK parts and generated identity access. Keep nested/non-BASIC/chained-derived parents, business/join-table/polymorphic mappings and loading optimizations out of scope. | Actioned |

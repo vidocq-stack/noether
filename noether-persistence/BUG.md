@@ -1122,3 +1122,34 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     across **259 reports**. All **2135** identities/outcomes, **518** effective
     classpaths and **49** immutable input hashes checked independently; no
     official fixture or exclusion change. Not a certification claim.
+
+## BUG-20261018-01 — Whole MapsId key copying depends on parent attribute declaration order
+
+- **Date**: 2026-10-18
+- **Status**: FIXED (D39, 2026-10-18)
+- **Affected module**: `noether-jpa-core`, `mapping.MappedEntity.deriveId`
+- **Symptom**: persisting a dependent with a whole EmbeddedId MapsId from an
+  IdClass parent fails at commit with `@MapsId identity ... cannot be changed
+  or cleared` when the parent declares its ID attributes in a different order
+  from the shared key class. The values are swapped during key derivation.
+- **Minimal reproduction**:
+  ```sh
+  ./mvnw -ntp -pl noether-persistence/noether-jpa-core \
+    -Dtest=ElementCollectionRelationsTest#wholeMapsIdCopiesParentKeyByAttributeRatherThanDeclarationOrder \
+    -Dsurefire.failIfNoSpecifiedTests=false test
+  ```
+- **Confirmed cause**: whole-key derivation copies the parent's flattened
+  database tuple into the dependent key by position instead of reading the
+  parent's identifier object through the dependent's generated key access.
+- **Investigations**:
+  - 2026-10-18: the D39 collection scenario exposes the issue after widening
+    eligibility. An isolated regression without any collection owner reproduces
+    the same commit failure, proving the existing whole-key lifecycle is affected.
+  - 2026-10-18: read the parent's identifier object through the dependent key's
+    generated access before constructing its independent copy. This aligns key
+    attributes without depending on the parent's physical tuple order.
+  - Both failing regressions now pass; annotation/XML collection, cache and
+    mutation checks pass in the **91/91** coupled gate. Full clean install:
+    **1129/1129**, 92 reports. Full locally patched TCK:
+    **2135 / 2131 passed / 0 failures / 0 errors / 4 official skips**, 259 reports,
+    with every case identity/outcome identical to D26 and D38. Not certification.

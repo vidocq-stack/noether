@@ -608,17 +608,20 @@ combinations, nested/non-BASIC keys, composite/chained parents and broader
 business/join-table/polymorphic or fetch/lazy/batch support are not added.
 Scope and regression evidence are in the roadmaps and `noether-persistence/TCK.md`.
 
-### Whole composite MapsId element targets (D38, 2026-10-18)
+### Whole composite MapsId element targets (D38/D39, 2026-10-18)
 
 An element-value owning to-one can reference a dependent whose whole direct
 all-BASIC `@EmbeddedId` is shared through one owning `@OneToOne @MapsId`
-with a non-polymorphic parent using the same embedded key type. The collection
+with a non-polymorphic parent using the same key type as a direct all-BASIC
+`@EmbeddedId` or `@IdClass`. The collection
 FK uses the dependent's physical PK/FK column names, including reordered
 explicit joins. Existing whole-key derivation, managed identity and ordinary
-query/lifecycle/cache behavior are reused.
+query/lifecycle/cache behavior are reused. D39 fixes BUG-20261018-01: the
+dependent key is copied by generated attribute access, independently of the
+parent's identifier declaration order.
 
 Annotations and metadata-complete ORM XML cover the full mapping. Named-component
-composite parents, nested/non-BASIC/chained keys, IdClass parents for this shape,
+composite parents, nested/non-BASIC/chained keys, relationship-valued parent keys,
 polymorphism and broader fetch/lazy/batch support remain outside the extension.
 See the roadmaps and `noether-persistence/TCK.md` for the exact regression scope.
 
