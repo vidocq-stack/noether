@@ -19,6 +19,24 @@ CDI/JTA integration uses `noether-jpa-cdi` and the external Mansart transaction
 manager. The core does not import CDI, JTA or Vauban. See
 xref:modules/noether-persistence.adoc[the detailed Persistence guide].
 
+== Composite business tuples in a target secondary table
+
+D43 permits owning `ManyToOne`/`OneToOne` joins to a composite tuple of
+immutable, non-null, insertable BASIC columns in one declared target
+`SecondaryTable`. This is optional, nonportable non-PK reference support
+(Persistence 3.2 §11.1.26), not a portable JPA requirement.
+Declare the exact tuple in that secondary table's `uniqueConstraints` and
+reference every component with `JoinColumns`; explicit join order may differ
+from attribute and constraint order. The target PK and secondary PK join
+must each remain single-column.
+
+`JoinColumn.table` names the owner's FK table, never the referenced table;
+do not use it to select a target secondary table. Noether resolves that table
+from the unambiguous referenced BASIC columns. Reads resolve the whole tuple
+to the actual primary identity; converters, lifecycle/cache and association
+queries use the ordinary paths. Fetch graphs/joins remain complete eager
+fallbacks. Cross-table tuples and broader loading remain unsupported.
+
 == Relationship-valued IdClass targets in collection elements
 
 An embeddable element may hold an owning to-one to a target whose `@IdClass`

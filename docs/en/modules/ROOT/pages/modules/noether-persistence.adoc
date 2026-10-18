@@ -257,7 +257,8 @@ JOINED inheritance use their mapped relational keys. To-one bulk assignments and
 deletes maintain the corresponding relationship rows; bulk operations do not cascade to targets.
 
 Some mapping shapes remain explicitly refused: relationships to derived-identity targets,
-joins referencing non-key columns, inverse many-to-many indexes and associations inside
+business joins outside D22/D26/D43's immutable unique BASIC tuple contract,
+inverse many-to-many indexes and associations inside
 collection-table embeddable elements.
 All three inheritance strategies are supported within the boundaries described above.
 Eager relationship loading is supported; lazy exclusion is not guaranteed.

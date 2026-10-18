@@ -15,6 +15,32 @@ The official artifact checksums and TCK-BUG-001 byte-exact derived-jar fixture
 patch are unchanged; original artifacts are never edited. `TCK_FIXTURES=official`
 selects the untouched Persistence fixture. See the runner README for setup.
 
+== Composite secondary-table business tuple verification (D43, 2026-10-18)
+
+D43 extends D26 to immutable, non-null composite BASIC tuples in one declared
+target secondary table, with an exact unique constraint and a single target
+PK/secondary PK join. This remains optional, nonportable non-PK reference
+support. Cross-table tuples, composite PK joins and other D26 boundaries stay
+excluded; no broader loading optimization is introduced.
+
+Failing-first annotation/XML bootstrap scenarios report *2 errors* before
+production edits. Final core business-key coverage is *37/37*; a new
+closed-module APT property-access test retains generated access without opens.
+The clean reactor passes *1151/1151*, *92 reports*, with no failures/errors/skips.
+Provider-owned tests cover grouped secondary FKs and renamed PK joins,
+generated identities, reordered tuple components, JPQL/Criteria and bulk SET,
+lifecycle/cache/merge/refresh, immutability, conversion, partial-null refusal
+and pre-DDL rejection of cross-table/nonunique mappings.
+
+A separate owned PostgreSQL *17* probe passes *5 test methods*:
+*6 annotation/XML scenarios plus 1 converted scenario*. Its container was
+removed without restarting any shared service.
+The full locally *PATCHED* TCK remains *2135 tests / 2131 passed / 0 failures /
+0 errors / 4 official skips*, *259 reports*. Independent verification matches
+all execution/class/method/outcome identities to D26 and D42 and checks the
+derived fixture on every report. This is not an untouched official result or
+certification claim. Commands and provenance are in `noether-persistence/TCK.md`.
+
 == Secondary-table business-key verification (D26, 2026-10-17)
 
 This lot extends D22's *optional, nonportable* non-PK association references to

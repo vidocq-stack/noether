@@ -2330,7 +2330,47 @@ Full locally patched TCK: **2135 / 2131 / 0 / 0 / 4**, 259 reports; every
 execution/class/method/outcome identity matches D26 and D41. Commands and fixture
 provenance are in `TCK.md`; this is local regression evidence, not certification.
 
-Prioritized backlog after D42, 2026-10-18. Each item needs its own approved, bounded lot; until then
+### D43 — Composite secondary-table business-key to-one references ✅ (2026-10-18)
+
+D43 extends D26's optional, nonportable non-PK association support
+(Persistence 3.2 §11.1.26/Table 24, §11.1.47) to composite immutable, non-null,
+insertable non-ID BASIC tuples within one declared target secondary table.
+The target still has one primary-key column and one secondary PK join.
+Every referenced column must resolve unambiguously to that same table, and
+the selected table must declare the exact tuple as a unique constraint;
+primary/other-table constraints and separate per-column constraints do not qualify.
+
+The mapping gate now validates table consistency instead of limiting the
+business tuple to one column. D22/D26 already bind and resolve whole tuples:
+existing generated access, converters, schema FKs, target-identity lookup,
+ordinary eager loading, lifecycle/cache, JPQL/Criteria and bulk association
+SET are reused without a second engine or new SQL AST. Explicit join order
+may differ from both attribute and unique-constraint order.
+Cross-table tuples, composite target PKs/secondary PK joins, owner-secondary
+FKs, inheritance, join tables, embedded/derived relationships, mutable/nullable/
+ambiguous/nonunique keys, inverse collections and broader loading remain excluded.
+The single-column D26 and primary-table D22 behavior is preserved.
+
+Mandatory red: **2 annotation/XML errors** at the previous one-column
+bootstrap boundary before production changes. Final core business-key gate:
+**37/37**. New annotation/XML scenarios exercise generated IDs, independently
+repeated tuple components, actual grouped secondary FKs and renamed PK joins,
+invalid combined tuples, managed identity, navigation/projection/parameters,
+Criteria, graph/fetch fallbacks, reassignment/null, bulk SET, deletion,
+cache, detached merge, refresh and mutation refusal for each component.
+Converted components and partial-null stored tuples are covered; mixed-table
+references in both orders and wrongly located/nonexact uniqueness fail before DDL.
+A closed-module APT property-access regression needs no package opens.
+Separate PostgreSQL **17** verification passes all **5 test methods**:
+**6 annotation/XML scenarios plus 1 converted scenario**, using an owned
+container subsequently removed.
+Full clean install: **1151 tests / 0 failures / 0 errors / 0 skips**, 92 reports.
+Full locally patched TCK: **2135 / 2131 / 0 / 0 / 4**, 259 reports; all
+execution/class/method/outcome identities match D26 and D42.
+Evidence and fixture provenance are in `TCK.md`; no certification claim or
+new bug entry is made for this extension of an explicit unsupported boundary.
+
+Prioritized backlog after D43, 2026-10-18. Each item needs its own approved, bounded lot; until then
 the documented fallback (follow-up selects, eager loading, or an explicit refusal naming the
 milestone) stays in place.
 
@@ -2341,8 +2381,8 @@ milestone) stays in place.
    D30's simple shared `@MapsId` contract, D37's multiple direct BASIC
    `@EmbeddedId` components and D36's direct BASIC simple/composite-parent
    relationship components in an `@IdClass`; business joins
-   through join tables or inheritance, broader secondary-table business tuples/
-   PK joins beyond D26, embedded business association paths,
+   through join tables or inheritance, cross-table secondary business tuples/
+   composite PK joins beyond D26/D43, embedded business association paths,
    inverse collections and safely mutable referenced keys; inverse many-to-many
    indexes and broader relationships inside collection-table embeddable elements
    beyond D24/D28/D29/D30/D31/D32/D35/D36/D37/D38/D39/D40/D41/D42 (business/join-table and unsupported composite or
@@ -2372,6 +2412,7 @@ Recorded before implementation; each entry: date, decision, reason.
 
 | # | Date | Decision | Status |
 |---|---|---|---|
+| D43 | 2026-10-18 | Extend D26 to immutable, non-null composite BASIC business tuples within one declared target secondary table, covered by that table's exact unique constraint. Retain a single target PK/secondary PK join and reuse D22/D26 generated access, binders, physical FKs, identity lookup and association SQL. Preserve mixed-table, composite-PK, owner-secondary, inheritance/derived/embedded, join-table and broader loading boundaries. | Actioned |
 | D42 | 2026-10-18 | Extend D40/D41 element-value to-one targets to multiple distinct named embedded MapsId components, each from a non-polymorphic parent with a direct all-BASIC EmbeddedId or IdClass of the matching component type; BASIC components may remain assigned or derive from simple-ID parents. Reuse generated access, lifecycle and physical FK tuples; fix derived primitive record-key hydration (BUG-20261018-02). Keep overlapping/whole-plus-named mappings, unmapped nested remainder, deeper/relationship-valued/chained/polymorphic parents and unrelated loading outside scope. | Actioned |
 | D41 | 2026-10-18 | Extend D40's single named embedded MapsId component in element-value to-one targets to a non-polymorphic parent using a direct all-BASIC IdClass of the same component type. Reuse generated identity access and physical FK tuple mapping, independently of parent declaration order. Keep multiple composite components, unmapped nested remainder, relationship-valued/chained/polymorphic parents and unrelated loading outside scope. | Actioned |
 | D40 | 2026-10-18 | Extend element-value owning to-one targets to an EmbeddedId with one named embedded component derived via MapsId from a non-polymorphic parent with a direct all-BASIC EmbeddedId of the same component type; remaining components are BASIC. Reuse generated lifecycle access and flatten the component to the parent's physical FK tuple. Keep multiple composite components, IdClass parents for named embedded components, unmapped nested parts, chained/polymorphic parents and unrelated loading out of scope. | Actioned |

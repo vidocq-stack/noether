@@ -5,6 +5,15 @@ Entity metadata is read from class files. `AccessPlanner` is shared by bootstrap
 and the annotation processor; generated access handles state without reflective
 field/method invocation. The JDK Class-File API is used, not ASM or Byte Buddy.
 
+D43 extends D26's secondary-table business reference eligibility from one
+column to a composite tuple, validating that every referenced BASIC column
+belongs to the same declared target secondary table. Existing exact-table
+uniqueness validation and D22 tuple binders remain authoritative. Schema FKs
+use that table and its actual unique tuple; ordinary loader and query AST
+lookups resolve its single secondary PK join back to the real JPA identity.
+Generated access, converters, lifecycle/cache and complete eager fallbacks
+are unchanged. No new reflection, SQL AST or loading architecture is added.
+
 For eligible lazy to-one targets the same planner feeds `LazySubclassGenerator`.
 APT writes the subclass class file and the generated access's `instantiateLazy` factory
 inside the application's module. The existing access provider supplies it through

@@ -9,12 +9,15 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.SecondaryTable;
 import jakarta.persistence.SecondaryTables;
+import jakarta.persistence.UniqueConstraint;
 
 @Entity
-@SecondaryTables(@SecondaryTable(name = "closed_business_details"))
+@SecondaryTables(@SecondaryTable(name = "closed_business_details",
+    uniqueConstraints = @UniqueConstraint(columnNames = {"code", "revision"})))
 public class SecondaryBusinessCustomer {
     private long id;
     private String code;
+    private int revision;
 
     public SecondaryBusinessCustomer() {}
     public SecondaryBusinessCustomer(long id, String code) { this.id = id; this.code = code; }
@@ -25,4 +28,8 @@ public class SecondaryBusinessCustomer {
     @Column(table = "closed_business_details", unique = true, nullable = false, updatable = false)
     public String getCode() { return code; }
     public void setCode(String code) { this.code = code; }
+
+    @Column(table = "closed_business_details", nullable = false, updatable = false)
+    public int getRevision() { return revision; }
+    public void setRevision(int revision) { this.revision = revision; }
 }

@@ -480,10 +480,11 @@ derived from BASIC EmbeddedId/IdClass parents. This does not imply arbitrary nes
 composite/partial key support or broader optimized loading.
 See the detailed Persistence roadmap and `TCK.md` for the exact evidence.
 
-== Secondary-table business-key to-one joins (D26, 2026-10-17)
+== Secondary-table business-key to-one joins (D26/D43, 2026-10-18)
 
-D26 extends the historical D22 boundary below to *one* immutable, non-null,
+D26 extends the historical D22 boundary below to one immutable, non-null,
 insertable, unique non-ID BASIC column in a declared target secondary table.
+D43 adds composite BASIC tuples whose columns all belong to that same table.
 Owning `ManyToOne`/`OneToOne`, `SecondaryTable`/`SecondaryTables`,
 metadata-complete ORM XML and existing converters use the same mapping/access
 planner. The target primary key and secondary PK join must each have one
@@ -496,10 +497,11 @@ Noether requires an unambiguous column-to-table mapping.
 `JoinColumn.table` remains the *owner's FK table*, not a target-table selector.
 Duplicate target column names are refused, never guessed.
 
-The unique declaration must be `Column(unique=true)` or an exact
+The unique declaration must be `Column(unique=true)` for a single column or an exact
 `SecondaryTable.uniqueConstraints`/XML secondary-table constraint.
-A primary-table or other-secondary-table constraint does not qualify.
-Generated DDL references the actual secondary unique column. Reads resolve the
+A primary-table or other-secondary-table constraint, or separate per-column
+constraints for a composite tuple, does not qualify.
+Generated DDL references the actual secondary unique tuple. Reads resolve the
 secondary PK join back to the target's primary identity; writes and converted
 values use the existing generated accesses/binders. Persist/generated identity,
 reassignment/null, flush/delete, JPQL/Criteria joins/navigation/projections/
@@ -510,12 +512,12 @@ Fetch/load graphs and explicit fetch joins retain complete ordinary eager
 loading. D10 lazy-reference, D13 batching and D11–D21 optimized collectors are
 not widened. No new FK-cycle ordering is introduced.
 
-Composite secondary business tuples or target PK/secondary PK joins, owner
+Cross-table business tuples, composite target PKs/secondary PK joins, owner
 secondary-table FKs, primary-table business references on multi-table targets,
 inheritance, join tables, embedded/derived business relationships, mutable/
 nullable/nonunique/ambiguous keys and inverse business collections stay refused.
 Ordinary primary-key references are unchanged. See the prioritized roadmap and
-xref:tck.adoc[D26 verification]; D5/D9–D25 evidence remains historical.
+xref:tck.adoc[D26/D43 verification]; D5/D9–D25 evidence remains historical.
 
 == Querying to-one references in element collections (D27, 2026-10-17)
 

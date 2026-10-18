@@ -4,7 +4,7 @@ Noether owns the implementations extracted from Mansart on 2026-10-11.
 
 | Building block | Status | Detailed roadmap |
 | --- | --- | --- |
-| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D26); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
+| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D43); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
 | Jakarta Validation 3.1 | V0–V2 provisional local test/TCK stopgap; not published | [Validation](noether-validation/ROADMAP.md) |
 
 The extraction changes repository, artifact, package and provider names, not
@@ -438,6 +438,16 @@ install: 1143 tests passed; full locally patched TCK: 2135 / 2131 / 0 / 0 / 4,
 every case identical to D26 and D41, not certification. Unmapped/deeper keys
 and relationship-valued/chained/polymorphic parents remain outside scope.
 
+Decision D43 (2026-10-18) extends D26 to composite immutable, non-null BASIC
+business tuples in one declared target secondary table, with that table's
+exact unique constraint and a single target PK/secondary PK join. Existing
+generated access, binders, physical FKs, identity lookup, JPQL/Criteria,
+lifecycle/cache and complete eager fallbacks are reused. Annotation/XML,
+closed-module APT property access and a separate PostgreSQL 17 probe pass.
+Full clean install: 1151 tests passed; full locally patched TCK:
+2135 / 2131 / 0 / 0 / 4, every case identical to D26 and D42, not certification.
+Cross-table tuples, composite PK joins and other D26 boundaries stay separate.
+
 Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
 detailed roadmap's "Remaining work"):
 
@@ -449,8 +459,8 @@ detailed roadmap's "Remaining work"):
    D30's simple shared `@MapsId` contract and D37's
    direct BASIC `@EmbeddedId` with multiple derived components and D36's direct BASIC
    simple/composite-parent relationship-valued `@IdClass` parts, business joins
-   through join tables or inheritance, broader secondary-table business tuples/
-   PK joins beyond D26, inverse business collections,
+   through join tables or inheritance, cross-table secondary business tuples/
+   composite PK joins beyond D26/D43, inverse business collections,
    embedded business association paths and safely mutable referenced keys;
    inverse many-to-many indexes and broader collection-table embeddable relationships
    (business/derived/join-table mappings, unsupported composite forms and broader

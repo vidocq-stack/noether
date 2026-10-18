@@ -55,6 +55,31 @@ class GeneratedAccessModulePathTest {
     }
 
     @Test
+    void compositeSecondaryBusinessTupleUsesGeneratedPropertyAccessInAClosedModule() { // §11.1.26, §11.1.47
+        var unit = new PersistenceConfiguration("processor-secondary-tuple")
+            .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
+            .managedClass(io.vidocq.noether.jpa.processorit.closed.SecondaryBusinessCustomer.class)
+            .managedClass(io.vidocq.noether.jpa.processorit.closed.SecondaryBusinessOwner.class)
+            .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:processor-secondary-tuple")
+            .property(PersistenceConfiguration.SCHEMAGEN_DATABASE_ACTION, "drop-and-create");
+        try (var factory = unit.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+            var customer = new io.vidocq.noether.jpa.processorit.closed.SecondaryBusinessCustomer(47, "COMPOSITE");
+            customer.setRevision(3);
+            var owner = new io.vidocq.noether.jpa.processorit.closed.SecondaryBusinessOwner();
+            owner.setId(1);
+            owner.setTuple(customer);
+            factory.runInTransaction(writer -> writer.persist(owner));
+            var loaded = em.find(owner.getClass(), 1L);
+            assertThat(loaded.getTuple()).isSameAs(em.find(customer.getClass(), 47L));
+            assertThat(loaded.getTuple().getCode()).isEqualTo("COMPOSITE");
+            assertThat(loaded.getTuple().getRevision()).isEqualTo(3);
+            assertThat(loaded.getCustomer()).isNull();
+            assertThat(customer.getClass().getModule().isOpen(customer.getClass().getPackageName(),
+                io.vidocq.noether.jpa.core.spi.ManagedAccess.class.getModule())).isFalse();
+        }
+    }
+
+    @Test
     void lazyToOneUsesAClassFileGeneratedSubclassInAClosedApplicationModule() { // §2.10, §7.11
         var unit = new PersistenceConfiguration("processor-lazy-one")
             .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")

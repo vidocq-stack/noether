@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entity-mappings xmlns="https://jakarta.ee/xml/ns/persistence/orm" version="3.2">
+  <access>FIELD</access>
+  <entity class="io.vidocq.noether.jpa.core.session.SecondaryBusinessKeyToOneTest$Part" name="SecondaryPart" metadata-complete="true">
+    <table name="sb_part">
+      <unique-constraint><column-name>part_code</column-name><column-name>revision</column-name></unique-constraint>
+    </table>
+    <secondary-table name="sb_part_details">
+      <primary-key-join-column name="part_pk" referenced-column-name="id"/>
+      <unique-constraint><column-name>part_code</column-name></unique-constraint>
+      <unique-constraint><column-name>revision</column-name></unique-constraint>
+    </secondary-table>
+    <attributes>
+      <id name="id"><generated-value strategy="IDENTITY"/></id>
+      <basic name="code"><column name="part_code" table="sb_part_details" nullable="false" updatable="false"/></basic>
+      <basic name="revision"><column table="sb_part_details" nullable="false" updatable="false"/></basic>
+      <basic name="label"/>
+    </attributes>
+  </entity>
+</entity-mappings>

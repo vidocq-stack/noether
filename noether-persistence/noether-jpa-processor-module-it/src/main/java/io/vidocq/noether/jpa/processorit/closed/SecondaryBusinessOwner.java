@@ -8,12 +8,14 @@ import jakarta.persistence.CascadeType;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
+import jakarta.persistence.JoinColumns;
 import jakarta.persistence.ManyToOne;
 
 @Entity
 public class SecondaryBusinessOwner {
     private long id;
     private SecondaryBusinessCustomer customer;
+    private SecondaryBusinessCustomer tuple;
 
     public SecondaryBusinessOwner() {}
     public SecondaryBusinessOwner(long id, SecondaryBusinessCustomer customer) { this.id = id; this.customer = customer; }
@@ -25,4 +27,10 @@ public class SecondaryBusinessOwner {
     @JoinColumn(referencedColumnName = "code")
     public SecondaryBusinessCustomer getCustomer() { return customer; }
     public void setCustomer(SecondaryBusinessCustomer customer) { this.customer = customer; }
+
+    @ManyToOne(cascade = CascadeType.PERSIST)
+    @JoinColumns({@JoinColumn(name = "tuple_revision", referencedColumnName = "revision"),
+        @JoinColumn(name = "tuple_code", referencedColumnName = "code")})
+    public SecondaryBusinessCustomer getTuple() { return tuple; }
+    public void setTuple(SecondaryBusinessCustomer tuple) { this.tuple = tuple; }
 }

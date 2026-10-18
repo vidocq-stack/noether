@@ -1,3 +1,67 @@
+## Noether composite secondary-table business tuples (D43) — 2026-10-18
+
+D43 extends D26's optional, nonportable non-PK references to immutable,
+non-null composite BASIC tuples within one declared target secondary table,
+with an exact unique constraint on that table. The target PK and secondary
+PK join remain single-column. Cross-table tuples, composite PK joins, owner
+secondary FKs, inheritance/embedded/derived/join-table mappings and broader
+loading remain outside scope. Existing generated access, binders, physical
+FKs, ordinary identity lookup and association SQL are reused.
+
+Commands from the Noether root, Temurin **25.0.4**, Maven **3.9.16**:
+
+```sh
+./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test \
+  '-Dtest=SecondaryBusinessKeyToOneTest#annotationCompositeSecondaryTupleLifecycle+xmlCompositeSecondaryTupleLifecycle' \
+  -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test \
+  -Dtest=SecondaryBusinessKeyToOneTest,BusinessKeyToOneTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw -ntp clean install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+- Mandatory red: **2 tests / 0 failures / 2 errors / 0 skips**, annotation
+  and metadata-complete XML both reaching the previous one-column bootstrap
+  refusal before production edits.
+- Final core business-key gate: **37/37**, including all **21** D22 tests
+  and **16** D26/D43 tests. Full annotation/XML coverage checks generated IDs,
+  independent tuple components, reordered joins/unique constraints, actual
+  grouped FKs to the secondary table, renamed PK joins, rejected invalid
+  combined tuples, managed identity, JPQL/Criteria navigation/projections/
+  parameters, graph/fetch fallbacks, reassignment/null, bulk SET and deletion.
+  Cache, detached merge, refresh, mutation of either component, converted
+  components and partial-null stored tuples are covered.
+  Cross-secondary and primary/secondary tuples in either order, and
+  incorrectly located/nonexact unique constraints fail before schema output.
+- A closed-module APT property-access regression proves composite tuple
+  identity without opening the entity package. D26's single-column test remains.
+- Final clean install: **1151 tests / 0 failures / 0 errors / 0 skips**,
+  across **92 reports**, **BUILD SUCCESS** (D42 baseline 1143 plus eight tests).
+- Separate owned PostgreSQL **17** probe passes **5/5 test methods**:
+  **6 annotation/XML scenarios plus 1 converted scenario**, covering actual
+  grouped secondary FK/PK-join metadata, lifecycle/query/fallback execution,
+  cache/merge/refresh/immutability and partial-null refusal.
+  It uses the existing TCK test JDBC driver, adds no dependency, restarts no
+  shared service and removes its owned container.
+- Full locally patched Persistence 3.2.1 TCK on PostgreSQL **17**:
+  **2135 tests / 2131 passed / 0 failures / 0 errors / 4 official skips**,
+  across **259 reports**. Every execution/class/method/outcome identity
+  matches D26 and D42.
+- Independent aggregation checks reactor/TCK XML counts and all testcase
+  identities/outcomes. The runner and independent verifier confirm the
+  derived TCK-BUG-001 jar on every report. Official SHA-256:
+  `a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`;
+  derived SHA-256:
+  `1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+
+Session artifacts use `d43-`: red/focused/clean/TCK/PostgreSQL logs,
+PostgreSQL probe source, copied TCK reports and independent verification JSON.
+This is **locally patched regression evidence**, not an untouched official
+result or certification. The four unchanged official skips are listed in D26.
+This extends an explicit unsupported feature boundary, not an existing bug.
+
 ## Noether multiple composite MapsId element targets (D42) — 2026-10-18
 
 D42 admits multiple distinct named embedded MapsId components from matching

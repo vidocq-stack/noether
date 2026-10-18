@@ -530,10 +530,11 @@ separate normative/cardinality analysis and tests; it is not claimed illegal
 merely because collection traversal is unsupported. D24 owning-side behavior and
 all earlier evidence remain unchanged. See D25 and `TCK.md` for verification.
 
-### Secondary-table business-key to-one joins (D26, 2026-10-17)
+### Secondary-table business-key to-one joins (D26/D43, 2026-10-18)
 
-D26 extends D22 to **one** immutable, non-null, unique BASIC column in a target's
-declared secondary table, for owning `ManyToOne` and `OneToOne`. Annotation
+D26 extends D22 to one immutable, non-null, unique BASIC column in a target's
+declared secondary table; D43 adds composite BASIC tuples within that same
+table, for owning `ManyToOne` and `OneToOne`. Annotation
 (`SecondaryTable`/`SecondaryTables`) and metadata-complete ORM XML share the
 existing model, generated field/property accesses and converters.
 
@@ -546,15 +547,17 @@ Ambiguous names are refused rather than guessing a table.
 
 The target has a single-column primary key and a single-column secondary PK
 join (explicitly renamed or defaulted). Uniqueness must be declared by
-`Column.unique` or that secondary table's exact `uniqueConstraints`; a primary
-table constraint cannot substitute. DDL references the actual secondary unique
-column. Reads resolve its secondary PK join back to actual JPA identity; writes,
+`Column.unique` for a single column or that secondary table's exact
+`uniqueConstraints` for the complete tuple; primary-table constraints or
+separate per-column constraints cannot substitute. DDL references the actual
+secondary unique tuple, preserving explicit join order. Reads resolve its
+secondary PK join back to actual JPA identity; writes,
 generated identities, reassignment/null, deletion, JPQL/Criteria, bulk association
 SET and cache identity retain the ordinary paths. Fetch graphs/joins remain
 complete eager fallbacks, not new lazy/batch/SQL-collector eligibility.
 
-Composite secondary business keys/PK joins, owner secondary-table FKs,
-inheritance, join tables, embedded/derived business associations, mutable or
+Cross-table business tuples, composite target PKs/secondary PK joins,
+owner secondary-table FKs, inheritance, join tables, embedded/derived business associations, mutable or
 ambiguous keys and inverse business collections remain refused. D22's original
 primary-table scope and all D5/D9–D25 deliveries remain historical; the current
 prioritized backlog and independently checked evidence are in the roadmaps

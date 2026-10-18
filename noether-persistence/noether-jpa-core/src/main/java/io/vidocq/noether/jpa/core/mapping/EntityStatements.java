@@ -454,9 +454,11 @@ public final class EntityStatements {
                     var secondary = target.secondaryTables().stream()
                         .filter(t -> basic.column().table() != null && sameColumn(Identifier.of(t.table().name(), delimited),
                             Identifier.of(basic.column().table(), delimited))).findFirst().orElse(null);
-                    if (association.joinColumns().size() != 1 || keys.size() != 1 || secondary == null
-                            || secondary.joinColumns().size() > 1) {
-                        throw new PersistenceException("Secondary-table business-key joins require one BASIC column in a declared "
+                    if (keys.size() != 1 || secondary == null || secondary.joinColumns().size() > 1
+                            || referenced.stream().anyMatch(previous -> !sameColumn(
+                                Identifier.of(previous.column().table(), delimited),
+                                Identifier.of(basic.column().table(), delimited)))) {
+                        throw new PersistenceException("Secondary-table business-key joins require BASIC columns in one declared "
                             + "secondary table and a single-column target primary key");
                     }
                 } else if (basic.column().table() != null) {
