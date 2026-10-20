@@ -13,6 +13,86 @@ and Data remain owned by Mansart. Data/JPA integration and generation
 mutualisation remain deferred. Original evidence is preserved in the extracted
 modules, labelled historical; current commands are in `README.md`.
 
+## Closure contract — D43 baseline, 2026-10-18
+
+**Scope review complete; release readiness remains blocked.** P0–P12 and
+D5/D9–D43 are the frozen engineering baseline, not a promise that every
+portable JPA mapping works. The dated history below records delivered work;
+the future backlog is not an instruction to keep adding combinations until
+it is empty. No D44 mapping extension is part of this closure lot.
+
+The intended first Noether release is a bounded **JVM/Java Modules Persistence
+provider**, with APT-generated access for application sources and documented
+bootstrap generation/`opens` for opaque entities. H2 and PostgreSQL are the
+supported dialects. Validation is a non-published local test/TCK stopgap.
+No untouched-TCK certification, full portable-mapping coverage, GraalVM
+native-image, precompiled-JAR Maven generator or Data/JPA bridge is claimed.
+
+| Exit criterion | Evidence / remaining action | Status |
+| --- | --- | --- |
+| C1 — Finite functional contract | Delivered scope and boundary matrix in the Persistence roadmap; portable refusals are named, not relabelled optional | Documented |
+| C2 — Correctness of delivered paths | Fix and add tracked regressions for Persistence BUG-20261018-03 (CDI configuration collision) and -04 (TABLE allocation/pool capacity). Resolve or explicitly gate affected behavior; a surprising timeout is not an accepted fallback | Blocking |
+| C3 — Close review risks | Reproduce or dismiss table-generator initialization race, resource-local JDBC execution policy and early-bootstrap resource ownership risks. The Java 25 review supplied static evidence, not three additional proven bugs | Pending triage |
+| C4 — Published dependency gate | Select released parent/Mansart coordinates and rerun standalone/container gates without relying on locally installed development snapshots. Revalidate the Vauban integration against the selected published version | Blocking publication |
+| C5 — Verification and performance evidence | Clean reactor passes 1151 tests. D43 TCK evidence remains 2135 / 2131 passed / 0 failures / 0 errors / 4 skips with local TCK-BUG-001. Current comparative JMH, reverse-order repeat and JFR/SQL diagnostics are recorded in BENCH-20261018-01/02/03 | Baseline recorded; rerun correctness gates after C2/C3 changes |
+
+Dependency availability checked on 2026-10-18 via Maven Central metadata:
+`io.vidocq:vidocq-parent`, `io.vidocq.mansart:mansart-pool-core`,
+`io.vidocq.mansart:mansart-transactions-jdbc` and
+`io.vidocq.vauban:vauban-core` each advertise **0.3.0** as the latest release.
+This checkout uses **0.4.0-SNAPSHOT**. The Noether core Central metadata URL
+returns **404**. These observations do not establish binary compatibility
+with 0.3.0 or availability on every other registry; do not blindly downgrade.
+Vauban is an integration-test dependency here, not a direct core runtime dependency.
+The exact installed snapshot is not proof that a published release contains
+the required upstream fix.
+
+The Validation path-cache bug (Validation BUG-20261018-01) remains tracked
+and must not be hidden by the green suite; it does not make Validation a
+publication target. Producer-owned Data BUG-20261009-09 stays outside the
+standalone Persistence release contract.
+
+**Separate performance work, not a mapping prerequisite:** the new comparison
+still shows a gap, especially ordinary JPQL entity materialization.
+An untimed probe finds one identity SELECT followed by one full-row SELECT
+per result, while the competitors return full rows directly. The first
+bounded optimization proposal is result-row hydration through the existing
+loader; query-template caching and allocation reduction come afterwards.
+Details, raw results, caveats and proposed acceptance gates are in
+`noether-persistence/BENCH.md` and the Antora Performance page.
+No performance gain has been implemented or claimed by this closure lot.
+
+## Performance follow-up 1 — Query-row hydration, 2026-10-19
+
+The first requested optimization is implemented separately from mapping
+extensions: eligible plain JPQL/Criteria root selections now carry full state
+in the query rows instead of reloading each result by its identity. The
+32-entity fixture executes one data SELECT rather than 33. The existing
+staged loader registers all captured identities before resolving relationships,
+snapshots and PostLoad callbacks; existing managed dirty state, lazy references,
+versions, converters and shared-cache policies are retained.
+
+Eligibility remains bounded: directly selected single-table concrete roots
+under the existing hydration guards, without DISTINCT, grouping/HAVING, set
+operations or a query lock. Secondary-table roots without eligible fetch joins,
+polymorphic ranges, business-key references and relationship-bearing element
+collections keep the previous loading path. This neither makes every query
+one SELECT nor widens supported mappings. Existing optimized fetch/graph rows
+also use the staged assembler across the complete result.
+
+The full reactor has **1165 tests**; the locally patched TCK retains
+**2135 / 2131 passed / 0 failures / 0 errors / 4 skips**, with all test
+identities/outcomes unchanged from D43. Evidence is in `noether-persistence/TCK.md`;
+new comparison results belong in `noether-persistence/BENCH.md`.
+BENCH-20261019-01/02 record the two completed comparisons: the first measures
+JPQL throughput +26.31% and allocation -24.65% versus BENCH-20261018-02.
+The repeat retains the direction with wider throughput uncertainty; provider
+parity is not reached.
+The closure blockers C2–C4 above remain unchanged. Query-template caching and
+allocation tuning are not included in this follow-up.
+
+## Delivered follow-up history
+
 The 2026-10-14 Persistence follow-up adds to-one join-table mappings and
 unidirectional one-to-many target-table foreign keys (annotation and XML), including
 lifecycle and query execution. Other relational mapping boundaries remain documented
@@ -448,8 +528,9 @@ Full clean install: 1151 tests passed; full locally patched TCK:
 2135 / 2131 / 0 / 0 / 4, every case identical to D26 and D42, not certification.
 Cross-table tuples, composite PK joins and other D26 boundaries stay separate.
 
-Prioritized, each requiring its own approved bounded lot (detail and current fallbacks in the
-detailed roadmap's "Remaining work"):
+Future development backlog, **not release exit criteria**. Each item requires
+its own approved bounded lot after the closure criteria above; details and
+current fallbacks are in the Persistence roadmap:
 
 1. Remaining relational mapping shapes beyond D23/D24/D29/D30/D31/D32/D35/D36/D37/D38/D39/D40/D41/D42's bounded contracts:
    derived/nested identity targets and composite forms beyond D29's direct BASIC

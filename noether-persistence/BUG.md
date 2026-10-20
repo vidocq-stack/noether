@@ -1187,3 +1187,42 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     Full locally patched TCK **2135 / 2131 passed / 0 failures / 0 errors /
     4 official skips**, 259 reports; all case identities/outcomes match D26
     and D41. This is local regression evidence, not certification.
+
+## BUG-20261018-03 — Persistence-context property maps can share a binding key
+
+- **Date**: 2026-10-18
+- **Status**: OPEN
+- **Affected module**: `noether-jpa-cdi`, `NoetherPersistenceExtension.binding`
+- **Symptom**: distinct persistence-context configurations receive the same
+  qualifier; only the first configuration survives registration.
+- **Minimal reproduction**: register two otherwise identical context injection
+  points with properties `{x="a, y=b"}` and `{x="a", y="b"}`.
+  Both bindings end in `{x=a, y=b}` and the context map contains one entry.
+- **Confirmed cause**: `Map.toString()` is not an injective encoding of property
+  names and values; `putIfAbsent` discards the second configuration.
+- **Investigations**:
+  - 2026-10-18: a scratch regression invokes the actual binding method with
+    annotation metadata and checks the context registry. Equal qualifier values
+    and one retained configuration reproduce the defect. Evidence:
+    session artifact `java25-review/a/BindingCollisionRepro.java` and `a/output.txt`.
+    No production fix or tracked regression has been applied.
+
+## BUG-20261018-04 — TABLE generation cannot allocate with an occupied one-slot pool
+
+- **Date**: 2026-10-18
+- **Status**: OPEN
+- **Affected module**: `noether-jpa-core`, `generation.IdGenerators`
+- **Symptom**: a valid TABLE-generated persist fails with a connection acquisition
+  timeout when the resource-local transaction already holds the pool's only connection.
+- **Minimal reproduction**: configure `io.vidocq.noether.jpa.pool.max-size=1`
+  and `io.vidocq.noether.jpa.pool.acquire-timeout=PT0.5S`; begin a transaction,
+  execute `select 1`, then persist a TABLE-generated entity.
+- **Confirmed cause**: allocation requests an independent connection while the
+  transaction retains the sole pooled connection; it cannot release it until completion.
+- **Investigations**:
+  - 2026-10-18: a scratch H2 regression using the existing TABLE-generated
+    `Badge` fixture fails with `PersistenceException` caused by pool acquisition
+    timeout at max-size 1; the same scenario succeeds at max-size 2.
+    Evidence: session artifact `java25-review/c/TablePoolRepro.java` and `c/output.txt`.
+    Persist as the first transaction operation was not evaluated. No production
+    fix or tracked regression has been applied.

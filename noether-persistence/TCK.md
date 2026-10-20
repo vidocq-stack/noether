@@ -1,3 +1,51 @@
+## Noether query-row hydration (PERF1) — 2026-10-19
+
+Plain eligible single-table root JPQL/Criteria selections read their state
+from the query rows. Existing hydration metadata and staged entity loading
+are reused; all selected identities are registered before relationships,
+snapshots and PostLoad callbacks complete. This is a loading optimization,
+not a new mapping or a broadened conformance claim.
+
+Commands from the Noether root, Temurin **25.0.4.1+1-LTS**, Maven **3.9.16**:
+
+```sh
+./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test \
+  -Dtest=QueryRowHydrationTest,FetchJoinTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw -ntp -pl noether-persistence/noether-jpa-core -am test \
+  -Dtest=QueryRowHydrationTest,FetchJoinTest,CollectionFetchJoinTest,JpqlQueryTest,QueryLockTest,SecondLevelCacheTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw -ntp clean install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+- Mandatory red before production edits: **50 tests / 8 failures / 0 errors /
+  0 skips**. The 32-row query performs 33 data SELECTs; the three-row Criteria
+  page performs four, and the eager linked-result case performs three.
+- Final focused gate: **126/126**, including 12 plain-query contract tests
+  and two additional existing-fixture regressions for composite identity and
+  in-place lazy-reference hydration. Covers generated access/converters,
+  selected identity staging, duplicates/multiple roots/null column offsets,
+  cache/dirty/snapshot/version contracts and existing fetch/graph/lock paths.
+- Clean reactor: **1165 tests / 0 failures / 0 errors / 0 skips**, 93 reports.
+- Full locally patched Persistence 3.2.1 TCK on owned PostgreSQL **17**:
+  **2135 tests / 2131 passed / 0 failures / 0 errors / 4 official skips**,
+  259 reports. Independent aggregation finds every execution/class/method/
+  outcome identical to D43. The owned database container was removed.
+- Fixture hashes remain unchanged: official
+  `a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`;
+  derived TCK-BUG-001
+  `1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+  The runner verifies the exact derived jar on every report classpath.
+
+Session artifacts use `row-hydration-`: red/focused/clean/TCK logs, copied
+TCK reports, fixture provenance, production patch and independent verification
+JSON. The initial TCK attempt stopped before testing because Docker was not
+running; after starting the installed engine, the complete run passed.
+This remains **locally patched evidence**, not an untouched official result
+or certification. Publication blockers and unrelated open defects remain open.
+
 ## Noether composite secondary-table business tuples (D43) — 2026-10-18
 
 D43 extends D26's optional, nonportable non-PK references to immutable,

@@ -4,6 +4,14 @@
 > original provenance. Commands below reproduce the renamed Noether harness;
 > they do not establish a new performance result.
 
+The pre-optimization post-D43 runs are recorded as **BENCH-20261018-01/02/03**: unchanged
+three-provider comparison, reverse-order repeat, and separate JFR/SQL-count
+diagnostics. The Antora Performance page explains the observed plain-entity
+JPQL materialization overhead and proposed improvements; no production
+optimization is included in those measurements. PERF1 (2026-10-19) implements
+the first proposed result-row hydration improvement; its new measurements are
+recorded separately in `../BENCH.md`, without changing these workloads.
+
 Standalone JMH harness (outside the Noether reactor) comparing Noether, Hibernate ORM and
 EclipseLink on identical H2 workloads. Methodology and limitations:
 `docs/en/modules/ROOT/pages/performance.adoc`. Recorded results: `../BENCH.md`.

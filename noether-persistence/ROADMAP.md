@@ -441,7 +441,7 @@ refused or left as the instance holds it, naming P5, never mapped wrongly):
   loading everything with its owner: a performance concern, measured with P12 (`BENCH.md`), not a conformance one;
 - joins instead of secondary selects, with the SQL AST of P7. *Status 2026-10-16: delivered for eligible
   to-one fetch joins only (D11, see "Post-P12 follow-ups" below); collection fetches, entity graphs and `find`
-  still use secondary selects — see "Remaining work".*
+  still use secondary selects — see "Deferred development backlog".*
 
 **D24 follow-up (2026-10-16)**: the historical collection-table limitation above
 is superseded for owning simple-ID to-ones only; see the bounded D24 contract below.
@@ -1817,7 +1817,7 @@ Full locally patched TCK: **2135 / 2131 passed / 0 failures / 0 errors / 4 skips
 classpath checks and **49** unchanged input hashes. Exact commands, skipped
 identities and independent evidence are in `TCK.md`.
 
-## Remaining work
+## Delivered follow-ups D26–D43
 
 ### D26 — Single secondary-table business-key to-one references ✅ (2026-10-17)
 
@@ -2370,7 +2370,82 @@ execution/class/method/outcome identities match D26 and D42.
 Evidence and fixture provenance are in `TCK.md`; no certification claim or
 new bug entry is made for this extension of an explicit unsupported boundary.
 
-Prioritized backlog after D43, 2026-10-18. Each item needs its own approved, bounded lot; until then
+## Performance follow-up 1 — Query-row hydration, 2026-10-19
+
+User-directed implementation of the first BENCH-20261018-03 proposal, not D44:
+select full state for eligible plain root entity queries and reuse the existing
+generated-access/staged-loader pipeline. `Translator` adds the existing
+hydration columns for selected single-table roots even without a fetch join;
+`JpqlQuery` hands all captured entity rows to the existing staged assembler.
+All identities are registered before relationship completion, snapshots and
+PostLoad callbacks, including eager links to another selected result.
+
+The existing guards remain: only a directly selected concrete root variable
+whose existing `hydratable` test passes; no DISTINCT/grouping/HAVING, set-query
+operand or locked execution. Polymorphic ranges, JOINED/TABLE_PER_CLASS,
+business-key references and relationship-bearing element collections keep
+their former path. A plain secondary-table root also keeps its former path;
+eligible fetch/graph hydration of secondary state is unchanged. Scalar,
+constructor and non-root entity-path projections do not gain new eligibility.
+Ordinary joins do not become fetch joins; their omitted LAZY associations and
+collections remain lazy. Pagination still applies in SQL.
+
+Tests assert one data SELECT for 32 rows, Criteria paging, converted/null
+state, composite identities, repeated row multiplicity, multiple selected
+roots, rebinding/empty results, lazy-reference hydration in place, callbacks,
+dirty managed identity, snapshots/versioned writes and cache retrieval/storage
+including transaction publication and bypass. Existing graph-hint and plain-join
+counts are adjusted only where the eliminated root reload reduces SQL.
+Broader fetch, graph, collection, lock and fallback suites remain green.
+Full reactor: **1165 / 0 failures / 0 errors / 0 skips**, 93 reports.
+Locally patched PostgreSQL TCK: **2135 / 2131 passed / 0 failures /
+0 errors / 4 skips**, all identities/outcomes unchanged from D43.
+See `TCK.md` and `BENCH.md` for executable evidence and comparison caveats.
+No query-plan cache or independent allocation optimization is introduced.
+BENCH-20261019-01/02 record the unchanged comparative harness and reverse-order
+repeat. JPQL improves in the first campaign (+26.31% throughput, -24.65%
+allocation versus BENCH-20261018-02), but remains behind both competitors.
+Before/after runs are on separate dates; the repeat and uncertainty are
+reported rather than attributing every observed change to this patch.
+
+## Closure boundary matrix — 2026-10-18
+
+The frozen engineering baseline ends at D43. The root roadmap defines the
+finite C1–C5 release gate and its outstanding correctness/publication blockers.
+This classification closes the scope review; it does **not** declare all
+portable Jakarta Persistence mappings implemented or a release ready to publish.
+
+Normative reference:
+[Jakarta Persistence 3.2](https://jakarta.ee/specifications/persistence/3.2/jakarta-persistence-spec-3.2.html).
+
+| Class | Current boundary / evidence | Closure treatment |
+| --- | --- | --- |
+| Portable mappings not supported | `MappedUnit.validateMapsIds` refuses chained derived parents and broader nested/relationship-valued parent identities (§2.4.2–2.4.2.1). `EntityStatements.elementReferences` excludes `IdModel.Derived` targets and polymorphic targets in collection elements | Name these as provider limitations, not optional non-PK extensions. No complete portable-mapping claim. Verify each additional combination before scheduling it |
+| Portable lifecycle limitation | Collection-element owning `OneToOne` is legal (§2.8); `orphanRemoval` on `OneToOne` is defined by §2.11/§11.1.42. `elementReferences` currently refuses it in this context | Keep this specific legal combination explicitly unsupported. Do not imply that ordinary entity orphan removal is missing or that this combination is forbidden by JPA |
+| Optional, nonportable extensions | Non-PK business-column references are expressly optional (§11.1.26). Cross-table tuples, business join tables/inverse collections and broader D22/D26/D43 combinations remain refused | Deferred product extensions, not prerequisites to portable PK relationship support |
+| Correct but unoptimized loading | Eager fallback for unsupported LAZY forms; secondary reads for graph/fetch shapes outside optimized collectors. LAZY is a hint; graph contracts specify required loaded state, not a SELECT count (§3.8.1, §11.1.31/§11.1.42) | Defer optimizations only where ordinary loading is complete. A thrown query/mapping refusal is not automatically a correct fallback; retain completeness and identity tests |
+| Forbidden mappings | Entity associations targeting an embeddable as an entity; nested collections or inverse/to-many relationships declared inside collection-value embeddables (§2.7–2.8) | Retain bootstrap refusals. These are not future implementation targets |
+| Unverified relational edges | Broader inverse owner/index/cardinality contracts, including inverse many-to-many indexing | Keep explicitly unverified; do not classify every inverse relationship as illegal. Establish the normative case and an executable regression before claiming a gap or support |
+| Product tooling outside this release | Maven generation for precompiled dependency JARs is not delivered; opaque entities use bootstrap generation with `opens`. P12 proves a Leyden AOT cache smoke, not GraalVM native-image | Limit the product claim to the actual JVM/APT/bootstrap paths; no plugin/native-image commitment in the release gate |
+
+Known delivered-path defects are distinct from that extension backlog:
+Persistence **BUG-20261018-03** (CDI binding collision) and **-04** (TABLE
+allocation with an occupied one-slot pool) are reproduced and OPEN. They
+block readiness of the affected delivered scope until fixed or explicitly
+gated with a verified contract. Validation **BUG-20261018-01** remains OPEN
+in the non-published stopgap. The old Data producer mismatch is owned outside
+this release. Three additional static Java 25 review risks still need bounded
+triage; they are not represented as reproduced bugs.
+
+Current performance is recorded in **BENCH-20261018-01/02/03**, including the
+ordinary JPQL result-materialization SELECT amplification and JFR evidence.
+Optimization is a separate workstream with correctness and measurement gates,
+not a reason to reopen every mapping combination.
+
+## Deferred development backlog
+
+Prioritized backlog after D43, 2026-10-18, **not the release exit checklist**.
+Each item needs its own approved, bounded lot; until then
 the documented fallback (follow-up selects, eager loading, or an explicit refusal naming the
 milestone) stays in place.
 
@@ -2412,6 +2487,7 @@ Recorded before implementation; each entry: date, decision, reason.
 
 | # | Date | Decision | Status |
 |---|---|---|---|
+| PERF1 | 2026-10-19 | User requests the first measured optimization: hydrate eligible plain single-table root selections through existing hydration columns and the staged loader, instead of per-result find reloads. Preserve managed/lazy/cache/lifecycle contracts and existing unsupported-shape fallbacks; keep query-template caching and allocation tuning separate. | Actioned |
 | D43 | 2026-10-18 | Extend D26 to immutable, non-null composite BASIC business tuples within one declared target secondary table, covered by that table's exact unique constraint. Retain a single target PK/secondary PK join and reuse D22/D26 generated access, binders, physical FKs, identity lookup and association SQL. Preserve mixed-table, composite-PK, owner-secondary, inheritance/derived/embedded, join-table and broader loading boundaries. | Actioned |
 | D42 | 2026-10-18 | Extend D40/D41 element-value to-one targets to multiple distinct named embedded MapsId components, each from a non-polymorphic parent with a direct all-BASIC EmbeddedId or IdClass of the matching component type; BASIC components may remain assigned or derive from simple-ID parents. Reuse generated access, lifecycle and physical FK tuples; fix derived primitive record-key hydration (BUG-20261018-02). Keep overlapping/whole-plus-named mappings, unmapped nested remainder, deeper/relationship-valued/chained/polymorphic parents and unrelated loading outside scope. | Actioned |
 | D41 | 2026-10-18 | Extend D40's single named embedded MapsId component in element-value to-one targets to a non-polymorphic parent using a direct all-BASIC IdClass of the same component type. Reuse generated identity access and physical FK tuple mapping, independently of parent declaration order. Keep multiple composite components, unmapped nested remainder, relationship-valued/chained/polymorphic parents and unrelated loading outside scope. | Actioned |

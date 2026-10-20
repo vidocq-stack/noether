@@ -654,6 +654,17 @@ The project uses the Vidocq disjunctive triple licence:
 EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later. See `LICENSE`, `licenses/` and `NOTICE`;
 the bundled Jakarta ORM schema retains its original upstream licence.
 
+The D43 engineering baseline is frozen for a bounded JVM/APT release scope,
+not complete support for every portable JPA mapping. The roadmaps now separate
+portable refusals, optional extensions, loading optimizations and illegal
+mappings. Publication remains blocked by known delivered-path bugs and the
+published-dependency gate; see the root roadmap's C1–C5 closure contract.
+The first performance follow-up (PERF1, 2026-10-19) hydrates eligible plain
+JPQL/Criteria root selections directly from their result rows, through the
+existing staged loader; broader shapes retain their previous loading paths.
+Comparative results and the original JPQL materialization diagnosis are
+recorded in `noether-persistence/BENCH.md`.
+
 Noether has no independent published release yet. `0.4.0-SNAPSHOT` is the
 current development version; older Mansart versions in historical evidence
 are not Noether releases.
