@@ -475,7 +475,7 @@ class FetchJoinTest {
         query.setHint("jakarta.persistence.fetchgraph", em.createEntityGraph(Order.class));
         order = query.getSingleResult();
         assertThat(loaded(order, "customer")).isFalse();
-        assertThat(selects()).isEqualTo(2); // unchanged identifier query + ordinary owner load
+        assertThat(selects()).isEqualTo(1);
     }
 
     @Test
@@ -579,7 +579,7 @@ class FetchJoinTest {
         sql.clear();
         query.setHint("jakarta.persistence.fetchgraph", graph);
         assertThat(query.getSingleResult().order.getLabel()).isEqualTo("o1");
-        assertThat(selects()).isEqualTo(3);
+        assertThat(selects()).isEqualTo(2); // root state is in the query; the omitted eager order is loaded normally
         em.clear();
         sql.clear();
         graph.addAttributeNodes("order");
@@ -795,8 +795,36 @@ class FetchJoinTest {
             Order.class).getResultList();
         assertThat(orders).hasSize(2);
         assertThat(loaded(orders.getFirst(), "customer")).isFalse();
-        assertThat(selects()).isEqualTo(3); // unchanged: the query, then each owner by its key
+        assertThat(selects()).isEqualTo(1);
 
+    }
+
+    @Test
+    void plainQueryHydratesAnExistingLazyTargetReferenceInPlace() {
+        open();
+        Customer reference = em.find(Order.class, 1L).getCustomer();
+        assertThat(loaded(reference, "address")).isFalse();
+        sql.clear();
+        Customer customer = em.createQuery("select c from FjCustomer c where c.id = 10", Customer.class).getSingleResult();
+        assertThat(customer).isSameAs(reference);
+        assertThat(customer.getName()).isEqualTo("alice");
+        assertThat(loaded(customer, "address")).isFalse();
+        assertThat(Customer.POST_LOADS.get()).isEqualTo(1);
+        assertThat(selects()).isEqualTo(1);
+    }
+
+    @Test
+    void plainCompositeIdentityQueryUsesOneSelectAndKeepsLazyCollections() {
+        open();
+        Part part = em.createQuery("select p from FjPart p", Part.class).getSingleResult();
+        assertThat(part.key).isEqualTo(new PartKey("A", 1));
+        assertThat(part.name).isEqualTo("bolt");
+        assertThat(selects()).isEqualTo(1);
+        sql.clear();
+        Order order = em.createQuery("select o from FjOrder o where o.id = 1", Order.class).getSingleResult();
+        assertThat(loaded(order, "lines")).isFalse();
+        assertThat(loaded(order, "customer")).isFalse();
+        assertThat(selects()).isEqualTo(1);
     }
 
     @Test

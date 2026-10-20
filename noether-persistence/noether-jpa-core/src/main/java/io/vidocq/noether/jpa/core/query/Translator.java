@@ -1193,7 +1193,8 @@ final class Translator {
     /**
      * §4.4.5.3: the entities the to-one fetch joins of a selected root return with it, read from the same row. Eligible:
      * a fetch join {@code var.attribute} of a single-valued relationship, from the selected root variable or from the
-     * variable of an eligible fetch join of it; the root is read too when one of its fetch joins is. An entity is read
+     * variable of an eligible fetch join of it; the root is read too when one of its fetch joins is. A selected
+     * single-table root is also read without a fetch join. An entity is read
      * only when its rows hold one concrete type: no entity subclass, no joined or table-per-class inheritance. Anything
      * else keeps being found by identifier after the rows are read.
      */
@@ -1222,8 +1223,8 @@ final class Translator {
                 if (join.variable() != null) fetched.add(join.variable().toLowerCase(Locale.ROOT));
                 if (hydratable(target.type())) targets.add(target);
             }
-            if (targets.isEmpty()) continue;
             Variable root = variables.get(rootName);
+            if (targets.isEmpty() && root.type().statements().tables().size() != 1) continue;
             if (hydratable(root.type())) ordered.add(root);
             ordered.addAll(targets);
         }

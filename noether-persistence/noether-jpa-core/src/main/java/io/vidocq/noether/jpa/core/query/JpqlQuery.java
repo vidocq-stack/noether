@@ -640,7 +640,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
             GraphRows collected = splitRows(split, ids, owner -> runtime.graphBatchBound(owner, connection), dialect, connection);
             runtime.hydrateCollections(collected.entities(), collected.collections(), connection);
         }
-        if (compiled.collection() != null) {
+        if (!fetchedRows.isEmpty()) {
             List<io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedEntity> entities = new ArrayList<>();
             for (Fetched[] row : fetchedRows) {
                 for (Fetched fetched : row) {
@@ -648,14 +648,13 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
                         fetched.type(), fetched.id(), fetched.values(), fetched.nulls()));
                 }
             }
-            runtime.hydrateCollection(entities, compiled.collection().owner(), compiled.collection().attribute(), collectionRows, connection);
+            if (compiled.collection() != null) {
+                runtime.hydrateCollection(entities, compiled.collection().owner(), compiled.collection().attribute(), collectionRows, connection);
+            } else {
+                runtime.hydrateCollections(entities, List.of(), connection);
+            }
         }
         for (int r = 0; r < rows.size(); r++) {
-            if (compiled.collection() == null && !fetchedRows.isEmpty()) { // the fetched entities first
-                for (Fetched fetched : fetchedRows.get(r)) {
-                    if (fetched != null) runtime.hydrate(fetched.type(), fetched.id(), fetched.values(), fetched.nulls(), connection);
-                }
-            }
             Object row = rows.get(r);
             Object resolved = resolve(row, connection, followOn);
             fetch(resolved, plans, connection);
