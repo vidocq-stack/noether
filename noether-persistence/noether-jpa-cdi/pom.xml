@@ -19,7 +19,8 @@
     <build><plugins>
         <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId>
             <!-- Only nested test entities need the Class-File API bootstrap fallback, not production integration code. -->
-            <configuration><argLine>--add-opens io.vidocq.noether.jpa.cdi/io.vidocq.noether.jpa.cdi=io.vidocq.noether.jpa.core</argLine></configuration>
+            <!-- @{argLine} keeps the JaCoCo agent of the quality profile (vidocq-parent). -->
+            <configuration><argLine>@{argLine} --add-opens io.vidocq.noether.jpa.cdi/io.vidocq.noether.jpa.cdi=io.vidocq.noether.jpa.core</argLine></configuration>
         </plugin>
     </plugins></build>
 </project>

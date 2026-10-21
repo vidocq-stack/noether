@@ -67,7 +67,8 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <argLine>--add-opens io.vidocq.noether.jpa.core/io.vidocq.noether.jpa.core.session=io.vidocq.noether.validation.core</argLine>
+                    <!-- @{argLine} keeps the JaCoCo agent of the quality profile (vidocq-parent). -->
+                    <argLine>@{argLine} --add-opens io.vidocq.noether.jpa.core/io.vidocq.noether.jpa.core.session=io.vidocq.noether.validation.core</argLine>
                 </configuration>
             </plugin>
         </plugins>

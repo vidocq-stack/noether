@@ -4,7 +4,8 @@
     <parent><groupId>io.vidocq.noether</groupId><artifactId>noether-jpa</artifactId><version>0.4.0-SNAPSHOT</version></parent>
     <artifactId>noether-jpa-cdi-module-it</artifactId>
     <name>Noether :: Persistence :: Vauban module-path integration tests</name>
-    <properties><maven.deploy.skip>true</maven.deploy.skip><maven.javadoc.skip>true</maven.javadoc.skip><maven.source.skip>true</maven.source.skip><gpg.skip>true</gpg.skip></properties>
+    <!-- SonarQube: test vehicle, its main code only exists to be exercised by its tests (Vidocq/vidocq#284). -->
+    <properties><maven.deploy.skip>true</maven.deploy.skip><maven.javadoc.skip>true</maven.javadoc.skip><maven.source.skip>true</maven.source.skip><gpg.skip>true</gpg.skip><sonar.skip>true</sonar.skip></properties>
     <dependencies>
         <dependency><groupId>io.vidocq.noether</groupId><artifactId>noether-jpa-cdi</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.vidocq.noether</groupId><artifactId>noether-jpa-core</artifactId></dependency>
