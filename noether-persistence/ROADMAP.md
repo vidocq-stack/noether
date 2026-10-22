@@ -2408,6 +2408,29 @@ allocation versus BENCH-20261018-02), but remains behind both competitors.
 Before/after runs are on separate dates; the repeat and uncertainty are
 reported rather than attributing every observed change to this patch.
 
+## Performance follow-up 2 — Metadata indexing, 2026-10-22
+
+PERF2 addresses the repeated metadata work confirmed by BENCH-20261019-03.
+`EntityStatements` constructs an attribute-slot reference array and an
+immutable ordered list of `MappedBy` collections with non-null `indexUpdate`
+statements once per mapping. `reference(int)` uses the array, including
+negative/out-of-range empty results. `FlushEngine` uses the prefiltered list
+instead of repeating the inverse-index predicate for every managed entity
+and every write.
+
+The index retains the original reference/collection objects, execution-slot
+ordering, inherited and lowered embedded mappings, business-key references
+and mapping-availability checks. It captures no entity, session, connection
+or mutable query state. No new dependencies, generated code or module changes
+are required. Commit flush, dirty checking, cascades, lifecycle callbacks and
+optimistic locks are not bypassed.
+
+`EntityMetadataIndexTest` covers slot equivalence, absent/out-of-range slots,
+inherited/embedded/business-key references, ordered/keyed inverse collections,
+exclusion of unindexed/derived-key/owning collections, immutable lists and
+mapped-unit isolation. Existing flush/query/mapping suites remain the behavioral
+gate. See `TCK.md` and `BENCH.md` for validation and measurements.
+
 ## Closure boundary matrix — 2026-10-18
 
 The frozen engineering baseline ends at D43. The root roadmap defines the
@@ -2488,6 +2511,7 @@ Recorded before implementation; each entry: date, decision, reason.
 | # | Date | Decision | Status |
 |---|---|---|---|
 | PERF1 | 2026-10-19 | User requests the first measured optimization: hydrate eligible plain single-table root selections through existing hydration columns and the staged loader, instead of per-result find reloads. Preserve managed/lazy/cache/lifecycle contracts and existing unsupported-shape fallbacks; keep query-template caching and allocation tuning separate. | Actioned |
+| PERF2 | 2026-10-22 | User requests metadata indexing following the post-PERF1 profile. Precompute owned-reference lookup by execution slot and inverse index-update mappings at bootstrap; preserve flush semantics and validate with unchanged workloads. Hibernate may inform the design, without a production dependency or copied implementation. | Actioned |
 | D43 | 2026-10-18 | Extend D26 to immutable, non-null composite BASIC business tuples within one declared target secondary table, covered by that table's exact unique constraint. Retain a single target PK/secondary PK join and reuse D22/D26 generated access, binders, physical FKs, identity lookup and association SQL. Preserve mixed-table, composite-PK, owner-secondary, inheritance/derived/embedded, join-table and broader loading boundaries. | Actioned |
 | D42 | 2026-10-18 | Extend D40/D41 element-value to-one targets to multiple distinct named embedded MapsId components, each from a non-polymorphic parent with a direct all-BASIC EmbeddedId or IdClass of the matching component type; BASIC components may remain assigned or derive from simple-ID parents. Reuse generated access, lifecycle and physical FK tuples; fix derived primitive record-key hydration (BUG-20261018-02). Keep overlapping/whole-plus-named mappings, unmapped nested remainder, deeper/relationship-valued/chained/polymorphic parents and unrelated loading outside scope. | Actioned |
 | D41 | 2026-10-18 | Extend D40's single named embedded MapsId component in element-value to-one targets to a non-polymorphic parent using a direct all-BASIC IdClass of the same component type. Reuse generated identity access and physical FK tuple mapping, independently of parent declaration order. Keep multiple composite components, unmapped nested remainder, relationship-valued/chained/polymorphic parents and unrelated loading outside scope. | Actioned |

@@ -548,3 +548,118 @@ measurements, not a general provider ranking or a production-performance guarant
   Categories include descendants; JIT inlining and sample variation limit
   precise attribution. Recordings cover the profiled measurement window,
   not a production traffic sample. No implementation was changed by this study.
+
+## BENCH-20261022-01 — PERF2 same-session PERF1 baseline
+
+- **Date**: 2026-10-22.
+- **Commit**: `8af6b60` (`perf/query-row-hydration`), before PERF2 production
+  edits. PERF1 is present; the benchmark harness is unchanged.
+- **JVM**: Temurin 25.0.4.1+1-LTS, default JVM/GC flags.
+- **Hardware**: Apple M5 / 10 cores / 24 GiB RAM.
+- **OS**: Darwin 27.2.0.
+- **Exact command**, from the Noether root:
+  ```sh
+  ./mvnw -ntp -q clean install -DskipTests
+  cd noether-persistence/noether-jpa-bench
+  BENCH_RUN_ID=20261022-perf2-before ./run-bench.sh noether
+  ```
+  The runner uses `-wi 3 -i 5 -w 2s -r 2s -f 1 -t 1 -foe true -prof gc -rf json`.
+- **Results**, JMH 99.9% error:
+  ```text
+  createUpdateDelete 155405.012 +/-   3786.594 ops/s;  36480.040 +/-   0.083 B/op
+  findById           407660.315 +/- 195291.841 ops/s;  12414.759 +/-   0.004 B/op
+  jpqlQuery           38395.991 +/-   2333.792 ops/s; 108988.846 +/- 109.551 B/op
+  update             211107.488 +/-  28074.710 ops/s;  22111.824 +/-   3.335 B/op
+  ```
+- **Delta versus BENCH-20261019-02**, same workload order:
+  throughput **+5.10% / +2.62% / +6.35% / -3.04%**; allocation
+  **-0.83% / +2.71% / +1.67% / +0.95%**. No production code differs from
+  that PERF1 state; these changes illustrate run/JIT/environment variation,
+  not a new optimization. In particular the find throughput interval is wide.
+- **Evidence**: `noether-jpa-bench/target/bench-reports/20261022-perf2-before/noether/`
+  contains raw JSON, JMH log, JVM version and dependency/classpath records.
+  Session artifacts use `perf2-before-`. No build, test suite or other
+  benchmark was launched concurrently by this session during measurement.
+  The runner's normal write/version preflight remains enabled. H2 2.3.232,
+  fresh entity manager per operation, L2/query caches disabled; these short
+  single-fork, single-thread results are not a production scalability claim.
+
+## BENCH-20261022-02 — PERF2 indexed metadata, first comparison
+
+- **Date / JVM / hardware / OS / workload**: identical to BENCH-20261022-01.
+- **Commit**: `8af6b60` plus uncommitted PERF2 metadata indexing and tests.
+  Tested `noether-jpa-core` jar SHA-256:
+  `67de77d779a4c178419101fd3ffa586e3b376f059626674d6f6b9cd54dba8fbe`.
+- **Exact command**, from the Noether root:
+  ```sh
+  ./mvnw -ntp -q clean install
+  TCK_FIXTURES=patched TCK_VALIDATION=off \
+    ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+  cd noether-persistence/noether-jpa-bench
+  BENCH_RUN_ID=20261022-perf2-after ./run-bench.sh noether
+  ```
+  Reactor and TCK finish before the benchmark. JMH settings are unchanged:
+  `-wi 3 -i 5 -w 2s -r 2s -f 1 -t 1 -foe true -prof gc -rf json`.
+- **Results**, JMH 99.9% error:
+  ```text
+  createUpdateDelete 165615.010 +/-  9963.106 ops/s; 34512.038 +/-   0.075 B/op
+  findById           453642.628 +/- 39570.584 ops/s; 11790.758 +/-   0.003 B/op
+  jpqlQuery           42426.712 +/-  2019.375 ops/s; 77829.209 +/- 438.278 B/op
+  update             226993.104 +/- 15067.289 ops/s; 21376.112 +/-   0.852 B/op
+  ```
+- **Delta versus same-session BENCH-20261022-01**, same workload order:
+  throughput **+6.57% / +11.28% / +10.50% / +7.52%**; allocation
+  **-5.39% / -5.03% / -28.59% / -3.33%**.
+- **Interpretation**: the largest allocation reduction is in JPQL, where
+  each operation commits 32 managed entities. Bootstrap-indexed references
+  eliminate the repeated stream lookup for every basic attribute, and the
+  prefiltered inverse-index list eliminates the per-entity stream predicate.
+  The benchmark still runs commit flush and dirty checking; no columns,
+  result rows, writes, version checks or preflight are removed. No query-plan
+  cache, read-only transaction shortcut or provider setting is introduced.
+  Throughput improves in these point estimates, but 99.9% intervals overlap
+  the baseline (especially find); do not treat percentages as precise or
+  statistically established speedups. Allocation reduction is clearer.
+- **Evidence / limitations**:
+  `noether-jpa-bench/target/bench-reports/20261022-perf2-after/noether/`;
+  session `perf2-after-bench.log`, `perf2-comparison.json` and
+  `perf2-compare.py`. No concurrent build/test/benchmark was launched by this
+  session during measurement. The clean reactor and locally patched TCK
+  retain their contracts (`TCK.md`). Hibernate/EclipseLink were not rerun in
+  this experiment: comparisons to their 2026-10-19 scores are cross-date
+  context, not a newly measured provider ranking.
+
+## BENCH-20261022-03 — PERF2 indexed metadata, independent-fork repeat
+
+- **Date / commit / binary / JVM / hardware / OS**: identical to
+  BENCH-20261022-02. No source change between these two campaigns.
+- **Exact command**, from `noether-persistence/noether-jpa-bench`:
+  ```sh
+  BENCH_RUN_ID=20261022-perf2-after-repeat ./run-bench.sh noether
+  ```
+  Same JMH settings as entries 01/02, new forks, after campaign 02 completes.
+- **Results**, JMH 99.9% error:
+  ```text
+  createUpdateDelete 162483.852 +/-  3285.420 ops/s; 34520.039 +/-   0.080 B/op
+  findById           467966.885 +/- 21168.670 ops/s; 11478.758 +/-   0.003 B/op
+  jpqlQuery           43207.439 +/-  2785.894 ops/s; 77828.206 +/- 309.133 B/op
+  update             230642.463 +/-  7945.563 ops/s; 21080.112 +/-   0.842 B/op
+  ```
+- **Delta versus preceding BENCH-20261022-02**, same workload order:
+  throughput **-1.89% / +3.16% / +1.84% / +1.61%**; allocation
+  **+0.02% / -2.65% / -0.001% / -1.38%**.
+- **Delta versus pre-PERF2 BENCH-20261022-01**:
+  throughput **+4.56% / +14.79% / +12.53% / +9.25%**; allocation
+  **-5.37% / -7.54% / -28.59% / -4.67%**.
+- **Interpretation / limitations**: JPQL allocation repeats at approximately
+  77.8 kB/op instead of 109.0 kB/op. All workload throughput point estimates
+  remain above baseline, but this is one baseline campaign followed by two
+  optimized campaigns, not randomized multi-fork A/B evidence. Wide baseline
+  intervals and the find/update allocation variation across optimized forks
+  limit exact attribution. Do not claim parity with Hibernate, production
+  latency/scalability gains, or a universal gain from these short H2 runs.
+- **Evidence**:
+  `noether-jpa-bench/target/bench-reports/20261022-perf2-after-repeat/noether/`.
+  All three raw report directories and the core patch are also copied to
+  session `perf2-bench-evidence`; `perf2-compare.py` computes deltas from the
+  raw JSON without rounding intermediate scores.

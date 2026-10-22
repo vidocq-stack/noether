@@ -151,7 +151,7 @@ public final class FlushEngine {
                         if (entry.lockMode() == LockModeType.OPTIMISTIC || entry.lockMode() == LockModeType.READ) {
                             checks.add(entry);
                         }
-                        if (hasInverseIndexes(type)) {
+                        if (!type.statements().inverseIndexes().isEmpty()) {
                             indexes.add(new Work(entry, state)); // an inverse index changes nothing of its owner's row
                         }
                     }
@@ -749,11 +749,6 @@ public final class FlushEngine {
 
     // ---- the indexes an inverse side writes (§11.1.33, §11.1.42) --------------------------------------------
 
-    private static boolean hasInverseIndexes(MappedEntity type) {
-        return type.statements().collections().stream()
-            .anyMatch(c -> c instanceof CollectionMapping.MappedBy inverse && inverse.indexUpdate() != null);
-    }
-
     /**
      * Writes the keys or positions that the inverse collections of {@code work} keep in the table of their elements:
      * all of them for a new owner ({@code snapshot} {@code null}) unless they are not insertable, those of a collection
@@ -762,10 +757,7 @@ public final class FlushEngine {
     private boolean writeInverseIndexes(Work work, Object[] snapshot, Connection connection) {
         MappedEntity type = work.type();
         boolean written = false;
-        for (CollectionMapping mapping : type.statements().collections()) {
-            if (!(mapping instanceof CollectionMapping.MappedBy inverse) || inverse.indexUpdate() == null) {
-                continue;
-            }
+        for (CollectionMapping.MappedBy inverse : type.statements().inverseIndexes()) {
             Object current = work.state()[inverse.attribute()];
             boolean write = snapshot == null ? inverse.index().insertable()
                 : inverse.index().updatable() && type.state().collectionChanged(inverse.attribute(), snapshot[inverse.attribute()], current);

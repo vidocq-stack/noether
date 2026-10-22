@@ -131,7 +131,9 @@ public final class EntityStatements {
     private final String unsupported;
     private final Function<Class<?>, MappedEntity> entities;
     private final List<Reference> references;
+    private final Reference[] referencesByAttribute;
     private final List<CollectionMapping> collections;
+    private final List<CollectionMapping.MappedBy> inverseIndexes;
     private final List<ElementCollectionMapping> elementCollections;
     private final List<Column> columns;
     private final List<TableStatements> tables;
@@ -151,7 +153,22 @@ public final class EntityStatements {
         this.unsupported = unsupported;
         this.entities = entities;
         this.references = references;
+        int referenceSlots = 0;
+        for (Reference reference : references) {
+            referenceSlots = Math.max(referenceSlots, reference.attribute() + 1);
+        }
+        this.referencesByAttribute = new Reference[referenceSlots];
+        for (Reference reference : references) {
+            referencesByAttribute[reference.attribute()] = reference;
+        }
         this.collections = collections;
+        List<CollectionMapping.MappedBy> indexes = new ArrayList<>();
+        for (CollectionMapping collection : collections) {
+            if (collection instanceof CollectionMapping.MappedBy inverse && inverse.indexUpdate() != null) {
+                indexes.add(inverse);
+            }
+        }
+        this.inverseIndexes = List.copyOf(indexes);
         this.elementCollections = elementCollections;
         this.columns = columns;
         this.tables = tables;
@@ -1272,6 +1289,12 @@ public final class EntityStatements {
         return collections;
     }
 
+    /** Inverse collections that write a map key or list position in their elements' table, in mapping order. */
+    public List<CollectionMapping.MappedBy> inverseIndexes() {
+        check();
+        return inverseIndexes;
+    }
+
     /** The mapping of the collection-valued relationship {@code attribute}, if it is one. */
     public Optional<CollectionMapping> collection(int attribute) {
         check();
@@ -1333,7 +1356,8 @@ public final class EntityStatements {
     /** The reference whose foreign key columns hold the relationship attribute {@code attribute}, if this side owns it. */
     public Optional<Reference> reference(int attribute) {
         check();
-        return references.stream().filter(r -> r.attribute() == attribute).findFirst();
+        return attribute < 0 || attribute >= referencesByAttribute.length
+            ? Optional.empty() : Optional.ofNullable(referencesByAttribute[attribute]);
     }
 
     /** Actual target columns, never an assumption that a foreign key holds JPA identity. */

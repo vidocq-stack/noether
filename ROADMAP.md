@@ -91,6 +91,24 @@ parity is not reached.
 The closure blockers C2–C4 above remain unchanged. Query-template caching and
 allocation tuning are not included in this follow-up.
 
+## Performance follow-up 2 — Metadata indexing, 2026-10-22
+
+PERF2 follows the post-PERF1 JFR evidence (BENCH-20261019-03). At mapping
+construction, `EntityStatements` builds a private reference array indexed by
+execution-state attribute slot, and an immutable ordered list of inverse
+collections with index-update statements. Reference lookup no longer scans
+or constructs stream pipelines. The flush uses the prefiltered list both to
+detect inverse-index work and to execute it.
+
+Indexes are local to the mapped unit, include inherited and lowered embedded
+relationship slots, and retain the original mapping objects and order.
+Missing/out-of-range reference slots still return empty; unsupported mappings
+still fail through the existing guard. No entity state, transaction work or
+query plan is cached. Dirty checking, callbacks, cascades, versions and commit
+flush remain unchanged. This is not a new mapping decision or closure blocker.
+Measurements and validation are recorded in `noether-persistence/BENCH.md`
+and `noether-persistence/TCK.md`.
+
 ## Delivered follow-up history
 
 The 2026-10-14 Persistence follow-up adds to-one join-table mappings and

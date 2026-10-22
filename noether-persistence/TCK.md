@@ -1,3 +1,48 @@
+## Noether metadata indexing (PERF2) — 2026-10-22
+
+`EntityStatements` indexes owned references by execution-state slot and
+prefilters inverse collections with index-update statements at bootstrap.
+Flush work and mapping eligibility are unchanged.
+
+Commands from the Noether root, Temurin **25.0.4.1+1-LTS**, Maven **3.9.16**:
+
+```sh
+./mvnw -ntp -q -pl noether-persistence/noether-jpa-core -am \
+  -Dtest=EntityMetadataIndexTest -Dsurefire.failIfNoSpecifiedTests=false test
+./mvnw -ntp -q -pl noether-persistence/noether-jpa-core -am \
+  -Dtest=EntityMetadataIndexTest,EntityStatementsTest,FlushEngineTest,FlushOnCommitTest,AssociationTablesTest,QueryRowHydrationTest,ElementCollectionRelationsTest \
+  -Dsurefire.failIfNoSpecifiedTests=false test
+./mvnw -ntp -q clean install
+TCK_FIXTURES=patched TCK_VALIDATION=off \
+  ./noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+```
+
+- Before production edits, the new metadata contract tests fail compilation
+  because the precomputed inverse-index view does not yet exist. A subsequent
+  fixture correction supplies the required non-null, immutable business key;
+  the mapping validation itself is unchanged.
+- Focused gate: **119 tests / 0 failures / 0 errors / 0 skips**, including
+  five new slot/index/isolation tests.
+- Clean reactor: **1170 tests / 0 failures / 0 errors / 0 skips**, 94 reports.
+- Full locally patched Persistence 3.2.1 TCK, owned PostgreSQL **17**:
+  **2135 tests / 2131 passed / 0 failures / 0 errors / 4 official skips**,
+  259 reports, independently aggregated from the XML reports.
+- Skips remain the official `Client6.resultContainsFetchReference`
+  (query language), `Client.getDeclaredSingularAttributes` (identifiable-type
+  metamodel), `Client2.createEntityManagerFactoryStringMapTest` (SE EMF) and
+  `Client.tableGeneratorTest` (SE table-generator schema generation).
+  These remain skipped by the upstream fixture, not excluded by PERF2.
+- Fixture hashes remain unchanged: official
+  `a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`;
+  derived TCK-BUG-001
+  `1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`.
+  The runner verifies the exact derived jar on every report classpath and
+  removes its owned PostgreSQL container on exit.
+
+Session artifacts use the `perf2-` prefix (red/focused/reactor/TCK logs and
+benchmark comparison). This remains locally patched evidence, not an
+untouched official result or certification.
+
 ## Noether query-row hydration (PERF1) — 2026-10-19
 
 Plain eligible single-table root JPQL/Criteria selections read their state

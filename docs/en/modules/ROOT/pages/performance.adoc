@@ -136,8 +136,8 @@ pipelines; `FlushEngine.hasInverseIndexes` scans collection metadata.
 Flush workspaces are another candidate, although per-site allocation weights
 vary substantially between recordings.
 
-The next recommended bounded change is therefore *precomputed/indexed
-relationship metadata and inverse-index presence*, before query-plan caching.
+That profile motivates *precomputed/indexed relationship metadata and
+inverse-index presence* (PERF2 below), before query-plan caching.
 Parsing/translation is visible but does not dominate the confirmed profile.
 Then investigate avoidable flush workspace/state allocation. Do not skip
 dirty checking or commit flush merely because the query is a SELECT: mutable
@@ -145,6 +145,57 @@ state, cascades, callbacks, collections and optimistic locks still matter.
 Sample percentages are not achievable speedups; no further optimization is
 implemented by this profiling study. The first capture's throughput is too
 noisy to compare; retain the unprofiled PERF1 runs as the throughput evidence.
+
+=== PERF2: bootstrap-indexed metadata
+
+On 2026-10-22, PERF2 builds a private owned-reference array keyed by
+execution-state attribute slot and an immutable ordered list of inverse
+collections with index-update statements. Both belong to the mapped unit
+and are constructed once. Reference lookups no longer build stream pipelines;
+flush checks the prefiltered list and uses it when writing inverse indexes.
+Inherited, lowered embedded and business-key mappings retain their original
+metadata objects. Missing reference slots and mapping-availability guards
+keep their existing behavior.
+
+This follows the general ORM principle of preparing hot-path metadata at
+bootstrap rather than discovering it repeatedly. Hibernate's
+https://github.com/hibernate/hibernate-orm/blob/7.1/hibernate-core/src/main/java/org/hibernate/tuple/entity/EntityMetamodel.java[7.1 EntityMetamodel]
+also illustrates property-slot arrays; it is a design reference, not copied
+code, a new dependency or a claim about the internals of the measured 7.4 build.
+No session/entity/query state is shared. Commit flush, dirty checking,
+cascades, lifecycle callbacks and optimistic locking remain active.
+
+BENCH-20261022-01/02/03 record one same-session PERF1 baseline followed by two
+unchanged-harness optimized campaigns, with fresh forks:
+
+|===
+|JPQL, 32 entity rows |PERF1 baseline |PERF2 |PERF2 repeat
+
+|Throughput, ops/s (JMH 99.9% error)
+|38,396 +/- 2,334
+|42,427 +/- 2,019
+|43,207 +/- 2,786
+
+|Allocation, B/op
+|108,989
+|77,829
+|77,828
+|===
+
+JPQL throughput point estimates rise *10.50%* and *12.53%*, while allocation
+falls *28.59%* in both campaigns. Other workloads also allocate less in these
+runs; their complete scores and uncertainty are in `BENCH.md`. Baseline
+throughput intervals overlap optimized ones, particularly for find; these
+short single-fork campaigns are not randomized A/B evidence or precise
+speedup guarantees. Allocation reduction is the stronger result.
+Competitors were not rerun: the earlier Hibernate/EclipseLink gap is context,
+not a new cross-provider ranking or proof of parity. Java 25 is common to
+all three providers in that earlier comparison, not an exclusive Noether
+advantage.
+
+The next investigation remains avoidable flush/state and materialization
+allocation, followed by bounded query-template reuse according to a fresh
+profile. Neither is implemented by PERF2.
 
 For each change: failing-first correctness and SQL-count tests, clean
 reactor/TCK validation, then identical repeated JMH runs with allocation
