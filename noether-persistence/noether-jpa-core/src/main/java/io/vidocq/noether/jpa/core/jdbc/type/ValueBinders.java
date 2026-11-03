@@ -552,17 +552,17 @@ public final class ValueBinders {
                 }
                 if (c.isArray()) {
                     Class<?> element = c.getComponentType();
-                    return element.isPrimitive() || allowed(element.getName(), declaredType, pkg, extraPrefixes)
+                    return element.isPrimitive() || allowed(element.getName(), pkg, extraPrefixes)
                             ? ObjectInputFilter.Status.ALLOWED
                             : ObjectInputFilter.Status.REJECTED;
                 }
-                return allowed(c.getName(), declaredType, pkg, extraPrefixes) || declaredType.isAssignableFrom(c)
+                return allowed(c.getName(), pkg, extraPrefixes) || declaredType.isAssignableFrom(c)
                         ? ObjectInputFilter.Status.ALLOWED
                         : ObjectInputFilter.Status.REJECTED;
             };
         }
 
-        private static boolean allowed(String className, Class<?> declaredType, String pkg, List<String> extraPrefixes) {
+        private static boolean allowed(String className, String pkg, List<String> extraPrefixes) {
             return className.startsWith("java.")
                     || (!pkg.isEmpty() && className.startsWith(pkg + "."))
                     || extraPrefixes.stream().anyMatch(className::startsWith);
