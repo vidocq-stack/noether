@@ -30,6 +30,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.ObjectInputFilter;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.ObjectStreamClass;
@@ -50,9 +51,11 @@ import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.OffsetTime;
 import java.time.Year;
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -466,7 +469,7 @@ public final class ValueBinders {
                 || !Serializable.class.isAssignableFrom(type)) {
             return of(type);
         }
-        return blob(ValueBinders::serialize, bytes -> type.cast(deserialize(bytes)));
+        return blob(ValueBinders::serialize, bytes -> type.cast(deserialize(bytes, type)));
     }
 
     private static ValueBinder blob(Function<Object, byte[]> toBytes, Function<byte[], Object> fromBytes) {
@@ -491,7 +494,7 @@ public final class ValueBinders {
     private ValueBinder serialized(Class<?> type) {
         return new Simple(Types.VARBINARY, (s, i, v) -> s.setBytes(i, serialize(v)), (r, c) -> {
             byte[] bytes = r.getBytes(c);
-            return bytes == null ? null : type.cast(deserialize(bytes));
+            return bytes == null ? null : type.cast(deserialize(bytes, type));
         });
     }
 
@@ -505,21 +508,72 @@ public final class ValueBinders {
         return bytes.toByteArray();
     }
 
-    private Object deserialize(byte[] bytes) {
-        try (ObjectInputStream in = new UnitObjectInputStream(new ByteArrayInputStream(bytes), loader)) {
+    private Object deserialize(byte[] bytes, Class<?> declaredType) {
+        try (ObjectInputStream in = new UnitObjectInputStream(new ByteArrayInputStream(bytes), loader, declaredType, bytes.length)) {
             return in.readObject();
         } catch (IOException | ClassNotFoundException e) {
             throw new PersistenceException("Noether cannot deserialize a value read from the database", e);
         }
     }
 
-    /** Resolves the classes of serialized values with the loader of the persistence unit. */
+    /**
+     * Resolves the classes of serialized values with the loader of the persistence unit, and installs a JEP 290
+     * {@link java.io.ObjectInputFilter} (security audit F-02): column bytes are untrusted input, so deserialization
+     * is bounded in depth, references, array length and stream size, and only an allowlist of classes is accepted —
+     * JDK types ({@code java.*}), the declared attribute type and its subtypes, classes in the same package as the
+     * declared type, plus the comma-separated package prefixes of the system property
+     * {@code io.vidocq.noether.serialization.allow}. Anything else is rejected.
+     */
     private static final class UnitObjectInputStream extends ObjectInputStream {
+        private static final int MAX_DEPTH = 64;
+        private static final long MAX_REFERENCES = 100_000;
+        private static final long MAX_ARRAY_LENGTH = 1_000_000;
+
         private final ClassLoader loader;
 
-        UnitObjectInputStream(InputStream in, ClassLoader loader) throws IOException {
+        UnitObjectInputStream(InputStream in, ClassLoader loader, Class<?> declaredType, long maxStreamBytes) throws IOException {
             super(in);
             this.loader = loader;
+            setObjectInputFilter(deserializationFilter(declaredType, maxStreamBytes));
+        }
+
+        private static ObjectInputFilter deserializationFilter(Class<?> declaredType, long maxStreamBytes) {
+            Class<?> component = declaredType.isArray() ? declaredType.getComponentType() : declaredType;
+            String pkg = component.getPackageName();
+            List<String> extraPrefixes = extraAllowedPrefixes();
+            return info -> {
+                if (info.depth() > MAX_DEPTH || info.references() > MAX_REFERENCES
+                        || info.arrayLength() > MAX_ARRAY_LENGTH || info.streamBytes() > maxStreamBytes) {
+                    return ObjectInputFilter.Status.REJECTED;
+                }
+                Class<?> c = info.serialClass();
+                if (c == null) {
+                    return ObjectInputFilter.Status.UNDECIDED;
+                }
+                if (c.isArray()) {
+                    Class<?> element = c.getComponentType();
+                    return element.isPrimitive() || allowed(element.getName(), declaredType, pkg, extraPrefixes)
+                            ? ObjectInputFilter.Status.ALLOWED
+                            : ObjectInputFilter.Status.REJECTED;
+                }
+                return allowed(c.getName(), declaredType, pkg, extraPrefixes) || declaredType.isAssignableFrom(c)
+                        ? ObjectInputFilter.Status.ALLOWED
+                        : ObjectInputFilter.Status.REJECTED;
+            };
+        }
+
+        private static boolean allowed(String className, Class<?> declaredType, String pkg, List<String> extraPrefixes) {
+            return className.startsWith("java.")
+                    || (!pkg.isEmpty() && className.startsWith(pkg + "."))
+                    || extraPrefixes.stream().anyMatch(className::startsWith);
+        }
+
+        private static List<String> extraAllowedPrefixes() {
+            String prop = System.getProperty("io.vidocq.noether.serialization.allow", "");
+            if (prop.isBlank()) {
+                return List.of();
+            }
+            return Arrays.stream(prop.split(",")).map(String::trim).filter(s -> !s.isEmpty()).toList();
         }
 
         @Override
