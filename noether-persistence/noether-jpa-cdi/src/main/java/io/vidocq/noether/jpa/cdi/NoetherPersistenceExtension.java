@@ -112,7 +112,7 @@ public final class NoetherPersistenceExtension implements BuildCompatibleExtensi
 
     /** Unique, without dots (a dotted name would clash with any bean named after its first segment). */
     static String factoryName(int index, String unit) {
-        return "noetherPersistenceUnit" + index + "_" + unit.replaceAll("[^A-Za-z0-9_]", "_");
+        return "noetherPersistenceUnit" + index + "_" + unit.replaceAll("\\W", "_");
     }
 
     private static String string(AnnotationInfo annotation, String member, String fallback) {
