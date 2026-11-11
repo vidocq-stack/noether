@@ -34,6 +34,7 @@ import java.sql.SQLException;
 import java.time.Duration;
 import java.time.format.DateTimeParseException;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Properties;
 import java.util.function.Supplier;
 import javax.sql.DataSource;
@@ -48,6 +49,11 @@ import javax.sql.DataSource;
  * has a {@link ConnectionPoolFactory}, found with {@link java.util.ServiceLoader} ({@code noether-jpa-pool-mansart}
  * provides one); the core itself has no pool. Without one, each transaction opens its own connection, and one log
  * line says how to get a pool.
+ *
+ * <p>A unit with a {@code TABLE} identifier generator needs at least two connections at once: the generator allocates
+ * its identifiers on a connection of its own while the persisting transaction keeps its connection (BUG-20261018-04).
+ * A Noether pool sized below two is refused when the factory is created. Noether does not know the size of a
+ * {@code DataSource} that the application or the container supplies: it must allow two connections as well.
  */
 public final class ConnectionSources {
 
@@ -56,7 +62,7 @@ public final class ConnectionSources {
      * {@link ConnectionPoolFactory} is found: one connection per transaction.
      */
     public static final String POOL = "io.vidocq.noether.jpa.pool";
-    /** The maximum number of connections of the pool (default 10). */
+    /** The maximum number of connections of the pool (default 10); at least 2 for a unit with a TABLE generator. */
     public static final String POOL_MAX_SIZE = "io.vidocq.noether.jpa.pool.max-size";
     /** The connections the pool keeps open when idle (default 0). */
     public static final String POOL_MIN_IDLE = "io.vidocq.noether.jpa.pool.min-idle";
@@ -122,10 +128,12 @@ public final class ConnectionSources {
     /** The pool that {@code factory} opens for the unit, closed with the {@code EntityManagerFactory}. */
     private static ConnectionSource pooled(ConnectionPoolFactory factory, UnitSettings settings, String url, String user,
             String password) {
+        ConnectionPoolSettings poolSettings;
         ConnectionPool pool;
         try {
-            pool = factory.open(new ConnectionPoolSettings(url, user, password, integer(settings, POOL_MAX_SIZE),
-                integer(settings, POOL_MIN_IDLE), acquireTimeout(settings)));
+            poolSettings = new ConnectionPoolSettings(url, user, password, integer(settings, POOL_MAX_SIZE),
+                integer(settings, POOL_MIN_IDLE), acquireTimeout(settings));
+            pool = factory.open(poolSettings);
         } catch (IllegalArgumentException e) {
             throw new PersistenceException("Invalid connection pool settings for persistence unit " + settings.unitName() + " ("
                 + POOL_MAX_SIZE + ", " + POOL_MIN_IDLE + ", " + POOL_ACQUIRE_TIMEOUT + "): " + e.getMessage(), e);
@@ -134,6 +142,11 @@ public final class ConnectionSources {
             @Override
             public Connection acquire() throws SQLException {
                 return pool.getConnection();
+            }
+
+            @Override
+            public OptionalInt maxSize() {
+                return poolSettings.maxSize() == null ? OptionalInt.empty() : OptionalInt.of(poolSettings.maxSize());
             }
 
             @Override

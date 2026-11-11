@@ -115,6 +115,29 @@ class ConnectionSourcesTest {
     }
 
     @Test
+    void aPoolReportsTheMaxSizeTheUnitSets() { // BUG-20261018-04: checked against the TABLE generators of the unit
+        ConnectionSource source = ConnectionSources.of(unit(Map.of(ConnectionSources.POOL_MAX_SIZE, " 3 ")), loader(),
+            new RecordingPools()::found);
+        assertThat(source.maxSize()).hasValue(3);
+    }
+
+    @Test
+    void theMaxSizeIsUnknownWithoutAPoolOrWithThePoolDefault() {
+        Map<String, String> oneConnection = Map.of(ConnectionSources.POOL_MAX_SIZE, "1");
+        assertThat(ConnectionSources.of(unit(Map.of()), loader(), new RecordingPools()::found).maxSize())
+            .as("the pool's own default").isEmpty();
+        assertThat(ConnectionSources.of(unit(oneConnection), loader()).maxSize())
+            .as("no connection pool factory: one connection per transaction").isEmpty();
+        assertThat(ConnectionSources.of(unit(Map.of(ConnectionSources.POOL_MAX_SIZE, "1", ConnectionSources.POOL, "false")),
+            loader(), NOT_LOOKED_UP).maxSize()).as("pooling turned off").isEmpty();
+        DataSource dataSource = new CountingDataSource("jdbc:h2:mem:connections-unsized;DB_CLOSE_DELAY=-1");
+        UnitSettings application = UnitSettings.of(Definitions.from(new PersistenceConfiguration("unsized")
+            .property(ConnectionSources.POOL_MAX_SIZE, "1"), loader()), Map.of(), Map.of(Definitions.NON_JTA_DATA_SOURCE, dataSource));
+        assertThat(ConnectionSources.of(application, loader(), NOT_LOOKED_UP).maxSize()).as("a DataSource of the application")
+            .isEmpty();
+    }
+
+    @Test
     void theConnectionsComeFromThePoolWhichClosesWithTheSource() throws SQLException {
         RecordingPools pools = new RecordingPools();
         ConnectionSource source = ConnectionSources.of(unit(Map.of()), loader(), pools::found);

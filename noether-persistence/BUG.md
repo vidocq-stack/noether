@@ -1220,7 +1220,7 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
 ## BUG-20261018-04 — TABLE generation cannot allocate with an occupied one-slot pool
 
 - **Date**: 2026-10-18
-- **Status**: OPEN
+- **Status**: FIXED (branch `fix/table-generator-pool`, pull request into `fix-proposals`, Vidocq/noether#45)
 - **Affected module**: `noether-jpa-core`, `generation.IdGenerators`
 - **Symptom**: a valid TABLE-generated persist fails with a connection acquisition
   timeout when the resource-local transaction already holds the pool's only connection.
@@ -1248,6 +1248,23 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     holds the generator row until it ends, so concurrent inserting transactions serialize), a block private until
     its transaction commits and shared after that (needs a completion hook for resource-local and JTA), or the
     current separate connection with a documented or enforced minimum pool size of 2. No production change.
+  - 2026-11-11 (fix, branch `fix/table-generator-pool`, #45): the maintainer kept the separate connection, as
+    Hibernate and EclipseLink do (the generator row is locked only for the allocation, and a block shared by the
+    factory is safe because its allocation is committed on its own), and chose a refusal at bootstrap. Reproduced
+    first on the module path with the real `noether-jpa-pool-mansart` pool (`max-size=1`, `PT0.5S`, a `Ticket` with a
+    TABLE generator, `select 1`, then persist): `PersistenceException: Unable to generate an identifier: no connection
+    available within PT0.5S`, caused by `io.vidocq.mansart.pool.PoolException`. Fix: `ConnectionSource.maxSize()`
+    reports the `io.vidocq.noether.jpa.pool.max-size` of a Noether pool, and `IdGenerators.checkConnections`, called
+    by `NoetherPersistenceProvider` before schema generation, refuses a unit that has a TABLE generator (or `AUTO`
+    resolved to one: not a `UUID` identifier, no sequence generator named) and a pool below 2 connections. The
+    `PersistenceException` names the unit, each TABLE generator and the property. A `DataSource` of the application
+    or the container, a pool left at its default size and a unit without a pool are not checked; the minimum of two
+    connections is documented (Javadoc of `ConnectionSources`, the module page of the Antora docs). Tests:
+    `ConnectionPoolModulePathTest.aTableGeneratorRefusesAOneConnectionPoolWhenTheFactoryIsCreated`, red on 6968229
+    (the factory was created), green after the fix; with two connections the block 1–10 is committed beside a
+    transaction that rolls back; a one-connection pool without a TABLE generator and a TABLE generator without a pool
+    are still accepted. `IdGeneratorsTest` 5/5, `ConnectionSourcesTest` 10/10. The JTA path of a server is a separate
+    defect, BUG-20261111-04.
 
 ## BUG-20261111-01 — A JTA unit bootstrapped by a Jakarta EE server is refused
 

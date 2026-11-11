@@ -342,7 +342,8 @@ Spec: ch. 3 (entity operations), §3.6 (callbacks), §3.5 (optimistic / pessimis
       is an `IllegalStateException`; the remove of a new instance still cascades (§3.2.3).
 - [x] Identifier generation (*from P2*, `generation.IdGenerators`): `IDENTITY` (generated keys), `SEQUENCE` and
       `TABLE` pooled by `allocationSize` in immutable blocks swapped by compare-and-set (the round trip outside any
-      critical section; `TABLE` in a transaction of its own), `UUID`, `AUTO` (UUID for a UUID identifier, else the
+      critical section; `TABLE` in a transaction of its own, on a second connection: a Noether pool below two
+      connections is refused at bootstrap, BUG-20261018-04), `UUID`, `AUTO` (UUID for a UUID identifier, else the
       named generator, else a table generator on the reference implementation's defaults: table `SEQUENCE`,
       `SEQ_NAME` / `SEQ_COUNT`, row `SEQ_GEN`, blocks of 50); SQL rendered by the dialect (D4: `NextValue`,
       `Increment`). `db.supports.sequence` is a runner property telling the TCK whether to run its sequence tests,

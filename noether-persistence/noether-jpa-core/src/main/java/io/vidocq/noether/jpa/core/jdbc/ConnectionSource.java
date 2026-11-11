@@ -21,12 +21,22 @@ package io.vidocq.noether.jpa.core.jdbc;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.OptionalInt;
 
 /** Where the JDBC connections of a persistence unit come from. Implementations are thread-safe. */
 public interface ConnectionSource {
 
     /** A connection; the caller closes it, which returns a pooled connection to its pool. */
     Connection acquire() throws SQLException;
+
+    /**
+     * The most connections the source hands out at once, when the unit sets it: the
+     * {@value ConnectionSources#POOL_MAX_SIZE} of its Noether pool. Empty when Noether does not know it: one connection
+     * per transaction, a pool left at its default size, or a {@code DataSource} of the application or the container.
+     */
+    default OptionalInt maxSize() {
+        return OptionalInt.empty();
+    }
 
     /** Releases what the source holds (the connections of its pool) when the factory closes. */
     default void close() {

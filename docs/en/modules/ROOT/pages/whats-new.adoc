@@ -1,6 +1,14 @@
 = What's new
 :description: Noether extraction and compatibility changes.
 
+== 2026-11-11 — A TABLE generator needs two pooled connections
+
+A unit with a `TABLE` identifier generator (or `AUTO` resolved to one) and a Noether pool whose
+`io.vidocq.noether.jpa.pool.max-size` is below 2 is now refused when its `EntityManagerFactory` is created. Before,
+the factory was created and the first persist waited for a second connection until the pool's acquire timeout
+(BUG-20261018-04). The generator still allocates on a connection of its own, committed on its own; set the pool
+size to 2 or more. See xref:modules/noether-persistence.adoc[Persistence].
+
 == 2026-11-11 — The connection pool becomes an optional module
 
 `noether-jpa-core` no longer depends on Mansart. The pool of a unit configured by

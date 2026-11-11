@@ -23,6 +23,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.vidocq.noether.jpa.moduleit.opened.Book;
+import io.vidocq.noether.jpa.moduleit.opened.Ticket;
+import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.PersistenceConfiguration;
 import jakarta.persistence.PersistenceException;
@@ -30,6 +32,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -40,10 +43,18 @@ import org.junit.jupiter.api.Test;
 class ConnectionPoolModulePathTest {
 
     private static final String POOL_MODULE = "io.vidocq.noether.jpa.pool.mansart";
+    private static final String MAX_SIZE = "io.vidocq.noether.jpa.pool.max-size";
 
     private static PersistenceConfiguration unit(String database) {
         return new PersistenceConfiguration("module-it-pool").provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
             .managedClass(Book.class).property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:" + database);
+    }
+
+    /** A unit with a TABLE generator, its schema created, whose transactions wait at most half a second for a connection. */
+    private static PersistenceConfiguration tickets(String database, String maxSize) {
+        return unit(database).managedClass(Ticket.class).property(MAX_SIZE, maxSize)
+            .property("io.vidocq.noether.jpa.pool.acquire-timeout", "PT0.5S")
+            .property("jakarta.persistence.schema-generation.database.action", "create");
     }
 
     private static Object session(EntityManagerFactory emf) {
@@ -77,6 +88,65 @@ class ConnectionPoolModulePathTest {
         PersistenceConfiguration unit = unit("module-it-invalid;DB_CLOSE_DELAY=-1").property("io.vidocq.noether.jpa.pool.max-size", "0");
         assertThatThrownBy(unit::createEntityManagerFactory).isInstanceOf(PersistenceException.class)
             .hasMessageContaining("io.vidocq.noether.jpa.pool.max-size");
+    }
+
+    /**
+     * BUG-20261018-04: a TABLE generator allocates on a connection of its own while the transaction keeps its
+     * connection, so a pool of one connection could only time out at the first persist. The factory refuses it.
+     */
+    @Test
+    void aTableGeneratorRefusesAOneConnectionPoolWhenTheFactoryIsCreated() {
+        PersistenceConfiguration unit = tickets("module-it-one;DB_CLOSE_DELAY=-1", "1");
+        assertThatThrownBy(unit::createEntityManagerFactory).isInstanceOf(PersistenceException.class)
+            .hasMessageContaining("Persistence unit module-it-pool").hasMessageContaining(MAX_SIZE + "=1")
+            .hasMessageContaining("Ticket (TABLE, generator tickets)").hasMessageContaining("at least 2 connections");
+    }
+
+    @Test
+    void withTwoConnectionsTheTableAllocationCommitsBesideTheTransaction() throws SQLException {
+        String database = "module-it-two";
+        try (EntityManagerFactory emf = tickets(database + ";DB_CLOSE_DELAY=-1", "2").createEntityManagerFactory();
+             EntityManager em = emf.createEntityManager()) {
+            em.getTransaction().begin();
+            em.createNativeQuery("select 1").getSingleResult(); // the transaction holds one of the two connections
+            Ticket ticket = new Ticket();
+            em.persist(ticket);
+            em.getTransaction().rollback();
+
+            assertThat(ticket.id()).isEqualTo(1L);
+            assertThat(allocated(database)).as("the block, committed on the other connection").isEqualTo(10L);
+        }
+    }
+
+    @Test
+    void aOneConnectionPoolStaysValidWithoutATableGenerator() {
+        try (EntityManagerFactory emf = unit("module-it-one-book;DB_CLOSE_DELAY=-1").property(MAX_SIZE, "1")
+                .createEntityManagerFactory()) {
+            assertThat(session(emf)).isEqualTo(session(emf));
+        }
+    }
+
+    @Test
+    void aTableGeneratorWithoutAPoolIsNotRefused() {
+        try (EntityManagerFactory emf = tickets("module-it-unpooled-tickets;DB_CLOSE_DELAY=-1", "1")
+                .property("io.vidocq.noether.jpa.pool", "false").createEntityManagerFactory()) {
+            Ticket ticket = emf.callInTransaction(em -> {
+                em.createNativeQuery("select 1").getSingleResult();
+                Ticket persisted = new Ticket();
+                em.persist(persisted);
+                return persisted;
+            });
+            assertThat(ticket.id()).isEqualTo(1L);
+        }
+    }
+
+    private static long allocated(String database) throws SQLException {
+        try (Connection connection = DriverManager.getConnection("jdbc:h2:mem:" + database);
+             Statement query = connection.createStatement();
+             ResultSet row = query.executeQuery("select SEQ_COUNT from TICKET_IDS where SEQ_NAME = 'tickets'")) {
+            assertThat(row.next()).isTrue();
+            return row.getLong(1);
+        }
     }
 
     @Test
