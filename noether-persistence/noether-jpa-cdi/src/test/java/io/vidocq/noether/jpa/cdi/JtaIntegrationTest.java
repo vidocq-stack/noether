@@ -1,6 +1,7 @@
 package io.vidocq.noether.jpa.cdi;
 
 import io.vidocq.mansart.transactions.core.MansartTransactionManager;
+import io.vidocq.noether.jpa.core.spi.PersistenceDescriptors;
 import jakarta.persistence.*;
 import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.*;
@@ -268,7 +269,7 @@ class JtaIntegrationTest {
 
     @Test
     void defaultPersistenceUnitNameIsResolvedFromTheDeploymentDescriptor() {
-        assertThat(PersistenceFactoryCreator.defaultUnitName(Thread.currentThread().getContextClassLoader())).isEqualTo("default-cdi");
+        assertThat(PersistenceDescriptors.defaultUnitName(Thread.currentThread().getContextClassLoader())).isEqualTo("default-cdi");
     }
 
     @Test
