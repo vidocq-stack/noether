@@ -21,8 +21,9 @@ package io.vidocq.noether.jpa.core.jdbc;
 
 import io.vidocq.noether.jpa.core.bootstrap.Definitions;
 import io.vidocq.noether.jpa.core.bootstrap.UnitSettings;
-import io.vidocq.mansart.pool.PoolConfig;
-import io.vidocq.mansart.pool.core.MansartDataSource;
+import io.vidocq.noether.jpa.core.spi.ConnectionPool;
+import io.vidocq.noether.jpa.core.spi.ConnectionPoolFactory;
+import io.vidocq.noether.jpa.core.spi.ConnectionPoolSettings;
 import jakarta.persistence.PersistenceException;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
@@ -34,6 +35,7 @@ import java.time.Duration;
 import java.time.format.DateTimeParseException;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.function.Supplier;
 import javax.sql.DataSource;
 
 /**
@@ -41,10 +43,18 @@ import javax.sql.DataSource;
  * {@link DataSource} object given as {@code jakarta.persistence.nonJtaDataSource} or {@code jakarta.persistence.dataSource},
  * then the {@code jakarta.persistence.jdbc.*} properties. A data source <em>name</em> needs JNDI, which Java SE
  * does not have: it is refused with a message saying what to do instead.
+ *
+ * <p>Decision D7: the connections of a {@code jakarta.persistence.jdbc.*} unit come from a pool when the application
+ * has a {@link ConnectionPoolFactory}, found with {@link java.util.ServiceLoader} ({@code noether-jpa-pool-mansart}
+ * provides one); the core itself has no pool. Without one, each transaction opens its own connection, and one log
+ * line says how to get a pool.
  */
 public final class ConnectionSources {
 
-    /** {@code false} turns off the pool of a {@code jakarta.persistence.jdbc.*} unit (decision D7): one connection per transaction. */
+    /**
+     * {@code false} turns off the pool of a {@code jakarta.persistence.jdbc.*} unit (decision D7), even when a
+     * {@link ConnectionPoolFactory} is found: one connection per transaction.
+     */
     public static final String POOL = "io.vidocq.noether.jpa.pool";
     /** The maximum number of connections of the pool (default 10). */
     public static final String POOL_MAX_SIZE = "io.vidocq.noether.jpa.pool.max-size";
@@ -59,6 +69,11 @@ public final class ConnectionSources {
     }
 
     public static ConnectionSource of(UnitSettings settings, ClassLoader loader) {
+        return of(settings, loader, () -> ConnectionPools.find(loader));
+    }
+
+    /** {@link #of(UnitSettings, ClassLoader)}, asking {@code pools} for the pool factory only when the unit could use one. */
+    static ConnectionSource of(UnitSettings settings, ClassLoader loader, Supplier<Optional<ConnectionPoolFactory>> pools) {
         Object dataSource = settings.transactionType() == jakarta.persistence.PersistenceUnitTransactionType.JTA
             ? settings.property(Definitions.JTA_DATA_SOURCE) : settings.property(Definitions.NON_JTA_DATA_SOURCE);
         if (dataSource == null) {
@@ -69,13 +84,7 @@ public final class ConnectionSources {
         }
         String url = settings.string(UnitSettings.JDBC_URL);
         if (url != null && !url.isBlank()) {
-            String user = settings.string(UnitSettings.JDBC_USER);
-            String password = settings.string(UnitSettings.JDBC_PASSWORD);
-            String driver = settings.string(UnitSettings.JDBC_DRIVER);
-            if (!"false".equalsIgnoreCase(String.valueOf(settings.string(POOL)).strip()) && pooledDriverFound(url, driver, loader)) {
-                return pooled(settings, url, user, password);
-            }
-            return driverManager(url, user, password, driver, loader);
+            return jdbc(settings, url, loader, pools);
         }
         String name = dataSource != null ? dataSource.toString() : settings.definition().nonJtaDataSourceName();
         return () -> {
@@ -88,25 +97,39 @@ public final class ConnectionSources {
     }
 
     /**
-     * Decision D7: the connections of a {@code jakarta.persistence.jdbc.*} unit come from a {@code mansart-pool} pool,
-     * closed with the factory. The pool opens them through {@code DriverManager}.
+     * Decision D7: the connections of a {@code jakarta.persistence.jdbc.*} unit come from the pool of the
+     * {@link ConnectionPoolFactory} that {@code pools} finds, unless the unit turns pooling off or {@code DriverManager}
+     * does not serve its URL; otherwise each transaction opens its own connection.
      */
-    private static ConnectionSource pooled(UnitSettings settings, String url, String user, String password) {
-        PoolConfig config;
-        try {
-            PoolConfig.Builder builder = PoolConfig.builder().jdbcUrl(url).username(user).password(password);
-            integer(settings, POOL_MAX_SIZE).ifPresent(builder::maxSize);
-            integer(settings, POOL_MIN_IDLE).ifPresent(builder::minIdle);
-            String timeout = settings.string(POOL_ACQUIRE_TIMEOUT);
-            if (timeout != null && !timeout.isBlank()) {
-                builder.acquireTimeout(duration(timeout.strip()));
+    private static ConnectionSource jdbc(UnitSettings settings, String url, ClassLoader loader,
+            Supplier<Optional<ConnectionPoolFactory>> pools) {
+        String user = settings.string(UnitSettings.JDBC_USER);
+        String password = settings.string(UnitSettings.JDBC_PASSWORD);
+        String driver = settings.string(UnitSettings.JDBC_DRIVER);
+        if (!"false".equalsIgnoreCase(String.valueOf(settings.string(POOL)).strip())) {
+            Optional<ConnectionPoolFactory> factory = pools.get();
+            if (factory.isEmpty()) {
+                LOGGER.log(System.Logger.Level.INFO, "Persistence unit {0} has no connection pool: each transaction opens "
+                    + "its own connection. Add noether-jpa-pool-mansart to pool them, or pass a pooled javax.sql.DataSource "
+                    + "as jakarta.persistence.nonJtaDataSource ({1}=false silences this message)", settings.unitName(), POOL);
+            } else if (pooledDriverFound(url, driver, loader)) {
+                return pooled(factory.get(), settings, url, user, password);
             }
-            config = builder.build();
+        }
+        return driverManager(url, user, password, driver, loader);
+    }
+
+    /** The pool that {@code factory} opens for the unit, closed with the {@code EntityManagerFactory}. */
+    private static ConnectionSource pooled(ConnectionPoolFactory factory, UnitSettings settings, String url, String user,
+            String password) {
+        ConnectionPool pool;
+        try {
+            pool = factory.open(new ConnectionPoolSettings(url, user, password, integer(settings, POOL_MAX_SIZE),
+                integer(settings, POOL_MIN_IDLE), acquireTimeout(settings)));
         } catch (IllegalArgumentException e) {
             throw new PersistenceException("Invalid connection pool settings for persistence unit " + settings.unitName() + " ("
                 + POOL_MAX_SIZE + ", " + POOL_MIN_IDLE + ", " + POOL_ACQUIRE_TIMEOUT + "): " + e.getMessage(), e);
         }
-        MansartDataSource pool = MansartDataSource.of(config);
         return new ConnectionSource() {
             @Override
             public Connection acquire() throws SQLException {
@@ -139,21 +162,27 @@ public final class ConnectionSources {
         }
     }
 
-    private static Optional<Integer> integer(UnitSettings settings, String property) {
+    /** The integer value of {@code property}, or {@code null} when the unit does not set it. */
+    private static Integer integer(UnitSettings settings, String property) {
         String value = settings.string(property);
         if (value == null || value.isBlank()) {
-            return Optional.empty();
+            return null;
         }
         try {
-            return Optional.of(Integer.parseInt(value.strip()));
+            return Integer.valueOf(value.strip());
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException(property + " must be an integer, not '" + value + "'", e);
         }
     }
 
-    private static Duration duration(String value) {
+    /** The value of {@link #POOL_ACQUIRE_TIMEOUT}, or {@code null} when the unit does not set it. */
+    private static Duration acquireTimeout(UnitSettings settings) {
+        String value = settings.string(POOL_ACQUIRE_TIMEOUT);
+        if (value == null || value.isBlank()) {
+            return null;
+        }
         try {
-            return Duration.parse(value);
+            return Duration.parse(value.strip());
         } catch (DateTimeParseException e) {
             throw new IllegalArgumentException(POOL_ACQUIRE_TIMEOUT + " must be an ISO-8601 duration such as PT5S, not '"
                 + value + "'", e);

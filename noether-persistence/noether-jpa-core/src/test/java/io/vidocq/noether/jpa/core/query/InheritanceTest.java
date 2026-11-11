@@ -74,7 +74,7 @@ class InheritanceTest {
                 .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
                 .managedClass(Animal.class).managedClass(Cat.class).managedClass(Dog.class)
                 .mappingFile("orm/delimited.xml")
-                .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:delimited-native-inheritance")
+                .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:delimited-native-inheritance;DB_CLOSE_DELAY=-1")
                 .property(PersistenceConfiguration.JDBC_USER, "sa")
                 .property(PersistenceConfiguration.SCHEMAGEN_DATABASE_ACTION, "drop-and-create")
                 .createEntityManagerFactory();

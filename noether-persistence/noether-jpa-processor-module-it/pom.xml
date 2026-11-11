@@ -32,6 +32,12 @@
             <groupId>io.vidocq.noether</groupId>
             <artifactId>noether-jpa-core</artifactId>
         </dependency>
+        <!-- Decision D7: the pool of the jakarta.persistence.jdbc.* units, bound as a service (not required). -->
+        <dependency>
+            <groupId>io.vidocq.noether</groupId>
+            <artifactId>noether-jpa-pool-mansart</artifactId>
+            <scope>runtime</scope>
+        </dependency>
 
         <dependency>
             <groupId>org.junit.jupiter</groupId>

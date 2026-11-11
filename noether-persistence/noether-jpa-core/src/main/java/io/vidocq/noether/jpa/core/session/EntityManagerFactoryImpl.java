@@ -227,11 +227,7 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
         return cache;
     }
 
-    /** Where the connections of the unit come from: its pool, its data source, or the driver (decision D7). */
-    public ConnectionSource connectionSource() {
-        return connections;
-    }
-
+    /** Where the connections of the unit come from: its data source, its pool, or the driver (decision D7). */
     ConnectionSource connections() {
         return connections;
     }

@@ -507,7 +507,7 @@ class BusinessKeyToOneTest {
                 .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
                 .managedClass(Customer.class).managedClass(Order.class).managedClass(Part.class).managedClass(Item.class)
                 .mappingFile("orm/business-keys.xml")
-                .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:business-xml-" + DATABASES.incrementAndGet())
+                .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:business-xml-" + DATABASES.incrementAndGet() + ";DB_CLOSE_DELAY=-1")
                 .property(PersistenceConfiguration.JDBC_USER, "sa")
                 .property(PersistenceConfiguration.SCHEMAGEN_DATABASE_ACTION, "drop-and-create");
             try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {

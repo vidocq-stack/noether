@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.vidocq.noether</groupId>
+        <artifactId>noether-jpa</artifactId>
+        <version>0.4.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>noether-jpa-pool-mansart</artifactId>
+    <name>Noether :: Jakarta Persistence 3.2 :: Mansart connection pool</name>
+    <description>
+        The connection pool of the units configured by jakarta.persistence.jdbc.* in Java SE (decision D7): a
+        mansart-pool pool, which noether-jpa-core finds through ServiceLoader. Without this module, each transaction
+        of such a unit opens its own connection.
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.vidocq.noether</groupId>
+            <artifactId>noether-jpa-core</artifactId>
+        </dependency>
+        <!-- Decision D7: a zero-dependency, virtual-thread-native pool (Mansart). -->
+        <dependency>
+            <groupId>io.vidocq.mansart</groupId>
+            <artifactId>mansart-pool-core</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

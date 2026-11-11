@@ -23,11 +23,6 @@
             <version>3.1.1</version>
             <optional>true</optional>
         </dependency>
-        <!-- Decision D7: units configured by jakarta.persistence.jdbc.* get a mansart-pool pool (zero-dep, virtual-thread-native). -->
-        <dependency>
-            <groupId>io.vidocq.mansart</groupId>
-            <artifactId>mansart-pool-core</artifactId>
-        </dependency>
         <!-- Decision D4: the SQL AST and dialect SPI of Noether JPA (JDK only). -->
         <dependency>
             <groupId>io.vidocq.noether</groupId>

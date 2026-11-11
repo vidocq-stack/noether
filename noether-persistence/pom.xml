@@ -77,6 +77,7 @@
     <modules>
         <module>noether-jpa-dialects</module>
         <module>noether-jpa-core</module>
+        <module>noether-jpa-pool-mansart</module>
         <module>noether-jpa-processor</module>
         <module>noether-jpa-module-it</module>
         <module>noether-jpa-processor-module-it</module>
@@ -102,7 +103,13 @@
                 <artifactId>noether-jpa-processor</artifactId>
                 <version>${project.version}</version>
             </dependency>
-            <!-- Decision D7: the default connection pool of jakarta.persistence.jdbc.* units in Java SE. -->
+            <!-- Decision D7: the optional connection pool of jakarta.persistence.jdbc.* units in Java SE. -->
+            <dependency>
+                <groupId>io.vidocq.noether</groupId>
+                <artifactId>noether-jpa-pool-mansart</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <!-- The pool behind noether-jpa-pool-mansart; noether-jpa-core does not depend on it. -->
             <dependency>
                 <groupId>io.vidocq.mansart</groupId>
                 <artifactId>mansart-pool-core</artifactId>
