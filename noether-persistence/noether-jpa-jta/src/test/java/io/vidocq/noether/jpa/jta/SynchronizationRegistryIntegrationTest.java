@@ -27,9 +27,11 @@ import jakarta.persistence.SynchronizationType;
 import jakarta.persistence.TransactionRequiredException;
 import jakarta.persistence.spi.PersistenceProvider;
 import jakarta.persistence.spi.PersistenceProviderResolverHolder;
+import jakarta.transaction.Synchronization;
 import jakarta.transaction.Transaction;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -110,6 +112,23 @@ class SynchronizationRegistryIntegrationTest {
             assertThat(rows("registry-no-commit")).as("flushed, not committed").isZero();
             manager.commit();
             assertThat(rows("registry-no-commit")).isEqualTo(1);
+        }
+    }
+
+    /** Each unit of work takes a handle; the data source hands out the connection the transaction enlisted each time. */
+    @Test
+    void everyUnitOfWorkOfATransactionRunsOnTheConnectionItEnlisted() throws Exception {
+        try (var factory = factory("registry-shared", true); var em = factory.createEntityManager()) {
+            manager.begin();
+            em.persist(new Ledger(1, "credit"));
+            em.flush();
+            Object first = em.createNativeQuery("SELECT SESSION_ID()").getSingleResult();
+            Object second = em.createNativeQuery("SELECT SESSION_ID()").getSingleResult();
+            Object flushed = em.createNativeQuery("SELECT COUNT(*) FROM jta_ledger").getSingleResult();
+            manager.commit();
+
+            assertThat(second).isEqualTo(first);
+            assertThat(((Number) flushed).longValue()).as("the flushed insert, not yet committed").isEqualTo(1);
         }
     }
 
@@ -220,7 +239,88 @@ class SynchronizationRegistryIntegrationTest {
 
         assertThat(threads).containsOnlyKeys("acquire", "work", "flush", "detach")
             .allSatisfy((step, thread) -> assertThat(thread).as(step).isSameAs(Thread.currentThread()));
+        assertThat(acquired).as("one handle for the work, one for the flush").hasSize(2)
+            .allSatisfy(connection -> assertThat(connection.isClosed()).isTrue());
+    }
+
+    /** What a pool sees of the handles it handed out when its own synchronization runs. */
+    private Synchronization openHandles(List<Connection> acquired, List<Long> seen) {
+        return new Synchronization() {
+            @Override
+            public void beforeCompletion() {
+                seen.add(open(acquired));
+            }
+
+            @Override
+            public void afterCompletion(int status) {
+                seen.add(open(acquired));
+            }
+        };
+    }
+
+    private static long open(List<Connection> connections) {
+        return connections.stream().filter(connection -> {
+            try {
+                return !connection.isClosed();
+            } catch (SQLException e) {
+                throw new IllegalStateException(e);
+            }
+        }).count();
+    }
+
+    /**
+     * BUG-20261111-05: a pool closes, with a warning, the handles still open when the transaction completes (Agroal:
+     * "Closing 1 open connection(s) prior to commit"). Each unit of work closes its handle, so the pool finds none open
+     * whether its synchronization runs before Noether's or after it; JTA leaves the order of interposed
+     * synchronizations open.
+     */
+    @Test
+    void noHandleIsOpenWhenAnotherSynchronizationChecksBeforeOrAfterTheCommit() throws Exception {
+        List<Connection> acquired = new ArrayList<>();
+        List<Long> before = new ArrayList<>();
+        List<Long> after = new ArrayList<>();
+        var session = session(SynchronizationType.SYNCHRONIZED, new ConcurrentHashMap<>(), acquired, new ArrayList<>());
+        manager.begin();
+        registry.registerInterposedSynchronization(openHandles(acquired, before));
+        session.join();
+        session.onConnection(connection -> connection);
+        registry.registerInterposedSynchronization(openHandles(acquired, after));
+        manager.commit();
+
+        assertThat(before).as("registered before Noether's").containsExactly(0L, 0L);
+        assertThat(after).as("registered after Noether's").containsExactly(0L, 0L);
+        assertThat(acquired).isNotEmpty();
+    }
+
+    @Test
+    void noHandleIsOpenWhenAnotherSynchronizationChecksAfterARollback() throws Exception {
+        List<Connection> acquired = new ArrayList<>();
+        List<Long> seen = new ArrayList<>();
+        var session = session(SynchronizationType.SYNCHRONIZED, new ConcurrentHashMap<>(), acquired, new ArrayList<>());
+        manager.begin();
+        registry.registerInterposedSynchronization(openHandles(acquired, seen));
+        session.join();
+        session.onConnection(connection -> connection);
+        manager.rollback();
+
+        assertThat(seen).as("afterCompletion only").containsExactly(0L);
         assertThat(acquired).singleElement().satisfies(connection -> assertThat(connection.isClosed()).isTrue());
+    }
+
+    /** The connection handed out as such (EntityManager.unwrap) stays the same until Noether's synchronization. */
+    @Test
+    void theConnectionHandedOutStaysOpenUntilTheTransactionCompletes() throws Exception {
+        List<Connection> acquired = new ArrayList<>();
+        var session = session(SynchronizationType.SYNCHRONIZED, new ConcurrentHashMap<>(), acquired, new ArrayList<>());
+        manager.begin();
+        session.join();
+        Connection connection = session.connection();
+        assertThat(session.connection()).isSameAs(connection);
+        assertThat(connection.isClosed()).isFalse();
+        manager.commit();
+
+        assertThat(connection.isClosed()).isTrue();
+        assertThat(acquired).allSatisfy(handle -> assertThat(handle.isClosed()).isTrue());
     }
 
     /** §3.3.2, §7.9.1: a context marked for rollback is not flushed, and its instances are detached after completion. */

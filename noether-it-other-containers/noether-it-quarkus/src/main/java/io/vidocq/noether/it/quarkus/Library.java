@@ -81,6 +81,20 @@ public class Library {
         em.find(Book.class, id).setTitle(title);
     }
 
+    /**
+     * The application reads through the data source before its first use of the persistence context in the transaction,
+     * so Agroal's synchronization comes before Noether's. Noether writes the change before Narayana commits.
+     */
+    @Transactional
+    public void readThenRename(long id, String title) throws SQLException {
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement();
+             ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM noether_book")) {
+            result.next();
+        }
+        em.find(Book.class, id).setTitle(title);
+    }
+
     /** §3.11.2: in the AUTO flush mode the change reaches the database before the query of the same transaction. */
     @Transactional
     public long renameThenCount(long id, String title) {
@@ -89,18 +103,23 @@ public class Library {
     }
 
     /**
-     * The H2 session of Noether's connection and the one of a connection the application takes from the data source,
-     * in the same transaction: Agroal hands out the connection it enlisted in the transaction again.
+     * The H2 sessions of two statements of Noether and of a connection the application takes from the data source, in
+     * the same transaction: Agroal hands out the connection it enlisted in the transaction again.
      */
     @Transactional
     public long[] sessions() throws SQLException {
-        long noether = ((Number) em.createNativeQuery("SELECT SESSION_ID()").getSingleResult()).longValue();
+        long first = sessionOfNoether();
+        long second = sessionOfNoether();
         try (Connection connection = dataSource.getConnection();
              Statement statement = connection.createStatement();
              ResultSet result = statement.executeQuery("SELECT SESSION_ID()")) {
             result.next();
-            return new long[] {noether, result.getLong(1)};
+            return new long[] {first, second, result.getLong(1)};
         }
+    }
+
+    private long sessionOfNoether() {
+        return ((Number) em.createNativeQuery("SELECT SESSION_ID()").getSingleResult()).longValue();
     }
 
     /** What the database holds, read straight from the data source outside any transaction. */
