@@ -63,7 +63,9 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>A table generator allocates on a connection of its own, as Hibernate and EclipseLink do: the generator row stays
  * locked only for the allocation, and a block shared by the whole factory is safe because its allocation is committed
  * on its own, whatever becomes of the transaction that asked for it. A unit with a table generator therefore needs at
- * least two connections at once (BUG-20261018-04, {@link #checkConnections}).
+ * least two connections at once (BUG-20261018-04, {@link #checkConnections}). A JTA unit allocates through its
+ * non-JTA data source instead: the container enlists every connection of the JTA data source in the transaction and
+ * refuses the allocation's own commit (BUG-20261111-04, {@link #checkAllocations}).
  */
 public final class IdGenerators {
 
@@ -121,18 +123,19 @@ public final class IdGenerators {
     }
 
     private final Dialect dialect;
-    private final ConnectionSource connections;
+    /** Where the table generators allocate: {@link ConnectionSources#allocations}. */
+    private final ConnectionSource allocations;
     private final java.util.function.Function<String, Identifier> identifiers;
     private final Map<String, Generator> generators = new ConcurrentHashMap<>();
 
-    public IdGenerators(Dialect dialect, ConnectionSource connections) {
-        this(dialect, connections, Identifier::of);
+    public IdGenerators(Dialect dialect, ConnectionSource allocations) {
+        this(dialect, allocations, Identifier::of);
     }
 
-    public IdGenerators(Dialect dialect, ConnectionSource connections,
+    public IdGenerators(Dialect dialect, ConnectionSource allocations,
             java.util.function.Function<String, Identifier> identifiers) {
         this.dialect = dialect;
-        this.connections = connections;
+        this.allocations = allocations;
         this.identifiers = identifiers;
     }
 
@@ -158,7 +161,7 @@ public final class IdGenerators {
         if (maxSize.isEmpty() || maxSize.getAsInt() >= TABLE_CONNECTIONS) {
             return;
         }
-        List<String> tableGenerators = entities.stream().map(IdGenerators::tableGenerator).flatMap(Optional::stream).toList();
+        List<String> tableGenerators = tableGenerators(entities);
         if (!tableGenerators.isEmpty()) {
             throw new PersistenceException("Persistence unit " + unitName + " sets " + ConnectionSources.POOL_MAX_SIZE + "="
                 + maxSize.getAsInt() + ", but a TABLE identifier generator needs at least " + TABLE_CONNECTIONS
@@ -166,6 +169,33 @@ public final class IdGenerators {
                 + "connection. TABLE generators of the unit: " + String.join(", ", tableGenerators) + ". Set "
                 + ConnectionSources.POOL_MAX_SIZE + " to " + TABLE_CONNECTIONS + " or more.");
         }
+    }
+
+    /**
+     * Refuses, when the factory is created, a JTA unit with table generators and no non-JTA data source to allocate
+     * through (BUG-20261111-04, {@link ConnectionSources#allocations}): the container enlists every connection of the
+     * JTA data source in the transaction, and refuses the commit of the allocation.
+     *
+     * @param allocations where the unit's table generators allocate; empty when the unit has nowhere to
+     * @throws PersistenceException naming the unit, its table generators and the two ways out
+     */
+    public static void checkAllocations(String unitName, List<EntityModel> entities, Optional<ConnectionSource> allocations) {
+        if (allocations.isPresent()) {
+            return;
+        }
+        List<String> tableGenerators = tableGenerators(entities);
+        if (!tableGenerators.isEmpty()) {
+            throw new PersistenceException("Persistence unit " + unitName + " is JTA and has TABLE identifier generators, "
+                + "but no non-JTA data source to allocate through. A TABLE generator commits each allocation on a "
+                + "connection of its own, and the container enlists every connection of the JTA data source in the "
+                + "transaction. TABLE generators of the unit: " + String.join(", ", tableGenerators) + ". Declare a "
+                + "<non-jta-data-source> for the unit (on Quarkus, a datasource with "
+                + "quarkus.datasource.\"name\".jdbc.transactions=disabled), or use SEQUENCE or IDENTITY identifiers.");
+        }
+    }
+
+    private static List<String> tableGenerators(List<EntityModel> entities) {
+        return entities.stream().map(IdGenerators::tableGenerator).flatMap(Optional::stream).toList();
     }
 
     /** The entity and its generator, when a generator table allocates its identifiers. */
@@ -239,9 +269,9 @@ public final class IdGenerators {
     }
 
     /**
-     * A row of a generator table moved forward by {@code allocationSize} in a transaction of its own, on a second
-     * connection of the unit (a rollback of the caller must not hand the same values out again); a missing row is
-     * created at {@code initialValue}.
+     * A row of a generator table moved forward by {@code allocationSize} in a transaction of its own, on a connection of
+     * its own from {@link #allocations} (a rollback of the caller must not hand the same values out again); a missing
+     * row is created at {@code initialValue}.
      */
     private Generator table(TableGeneratorModel model) {
         Table table = new Table(identifier(model.table() != null ? model.table() : "SEQUENCE"), identifier(model.schema()),
@@ -255,7 +285,7 @@ public final class IdGenerators {
         int allocation = Math.max(1, model.allocationSize());
         int initial = model.initialValue();
         return generators.computeIfAbsent("table:" + increment + "/" + row, k -> new Blocks(caller -> {
-            try (Connection own = connections.acquire()) {
+            try (Connection own = allocations.acquire()) {
                 own.setAutoCommit(false);
                 try {
                     long[] block = tableBlock(own, increment, select, insert, row, initial, allocation);

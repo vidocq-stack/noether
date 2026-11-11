@@ -103,6 +103,21 @@ public final class ConnectionSources {
     }
 
     /**
+     * Where the table generators of a unit allocate their identifiers, on a connection of their own that they commit
+     * (BUG-20261018-04): the unit's {@code connections} when it is resource-local. A JTA unit allocates through its
+     * {@code non-jta-data-source}, the {@link DataSource} given as {@code jakarta.persistence.nonJtaDataSource}
+     * (§8.2.1.5): the container enlists every connection of the JTA data source in the transaction and refuses its
+     * commit (BUG-20261111-04). Empty for a JTA unit without one.
+     */
+    public static Optional<ConnectionSource> allocations(UnitSettings settings, ConnectionSource connections) {
+        if (settings.transactionType() != jakarta.persistence.PersistenceUnitTransactionType.JTA) {
+            return Optional.of(connections);
+        }
+        return settings.property(Definitions.NON_JTA_DATA_SOURCE) instanceof DataSource source
+            ? Optional.of(source::getConnection) : Optional.empty();
+    }
+
+    /**
      * Decision D7: the connections of a {@code jakarta.persistence.jdbc.*} unit come from the pool of the
      * {@link ConnectionPoolFactory} that {@code pools} finds, unless the unit turns pooling off or {@code DriverManager}
      * does not serve its URL; otherwise each transaction opens its own connection.

@@ -9,7 +9,8 @@ import javax.sql.DataSource;
 
 /**
  * The data sources of a CDI container, whose connections it enlists in its transactions: the default one, and one a
- * persistence unit names in its {@code jta-data-source}.
+ * persistence unit names in its {@code jta-data-source}. And a data source whose connections it does not enlist, which
+ * a persistence unit names in its {@code non-jta-data-source}.
  */
 @Dependent
 public class DataSources {
@@ -22,5 +23,9 @@ public class DataSources {
 
     @Produces @Singleton @Named("ledger") @Ledger public DataSource ledgerSource(TransactionManager manager) {
         return new EnlistingDataSource(LEDGER_URL, manager);
+    }
+
+    @Produces @Singleton @Named("allocations") @Allocations public DataSource allocationSource() {
+        return new NonJtaDataSource(DEFAULT_URL);
     }
 }

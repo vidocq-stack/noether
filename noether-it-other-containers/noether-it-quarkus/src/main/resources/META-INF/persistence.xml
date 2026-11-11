@@ -2,7 +2,8 @@
 <!--
     A JTA unit on Quarkus: Noether as the provider, on Quarkus' default data source (Agroal, configured in
     application.properties), which enlists its connections in Narayana's transactions. It names no jta-data-source,
-    so noether-jpa-cdi takes the @Default javax.sql.DataSource bean.
+    so noether-jpa-cdi takes the @Default javax.sql.DataSource bean. Its non-jta-data-source, the datasource
+    "allocations" without transactions, is where the TABLE generator of Voucher allocates.
 -->
 <persistence xmlns="https://jakarta.ee/xml/ns/persistence"
              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -10,7 +11,9 @@
              version="3.2">
     <persistence-unit name="library" transaction-type="JTA">
         <provider>io.vidocq.noether.jpa.core.NoetherPersistenceProvider</provider>
+        <non-jta-data-source>allocations</non-jta-data-source>
         <class>io.vidocq.noether.it.quarkus.Book</class>
+        <class>io.vidocq.noether.it.quarkus.Voucher</class>
         <exclude-unlisted-classes>true</exclude-unlisted-classes>
         <properties>
             <property name="jakarta.persistence.schema-generation.database.action" value="drop-and-create"/>

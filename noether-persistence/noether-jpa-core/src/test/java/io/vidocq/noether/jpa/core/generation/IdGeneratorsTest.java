@@ -37,6 +37,7 @@ import jakarta.persistence.PersistenceException;
 import jakarta.persistence.SequenceGenerator;
 import java.sql.Connection;
 import java.util.List;
+import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.UUID;
 import java.util.stream.Stream;
@@ -108,6 +109,28 @@ class IdGeneratorsTest {
     @Test
     void aSourceOfUnknownSizeIsNotChecked() { // one connection per transaction, the pool default, a DataSource
         assertThatNoException().isThrownBy(() -> check(UNSIZED, Badge.class, Stamp.class));
+    }
+
+    /** BUG-20261111-04: a JTA unit with a table generator and nowhere to allocate is refused when the factory is created. */
+    @Test
+    void aJtaUnitWithATableGeneratorAndNoNonJtaDataSourceIsRefused() {
+        assertThatThrownBy(() -> IdGenerators.checkAllocations("ids", entities(Badge.class, Stamp.class, Account.class),
+                Optional.empty()))
+            .isInstanceOf(PersistenceException.class)
+            .hasMessage("Persistence unit ids is JTA and has TABLE identifier generators, but no non-JTA data source to "
+                + "allocate through. A TABLE generator commits each allocation on a connection of its own, and the "
+                + "container enlists every connection of the JTA data source in the transaction. TABLE generators of the "
+                + "unit: Badge (TABLE, generator badges), Stamp (AUTO, default table generator). Declare a "
+                + "<non-jta-data-source> for the unit (on Quarkus, a datasource with "
+                + "quarkus.datasource.\"name\".jdbc.transactions=disabled), or use SEQUENCE or IDENTITY identifiers.");
+    }
+
+    @Test
+    void aUnitWithASourceToAllocateThroughOrWithoutTableGeneratorIsAccepted() {
+        assertThatNoException().isThrownBy(() -> IdGenerators.checkAllocations("ids", entities(Badge.class, Stamp.class),
+            Optional.of(UNSIZED)));
+        assertThatNoException().isThrownBy(() -> IdGenerators.checkAllocations("ids",
+            entities(Account.class, Token.class, AutoUuid.class, AutoSequence.class, Counted.class), Optional.empty()));
     }
 
     /** {@code TABLE} without a named generator: the default generator table. */

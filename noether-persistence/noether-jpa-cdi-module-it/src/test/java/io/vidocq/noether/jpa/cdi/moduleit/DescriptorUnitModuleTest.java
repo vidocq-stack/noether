@@ -93,6 +93,46 @@ class DescriptorUnitModuleTest {
         }
     }
 
+    private static long persistVoucher(EntityManager manager, TransactionManager tm, String code, boolean commit)
+            throws Exception {
+        tm.begin();
+        Voucher voucher = new Voucher(code);
+        manager.persist(voucher);
+        manager.flush();
+        if (commit) tm.commit(); else tm.rollback();
+        return voucher.id;
+    }
+
+    /**
+     * BUG-20261111-04: a JTA unit allocates its TABLE identifiers through the data source bean {@code @Named} after its
+     * {@code non-jta-data-source}; a rolled-back transaction does not give its identifiers back.
+     */
+    @Test
+    void aJtaUnitAllocatesTableIdentifiersThroughTheBeanNamedAfterItsNonJtaDataSource() throws Exception {
+        try (var container = container(Transactions.class, DataSources.class, VoucherRepository.class)) {
+            EntityManager manager = container.select(VoucherRepository.class).manager;
+            TransactionManager tm = container.select(TransactionManager.class);
+
+            long doomed = persistVoucher(manager, tm, "doomed", false);
+            long first = persistVoucher(manager, tm, "first", true);
+            long second = persistVoucher(manager, tm, "second", true);
+
+            assertThat(doomed).isEqualTo(1);
+            assertThat(first).isEqualTo(2);
+            assertThat(second).isEqualTo(3);
+        }
+    }
+
+    @Test
+    void withoutTheNonJtaDataSourceBeanAJtaUnitFailsAtFactoryCreation() {
+        try (var container = container(Transactions.class, VoucherRepository.class, DefaultSource.class)) {
+            assertThatThrownBy(() -> container.select(VoucherRepository.class))
+                .satisfies(failure -> assertThat(causes(failure)).anyMatch(PersistenceException.class::isInstance))
+                .hasStackTraceContaining("xml-vouchers")
+                .hasStackTraceContaining("javax.sql.DataSource bean @Named(\"allocations\")");
+        }
+    }
+
     @Test
     void aResourceLocalUnitNeedsNoTransactionBean() {
         try (var container = container(ResourceLocalRepository.class)) {

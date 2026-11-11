@@ -65,6 +65,8 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     private final UnitSettings settings;
     private final BeanValidation.Validator validator;
     private final ConnectionSource connections;
+    /** Where the table generators allocate (BUG-20261111-04): see {@code ConnectionSources.allocations}. */
+    private final ConnectionSource allocations;
     private final MappedUnit mapping;
     private final AtomicReference<FlushEngine> flushEngine = new AtomicReference<>();
     private final AtomicReference<IdGenerators> idGenerators = new AtomicReference<>();
@@ -110,11 +112,12 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
         return jakarta.persistence.spi.LoadState.UNKNOWN;
     }
 
-    public EntityManagerFactoryImpl(UnitSettings settings, ConnectionSource connections, MappedUnit mapping,
-            BeanValidation.Validator validator) {
+    public EntityManagerFactoryImpl(UnitSettings settings, ConnectionSource connections, ConnectionSource allocations,
+            MappedUnit mapping, BeanValidation.Validator validator) {
         this.settings = settings;
         this.validator = validator;
         this.connections = connections;
+        this.allocations = allocations;
         this.mapping = mapping;
         this.cache = new SecondLevelCache(mapping, settings.sharedCacheMode());
         this.namedQueries = new NamedQueries(mapping);
@@ -186,7 +189,7 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     IdGenerators idGenerators(Connection connection) {
         IdGenerators generators = idGenerators.get();
         if (generators == null) {
-            IdGenerators created = new IdGenerators(flushEngine(connection).dialect(), connections, mapping::identifier);
+            IdGenerators created = new IdGenerators(flushEngine(connection).dialect(), allocations, mapping::identifier);
             generators = idGenerators.compareAndExchange(null, created);
             if (generators == null) {
                 generators = created;
