@@ -17,11 +17,15 @@ work transformed abstract algebra and connected symmetries with conservation law
 
 All implementation packages and Java modules use `io.vidocq.noether`.
 The provider is `io.vidocq.noether.jpa.core.NoetherPersistenceProvider`.
-Pool and transaction integration retain their external `io.vidocq.mansart`
-dependencies. `noether-jpa-core` itself does not depend on Mansart: the pool of
-a unit configured by `jakarta.persistence.jdbc.*` comes from the optional
+`noether-jpa-core` itself does not depend on Mansart: the pool of a unit
+configured by `jakarta.persistence.jdbc.*` comes from the optional
 `noether-jpa-pool-mansart`, found through `ServiceLoader`; without it, each
-transaction opens its own connection. Jakarta Data remains in Mansart; no
+transaction opens its own connection. JTA goes through the container: on a CDI
+container, `noether-jpa-cdi` takes its `TransactionSynchronizationRegistry` bean
+and a `DataSource` bean whose connections the container enlists (Quarkus and
+Jakarta EE servers have both; on Vidocq the runtime extension brings them; a bare
+Vauban application produces them). No published module depends on Mansart
+Transactions. Jakarta Data remains in Mansart; no
 Data/JPA bridge is introduced.
 
 ## Build

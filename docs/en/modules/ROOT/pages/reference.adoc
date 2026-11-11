@@ -14,7 +14,7 @@ All Noether artifacts are under `io.vidocq.noether`:
 | `noether-jpa-dialect-h2`, `noether-jpa-dialect-postgresql` | Dialect adapters
 | `noether-jpa-processor` | APT and generated entity access
 | `noether-jpa-jta` | JTA bridge of a Jakarta EE server (`java:comp/TransactionSynchronizationRegistry`)
-| `noether-jpa-cdi` | Vauban CDI and Mansart JTA bridge
+| `noether-jpa-cdi` | Persistence injection on a CDI container; JTA through the container's registry (`noether-jpa-jta`)
 | `noether-validation`, `noether-validation-core` | Provisional local-only Validation
 |===
 
@@ -37,8 +37,8 @@ Tested on Open Liberty 26.0.0.10 by `noether-it-openliberty`.
 * **Add `noether-jpa-jta` for a JTA unit.** It reads the server's `java:comp/TransactionSynchronizationRegistry`;
   the server's JTA data source enlists the connections and the server commits them. Without it, a JTA unit is
   refused at deployment.
-* **Leave `noether-jpa-cdi` out of the WAR**: the server injects `@PersistenceContext` itself, and
-  `noether-jpa-cdi` binds Vauban CDI to the Mansart transaction manager.
+* **Leave `noether-jpa-cdi` out of the WAR**: the server injects `@PersistenceContext` itself; a second injection
+  of the same annotations through the CDI extension would compete with it.
 * **The WAR carries** `noether-jpa-core`, `noether-jpa-jta` and a dialect (`noether-jpa-dialect-h2` or
   `-postgresql`), with what they bring transitively (`noether-jpa-dialect-spi`), and the entity accesses that
   `noether-jpa-processor` generated at compile time (in `annotationProcessorPaths`). The server brings the Jakarta
@@ -70,20 +70,43 @@ Tested on Open Liberty 26.0.0.10 by `noether-it-openliberty`.
 ====
 
 [NOTE]
+.JTA units on a CDI container
+====
+`noether-jpa-cdi` injects `@PersistenceContext` and `@PersistenceUnit` through a CDI 4.1 Lite build compatible
+extension. It depends on no transaction manager: a JTA unit runs on what the container provides, through
+`noether-jpa-jta`.
+
+* **A `jakarta.transaction.TransactionSynchronizationRegistry` bean.** Noether joins each persistence context to the
+  current transaction with an interposed synchronization: it flushes before completion and detaches after it.
+* **A `javax.sql.DataSource` bean whose connections the container enlists in its transactions**: the bean
+  `@Named` after the unit's `jta-data-source`, or the `@Default` one when the unit names none. The container
+  commits or rolls the connections back; Noether never does. A bean whose only qualifier is `@Named` is also
+  `@Default` (CDI 4.1 §2.3.1): give the other data sources a qualifier of their own.
+* **A resource-local unit needs neither**, through `@PersistenceUnit` as through `Persistence`.
+
+Quarkus (`quarkus-narayana-jta`, `quarkus-agroal`) and Jakarta EE servers have both beans. On Vidocq the runtime
+extension brings them. A bare Vauban application, without the Vidocq extension, produces them itself. Without them,
+the factory of a JTA unit fails at creation with a `PersistenceException` that names the missing bean.
+====
+
+[NOTE]
 .Running on Quarkus
 ====
 Noether is the Jakarta Persistence provider of a Quarkus application through `noether-jpa-cdi`: ArC runs its
-build compatible extension at build time, Narayana drives the transactions. Tested on Quarkus 3.40.1 by
-`noether-it-quarkus`.
+build compatible extension at build time. A JTA unit runs on Quarkus' own pieces: Agroal's data source, which
+enlists its connections in Narayana's transactions, and Narayana's `TransactionSynchronizationRegistry`. Tested on
+Quarkus 3.40.1 by `noether-it-quarkus`.
 
 * **Leave Quarkus' Hibernate ORM extension out** (`quarkus-hibernate-orm`), or it owns `persistence.xml` and
   `@PersistenceContext`.
-* **Declare** `noether-jpa-cdi`, a dialect, `quarkus-arc` and `quarkus-narayana-jta`; the entity accesses come from
-  `noether-jpa-processor` in `annotationProcessorPaths`.
-* **The unit's connections come from its `jakarta.persistence.jdbc.url`**, not from an Agroal data source:
-  `noether-jpa-cdi` enlists each transaction's connection in Narayana as a one-phase resource. Keep it the only
-  resource of its transactions. Each transaction opens its own connection; add `noether-jpa-pool-mansart` to pool
-  them (`noether-it-quarkus` runs without it).
+* **Declare** `noether-jpa-cdi`, a dialect, `quarkus-arc`, `quarkus-narayana-jta`, `quarkus-agroal` and the Quarkus
+  JDBC driver extension of the database (`quarkus-jdbc-h2`, `quarkus-jdbc-postgresql`); the entity accesses come
+  from `noether-jpa-processor` in `annotationProcessorPaths`. Leave `noether-jpa-pool-mansart` out: Agroal pools
+  the connections.
+* **Configure the data source in `application.properties`** (`quarkus.datasource.db-kind`,
+  `quarkus.datasource.jdbc.url`, ...), not with `jakarta.persistence.jdbc.*` properties in `persistence.xml`. A unit
+  without `jta-data-source` uses the default data source (tested). Quarkus gives a named data source the qualifier
+  `@Named("name")`, so `<jta-data-source>name</jta-data-source>` selects it (not covered by `noether-it-quarkus`).
 ====
 
 == Query entity graph hints
