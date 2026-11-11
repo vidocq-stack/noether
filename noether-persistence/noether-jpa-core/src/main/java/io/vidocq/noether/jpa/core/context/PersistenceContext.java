@@ -250,7 +250,8 @@ public final class PersistenceContext {
         disconnectAll();
         byKey.clear();
         byInstance.clear();
-        for (ManagedEntity entry = first; entry != null; ) { // an entry a caller still holds keeps no other alive
+        ManagedEntity entry = first;
+        while (entry != null) { // an entry a caller still holds keeps no other alive
             ManagedEntity next = entry.next;
             entry.previous = null;
             entry.next = null;
