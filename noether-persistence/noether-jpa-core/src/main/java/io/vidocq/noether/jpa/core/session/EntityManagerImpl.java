@@ -1256,7 +1256,7 @@ final class EntityManagerImpl implements EntityManager {
             }
             Map<EntityKey, MappedEntity> fresh = new java.util.LinkedHashMap<>();
             for (var row : rows) {
-                EntityKey key = new EntityKey(row.type().root(), row.id());
+                EntityKey key = row.key();
                 if (context.find(key).isPresent()) continue;
                 if (!cacheInvalidationPending && cacheRetrieveMode == CacheRetrieveMode.USE
                         && cacheStoreMode != CacheStoreMode.REFRESH

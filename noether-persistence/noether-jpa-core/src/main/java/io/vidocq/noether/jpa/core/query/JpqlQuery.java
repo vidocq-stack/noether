@@ -92,12 +92,12 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
                 slot.binder().bind(dialect, statement, i + 1, slot.constant());
             }
             try (ResultSet results = statement.executeQuery()) {
+                EntityLoader.FetchedEntity[] row = new EntityLoader.FetchedEntity[compiled.hydrations().size()];
                 while (results.next()) {
                     int[] column = {compiled.items().getFirst().width() + 1};
-                    Fetched[] row = fetched(compiled.hydrations(), results, column);
-                    for (Fetched fetched : row) {
-                        if (fetched != null) entities.add(new io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedEntity(
-                            fetched.type(), fetched.id(), fetched.values(), fetched.nulls()));
+                    fetched(compiled.hydrations(), results, column, row);
+                    for (EntityLoader.FetchedEntity fetched : row) {
+                        if (fetched != null) entities.add(fetched);
                     }
                     if (compiled.collection() != null && row[0] != null) {
                         collectionRows.add(fetchedElement(compiled.collection(), row[0].id(), row, results, column));
@@ -173,12 +173,12 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
                             slot.binder().bind(dialect, statement, i + 1, slot.constant());
                         }
                         try (ResultSet results = statement.executeQuery()) {
+                            EntityLoader.FetchedEntity[] row = new EntityLoader.FetchedEntity[compiled.hydrations().size()];
                             while (results.next()) {
                                 int[] column = {compiled.items().getFirst().width() + 1};
-                                Fetched[] row = fetched(compiled.hydrations(), results, column);
-                                for (Fetched fetched : row) {
-                                    if (fetched != null) entities.add(new EntityLoader.FetchedEntity(
-                                        fetched.type(), fetched.id(), fetched.values(), fetched.nulls()));
+                                fetched(compiled.hydrations(), results, column, row);
+                                for (EntityLoader.FetchedEntity fetched : row) {
+                                    if (fetched != null) entities.add(fetched);
                                 }
                                 if (compiled.collection() != null && row[0] != null) {
                                     elements.add(fetchedElement(compiled.collection(), row[0].id(), row, results, column));
@@ -607,7 +607,10 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         // a row lock makes another statement of it, rendered for this execution
         Dialect.Rendered rendered = plan != null && sql == compiled.sql() ? plan.rendered(dialect) : dialect.renderQuery(sql);
         List<Object> rows = new ArrayList<>();
-        List<Fetched[]> fetchedRows = new ArrayList<>();
+        // the entities the rows fetched with their select items, in row order; one array serves the reading of each row
+        List<EntityLoader.FetchedEntity> entities = new ArrayList<>();
+        EntityLoader.FetchedEntity[] fetchedRow = new EntityLoader.FetchedEntity[compiled.hydrations().size()];
+        boolean fetchedRows = false;
         List<io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedElement> collectionRows = new ArrayList<>();
         try (PreparedStatement statement = connection.prepareStatement(rendered.sql())) {
             if (pessimistic) {
@@ -638,12 +641,16 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
                         first = row[0];
                         rows.add(row);
                     }
-                    if (!compiled.hydrations().isEmpty()) {
-                        fetchedRows.add(fetched(compiled.hydrations(), results, column));
+                    if (fetchedRow.length > 0) {
+                        fetched(compiled.hydrations(), results, column, fetchedRow);
+                        fetchedRows = true;
+                        for (EntityLoader.FetchedEntity fetched : fetchedRow) {
+                            if (fetched != null) entities.add(fetched);
+                        }
                     }
                     if (compiled.collection() != null) {
                         collectionRows.add(fetchedElement(compiled.collection(), ((EntityKey) first).id(),
-                            fetchedRows.getLast(), results, column));
+                            fetchedRow, results, column));
                     }
                 }
             }
@@ -661,14 +668,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
             GraphRows collected = splitRows(split, ids, owner -> runtime.graphBatchBound(owner, connection), dialect, connection);
             runtime.hydrateCollections(collected.entities(), collected.collections(), connection);
         }
-        if (!fetchedRows.isEmpty()) {
-            List<io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedEntity> entities = new ArrayList<>();
-            for (Fetched[] row : fetchedRows) {
-                for (Fetched fetched : row) {
-                    if (fetched != null) entities.add(new io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedEntity(
-                        fetched.type(), fetched.id(), fetched.values(), fetched.nulls()));
-                }
-            }
+        if (fetchedRows) {
             if (compiled.collection() != null) {
                 runtime.hydrateCollection(entities, compiled.collection().owner(), compiled.collection().attribute(), collectionRows, connection);
             } else {
@@ -700,7 +700,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     }
 
     private static io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedElement fetchedElement(
-            Compiled.CollectionHydration collection, Object owner, Fetched[] row, ResultSet results, int[] column)
+            Compiled.CollectionHydration collection, Object owner, EntityLoader.FetchedEntity[] row, ResultSet results, int[] column)
             throws SQLException {
         Object[] payload = new Object[collection.readers().size()];
         boolean[] nulls = new boolean[payload.length];
@@ -719,7 +719,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
                 java.util.Arrays.copyOfRange(nulls, 1, width + 1)) : null;
             indexFrom = width + 1;
         } else {
-            Fetched target = row[1];
+            EntityLoader.FetchedEntity target = row[1];
             present = target != null;
             element = present ? target.id() : null;
             indexFrom = 0;
@@ -742,13 +742,13 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         }
     }
 
-    /** The columns of an entity a fetch join read with its owner, indexed like its statement columns. */
-    private record Fetched(MappedEntity type, Object id, Object[] values, boolean[] nulls) {
-    }
-
-    /** Reads, after the select items, the columns of each fetched entity; {@code null} for one the row does not hold. */
-    private static Fetched[] fetched(List<Compiled.Hydration> hydrations, ResultSet results, int[] column) throws SQLException {
-        Fetched[] fetched = new Fetched[hydrations.size()];
+    /**
+     * Reads, after the select items, the columns of each fetched entity of the current row into {@code fetched}, one
+     * slot per hydration, each indexed like the statement columns of its entity; {@code null} for an entity the row
+     * does not hold. The caller reuses {@code fetched} for the next row: it takes what it keeps before reading it.
+     */
+    private static void fetched(List<Compiled.Hydration> hydrations, ResultSet results, int[] column,
+            EntityLoader.FetchedEntity[] fetched) throws SQLException {
         for (int h = 0; h < fetched.length; h++) {
             Compiled.Hydration hydration = hydrations.get(h);
             List<io.vidocq.noether.jpa.core.mapping.EntityStatements.Column> columns = hydration.type().statements().columns();
@@ -762,15 +762,22 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
                     values[c] = null;
                 }
             }
-            Object[] key = new Object[hydration.key().length];
+            int[] keyColumns = hydration.key();
+            Object id;
             boolean empty = true;
-            for (int k = 0; k < key.length; k++) {
-                key[k] = values[hydration.key()[k]];
-                empty &= nulls[hydration.key()[k]];
+            if (keyColumns.length == 1) { // a simple identifier is its one column: no array around it
+                empty = nulls[keyColumns[0]];
+                id = empty ? null : hydration.type().statements().simpleKey(values[keyColumns[0]]);
+            } else {
+                Object[] key = new Object[keyColumns.length];
+                for (int k = 0; k < key.length; k++) {
+                    key[k] = values[keyColumns[k]];
+                    empty &= nulls[keyColumns[k]];
+                }
+                id = empty ? null : hydration.type().statements().key(key);
             }
-            fetched[h] = empty ? null : new Fetched(hydration.type(), hydration.type().statements().key(key), values, nulls);
+            fetched[h] = empty ? null : new EntityLoader.FetchedEntity(hydration.type(), id, values, nulls);
         }
-        return fetched;
     }
 
     /** The identity of an entity read in a row, found once the rows are read. */
@@ -833,6 +840,10 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     private static Object read(Compiled.Item item, ResultSet results, int[] column) throws SQLException {
         return switch (item) {
             case Compiled.EntityItem entity -> {
+                if (entity.width() == 1) { // a simple identifier is its one column: no array around it
+                    Object value = entity.keyBinders().getFirst().read(results, column[0]++);
+                    yield results.wasNull() ? null : new EntityKey(entity.type(), entity.type().statements().simpleKey(value));
+                }
                 Object[] key = new Object[entity.width()];
                 boolean empty = true;
                 for (int k = 0; k < key.length; k++) {

@@ -53,6 +53,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -158,8 +159,15 @@ public final class EntityLoader {
         return instance;
     }
 
-    /** Entity columns captured by a SQL fetch query, not a second mapping representation. */
-    public record FetchedEntity(MappedEntity type, Object id, Object[] values, boolean[] nulls) {}
+    /**
+     * Entity columns captured by a SQL fetch query, not a second mapping representation: the one form of a row from
+     * its result set to the persistence context. {@code key} is its identity in a context, made once with the row.
+     */
+    public record FetchedEntity(MappedEntity type, Object id, Object[] values, boolean[] nulls, EntityKey key) {
+        public FetchedEntity(MappedEntity type, Object id, Object[] values, boolean[] nulls) {
+            this(type, id, values, nulls, new EntityKey(type.root(), id));
+        }
+    }
 
     /** One collection row; an absent LEFT row still records its owner. Entity elements carry their identifier. */
     public record FetchedElement(Object ownerId, Object element, Object[] index, boolean present) {}
@@ -201,27 +209,39 @@ public final class EntityLoader {
 
     private void loadRows(List<FetchedEntity> rows, List<FetchedCollection> collections,
             Connection connection, PersistenceContext context, ManagedEntity initializing) {
-        Map<ManagedEntity, Row> pending = new LinkedHashMap<>();
+        // the entries these rows load, in the order of their first row, and the row of each: two lists, since a new
+        // instance has one row; only a reference can meet a second row, which then replaces the first
+        List<ManagedEntity> pending = new ArrayList<>(rows.size());
+        List<FetchedEntity> pendingRows = new ArrayList<>(rows.size());
+        Map<ManagedEntity, Integer> references = null;
         // whether a row still has relationships to resolve, a reference to complete or a collection to receive
         boolean relational = !collections.isEmpty();
-        for (FetchedEntity fetched : rows) {
+        for (int r = 0; r < rows.size(); r++) {
+            FetchedEntity fetched = rows.get(r);
             MappedEntity type = fetched.type();
-            var known = context.find(new EntityKey(type.root(), fetched.id()));
-            if (known.isPresent() && !LazyReference.unloaded(known.get().instance())) continue;
-            Row row = new Row(fetched.values(), fetched.nulls());
-            if (known.isPresent()) {
+            ManagedEntity known = context.find(fetched.key()).orElse(null);
+            if (known != null && !LazyReference.unloaded(known.instance())) continue;
+            if (known != null) {
                 relational = true;
-                ManagedEntity entry = known.get();
+                ManagedEntity entry = known;
                 if (entry == initializing) {
-                    state(type, entry.instance(), row);
+                    state(type, entry.instance(), fetched.values(), fetched.nulls());
                     ((LazyReference) entry.instance()).$noetherState().complete();
                 } else {
-                    ((LazyReference) entry.instance()).$noetherState().hydrate(() -> state(type, entry.instance(), row));
+                    ((LazyReference) entry.instance()).$noetherState()
+                        .hydrate(() -> state(type, entry.instance(), fetched.values(), fetched.nulls()));
                 }
-                pending.put(entry, row);
+                if (references == null) references = new IdentityHashMap<>();
+                Integer at = references.putIfAbsent(entry, pending.size());
+                if (at != null) {
+                    pendingRows.set(at, fetched);
+                } else {
+                    pending.add(entry);
+                    pendingRows.add(fetched);
+                }
             } else {
                 Object instance = type.access().instantiate();
-                Object[] state = state(type, instance, row);
+                Object[] state = state(type, instance, fetched.values(), fetched.nulls());
                 if (type.keepsFoundIdentifier()) {
                     int index = type.firstIdAttribute();
                     state[index] = fetched.id();
@@ -233,15 +253,18 @@ public final class EntityLoader {
                     // nothing more will be written into it: its snapshot is, now, the state the instance gives back
                     type.access().read(instance, state);
                 }
-                pending.put(context.loaded(instance, type, fetched.id(), type.state().snapshot(state)), row);
+                // the state is not read again here: it becomes the snapshot, without a copy of the array
+                pending.add(context.loadedAs(fetched.key(), instance, type, type.state().asSnapshot(state)));
+                pendingRows.add(fetched);
             }
         }
         if (!relational) { // only new instances of entities without relationships: each is complete with its row
             postLoad(pending, context);
             return;
         }
-        for (var item : pending.entrySet()) {
-            ManagedEntity entry = item.getKey();
+        for (int p = 0; p < pending.size(); p++) {
+            ManagedEntity entry = pending.get(p);
+            FetchedEntity row = pendingRows.get(p);
             MappedEntity type = entry.type();
             Object[] state = new Object[type.model().attributes().size()];
             type.access().read(entry.instance(), state);
@@ -251,31 +274,38 @@ public final class EntityLoader {
                 if (collection.owner() == type && collection.elements().stream()
                         .anyMatch(e -> Objects.equals(e.ownerId(), entry.key().id()))) fetched.add(collection.attribute());
             }
-            relationships(type, entry.key().id(), entry.instance(), state, item.getValue(), connection, context, null, fetched);
+            relationships(type, entry.key().id(), entry.instance(), state, new Row(row.values(), row.nulls()), connection,
+                context, null, fetched);
             type.deriveId(entry.instance());
         }
-        for (FetchedCollection collection : collections) {
-            completeRows(collection.owner(), collection.attribute(), collection.elements(), pending, connection, context);
+        if (!collections.isEmpty()) {
+            java.util.Set<ManagedEntity> loading = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+            loading.addAll(pending);
+            for (FetchedCollection collection : collections) {
+                completeRows(collection.owner(), collection.attribute(), collection.elements(), loading, connection, context);
+            }
         }
         // No snapshot or callback sees a graph whose later rows/relationships are still missing.
-        for (ManagedEntity entry : pending.keySet()) {
+        for (int p = 0; p < pending.size(); p++) {
+            ManagedEntity entry = pending.get(p);
             Object[] state = new Object[entry.type().model().attributes().size()];
             entry.type().access().read(entry.instance(), state);
-            context.updated(entry, entry.type().state().snapshot(state));
+            context.updated(entry, entry.type().state().asSnapshot(state));
         }
         postLoad(pending, context);
     }
 
     /** §3.6.3: the PostLoad callbacks of the rows just loaded, in their order. */
-    private static void postLoad(Map<ManagedEntity, Row> pending, PersistenceContext context) {
-        for (ManagedEntity entry : pending.keySet()) {
+    private static void postLoad(List<ManagedEntity> pending, PersistenceContext context) {
+        for (int p = 0; p < pending.size(); p++) {
+            ManagedEntity entry = pending.get(p);
             if (!entry.type().hasCallback("PostLoad")) continue; // nothing to defer
             context.postLoad(() -> entry.type().callback("PostLoad", entry.instance()));
         }
     }
 
     private void completeRows(MappedEntity owner, int attribute, List<FetchedElement> elements,
-            Map<ManagedEntity, Row> pending, Connection connection, PersistenceContext context) {
+            java.util.Set<ManagedEntity> pending, Connection connection, PersistenceContext context) {
         Map<Object, List<Indexed>> grouped = new LinkedHashMap<>();
         AttributeModel model = owner == null ? null : owner.model().attributes().get(attribute);
         MappedEntity target = model instanceof AssociationAttribute a ? entity(a.targetEntity()) : null;
@@ -291,7 +321,7 @@ public final class EntityLoader {
         for (var group : grouped.entrySet()) {
             ManagedEntity entry = context.find(new EntityKey(owner.root(), group.getKey())).orElseThrow();
             Object current = owner.access().get(entry.instance(), attribute);
-            if (!pending.containsKey(entry) && !LazyCollection.unloaded(current)) continue;
+            if (!pending.contains(entry) && !LazyCollection.unloaded(current)) continue;
             Object value;
             if (model instanceof AssociationAttribute a) {
                 value = assemble(a.javaType(), index, group.getValue(), target, a.orderBy(),
@@ -331,7 +361,7 @@ public final class EntityLoader {
         relationships(type, id, instance, state, row, connection, context);
         type.deriveId(instance); // §2.4.1: the identifier attributes an @MapsId maps, from the parent now loaded
         type.access().read(instance, state);
-        context.updated(entry, type.state().snapshot(state));
+        context.updated(entry, type.state().asSnapshot(state)); // the last use of the state: no copy of the array
         context.postLoad(() -> type.callback("PostLoad", instance)); // §3.6.3: once the state is loaded
         return instance;
     }
@@ -379,7 +409,7 @@ public final class EntityLoader {
         Object[] state = state(type, instance, row);
         relationships(type, entry.key().id(), instance, state, row, connection, context);
         type.access().read(instance, state);
-        context.updated(entry, type.state().snapshot(state));
+        context.updated(entry, type.state().asSnapshot(state));
         context.postLoad(() -> type.callback("PostLoad", instance));
     }
 
@@ -1207,9 +1237,14 @@ public final class EntityLoader {
 
     /** Writes the row into {@code instance}; what the row does not hold keeps its current value. */
     private static Object[] state(MappedEntity type, Object instance, Row row) {
+        return state(type, instance, row.values(), row.nulls());
+    }
+
+    /** {@link #state(MappedEntity, Object, Row)} from the columns of a row, indexed like the statement columns. */
+    private static Object[] state(MappedEntity type, Object instance, Object[] values, boolean[] nulls) {
         Object[] state = new Object[type.model().attributes().size()];
         type.access().read(instance, state);
-        type.statements().hydrate(row.values(), row.nulls(), state);
+        type.statements().hydrate(values, nulls, state);
         type.access().write(instance, state);
         return state;
     }
