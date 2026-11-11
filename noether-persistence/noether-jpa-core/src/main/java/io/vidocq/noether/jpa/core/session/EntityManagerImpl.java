@@ -464,14 +464,17 @@ final class EntityManagerImpl implements EntityManager {
     @SuppressWarnings("unchecked")
     public <C, T> T callWithConnection(ConnectionFunction<C, T> function) {
         checkOpen();
+        Function<Connection, T> work = connection -> {
+            try {
+                return function.apply((C) connection);
+            } catch (Exception e) {
+                throw e instanceof RuntimeException runtime ? runtime : new PersistenceException(e.getMessage(), e);
+            }
+        };
         try {
-            Function<Connection, T> work = connection -> io.vidocq.noether.jpa.core.spi.JdbcExecution.call(
-                () -> function.apply((C) connection));
             return onConnection(work);
         } catch (RuntimeException e) {
             throw failed(e);
-        } catch (Exception e) {
-            throw failed(new PersistenceException(e.getMessage(), e));
         }
     }
 
@@ -679,20 +682,18 @@ final class EntityManagerImpl implements EntityManager {
         if (transaction.isActive()) {
             return withTransactionConnection(work);
         }
-        return io.vidocq.noether.jpa.core.spi.JdbcExecution.call(() -> {
-            try (Connection connection = factory.connections().acquire()) {
-                return withConnection(connection, work);
-            } catch (SQLException e) {
-                throw new PersistenceException("Unable to obtain a connection: " + e.getMessage(), e);
-            }
-        });
+        try (Connection connection = factory.connections().acquire()) {
+            return withConnection(connection, work);
+        } catch (SQLException e) {
+            throw new PersistenceException("Unable to obtain a connection: " + e.getMessage(), e);
+        }
     }
 
     private <T> T withTransactionConnection(Function<Connection, T> work) {
         return transaction.onConnection(connection -> withConnection(connection, work));
     }
 
-    /** Nested loaders and cascades retain the enlisted connection across virtual execution without a ThreadLocal. */
+    /** Nested loaders and cascades reuse the connection of the operation that runs them, without a ThreadLocal. */
     private <T> T withConnection(Connection connection, Function<Connection, T> work) {
         Connection previous = executionConnection;
         executionConnection = connection;

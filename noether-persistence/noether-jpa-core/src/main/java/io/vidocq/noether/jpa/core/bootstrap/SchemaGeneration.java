@@ -3,7 +3,6 @@ package io.vidocq.noether.jpa.core.bootstrap;
 import io.vidocq.noether.jpa.core.flush.Dialects;
 import io.vidocq.noether.jpa.core.jdbc.ConnectionSource;
 import io.vidocq.noether.jpa.core.mapping.MappedUnit;
-import io.vidocq.noether.jpa.core.spi.JdbcExecution;
 import io.vidocq.noether.jpa.dialect.Dialect;
 import io.vidocq.noether.jpa.dialect.sql.SchemaStatement;
 import jakarta.persistence.PersistenceException;
@@ -41,28 +40,25 @@ public final class SchemaGeneration implements SchemaManager {
                 || drops(scripts) && settings.property(PREFIX + "scripts.drop-target") == null) {
             throw new PersistenceException("Schema script actions require their scripts.create-target / scripts.drop-target");
         }
-        JdbcExecution.call(() -> {
-            withConnection(!"none".equals(database) || settings.string("jakarta.persistence.database-product-name") == null, connection -> {
-                Dialect dialect = dialect(connection);
-                SchemaPlan plan = new SchemaPlan(mapping);
-                boolean schemas = Boolean.parseBoolean(settings.string(PREFIX + "create-database-schemas"));
-                List<String> create = creates(database) || creates(scripts) ? statements("create", plan.create(schemas), dialect) : List.of();
-                List<String> drop = drops(database) || drops(scripts) ? statements("drop", plan.drop(false), dialect) : List.of();
-                List<String> load = creates(database) || creates(scripts)
-                    ? loadCommands() : List.of();
-                if (drops(scripts)) write(settings.property(PREFIX + "scripts.drop-target"), drop);
-                if (creates(scripts)) {
-                    var commands = new ArrayList<>(create);
-                    commands.addAll(load);
-                    write(settings.property(PREFIX + "scripts.create-target"), commands);
-                }
-                if (drops(database)) execute(connection, drop);
-                if (creates(database)) {
-                    execute(connection, create);
-                    execute(connection, load);
-                }
-            });
-            return null;
+        withConnection(!"none".equals(database) || settings.string("jakarta.persistence.database-product-name") == null, connection -> {
+            Dialect dialect = dialect(connection);
+            SchemaPlan plan = new SchemaPlan(mapping);
+            boolean schemas = Boolean.parseBoolean(settings.string(PREFIX + "create-database-schemas"));
+            List<String> create = creates(database) || creates(scripts) ? statements("create", plan.create(schemas), dialect) : List.of();
+            List<String> drop = drops(database) || drops(scripts) ? statements("drop", plan.drop(false), dialect) : List.of();
+            List<String> load = creates(database) || creates(scripts)
+                ? loadCommands() : List.of();
+            if (drops(scripts)) write(settings.property(PREFIX + "scripts.drop-target"), drop);
+            if (creates(scripts)) {
+                var commands = new ArrayList<>(create);
+                commands.addAll(load);
+                write(settings.property(PREFIX + "scripts.create-target"), commands);
+            }
+            if (drops(database)) execute(connection, drop);
+            if (creates(database)) {
+                execute(connection, create);
+                execute(connection, load);
+            }
         });
     }
 
@@ -247,12 +243,9 @@ public final class SchemaGeneration implements SchemaManager {
 
     @Override public void truncate() {
         checkOpen.run();
-        JdbcExecution.call(() -> {
-            withConnection(true, connection -> {
-                execute(connection, new SchemaPlan(mapping).truncate().stream().map(dialect(connection)::render).toList());
-                execute(connection, loadCommands());
-            });
-            return null;
+        withConnection(true, connection -> {
+            execute(connection, new SchemaPlan(mapping).truncate().stream().map(dialect(connection)::render).toList());
+            execute(connection, loadCommands());
         });
     }
 
@@ -267,37 +260,31 @@ public final class SchemaGeneration implements SchemaManager {
     }
 
     private void operate(java.util.function.Function<SchemaPlan, List<io.vidocq.noether.jpa.dialect.sql.Statement>> action) {
-        JdbcExecution.call(() -> {
-            withConnection(true, connection -> execute(connection, action.apply(new SchemaPlan(mapping)).stream()
-                .map(dialect(connection)::render).toList()));
-            return null;
-        });
+        withConnection(true, connection -> execute(connection, action.apply(new SchemaPlan(mapping)).stream()
+            .map(dialect(connection)::render).toList()));
     }
 
     @Override public void validate() throws SchemaValidationException {
         checkOpen.run();
         List<Exception> failures = new ArrayList<>();
-        JdbcExecution.call(() -> {
-            withConnection(true, connection -> {
-                DatabaseMetaData metadata = connection.getMetaData();
-                for (var statement : new SchemaPlan(mapping).create(false)) {
-                    if (!(statement instanceof SchemaStatement table) || table.operation() != SchemaStatement.Operation.CREATE_TABLE) continue;
-                    Set<String> found = new HashSet<>();
-                    String name = table.table().name().quoted() ? table.table().name().name()
-                        : metadata.storesUpperCaseIdentifiers() ? table.table().name().name().toUpperCase(Locale.ROOT)
-                        : table.table().name().name().toLowerCase(Locale.ROOT);
-                    String schema = table.table().schema() == null ? connection.getSchema() : table.table().schema().name();
-                    try (ResultSet columns = metadata.getColumns(connection.getCatalog(), schema, name, null)) {
-                        while (columns.next()) found.add(columns.getString("COLUMN_NAME").toLowerCase(Locale.ROOT));
-                    }
-                    for (var column : table.columns()) {
-                        if (!found.contains(column.name().name().toLowerCase(Locale.ROOT))) {
-                            failures.add(new Exception("Missing table/column " + table.table().name().name() + "." + column.name().name()));
-                        }
+        withConnection(true, connection -> {
+            DatabaseMetaData metadata = connection.getMetaData();
+            for (var statement : new SchemaPlan(mapping).create(false)) {
+                if (!(statement instanceof SchemaStatement table) || table.operation() != SchemaStatement.Operation.CREATE_TABLE) continue;
+                Set<String> found = new HashSet<>();
+                String name = table.table().name().quoted() ? table.table().name().name()
+                    : metadata.storesUpperCaseIdentifiers() ? table.table().name().name().toUpperCase(Locale.ROOT)
+                    : table.table().name().name().toLowerCase(Locale.ROOT);
+                String schema = table.table().schema() == null ? connection.getSchema() : table.table().schema().name();
+                try (ResultSet columns = metadata.getColumns(connection.getCatalog(), schema, name, null)) {
+                    while (columns.next()) found.add(columns.getString("COLUMN_NAME").toLowerCase(Locale.ROOT));
+                }
+                for (var column : table.columns()) {
+                    if (!found.contains(column.name().name().toLowerCase(Locale.ROOT))) {
+                        failures.add(new Exception("Missing table/column " + table.table().name().name() + "." + column.name().name()));
                     }
                 }
-            });
-            return null;
+            }
         });
         if (!failures.isEmpty()) throw new SchemaValidationException("Schema does not match the persistence unit",
             failures.toArray(Exception[]::new));

@@ -26,7 +26,7 @@
 | No runtime reflection on entities | Entity access, instantiation and metamodel are generated: APT for sources, Maven plugin for jars, Class-File API at bootstrap for opaque archives. |
 | No proxy / bytecode library | Lazy to-one via Class-File API generated subclasses, lazy collections via our own wrappers, dirty checking via snapshots. `ClassTransformer` is declined. |
 | Shared Noether bricks | JTA through `mansart-transactions`; any `DataSource` (e.g. `mansart-pool`). SQL through Noether JPA's own dialect SPI (D4: `noether-jpa-dialect-*`, H2 and PostgreSQL). |
-| Virtual threads | JDBC on virtual threads; no `synchronized` around I/O; `ScopedValue` instead of `ThreadLocal`. |
+| Virtual threads | JDBC on the calling thread, never moved to another one, so a virtual-thread caller keeps its thread (D44); no `synchronized` around I/O; `ScopedValue` instead of `ThreadLocal`. |
 | Strict Java Modules | One `module-info.java` per module, provider published via `provides`, internals not exported. |
 | Measured performance | JMH from P12, vs Hibernate ORM and EclipseLink on the same JVM and database; numbers only in `BENCH.md`. |
 
@@ -524,7 +524,7 @@ loaded with their owner. The loader installs a typed wrapper of the declared int
 (`mapping.LazyCollection`: bag, list, set, sorted/navigable set, map, sorted/navigable map),
 assigned through the generated access — no proxy, reflection or bytecode library. The first data
 access loads it once, in the persistence context of its owner, on the transaction connection or a
-connection of its own taken through the existing virtual-thread JDBC path; elements resolve to the
+connection of its own taken through the existing JDBC path; elements resolve to the
 managed instances of the context. Snapshots, dirty checking, flush, `isLoaded`, merge cascades and
 second-level cache encoding never load an untouched wrapper; any mutation loads it first, then is
 written (join rows, collection tables, target foreign keys, orphan removal). Replacing an unloaded
@@ -570,7 +570,7 @@ No instrumentation, reflective entity access, proxy library or runtime dependenc
 The persistence context registers the reference under its real entity key before assigning
 it to its owner. The identifier is assigned through generated access without loading; the
 simple annotated identifier getter remains unintercepted. Every other accessible declared
-instance method, including setters, initializes through the existing virtual-thread connection
+instance method, including setters, initializes through the existing connection
 path. Initialization hydrates that same object, builds its snapshot and invokes `PostLoad`;
 `find` and entity-query results initialize existing references rather than returning another
 instance. Untouched references do not enter dirty checking, flush or persist cascades.
@@ -2510,6 +2510,7 @@ Recorded before implementation; each entry: date, decision, reason.
 
 | # | Date | Decision | Status |
 |---|---|---|---|
+| D44 | 2026-11-11 | JDBC work runs on the calling thread (audit F6, #45). `JdbcExecution` moved each call made from a platform thread to a new virtual thread and waited for it: the caller still blocked, each call paid about 7 µs (BENCH-20261111-02), and a context that a server binds to the calling thread, its transaction included, was lost. `JdbcExecution` and the JTA bridge's `VirtualResource` wrapper are removed; a caller on a virtual thread stays on it. | Actioned |
 | PERF1 | 2026-10-19 | User requests the first measured optimization: hydrate eligible plain single-table root selections through existing hydration columns and the staged loader, instead of per-result find reloads. Preserve managed/lazy/cache/lifecycle contracts and existing unsupported-shape fallbacks; keep query-template caching and allocation tuning separate. | Actioned |
 | PERF2 | 2026-10-22 | User requests metadata indexing following the post-PERF1 profile. Precompute owned-reference lookup by execution slot and inverse index-update mappings at bootstrap; preserve flush semantics and validate with unchanged workloads. Hibernate may inform the design, without a production dependency or copied implementation. | Actioned |
 | D43 | 2026-10-18 | Extend D26 to immutable, non-null composite BASIC business tuples within one declared target secondary table, covered by that table's exact unique constraint. Retain a single target PK/secondary PK join and reuse D22/D26 generated access, binders, physical FKs, identity lookup and association SQL. Preserve mixed-table, composite-PK, owner-secondary, inheritance/derived/embedded, join-table and broader loading boundaries. | Actioned |
