@@ -149,7 +149,7 @@ class LazyCollectionTest {
     }
 
     @Test
-    void findSelectsOnlyTheOwnerAndFirstAccessLoadsEachCollectionOnceOnTheCallerThread() {
+    void findSelectsOnlyTheOwnerAndFirstAccessLoadsTheChildrenOnceOnTheCallerThread() {
         open(Owner.class, Child.class, Tag.class);
         seed();
         Owner owner = em.find(Owner.class, 1L);
@@ -176,6 +176,13 @@ class LazyCollectionTest {
         assertThat(statements).hasSize(firstAccess);
         assertThat(util.isLoaded(owner, "children")).isTrue();
         assertThat(util.isLoaded(owner, "tags")).isFalse();
+    }
+
+    @Test
+    void firstAccessLoadsEachOtherCollectionOnceOnTheCallerThread() {
+        open(Owner.class, Child.class, Tag.class);
+        seed();
+        Owner owner = em.find(Owner.class, 1L);
         reset();
         assertThat(owner.tags).extracting(t -> t.name).containsExactly("red");
         assertThat(owner.sorted).extracting(t -> t.name).containsExactly("blue", "red");
@@ -192,6 +199,7 @@ class LazyCollectionTest {
         owner.labels.size();
         owner.sorted.first();
         assertThat(statements).hasSize(loaded);
+        assertThat(threads).containsOnly(Thread.currentThread());
     }
 
     @Test

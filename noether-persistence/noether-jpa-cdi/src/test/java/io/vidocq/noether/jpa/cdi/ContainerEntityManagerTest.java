@@ -149,13 +149,13 @@ class ContainerEntityManagerTest {
             var second = facade(factory);
             try {
                 tm.begin();
-                var record = new Record(1);
-                first.persist(record);
-                assertThat(second.contains(record)).isTrue();
+                var entity = new Record(1);
+                first.persist(entity);
+                assertThat(second.contains(entity)).isTrue();
                 assertThat(first.isJoinedToTransaction()).isTrue();
                 registry.setRollbackOnly();
                 assertThatThrownBy(tm::commit).isInstanceOf(jakarta.transaction.RollbackException.class);
-                assertThat(first.contains(record)).isFalse();
+                assertThat(first.contains(entity)).isFalse();
                 tm.begin();
                 assertThat(first.find(Record.class, 1)).isNull();
                 tm.rollback();

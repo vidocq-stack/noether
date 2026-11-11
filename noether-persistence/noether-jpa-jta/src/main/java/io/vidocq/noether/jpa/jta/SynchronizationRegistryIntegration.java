@@ -29,6 +29,7 @@ import jakarta.transaction.TransactionSynchronizationRegistry;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 /**
@@ -65,7 +66,7 @@ public final class SynchronizationRegistryIntegration implements TransactionInte
         private final Completion completion;
         private volatile Object joined;
         /** The connection handed out by {@link #connection()}, held until the transaction completes. */
-        private volatile Connection handedOut;
+        private final AtomicReference<Connection> handedOut = new AtomicReference<>();
 
         RegistrySession(SynchronizationType synchronization, Connections connections, Completion completion) {
             this.synchronization = synchronization;
@@ -154,10 +155,10 @@ public final class SynchronizationRegistryIntegration implements TransactionInte
         @Override
         public Connection connection() {
             requireActive();
-            Connection current = handedOut;
+            Connection current = handedOut.get();
             if (current == null) {
                 current = acquire();
-                handedOut = current;
+                handedOut.set(current);
             }
             return current;
         }
@@ -192,8 +193,7 @@ public final class SynchronizationRegistryIntegration implements TransactionInte
         }
 
         private void releaseHandedOut() {
-            Connection current = handedOut;
-            handedOut = null;
+            Connection current = handedOut.getAndSet(null);
             if (current != null) close(current);
         }
 
