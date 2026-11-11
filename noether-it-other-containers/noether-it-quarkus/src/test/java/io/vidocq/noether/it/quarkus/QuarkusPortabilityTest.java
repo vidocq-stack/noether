@@ -35,7 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * Noether's CDI 4.1 Lite build compatible extension at build time. The JTA unit runs on Quarkus' own pieces: Agroal's
  * default data source, which enlists its connections in Narayana's transactions, and Narayana's
  * {@code TransactionSynchronizationRegistry}. Quarkus' Hibernate ORM extension is absent, so every statement here is
- * Noether's, and no Mansart transactions module is in the application.
+ * Noether's, and no Mansart module is in the application.
  */
 @QuarkusTest
 class QuarkusPortabilityTest {
@@ -116,14 +116,20 @@ class QuarkusPortabilityTest {
         assertThrows(IllegalStateException.class, factory::close);
     }
 
-    /** Vidocq/noether#45 (F4, F10): on Quarkus, Quarkus' transactions; Mansart Transactions is not even on the path. */
+    /**
+     * Vidocq/noether#45: on Quarkus, Quarkus' transactions (F4, F10) and Agroal's pool (F7). No Mansart module is on
+     * the path, and neither is Noether's optional pool adapter.
+     */
     @Test
-    void noMansartTransactionsClassReachesTheApplication() {
+    void noMansartClassReachesTheApplication() {
         ClassLoader loader = Thread.currentThread().getContextClassLoader();
         assertDoesNotThrow(() -> Class.forName("io.vidocq.noether.jpa.jta.SynchronizationRegistryIntegration", false, loader));
         for (String name : List.of("io.vidocq.mansart.transactions.api.MansartTransactions",
                 "io.vidocq.mansart.transactions.core.MansartTransactionManager",
-                "io.vidocq.mansart.transactions.jdbc.ConnectionXAResource")) {
+                "io.vidocq.mansart.transactions.jdbc.ConnectionXAResource",
+                "io.vidocq.mansart.pool.PoolConfig",
+                "io.vidocq.mansart.pool.core.MansartDataSource",
+                "io.vidocq.noether.jpa.pool.mansart.MansartConnectionPoolFactory")) {
             assertThrows(ClassNotFoundException.class, () -> Class.forName(name, false, loader), name);
         }
     }
