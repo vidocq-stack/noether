@@ -24,8 +24,12 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 import java.net.URLConnection;
+import java.util.ArrayList;
 import java.util.Enumeration;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /** Finds the persistence units declared by the {@code META-INF/persistence.xml} files of a class loader (§8.2, §9.2). */
 public final class PersistenceUnits {
@@ -60,6 +64,30 @@ public final class PersistenceUnits {
                 }
             }
             return Optional.empty();
+        } catch (IOException e) {
+            throw new PersistenceException("Unable to read " + RESOURCE, e);
+        }
+    }
+
+    /**
+     * The names of the units of every {@code persistence.xml} of {@code loader}, in class path order. A file that the
+     * loader lists twice, through a parent loader for instance, is read once.
+     */
+    public static List<String> names(ClassLoader loader) {
+        try {
+            List<String> names = new ArrayList<>();
+            Set<String> read = new HashSet<>();
+            Enumeration<URL> files = loader.getResources(RESOURCE);
+            while (files.hasMoreElements()) {
+                URL file = files.nextElement();
+                if (read.add(file.toExternalForm())) {
+                    try (InputStream in = open(file)) {
+                        PersistenceXmlParser.parse(in, PersistenceXmlParser.rootOf(file), loader)
+                            .forEach(unit -> names.add(unit.name()));
+                    }
+                }
+            }
+            return names;
         } catch (IOException e) {
             throw new PersistenceException("Unable to read " + RESOURCE, e);
         }

@@ -1,5 +1,4 @@
 module io.vidocq.noether.jpa.cdi {
-    requires java.xml;
     requires io.vidocq.noether.jpa.core;
     requires io.vidocq.mansart.transactions.jdbc;
     requires io.vidocq.mansart.transactions.core;

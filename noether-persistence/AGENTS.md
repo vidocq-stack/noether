@@ -136,6 +136,8 @@ Module names are a plan, not a contract: a module is only created when a milesto
 - Dialects are found with `uses io.vidocq.noether.jpa.dialect.DialectFactory` (`ServiceLoader`).
 - `persistence.xml` and `orm.xml` are parsed with StAX (`java.xml`, JDK) — no JAXB, no DTD, no external entity;
   `orm.xml` is XSD-validated and becomes annotations of the `OrmOverlay`, never a second mapping engine.
+  Only the core parses `persistence.xml`: an integration module asks it through the `spi` package
+  (`PersistenceDescriptors.defaultUnitName`), never with a reader of its own.
 - Run the `java-modules-guardian` agent after every `module-info.java` or package change.
 
 ## Build & Test
