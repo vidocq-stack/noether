@@ -1344,3 +1344,60 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     (`addBeanClass(NoetherPersistenceExtension.class)`), so the build-time path was never
     run. With the extension on the processor path: red on the current Vauban snapshot
     (5 errors), green on Vidocq/vauban#285 (5/5), installed in a scratch local repository.
+
+## BUG-20261111-04 — TABLE allocation runs on an enlisted connection of a server's JTA data source
+
+- **Date**: 2026-11-11
+- **Status**: OPEN
+- **Affected module**: `noether-jpa-core`, `generation.IdGenerators`, on a JTA unit bootstrapped by a server
+  (`noether-jpa-jta`, `SynchronizationRegistryIntegration`)
+- **Symptom**: on Open Liberty 26.0.0.10, every persist of an entity with a `TABLE` generator in a JTA transaction
+  fails: `PersistenceException: Unable to generate an identifier: DSRA9250E: Opération setAutoCommit non autorisée au
+  cours d'une transaction globale pour les connexions partageables.` (the server's French locale; the English message
+  is "Operation setAutoCommit is not allowed during a global transaction for Shareable Connections"), caused by
+  `jakarta.resource.spi.SharingViolationException`. The generator table stays empty and nothing is inserted.
+- **Minimal reproduction**: add to the `noether-it-openliberty` WAR an entity with
+  `@GeneratedValue(strategy = TABLE, generator = "vouchers")` and
+  `@TableGenerator(name = "vouchers", table = "VOUCHER_IDS", initialValue = 1, allocationSize = 10)`, list it in the
+  `library` unit, and persist then flush it in a `@Transactional` method called from a REST resource. Then:
+  ```sh
+  ./mvnw -ntp -pl noether-it-other-containers/noether-it-openliberty -am verify -Dtest=none \
+    -Dsurefire.failIfNoSpecifiedTests=false -Dit.test=TableGeneratorExperimentIT -Dfailsafe.failIfNoSpecifiedTests=false
+  ```
+- **Confirmed cause**: `IdGenerators` allocates through the unit's `ConnectionSource`. For a JTA unit that a server
+  bootstraps (§9.6), that source is the server's JTA data source. Called inside the transaction, it returns a
+  connection that the server enlists in the global transaction (on Liberty, a handle shared with the persistence
+  context's connection). `IdGenerators` then calls `setAutoCommit(false)`, `commit()` and `close()` on it, as for its
+  own local transaction. A connection in a global transaction must not be committed by the application, and Liberty
+  refuses the first call. `SynchronizationRegistryIntegration` is designed never to commit or switch the auto-commit
+  mode of a connection; the allocation path bypasses it.
+- **Investigations**:
+  - 2026-11-11 (audit F14, #45, found while fixing BUG-20261018-04): three scratch experiments, not committed.
+    Evidence: session artifacts `f14-jta-table-experiment.diff` (the test code) and
+    `f14-jta-table-experiment-output.txt` (their output).
+    1. Open Liberty, the reproduction above: tx1 (persist, flush, application exception) and tx2 to tx12 (persist,
+       flush, commit) all fail with the DSRA9250E above. `VOUCHER_IDS` and the entity table stay empty. No duplicate
+       identifier can occur there, because nothing is ever allocated.
+    2. `noether-jpa-jta` stand-in (`EnlistingDataSource` over `MansartTransactionManager`): a persist that allocates
+       enlists a second connection in the JTA transaction (2 enlisted, 1 otherwise). The H2 connection accepts the
+       commit, so the block is visible from outside before the business transaction ends and survives its rollback:
+       no duplicate over 12 transactions (one rollback, then 11 commits). But the connection is closed before
+       completion, and the transaction that fetched the second block fails at commit: `RollbackException: Last-resource
+       commit failed — transaction rolled back` caused by `XAException` caused by H2 "object already closed"; its row
+       (id 11) was nevertheless written. The application is told "rolled back" for a committed row.
+    3. `noether-jpa-cdi` `JtaIntegration` (Vauban, Quarkus): not affected. The unit's connections come from
+       `jakarta.persistence.jdbc.url` (`DriverManager` or the Noether pool); only the persistence context's connection
+       is enlisted, explicitly. The rollback of tx1 leaves `COUPON_IDS` at 10, tx2 to tx12 commit ids 2 to 12, and the
+       second block (11 to 20) is allocated cleanly. With a Noether pool, the bootstrap check of BUG-20261018-04
+       applies.
+    The duplicate hazard of the shared block (BUG-20261018-04) would only come back on a container whose JTA data
+    source ignores `commit()` on an enlisted connection, so that the allocation completes with the business
+    transaction. Not observed.
+  - Options for the maintainer, none applied: (a) allocate through the unit's `non-jta-data-source` when it has one
+    (§8.2.1.5; on Liberty a `dataSource` with `transactional="false"`), and refuse at bootstrap a JTA unit with a
+    TABLE generator and no non-JTA data source; (b) suspend the JTA transaction around the allocation: the standard
+    `TransactionSynchronizationRegistry` cannot suspend, and a server's `TransactionManager` has no portable JNDI name,
+    so the bridge SPI would need a new operation per server; (c) refuse a TABLE generator (and `AUTO` resolved to
+    one) on a JTA unit bootstrapped by a server, pointing to `SEQUENCE` or `IDENTITY`; (d) allocate on the
+    transaction's connection without committing: this brings back the duplicate after a rollback of BUG-20261018-04
+    unless each block stays private to its transaction.

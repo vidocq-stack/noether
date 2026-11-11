@@ -44,6 +44,10 @@ Tested on Open Liberty 26.0.0.10 by `noether-it-openliberty`.
   `noether-jpa-processor` generated at compile time (in `annotationProcessorPaths`). The server brings the Jakarta
   APIs: exclude the Persistence API that `noether-jpa-core` declares at compile scope, keep the others `provided`.
   The JDBC driver belongs to the server's data source.
+* **Use `SEQUENCE` or `IDENTITY` identifiers on a JTA unit for now**, not `TABLE` (nor `AUTO` on an identifier that
+  is not a `UUID` without a sequence generator, which resolves to a table generator). The table generator allocates
+  on a connection of the server's JTA data source, which the server enlists in the transaction, and Open Liberty
+  refuses the allocation's own commit (BUG-20261111-04).
 * **Leave `noether-jpa-pool-mansart` out of the WAR**: the server's data source pools the connections.
 +
 [source,xml]
