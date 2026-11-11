@@ -99,12 +99,13 @@ class QuarkusPortabilityTest {
         assertEquals(1, library.renameThenCount(id, "Madeleine Férat"));
     }
 
-    /** The same H2 session: Noether works on the connection Agroal enlisted in Narayana's transaction. */
+    /** The same H2 session: each statement of Noether works on the connection Agroal enlisted in Narayana's transaction. */
     @Test
     void noetherWorksOnTheConnectionAgroalEnlisted() throws SQLException {
         long[] sessions = library.sessions();
 
-        assertEquals(sessions[1], sessions[0]);
+        assertEquals(sessions[2], sessions[0]);
+        assertEquals(sessions[2], sessions[1]);
     }
 
     @Test

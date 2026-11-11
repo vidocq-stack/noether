@@ -80,8 +80,12 @@ extension. It depends on no transaction manager: a JTA unit runs on what the con
   current transaction with an interposed synchronization: it flushes before completion and detaches after it.
 * **A `javax.sql.DataSource` bean whose connections the container enlists in its transactions**: the bean
   `@Named` after the unit's `jta-data-source`, or the `@Default` one when the unit names none. The container
-  commits or rolls the connections back; Noether never does. A bean whose only qualifier is `@Named` is also
-  `@Default` (CDI 4.1 §2.3.1): give the other data sources a qualifier of their own.
+  commits or rolls the connections back; Noether never does. Noether takes a connection for each unit of work and
+  closes it as soon as the work ends, so within a transaction the data source must hand out the connection it
+  enlisted again (connection sharing, as Agroal and Jakarta EE servers do). No connection of Noether is left open when
+  the transaction completes, except one the application took with `EntityManager.unwrap(Connection.class)`, closed by
+  Noether's synchronization. A bean whose only qualifier is `@Named` is also `@Default` (CDI 4.1 §2.3.1): give the
+  other data sources a qualifier of their own.
 * **A resource-local unit needs neither**, through `@PersistenceUnit` as through `Persistence`.
 
 Quarkus (`quarkus-narayana-jta`, `quarkus-agroal`) and Jakarta EE servers have both beans. On Vidocq the runtime

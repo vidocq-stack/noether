@@ -20,8 +20,9 @@
 /**
  * The transaction bridge of a JTA unit on a Jakarta EE container (§7.5, §9.6): the container's data source enlists
  * the connections and the container completes them; Noether flushes before completion and detaches after it,
- * through the standard {@code TransactionSynchronizationRegistry} (JTA 2.0 §3.4.4). No transaction manager, CDI or
- * container-specific class is involved.
+ * through the standard {@code TransactionSynchronizationRegistry} (JTA 2.0 §3.4.4). Each unit of work takes a
+ * connection from the data source and closes it when the work ends; within a transaction the container hands out the
+ * connection it enlisted again. No transaction manager, CDI or container-specific class is involved.
  */
 module io.vidocq.noether.jpa.jta {
     requires io.vidocq.noether.jpa.core;

@@ -40,6 +40,12 @@ import java.util.function.Function;
  *
  * <p>The connection of a joined context is acquired on the caller's thread, the one the container associates with the
  * transaction, and used there: no work moves to another thread, where a container would see no transaction.
+ *
+ * <p>Each unit of work takes a handle from the data source and closes it when the work ends, the flush before
+ * completion included. Within a transaction the container hands out the connection it enlisted in it each time
+ * (connection sharing). So no handle of Noether is open when a pool checks its connections at completion, whatever the
+ * order of the interposed synchronizations, which JTA leaves open (BUG-20261111-05). Only the connection handed out as
+ * such ({@code EntityManager.unwrap(Connection.class)}) stays open until Noether's synchronization.
  */
 public final class SynchronizationRegistryIntegration implements TransactionIntegration {
     private final TransactionSynchronizationRegistry registry;
@@ -58,7 +64,8 @@ public final class SynchronizationRegistryIntegration implements TransactionInte
         private final Connections connections;
         private final Completion completion;
         private volatile Object joined;
-        private volatile Connection connection;
+        /** The connection handed out by {@link #connection()}, held until the transaction completes. */
+        private volatile Connection handedOut;
 
         RegistrySession(SynchronizationType synchronization, Connections connections, Completion completion) {
             this.synchronization = synchronization;
@@ -103,13 +110,22 @@ public final class SynchronizationRegistryIntegration implements TransactionInte
             joined = current;
         }
 
-        /** Flushes before the container completes the transaction, detaches and releases the connection after. */
+        /** Flushes before the container completes the transaction and detaches after it. */
         private Synchronization completionOf() {
             return new Synchronization() {
                 @Override
                 public void beforeCompletion() {
                     // §7.9.1: flush before the container commits; a transaction marked for rollback is not flushed.
-                    if (registry.getTransactionStatus() == Status.STATUS_ACTIVE) completion.beforeCommit(connection());
+                    try {
+                        if (registry.getTransactionStatus() == Status.STATUS_ACTIVE) {
+                            onHandle(handle -> {
+                                completion.beforeCommit(handle);
+                                return null;
+                            });
+                        }
+                    } finally {
+                        releaseHandedOut();
+                    }
                 }
 
                 @Override
@@ -118,7 +134,7 @@ public final class SynchronizationRegistryIntegration implements TransactionInte
                         completion.afterCompletion(status == Status.STATUS_COMMITTED);
                     } finally {
                         joined = null;
-                        release();
+                        releaseHandedOut(); // a rollback runs no beforeCompletion
                     }
                 }
             };
@@ -134,37 +150,60 @@ public final class SynchronizationRegistryIntegration implements TransactionInte
             return joined() && registry.getRollbackOnly();
         }
 
-        /** The container enlists the connection in the transaction when its data source hands it out. */
+        /** The connection handed out as such: the same one until the transaction completes. */
         @Override
         public Connection connection() {
-            if (!active()) throw new TransactionRequiredException("The persistence context is not joined to a transaction");
-            Connection current = connection;
+            requireActive();
+            Connection current = handedOut;
             if (current == null) {
-                try {
-                    current = connections.acquire();
-                } catch (SQLException e) {
-                    throw new PersistenceException("Unable to obtain a connection from the JTA data source: " + e.getMessage(), e);
-                }
-                connection = current;
+                current = acquire();
+                handedOut = current;
             }
             return current;
         }
 
+        /** A unit of work on a handle of its own, closed when the work ends. */
         @Override
         public <T> T onConnection(Function<Connection, T> work) {
-            return work.apply(connection());
+            requireActive();
+            return onHandle(work);
         }
 
-        /** Closing hands the connection back to the container, which already completed it. */
-        private void release() {
-            Connection current = connection;
-            connection = null;
-            if (current == null) return;
+        private void requireActive() {
+            if (!active()) throw new TransactionRequiredException("The persistence context is not joined to a transaction");
+        }
+
+        private <T> T onHandle(Function<Connection, T> work) {
+            Connection handle = acquire();
             try {
-                current.close();
+                return work.apply(handle);
+            } finally {
+                close(handle);
+            }
+        }
+
+        /** The container enlists the connection in the transaction when its data source hands it out. */
+        private Connection acquire() {
+            try {
+                return connections.acquire();
+            } catch (SQLException e) {
+                throw new PersistenceException("Unable to obtain a connection from the JTA data source: " + e.getMessage(), e);
+            }
+        }
+
+        private void releaseHandedOut() {
+            Connection current = handedOut;
+            handedOut = null;
+            if (current != null) close(current);
+        }
+
+        /** Closing hands the handle back to the container, which completes the connection with the transaction. */
+        private static void close(Connection handle) {
+            try {
+                handle.close();
             } catch (SQLException e) {
                 System.getLogger(SynchronizationRegistryIntegration.class.getName())
-                    .log(System.Logger.Level.WARNING, "Unable to release a JTA connection after completion", e);
+                    .log(System.Logger.Level.WARNING, "Unable to hand a JTA connection back to the data source", e);
             }
         }
     }

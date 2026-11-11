@@ -1414,3 +1414,30 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     one) on a JTA unit bootstrapped by a server, pointing to `SEQUENCE` or `IDENTITY`; (d) allocate on the
     transaction's connection without committing: this brings back the duplicate after a rollback of BUG-20261018-04
     unless each block stays private to its transaction.
+
+## BUG-20261111-05 — On Quarkus, Agroal warns at every commit that Noether left a connection open
+
+- **Date**: 2026-11-11
+- **Status**: FIXED (branch `feat/container-jta`, pull request into `fix-proposals`, Vidocq/noether#45)
+- **Affected module**: `noether-jpa-jta`, `SynchronizationRegistryIntegration`
+- **Symptom**: each Quarkus transaction that touches a JTA unit logs
+  `WARN [io.agroal.pool] Datasource '<default>': Closing 1 open connection(s) prior to commit`
+  (12 times in one run of `noether-it-quarkus`). Production log noise on every transaction.
+- **Minimal reproduction**: `noether-it-quarkus`, `AgroalConnectionReleaseTest`: a `java.util.logging` handler on
+  `io.agroal.pool` around `library.add("...")` records the warning.
+- **Confirmed cause**: the bridge took one connection handle per transaction and closed it only in its
+  `afterCompletion`. Agroal's interposed synchronization checks the handles in `beforeCompletion` and closes, with a
+  warning, every one still open ("on after completion" for a handle still open when the transaction ends).
+- **Investigations**:
+  - 2026-11-11: red first, 4 of 5 `AgroalConnectionReleaseTest` cases (commit, flush before commit, the application's
+    connection taken first, and the commit that follows a rollback).
+  - 2026-11-11: closing the handle at the end of Noether's `beforeCompletion` clears the Quarkus warnings, because
+    Narayana runs Noether's synchronization first here. It still leaves the handle open while an interposed
+    synchronization registered earlier runs, and JTA leaves the order of interposed synchronizations open: the
+    `noether-jpa-jta` tests that register such a synchronization before Noether's stay red with it.
+  - 2026-11-11: fix: each unit of work takes a handle from the container's data source and closes it when the work
+    ends, the flush before completion included. Within a transaction the container hands out the connection it
+    enlisted again (connection sharing: Agroal, Open Liberty, the test data sources). Only the connection handed out by
+    `EntityManager.unwrap(Connection.class)` stays open until Noether's synchronization. `AgroalConnectionReleaseTest`
+    5/5, `SynchronizationRegistryIntegrationTest` 15/15; the test data sources of `noether-jpa-jta`, `noether-jpa-cdi`
+    and `noether-jpa-cdi-module-it` now share one enlisted connection per transaction, as a container does.
