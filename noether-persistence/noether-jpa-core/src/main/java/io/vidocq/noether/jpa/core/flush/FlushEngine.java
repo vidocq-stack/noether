@@ -101,6 +101,15 @@ public final class FlushEngine {
         .thenComparingLong(w -> w.entry().sequence());
     private static final Comparator<Work> DELETE_ORDER = INSERT_ORDER.reversed();
 
+    /** What a flush does with a managed instance: plain numbers, a flush makes no object to say it. */
+    private static final int INSERT = 0;
+    private static final int UPDATE = 1;
+    /** Its row is unchanged, an inverse index of one of its collections may not be. */
+    private static final int INDEX = 2;
+    private static final int UNCHANGED = 3;
+    /** Added to {@link #INDEX} or {@link #UNCHANGED}: its version is verified at the end of the flush (§3.5.5). */
+    private static final int CHECK = 4;
+
     private final Dialect dialect;
     private final int batchSize;
     private final Map<MappedEntity, Sql> sql = new ConcurrentHashMap<>();
@@ -136,43 +145,65 @@ public final class FlushEngine {
             if (entry.key() != null) {
                 type.validateMapsId(entry.instance(), entry.key().id());
             }
-            switch (entry.status()) {
-                case MANAGED -> {
-                    // most instances did not change: their state is read into one array, which the next one reuses
-                    Object[] state = read(type, entry.instance(), unchanged);
-                    unchanged = null; // the array belongs to this entry until it is known to need none
-                    if (!entry.inserted()) {
-                        inserts = added(inserts, new Work(entry, state));
-                    } else if (type.state().dirty(entry.snapshot(), state)) {
-                        // §3.6.3: PreUpdate may change the instance, its changes are written with the others
-                        type.callback("PreUpdate", entry.instance());
-                        type.validateMapsId(entry.instance(), entry.key().id());
-                        validateUpdate.accept(entry);
-                        type.access().read(entry.instance(), state);
-                        updates = added(updates, new Work(entry, state));
-                    } else if (Locks.forcesIncrement(entry.lockMode())) {
-                        updates = added(updates, new Work(entry, state)); // §3.5: a new version, without a change
-                    } else {
-                        if (entry.lockMode() == LockModeType.OPTIMISTIC || entry.lockMode() == LockModeType.READ) {
-                            checks = added(checks, entry);
-                        }
-                        if (!type.statements().inverseIndexes().isEmpty()) {
-                            indexes = added(indexes, new Work(entry, state)); // an inverse index changes nothing of its owner's row
-                        } else {
-                            unchanged = state; // nothing keeps it
-                        }
-                    }
-                }
-                case REMOVED -> {
-                    if (entry.inserted()) {
-                        deletes = added(deletes, new Work(entry, read(type, entry.instance())));
-                    } else {
-                        context.deleted(entry); // removed before its insert: the database never saw it
-                        type.callback("PostRemove", entry.instance());
-                    }
+            if (entry.status() == ManagedEntity.Status.REMOVED) {
+                deletes = removed(entry, context, deletes);
+            } else {
+                // most instances did not change: their state is read into one array, which the next one reuses
+                Object[] state = read(type, entry.instance(), unchanged);
+                unchanged = null; // the array belongs to this entry until it is known to need none
+                int change = change(entry, state, validateUpdate);
+                if ((change & CHECK) != 0) checks = added(checks, entry);
+                switch (change & ~CHECK) {
+                    case INSERT -> inserts = added(inserts, new Work(entry, state));
+                    case UPDATE -> updates = added(updates, new Work(entry, state));
+                    case INDEX -> indexes = added(indexes, new Work(entry, state));
+                    default -> unchanged = state; // nothing keeps it
                 }
             }
         }
+        write(context, connection, inserts, updates, deletes, checks, indexes);
+    }
+
+    /**
+     * What a flush does with the managed {@code entry} whose state was just read into {@code state}: {@link #INSERT},
+     * {@link #UPDATE}, {@link #INDEX} or {@link #UNCHANGED}, the last two with {@link #CHECK} when its version is to be
+     * verified. The callback and the validation of an update run here, and the state is read again after them.
+     */
+    private static int change(ManagedEntity entry, Object[] state, Consumer<ManagedEntity> validateUpdate) {
+        MappedEntity type = entry.type();
+        if (!entry.inserted()) {
+            return INSERT;
+        }
+        if (type.state().dirty(entry.snapshot(), state)) {
+            // §3.6.3: PreUpdate may change the instance, its changes are written with the others
+            type.callback("PreUpdate", entry.instance());
+            type.validateMapsId(entry.instance(), entry.key().id());
+            validateUpdate.accept(entry);
+            type.access().read(entry.instance(), state);
+            return UPDATE;
+        }
+        if (Locks.forcesIncrement(entry.lockMode())) {
+            return UPDATE; // §3.5: a new version, without a change
+        }
+        int check = entry.lockMode() == LockModeType.OPTIMISTIC || entry.lockMode() == LockModeType.READ ? CHECK : 0;
+        // an inverse index changes nothing of its owner's row
+        return (type.statements().inverseIndexes().isEmpty() ? UNCHANGED : INDEX) | check;
+    }
+
+    /** {@code deletes} with the removed {@code entry}, if its row exists; else the context forgets it at once. */
+    private static List<Work> removed(ManagedEntity entry, PersistenceContext context, List<Work> deletes) {
+        MappedEntity type = entry.type();
+        if (entry.inserted()) {
+            return added(deletes, new Work(entry, read(type, entry.instance())));
+        }
+        context.deleted(entry); // removed before its insert: the database never saw it
+        type.callback("PostRemove", entry.instance());
+        return deletes;
+    }
+
+    /** Writes the work a flush found, in the order of the class comment, then records it in the context. */
+    private void write(PersistenceContext context, Connection connection, List<Work> inserts, List<Work> updates,
+            List<Work> deletes, List<ManagedEntity> checks, List<Work> indexes) {
         if (inserts.isEmpty() && updates.isEmpty() && deletes.isEmpty() && checks.isEmpty() && indexes.isEmpty()) {
             return; // nothing changed, as at the commit of a transaction that only read
         }
@@ -185,36 +216,7 @@ public final class FlushEngine {
         Set<Object> removed = deletes.isEmpty() ? Collections.emptySet() : identitySet(deletes.size());
         for (int i = 0; i < deletes.size(); i++) removed.add(deletes.get(i).entry().instance());
         for (int i = 0; i < inserts.size(); i++) pending.add(inserts.get(i).entry().instance());
-        Map<Object, List<CollectionKeyWrite>> collectionInserts = Collections.emptyMap();
-        // the key a foreign-key collection gives a member being inserted: nothing to find without an insert
-        for (ManagedEntity entry : inserts.isEmpty() ? List.<ManagedEntity>of() : context.entries()) {
-            if (io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(entry.instance())) continue;
-            if (entry.status() != ManagedEntity.Status.MANAGED) continue;
-            if (!hasForeignKeyCollection(entry.type())) continue; // its state is not read for nothing
-            Work owner = new Work(entry, read(entry.type(), entry.instance()));
-            for (CollectionMapping mapping : owner.type().statements().collections()) {
-                if (!(mapping instanceof CollectionMapping.ForeignKey foreign)) continue;
-                Object current = owner.state()[foreign.attribute()];
-                if (LazyCollection.unloaded(current)) continue; // not loaded: no new member to find in it
-                List<Object> members = CollectionMapping.elements(current);
-                List<Object> keys = CollectionMapping.keys(current);
-                for (int e = 0; e < members.size(); e++) {
-                    if (pending.contains(members.get(e))) {
-                        if (collectionInserts.isEmpty()) collectionInserts = new IdentityHashMap<>(inserts.size());
-                        collectionInserts.computeIfAbsent(members.get(e), _ -> new ArrayList<>())
-                            .add(new CollectionKeyWrite(owner, foreign, keys.get(e)));
-                    }
-                }
-            }
-        }
-        if (!inserts.isEmpty()) {
-            List<ReferenceWrite> later = new ArrayList<>();
-            List<List<Work>> groups = groups(inserts);
-            for (int g = 0; g < groups.size(); g++) {
-                insert(groups.get(g), context, connection, pending, later, collectionInserts);
-            }
-            writeReferences(later, false, connection);
-        }
+        insertRows(inserts, context, connection, pending, collectionInserts(context, inserts, pending));
         for (int i = 0; i < updates.size(); i++) clearChangedToOneTables(updates.get(i), connection);
         for (int i = 0; i < deletes.size(); i++) deleteJoinRows(deletes.get(i), connection);
         for (int i = 0; i < updates.size(); i++) {
@@ -228,46 +230,129 @@ public final class FlushEngine {
             writeElements(work, true, connection);
             writeInverseIndexes(work, null, connection);
         }
-        if (!updates.isEmpty()) {
-            List<List<Work>> groups = groups(updates);
-            for (int g = 0; g < groups.size(); g++) {
-                List<Work> group = groups.get(g);
-                for (int i = 0; i < group.size(); i++) {
-                    Work work = group.get(i);
-                    writeJoinRows(work, work.entry().snapshot(), connection);
-                    writeCollectionKeys(work, work.entry().snapshot(), connection, removed, false);
-                    writeElements(work, false, connection);
-                    writeInverseIndexes(work, work.entry().snapshot(), connection);
+        updateRows(updates, context, connection, removed);
+        writeUnchangedIndexes(indexes, context, connection);
+        deleteRows(deletes, context, connection);
+        checkVersions(checks, connection);
+    }
+
+    /**
+     * The key a foreign-key collection gives a member being inserted, by member: nothing to find without an insert.
+     * The shared empty map becomes a map of its own with its first key.
+     */
+    private static Map<Object, List<CollectionKeyWrite>> collectionInserts(PersistenceContext context, List<Work> inserts,
+            Set<Object> pending) {
+        Map<Object, List<CollectionKeyWrite>> collectionInserts = Collections.emptyMap();
+        if (inserts.isEmpty()) {
+            return collectionInserts;
+        }
+        for (ManagedEntity entry : context.entries()) {
+            if (!ownsForeignKeyCollection(entry)) continue; // its state is not read for nothing
+            Work owner = new Work(entry, read(entry.type(), entry.instance()));
+            for (CollectionMapping mapping : owner.type().statements().collections()) {
+                // not loaded: no new member to find in it
+                if (mapping instanceof CollectionMapping.ForeignKey foreign
+                        && !LazyCollection.unloaded(owner.state()[foreign.attribute()])) {
+                    collectionInserts = memberKeys(owner, foreign, pending, inserts.size(), collectionInserts);
                 }
-                update(group, context, connection);
             }
         }
+        return collectionInserts;
+    }
+
+    /** Whether {@code entry} is a loaded, managed instance of an entity with a foreign-key collection. */
+    private static boolean ownsForeignKeyCollection(ManagedEntity entry) {
+        return !io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(entry.instance())
+            && entry.status() == ManagedEntity.Status.MANAGED
+            && hasForeignKeyCollection(entry.type());
+    }
+
+    /** {@code collectionInserts} with the keys of the members of one collection of {@code owner} that are in {@code pending}. */
+    private static Map<Object, List<CollectionKeyWrite>> memberKeys(Work owner, CollectionMapping.ForeignKey foreign,
+            Set<Object> pending, int inserts, Map<Object, List<CollectionKeyWrite>> collectionInserts) {
+        Object current = owner.state()[foreign.attribute()];
+        List<Object> members = CollectionMapping.elements(current);
+        List<Object> keys = CollectionMapping.keys(current);
+        for (int e = 0; e < members.size(); e++) {
+            if (pending.contains(members.get(e))) {
+                if (collectionInserts.isEmpty()) collectionInserts = new IdentityHashMap<>(inserts);
+                collectionInserts.computeIfAbsent(members.get(e), _ -> new ArrayList<>())
+                    .add(new CollectionKeyWrite(owner, foreign, keys.get(e)));
+            }
+        }
+        return collectionInserts;
+    }
+
+    /** The inserts, group by group, then the foreign keys they could not write yet. */
+    private void insertRows(List<Work> inserts, PersistenceContext context, Connection connection, Set<Object> pending,
+            Map<Object, List<CollectionKeyWrite>> collectionInserts) {
+        if (inserts.isEmpty()) {
+            return;
+        }
+        List<ReferenceWrite> later = new ArrayList<>();
+        List<List<Work>> groups = groups(inserts);
+        for (int g = 0; g < groups.size(); g++) {
+            insert(groups.get(g), context, connection, pending, later, collectionInserts);
+        }
+        writeReferences(later, false, connection);
+    }
+
+    /** The updates, group by group: the collections of the instances of a group, then their rows. */
+    private void updateRows(List<Work> updates, PersistenceContext context, Connection connection, Set<Object> removed) {
+        if (updates.isEmpty()) {
+            return;
+        }
+        List<List<Work>> groups = groups(updates);
+        for (int g = 0; g < groups.size(); g++) {
+            List<Work> group = groups.get(g);
+            for (int i = 0; i < group.size(); i++) {
+                Work work = group.get(i);
+                writeJoinRows(work, work.entry().snapshot(), connection);
+                writeCollectionKeys(work, work.entry().snapshot(), connection, removed, false);
+                writeElements(work, false, connection);
+                writeInverseIndexes(work, work.entry().snapshot(), connection);
+            }
+            update(group, context, connection);
+        }
+    }
+
+    /** The inverse indexes of the instances whose own row did not change. */
+    private void writeUnchangedIndexes(List<Work> indexes, PersistenceContext context, Connection connection) {
         for (int i = 0; i < indexes.size(); i++) {
             Work work = indexes.get(i);
             if (writeInverseIndexes(work, work.entry().snapshot(), connection)) {
                 context.updated(work.entry(), work.type().state().snapshot(work.state()));
             }
         }
-        if (!deletes.isEmpty()) {
-            writeReferences(referencesBetween(deletes), true, connection);
-            for (int i = 0; i < deletes.size(); i++) {
-                Work work = deletes.get(i);
-                deleteJoinRows(work, connection);
-                for (ElementCollectionMapping elements : work.type().statements().elementCollections()) {
-                    deleteElements(work, elements, connection);
-                }
-            }
-            List<List<Work>> groups = groups(deletes);
-            for (int g = 0; g < groups.size(); g++) {
-                delete(groups.get(g), context, connection);
+    }
+
+    /** The deletes: the foreign keys between them cleared, their join and collection rows, then their rows by group. */
+    private void deleteRows(List<Work> deletes, PersistenceContext context, Connection connection) {
+        if (deletes.isEmpty()) {
+            return;
+        }
+        writeReferences(referencesBetween(deletes), true, connection);
+        for (int i = 0; i < deletes.size(); i++) {
+            Work work = deletes.get(i);
+            deleteJoinRows(work, connection);
+            for (ElementCollectionMapping elements : work.type().statements().elementCollections()) {
+                deleteElements(work, elements, connection);
             }
         }
-        // §3.5.5 OPTIMISTIC: the rows read under that lock and not written must not have changed since
-        if (!checks.isEmpty()) {
-            Locks locks = new Locks(this);
-            for (ManagedEntity entry : checks) {
-                locks.checkVersion(entry.type(), entry, connection);
-            }
+        List<List<Work>> groups = groups(deletes);
+        for (int g = 0; g < groups.size(); g++) {
+            delete(groups.get(g), context, connection);
+        }
+    }
+
+    /** §3.5.5 OPTIMISTIC: the rows read under that lock and not written must not have changed since. */
+    private void checkVersions(List<ManagedEntity> checks, Connection connection) {
+        if (checks.isEmpty()) {
+            return;
+        }
+        Locks locks = new Locks(this);
+        for (ManagedEntity entry : checks) {
+            locks.checkVersion(entry.type(), entry, connection);
         }
     }
 
@@ -369,43 +454,9 @@ public final class FlushEngine {
         }
         try {
             if (sql.generatedKey() != null) {
-                int id = type.idAttributes()[0];
-                EntityStatements.Column idColumn = statements.columns().stream().filter(EntityStatements.Column::id).findFirst()
-                    .orElseThrow();
-                try (PreparedStatement statement = connection.prepareStatement(sql.tables().getFirst().insert(), sql.generatedKey())) {
-                    for (Work work : group) {
-                        initialVersion(type, work, version);
-                        bind(statement, statements.insertParameters(), statements, insertValues(work, pending, later), null);
-                        pending.remove(work.entry().instance());
-                        statement.executeUpdate();
-                        try (ResultSet keys = statement.getGeneratedKeys()) {
-                            if (!keys.next()) {
-                                throw new PersistenceException("The database returned no generated identifier for "
-                                    + type.model().entityName());
-                            }
-                            Object value = idColumn.binder().read(keys, 1);
-                            type.access().set(work.entry().instance(), id, value);
-                            work.state()[id] = value;
-                        }
-                    }
-                }
+                insertGeneratingKeys(group, sql, version, connection, pending, later);
             } else {
-                try (PreparedStatement statement = connection.prepareStatement(sql.tables().getFirst().insert())) {
-                    int batched = 0;
-                    for (Work work : group) {
-                        initialVersion(type, work, version);
-                        bind(statement, statements.insertParameters(), statements, insertValues(work, pending, later), null);
-                        pending.remove(work.entry().instance()); // a batch runs its rows in order
-                        statement.addBatch();
-                        if (++batched == batchSize) {
-                            statement.executeBatch();
-                            batched = 0;
-                        }
-                    }
-                    if (batched > 0) {
-                        statement.executeBatch();
-                    }
-                }
+                insertBatched(group, sql, version, connection, pending, later);
             }
             // the rows of the secondary tables, keyed by the identifier now known
             for (int t = 1; t < sql.tables().size(); t++) {
@@ -428,6 +479,56 @@ public final class FlushEngine {
         for (Work work : group) {
             context.inserted(work.entry(), type.id(work.entry().instance()), type.state().snapshot(work.state()));
             type.callback("PostPersist", work.entry().instance());
+        }
+    }
+
+    /** The primary rows of {@code group}, one statement each: the database generates their identifier, read back. */
+    private void insertGeneratingKeys(List<Work> group, Sql sql, int version, Connection connection, Set<Object> pending,
+            List<ReferenceWrite> later) throws SQLException {
+        MappedEntity type = group.getFirst().type();
+        EntityStatements statements = type.statements();
+        int id = type.idAttributes()[0];
+        EntityStatements.Column idColumn = statements.columns().stream().filter(EntityStatements.Column::id).findFirst()
+            .orElseThrow();
+        try (PreparedStatement statement = connection.prepareStatement(sql.tables().getFirst().insert(), sql.generatedKey())) {
+            for (Work work : group) {
+                initialVersion(type, work, version);
+                bind(statement, statements.insertParameters(), statements, insertValues(work, pending, later), null);
+                pending.remove(work.entry().instance());
+                statement.executeUpdate();
+                try (ResultSet keys = statement.getGeneratedKeys()) {
+                    if (!keys.next()) {
+                        throw new PersistenceException("The database returned no generated identifier for "
+                            + type.model().entityName());
+                    }
+                    Object value = idColumn.binder().read(keys, 1);
+                    type.access().set(work.entry().instance(), id, value);
+                    work.state()[id] = value;
+                }
+            }
+        }
+    }
+
+    /** The primary rows of {@code group}, their identifier known, in batches. */
+    private void insertBatched(List<Work> group, Sql sql, int version, Connection connection, Set<Object> pending,
+            List<ReferenceWrite> later) throws SQLException {
+        MappedEntity type = group.getFirst().type();
+        EntityStatements statements = type.statements();
+        try (PreparedStatement statement = connection.prepareStatement(sql.tables().getFirst().insert())) {
+            int batched = 0;
+            for (Work work : group) {
+                initialVersion(type, work, version);
+                bind(statement, statements.insertParameters(), statements, insertValues(work, pending, later), null);
+                pending.remove(work.entry().instance()); // a batch runs its rows in order
+                statement.addBatch();
+                if (++batched == batchSize) {
+                    statement.executeBatch();
+                    batched = 0;
+                }
+            }
+            if (batched > 0) {
+                statement.executeBatch();
+            }
         }
     }
 
