@@ -49,6 +49,8 @@ final class ResourceLocalTransaction implements SessionTransaction {
     private final ReentrantLock lock = new ReentrantLock();
     private final AtomicReference<Connection> connection = new AtomicReference<>();
     private volatile boolean rollbackOnly;
+    /** Whether {@link #begin()} took the connection out of auto-commit mode: a completed transaction puts it back. */
+    private boolean restoreAutoCommit;
     private Integer timeout;
 
     ResourceLocalTransaction(EntityManagerFactoryImpl factory, TransactionListener listener) {
@@ -67,7 +69,8 @@ final class ResourceLocalTransaction implements SessionTransaction {
         Connection acquired = null;
         try {
             acquired = factory.connections().acquire();
-            if (acquired.getAutoCommit()) {
+            restoreAutoCommit = acquired.getAutoCommit();
+            if (restoreAutoCommit) {
                 acquired.setAutoCommit(false);
             }
         } catch (SQLException e) {
@@ -112,6 +115,7 @@ final class ResourceLocalTransaction implements SessionTransaction {
                 } catch (SQLException e) {
                     throw end(current, new RollbackException("The transaction was marked for rollback, and the rollback failed", e));
                 }
+                restoreAutoCommit(current);
                 throw end(current, new RollbackException("The transaction was marked for rollback only"));
             }
             try {
@@ -125,6 +129,7 @@ final class ResourceLocalTransaction implements SessionTransaction {
                 listener.afterRollback();
                 throw end(current, new RollbackException("The commit failed: " + e.getMessage(), e));
             }
+            restoreAutoCommit(current);
             RuntimeException releaseFailure = null;
             try {
                 end(current, null);
@@ -158,6 +163,7 @@ final class ResourceLocalTransaction implements SessionTransaction {
             } catch (SQLException e) {
                 throw end(current, new PersistenceException("The rollback failed: " + e.getMessage(), e));
             }
+            restoreAutoCommit(current);
             end(current, null);
         } finally {
             lock.unlock();
@@ -255,6 +261,21 @@ final class ResourceLocalTransaction implements SessionTransaction {
             }
         }
         return failure;
+    }
+
+    /**
+     * Gives the connection of a transaction that completed, by a commit or a rollback that succeeded, the auto-commit
+     * mode it was acquired with. A pool resets a connection returned out of auto-commit mode with a rollback of its
+     * own, a statement that a completed transaction does not need. After a failed completion the mode is left as it
+     * is: switching it would commit whatever the failure left pending, and the {@code DataSource} decides.
+     */
+    private void restoreAutoCommit(Connection current) {
+        if (!restoreAutoCommit) return;
+        try {
+            current.setAutoCommit(true);
+        } catch (SQLException ignored) {
+            // the transaction is complete: the DataSource resets or discards the connection it gets back
+        }
     }
 
     private static void closeQuietly(Connection connection) {
