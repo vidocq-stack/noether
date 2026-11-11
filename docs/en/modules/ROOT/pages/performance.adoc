@@ -8,8 +8,13 @@ The standalone JMH harness is isolated from production dependencies:
 cd noether-persistence/noether-jpa-bench
 ./run-bench.sh noether
 ./run-bench.sh hibernate
+./run-bench.sh hibernate5
 ./run-bench.sh eclipselink
 ----
+
+`hibernate5` is Hibernate ORM 5.6.15 (`hibernate-core-jakarta`, Persistence 3.0). It predates
+`PersistenceConfiguration`, so the harness hands it the same unit as a `PersistenceUnitInfo` through
+`createContainerEntityManagerFactory`.
 
 The modular generated-access Leyden AOT cache smoke is
 `noether-persistence/noether-jpa-processor-module-it/run-aot-smoke.sh`.
@@ -203,3 +208,21 @@ measurement. A later PostgreSQL/application workload and common-DataSource
 comparison should distinguish database latency and pooling from provider CPU;
 they have not been measured here. Do not manufacture speed by reducing
 the selected columns, returned rows or write/version semantics.
+
+== Hibernate ORM 5.6 comparison (2026-11-11)
+
+link:{repo-noether}/src/branch/main/noether-persistence/BENCH.md[BENCH-20261111-01]
+measures Noether, Hibernate ORM 5.6.15 and Hibernate ORM 7.4.12 in one session, on another
+machine than the entries above (Apple M5 Max, Temurin 25.0.3), with unchanged workloads.
+
+[cols="2,>1,>1,>1",options="header"]
+|===
+|Workload (ops/s) |Noether |Hibernate 5.6 |Hibernate 7.4
+|`findById` |466,086 |536,978 |627,351
+|`jpqlQuery` |41,844 |67,387 |89,986
+|`update` |218,329 |284,889 |305,915
+|`createUpdateDelete` |164,213 |250,799 |237,486
+|===
+
+Noether is behind Hibernate 5.6 on every workload (-13% to -38%), with 1.5x to 3x its allocation
+per operation; JPQL materialization is the largest gap. Errors and allocation are in `BENCH.md`.
