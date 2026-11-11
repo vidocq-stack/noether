@@ -216,6 +216,8 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
 
     private final String jpql;
     private final Ast.Statement statement;
+    /** The shared parse of the query string and its reusable translations; {@code null} for a criteria query. */
+    private final QueryPlans.Parsed parsed;
     private final Class<X> resultClass;
     private final QueryRuntime runtime;
     private final boolean collectionFetch;
@@ -231,13 +233,13 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
      * @throws IllegalArgumentException if the query is not valid, or its results are not of {@code resultClass}
      */
     public JpqlQuery(String jpql, Class<X> resultClass, FlushModeType flushMode, QueryRuntime runtime) {
-        this(jpql, Parser.parse(jpql), resultClass, flushMode, runtime);
+        this(jpql, runtime.plans().parse(jpql), null, resultClass, flushMode, runtime);
     }
 
     JpqlQuery(Ast.Statement statement, Class<X> resultClass, FlushModeType flushMode, QueryRuntime runtime,
             Set<jakarta.persistence.criteria.ParameterExpression<?>> declared,
             List<jakarta.persistence.criteria.Selection<?>> tupleElements) {
-        this("Criteria", statement, resultClass, flushMode, runtime);
+        this("Criteria", null, statement, resultClass, flushMode, runtime);
         Map<Parameter<?>, Object> identities = new java.util.IdentityHashMap<>();
         for (var parameter : declared) {
             Ast.Parameter syntax = (Ast.Parameter) CriteriaExpressions.ast(parameter);
@@ -248,13 +250,17 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         this.tupleElements = List.copyOf(tupleElements);
     }
 
-    private JpqlQuery(String jpql, Ast.Statement statement, Class<X> resultClass, FlushModeType flushMode, QueryRuntime runtime) {
+    /** @param parsed the shared parse of a query string, whose translations are reused; {@code null} for {@code criteria} */
+    private JpqlQuery(String jpql, QueryPlans.Parsed parsed, Ast.Statement criteria, Class<X> resultClass, FlushModeType flushMode,
+            QueryRuntime runtime) {
         super(flushMode, runtime::isOpen);
         this.jpql = jpql;
         this.runtime = runtime;
         this.resultClass = resultClass;
-        this.statement = statement;
-        Compiled compiled = Translator.translate(statement, runtime.mapping(), null, null, null);
+        this.parsed = parsed;
+        this.statement = parsed != null ? parsed.statement() : criteria;
+        Compiled compiled = parsed != null ? parsed.plan(runtime.mapping(), null, false, false).compiled()
+            : Translator.translate(statement, runtime.mapping(), null, null, null);
         collectionFetch = compiled.collectionFetch();
         if (!(statement instanceof Ast.Query) && resultClass != null && resultClass != Object.class) {
             throw new IllegalArgumentException("An UPDATE or a DELETE has no results of type " + resultClass.getName() + ": " + jpql);
@@ -431,7 +437,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     }
 
     private int executeMutations(Compiled compiled, Connection connection, Dialect dialect) {
-        List<Object> captured = execute(compiled, List.of(), connection);
+        List<Object> captured = execute(compiled, null, List.of(), connection);
         for (Compiled.Mutation mutation : compiled.mutations()) {
             try (PreparedStatement statement = connection.prepareStatement(dialect.render(mutation.sql()))) {
                 if (getTimeout() != null) {
@@ -551,8 +557,11 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
             ? Translator.graphSelect(statement, runtime.mapping(), runtime.plan(graph), !getHints().containsKey(FETCH_GRAPH))
             : statement;
         boolean graphRows = execution != statement;
-        Compiled compiled = Translator.translate(execution, runtime.mapping(), p -> values.get(key(p)),
-            null, null, lockMode == LockModeType.NONE, graphRows);
+        // the query string as it is, without an entity graph: its translation is shared unless a value shaped it
+        QueryPlans.Plan plan = parsed != null && !graphRows
+            ? parsed.plan(runtime.mapping(), p -> values.get(key(p)), lockMode == LockModeType.NONE, false) : null;
+        Compiled compiled = plan != null ? plan.compiled() : Translator.translate(execution, runtime.mapping(),
+            p -> values.get(key(p)), null, null, lockMode == LockModeType.NONE, graphRows);
         if (!split.isEmpty() && (getFirstResult() > 0 || getMaxResults() < Integer.MAX_VALUE)) {
             compiled = Translator.paginateCollection(statement, runtime.mapping(), p -> values.get(key(p)),
                 getFirstResult() > 0 ? getFirstResult() : null, getMaxResults() < Integer.MAX_VALUE ? getMaxResults() : null);
@@ -566,7 +575,8 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
                 lockMode == LockModeType.NONE, graphRows);
         }
         Compiled read = compiled;
-        return (List<X>) runtime.read(getFlushMode(), connection -> execute(read, split, connection));
+        QueryPlans.Plan shared = plan != null && plan.compiled() == compiled ? plan : null; // not the page translated above
+        return (List<X>) runtime.read(getFlushMode(), connection -> execute(read, shared, split, connection));
     }
 
     /** A collection fetch anywhere in the query must never receive a SQL row limit. */
@@ -581,7 +591,8 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         return unique;
     }
 
-    private List<Object> execute(Compiled compiled, List<List<Compiled>> split, Connection connection) {
+    /** @param plan the shared plan {@code compiled} comes from, which keeps its rendered SQL; {@code null} if it has none */
+    private List<Object> execute(Compiled compiled, QueryPlans.Plan plan, List<List<Compiled>> split, Connection connection) {
         Dialect dialect = runtime.dialect(connection);
         boolean pessimistic = io.vidocq.noether.jpa.core.flush.Locks.pessimistic(lockMode);
         io.vidocq.noether.jpa.dialect.sql.Statement sql = compiled.sql();
@@ -593,7 +604,8 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         if (pessimistic && !followOn && sql instanceof io.vidocq.noether.jpa.dialect.sql.Query query) { // §3.5.6: the rows it reads
             sql = query.locked(io.vidocq.noether.jpa.core.flush.Locks.rowLock(lockMode), lockTimeout != null && lockTimeout == 0);
         }
-        Dialect.Rendered rendered = dialect.renderQuery(sql);
+        // a row lock makes another statement of it, rendered for this execution
+        Dialect.Rendered rendered = plan != null && sql == compiled.sql() ? plan.rendered(dialect) : dialect.renderQuery(sql);
         List<Object> rows = new ArrayList<>();
         List<Fetched[]> fetchedRows = new ArrayList<>();
         List<io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedElement> collectionRows = new ArrayList<>();

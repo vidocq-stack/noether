@@ -74,6 +74,7 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     private final AtomicBoolean open = new AtomicBoolean(true);
     private final Set<ResourceLocalTransaction> activeTransactions = ConcurrentHashMap.newKeySet();
     private final NamedQueries namedQueries;
+    private final io.vidocq.noether.jpa.core.query.QueryPlans queryPlans = new io.vidocq.noether.jpa.core.query.QueryPlans();
     private final Metamodel metamodel;
     private final EntityGraphs entityGraphs;
     private final io.vidocq.noether.jpa.core.bootstrap.SchemaGeneration schemaGeneration;
@@ -207,6 +208,11 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     /** The mapped persistence unit: entity model, generated access and binders. */
     public MappedUnit mapping() {
         return mapping;
+    }
+
+    /** The query strings this factory has parsed and translated, reused by its entity managers. */
+    io.vidocq.noether.jpa.core.query.QueryPlans queryPlans() {
+        return queryPlans;
     }
 
     UnitSettings settings() {
