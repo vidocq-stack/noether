@@ -49,9 +49,6 @@ class CallerThreadJdbcTest {
     public static class Item {
         @Id
         public int id;
-
-        public Item() {
-        }
     }
 
     /** Records the threads that ask for a connection. */

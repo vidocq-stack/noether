@@ -79,7 +79,8 @@ class IdGeneratorsTest {
 
     @Test
     void aTableGeneratorRefusesAPoolOfOneConnection() {
-        assertThatThrownBy(() -> check(pool(1), Badge.class, Account.class)).isInstanceOf(PersistenceException.class)
+        ConnectionSource pool = pool(1);
+        assertThatThrownBy(() -> check(pool, Badge.class, Account.class)).isInstanceOf(PersistenceException.class)
             .hasMessage("Persistence unit ids sets io.vidocq.noether.jpa.pool.max-size=1, but a TABLE identifier generator "
                 + "needs at least 2 connections: one for the transaction, one for the allocation of identifiers, which it "
                 + "commits on its own connection. TABLE generators of the unit: Badge (TABLE, generator badges). "
@@ -88,7 +89,8 @@ class IdGeneratorsTest {
 
     @Test
     void autoIsATableGeneratorUnlessTheIdentifierIsAUuidOrASequenceIsNamed() { // §11.1.20
-        assertThatThrownBy(() -> check(pool(1), Stamp.class, UnnamedTable.class, AutoUuid.class, AutoSequence.class))
+        ConnectionSource pool = pool(1);
+        assertThatThrownBy(() -> check(pool, Stamp.class, UnnamedTable.class, AutoUuid.class, AutoSequence.class))
             .isInstanceOf(PersistenceException.class)
             .hasMessageContaining("Stamp (AUTO, default table generator)")
             .hasMessageContaining("UnnamedTable (TABLE, default table generator)")
@@ -114,8 +116,9 @@ class IdGeneratorsTest {
     /** BUG-20261111-04: a JTA unit with a table generator and nowhere to allocate is refused when the factory is created. */
     @Test
     void aJtaUnitWithATableGeneratorAndNoNonJtaDataSourceIsRefused() {
-        assertThatThrownBy(() -> IdGenerators.checkAllocations("ids", entities(Badge.class, Stamp.class, Account.class),
-                Optional.empty()))
+        var entities = entities(Badge.class, Stamp.class, Account.class);
+        Optional<ConnectionSource> nonJta = Optional.empty();
+        assertThatThrownBy(() -> IdGenerators.checkAllocations("ids", entities, nonJta))
             .isInstanceOf(PersistenceException.class)
             .hasMessage("Persistence unit ids is JTA and has TABLE identifier generators, but no non-JTA data source to "
                 + "allocate through. A TABLE generator commits each allocation on a connection of its own, and the "

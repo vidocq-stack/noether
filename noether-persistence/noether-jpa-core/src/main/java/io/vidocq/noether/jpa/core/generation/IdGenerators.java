@@ -200,10 +200,10 @@ public final class IdGenerators {
 
     /** The entity and its generator, when a generator table allocates its identifiers. */
     private static Optional<String> tableGenerator(EntityModel entity) {
-        if (!(entity.id() instanceof IdModel.Single id)) {
+        if (!(entity.id() instanceof IdModel.Single(var attribute, var idGeneration))) {
             return Optional.empty();
         }
-        return id.generation().filter(generation -> allocatesFromTable(generation, id.attribute().javaType()))
+        return idGeneration.filter(generation -> allocatesFromTable(generation, attribute.javaType()))
             .map(generation -> entity.entityName() + " (" + generation.strategy() + ", "
                 + (generation.generatorName() != null ? "generator " + generation.generatorName() : "default table generator")
                 + ")");

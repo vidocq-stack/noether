@@ -143,32 +143,32 @@ public final class ConnectionSources {
     /** The pool that {@code factory} opens for the unit, closed with the {@code EntityManagerFactory}. */
     private static ConnectionSource pooled(ConnectionPoolFactory factory, UnitSettings settings, String url, String user,
             String password) {
-        ConnectionPoolSettings poolSettings;
-        ConnectionPool pool;
         try {
-            poolSettings = new ConnectionPoolSettings(url, user, password, integer(settings, POOL_MAX_SIZE),
-                integer(settings, POOL_MIN_IDLE), acquireTimeout(settings));
-            pool = factory.open(poolSettings);
+            ConnectionPoolSettings poolSettings = new ConnectionPoolSettings(url, user, password,
+                integer(settings, POOL_MAX_SIZE), integer(settings, POOL_MIN_IDLE), acquireTimeout(settings));
+            return new PooledSource(factory.open(poolSettings), poolSettings.maxSize());
         } catch (IllegalArgumentException e) {
             throw new PersistenceException("Invalid connection pool settings for persistence unit " + settings.unitName() + " ("
                 + POOL_MAX_SIZE + ", " + POOL_MIN_IDLE + ", " + POOL_ACQUIRE_TIMEOUT + "): " + e.getMessage(), e);
         }
-        return new ConnectionSource() {
-            @Override
-            public Connection acquire() throws SQLException {
-                return pool.getConnection();
-            }
+    }
 
-            @Override
-            public OptionalInt maxSize() {
-                return poolSettings.maxSize() == null ? OptionalInt.empty() : OptionalInt.of(poolSettings.maxSize());
-            }
+    /** The connections of a pool that the source owns: closing the source closes the pool. */
+    private record PooledSource(ConnectionPool pool, Integer poolMaxSize) implements ConnectionSource {
+        @Override
+        public Connection acquire() throws SQLException {
+            return pool.getConnection();
+        }
 
-            @Override
-            public void close() {
-                pool.close();
-            }
-        };
+        @Override
+        public OptionalInt maxSize() {
+            return poolMaxSize == null ? OptionalInt.empty() : OptionalInt.of(poolMaxSize);
+        }
+
+        @Override
+        public void close() {
+            pool.close();
+        }
     }
 
     /**

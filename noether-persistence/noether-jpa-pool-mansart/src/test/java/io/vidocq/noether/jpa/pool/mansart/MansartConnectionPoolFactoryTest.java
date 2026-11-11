@@ -110,7 +110,8 @@ class MansartConnectionPoolFactoryTest {
 
     @Test
     void aSettingOutOfRangeIsAnIllegalArgument() { // Noether turns it into a PersistenceException naming the property
-        assertThatThrownBy(() -> factory.open(settings(0, null, null))).isInstanceOf(IllegalArgumentException.class);
+        ConnectionPoolSettings outOfRange = settings(0, null, null);
+        assertThatThrownBy(() -> factory.open(outOfRange)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

@@ -173,12 +173,16 @@ class ConnectionSourcesTest {
     @Test
     void anInvalidPoolSettingFailsTheCreationOfTheFactory() {
         RecordingPools pools = new RecordingPools();
-        assertThatThrownBy(() -> ConnectionSources.of(unit(Map.of(ConnectionSources.POOL_MAX_SIZE, "0")), loader(), pools::found))
+        ClassLoader loader = loader();
+        UnitSettings maxSize = unit(Map.of(ConnectionSources.POOL_MAX_SIZE, "0"));
+        UnitSettings minIdle = unit(Map.of(ConnectionSources.POOL_MIN_IDLE, "some"));
+        UnitSettings acquireTimeout = unit(Map.of(ConnectionSources.POOL_ACQUIRE_TIMEOUT, "soon"));
+        assertThatThrownBy(() -> ConnectionSources.of(maxSize, loader, pools::found))
             .isInstanceOf(PersistenceException.class).hasMessageContaining(ConnectionSources.POOL_MAX_SIZE)
             .hasMessageContaining("maxSize must be at least 1");
-        assertThatThrownBy(() -> ConnectionSources.of(unit(Map.of(ConnectionSources.POOL_MIN_IDLE, "some")), loader(), pools::found))
+        assertThatThrownBy(() -> ConnectionSources.of(minIdle, loader, pools::found))
             .isInstanceOf(PersistenceException.class).hasMessageContaining(ConnectionSources.POOL_MIN_IDLE + " must be an integer");
-        assertThatThrownBy(() -> ConnectionSources.of(unit(Map.of(ConnectionSources.POOL_ACQUIRE_TIMEOUT, "soon")), loader(), pools::found))
+        assertThatThrownBy(() -> ConnectionSources.of(acquireTimeout, loader, pools::found))
             .isInstanceOf(PersistenceException.class).hasMessageContaining(ConnectionSources.POOL_ACQUIRE_TIMEOUT + " must be an ISO-8601 duration");
     }
 
