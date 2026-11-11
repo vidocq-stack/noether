@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs the official Jakarta Persistence 3.2 TCK against the Noether provider, on PostgreSQL.
 #
-# Steps: install the TCK if needed (install-tck.sh), build and install the provider (noether-jpa-core), start a throw-away PostgreSQL in Docker (or use an external
+# Steps: install the TCK if needed (install-tck.sh), build and install the provider (noether-jpa-core, with
+# noether-jpa-pool-mansart), start a throw-away PostgreSQL in Docker (or use an external
 # database), apply the official DDL and stored procedures of the bundle, run both failsafe executions, report.
 #
 # Usage:
@@ -70,8 +71,8 @@ SPEC_JAR="$(python3 -I tools/tck_fixture_patch.py prepare --mode "$TCK_FIXTURES"
     --work-dir "$FIXTURES_DIR")"
 echo "    spec-tests jar: $SPEC_JAR"
 
-echo ">>> Build and install the provider under test (noether-jpa-core)"
-(cd ../.. && ./mvnw -q -B -ntp -pl noether-persistence/noether-jpa-core,noether-persistence/noether-jpa-dialects/noether-jpa-dialect-postgresql -am install -DskipTests)
+echo ">>> Build and install the provider under test (noether-jpa-core, its pool and its dialect)"
+(cd ../.. && ./mvnw -q -B -ntp -pl noether-persistence/noether-jpa-core,noether-persistence/noether-jpa-pool-mansart,noether-persistence/noether-jpa-dialects/noether-jpa-dialect-postgresql -am install -DskipTests)
 
 if [ "$TCK_VALIDATION" = on ]; then
     echo ">>> Build and install noether-validation-core (Bean Validation on the class path of execution 1)"

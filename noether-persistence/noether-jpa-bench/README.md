@@ -49,7 +49,9 @@ docker stop noether-bench-pg
 ```
 
 Noether needs `noether-jpa-dialect-postgresql` installed with the other modules (a full
-`./mvnw -ntp install -DskipTests` from the root). The database name is recorded in
+`./mvnw -ntp install -DskipTests` from the root). Its units are configured by `jakarta.persistence.jdbc.*`,
+so the `noether` profile adds `noether-jpa-pool-mansart` (decision D7): without it Noether would open one
+connection per transaction. `run-bench.sh` stops when that module is missing from the class path. The database name is recorded in
 `target/bench-reports/<run-id>/<provider>/database.txt`.
 
 ## Output locations

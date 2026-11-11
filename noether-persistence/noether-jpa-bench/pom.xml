@@ -74,6 +74,13 @@
                     <version>${noether.version}</version>
                     <scope>test</scope>
                 </dependency>
+                <!-- Decision D7: the units of the harness (jakarta.persistence.jdbc.*) get a mansart-pool pool. -->
+                <dependency>
+                    <groupId>io.vidocq.noether</groupId>
+                    <artifactId>noether-jpa-pool-mansart</artifactId>
+                    <version>${noether.version}</version>
+                    <scope>test</scope>
+                </dependency>
                 <dependency>
                     <groupId>io.vidocq.noether</groupId>
                     <artifactId>noether-jpa-dialect-h2</artifactId>
