@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    A container-managed JTA unit, as an application on an application server writes it: Noether as
+    the provider, Liberty's data source by its JNDI name, Liberty's transactions.
+-->
+<persistence xmlns="https://jakarta.ee/xml/ns/persistence"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xsi:schemaLocation="https://jakarta.ee/xml/ns/persistence https://jakarta.ee/xml/ns/persistence/persistence_3_2.xsd"
+             version="3.2">
+    <persistence-unit name="library" transaction-type="JTA">
+        <provider>io.vidocq.noether.jpa.core.NoetherPersistenceProvider</provider>
+        <jta-data-source>jdbc/library</jta-data-source>
+        <class>io.vidocq.noether.it.openliberty.Book</class>
+        <exclude-unlisted-classes>true</exclude-unlisted-classes>
+        <properties>
+            <property name="jakarta.persistence.schema-generation.database.action" value="drop-and-create"/>
+        </properties>
+    </persistence-unit>
+</persistence>

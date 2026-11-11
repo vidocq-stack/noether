@@ -68,6 +68,8 @@ jobs:
             noether-jpa-module-it
             noether-jpa-processor-module-it
             noether-jpa-cdi-module-it
+            noether-it-other-containers
+            noether-it-openliberty
             noether-validation
             noether-validation-core
             noether-validation-core-module-it

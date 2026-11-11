@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Noether as the Jakarta Persistence provider of a WAR on Open Liberty (Jakarta EE 11 Web Profile
+    distribution). persistenceContainer-3.2 runs a provider the application brings; persistence-3.2
+    (Liberty's EclipseLink) stays off.
+-->
+<server description="noether-it-openliberty">
+    <featureManager>
+        <feature>persistenceContainer-3.2</feature>
+        <feature>cdi-4.1</feature>
+        <feature>restfulWS-4.0</feature>
+        <feature>jdbc-4.3</feature>
+        <feature>jndi-1.0</feature>
+    </featureManager>
+
+    <httpEndpoint id="defaultHttpEndpoint" host="localhost" httpPort="${http.port}" httpsPort="${https.port}"/>
+
+    <library id="h2">
+        <fileset dir="${shared.resource.dir}/h2" includes="*.jar"/>
+    </library>
+
+    <!-- jdbc/library, the JTA data source the persistence unit names: Liberty enlists its connections. -->
+    <dataSource id="library" jndiName="jdbc/library">
+        <jdbcDriver libraryRef="h2" javax.sql.XADataSource="org.h2.jdbcx.JdbcDataSource"/>
+        <properties URL="jdbc:h2:mem:noether-it;DB_CLOSE_DELAY=-1" user="sa" password=""/>
+    </dataSource>
+
+    <webApplication location="noether-it-openliberty.war" contextRoot="/noether"/>
+</server>
