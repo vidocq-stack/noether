@@ -126,6 +126,55 @@ class FlushEngineTest {
         assertThat(type(Customer.class).access().get(customer, index(type(Customer.class), "version"))).isEqualTo(1);
     }
 
+    /**
+     * The flush reads the state of an unchanged instance into an array it reuses for the next one; the state of an
+     * instance it writes is that instance's alone, whatever the flush reads after it.
+     */
+    @Test
+    void theStateOfAWrittenInstanceIsNotOverwrittenByTheInstancesReadAfterIt() throws SQLException {
+        MappedEntity type = type(Customer.class);
+        int name = index(type, "name");
+        Object unchangedBefore = customer(1, "before");
+        Object updated = customer(2, "old");
+        Object unchangedBetween = customer(3, "between");
+        Object removed = customer(4, "removed");
+        Object unchangedAfter = customer(5, "after");
+        for (Object customer : List.of(unchangedBefore, updated, unchangedBetween, removed, unchangedAfter)) {
+            context.persist(customer, type);
+        }
+        engine.flush(context, connection);
+        type.access().set(updated, name, "new");
+        context.remove(removed);
+        Object inserted = customer(6, "inserted");
+        ManagedEntity insertedEntry = context.persist(inserted, type);
+        Object unchangedLast = customer(7, "last");
+        context.persist(unchangedLast, type);
+        engine.flush(context, connection); // 7 is inserted too: two inserts around nothing
+        type.access().set(updated, name, "newer");
+        Object insertedLater = customer(8, "later");
+        context.persist(insertedLater, type);
+        engine.flush(context, connection); // unchanged 1, updated 2, unchanged 3 and 5, 6, 7, inserted 8
+
+        assertThat(column("select name from Customer where id = 1")).isEqualTo("before");
+        assertThat(column("select name from Customer where id = 2")).isEqualTo("newer");
+        assertThat(column("select version from Customer where id = 2")).isEqualTo(2);
+        assertThat(column("select name from Customer where id = 3")).isEqualTo("between");
+        assertThat(column("select count(*) from Customer where id = 4")).isEqualTo(0L);
+        assertThat(column("select name from Customer where id = 5")).isEqualTo("after");
+        assertThat(column("select name from Customer where id = 6")).isEqualTo("inserted");
+        assertThat(column("select name from Customer where id = 7")).isEqualTo("last");
+        assertThat(column("select name from Customer where id = 8")).isEqualTo("later");
+        // each snapshot is the state of its own instance, in an array of its own
+        List<ManagedEntity> entries = context.entries();
+        assertThat(entries).extracting(entry -> entry.snapshot()[name])
+            .containsExactly("before", "newer", "between", "after", "inserted", "last", "later");
+        assertThat(entries.stream().map(ManagedEntity::snapshot).distinct()).hasSize(entries.size());
+        assertThat(insertedEntry.snapshot()[index(type, "id")]).isEqualTo(6L);
+        recorder.calls.clear();
+        engine.flush(context, connection);
+        assertThat(recorder.calls).isEmpty(); // nothing is dirty against its snapshot
+    }
+
     @Test
     void anUnchangedInstanceIsNotUpdated() throws SQLException {
         context.persist(customer(1, "Vidocq"), type(Customer.class));
