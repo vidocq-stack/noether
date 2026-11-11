@@ -127,7 +127,8 @@ class SynchronizationRegistryIntegrationTest {
             manager.begin();
             var em = factory.createEntityManager();
             em.persist(new Ledger(1, "first"));
-            assertThatThrownBy(() -> em.persist(new Ledger(1, "duplicate"))).isInstanceOf(PersistenceException.class);
+            Ledger duplicate = new Ledger(1, "duplicate");
+            assertThatThrownBy(() -> em.persist(duplicate)).isInstanceOf(PersistenceException.class);
             assertThat(registry.getRollbackOnly()).isTrue();
             assertThatThrownBy(manager::commit).isInstanceOf(jakarta.transaction.RollbackException.class);
             assertThat(rows("registry-rollback-only")).isZero();
