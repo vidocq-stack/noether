@@ -18,8 +18,11 @@ open their entity packages to `io.vidocq.noether.jpa.core`.
 A JTA unit needs a transaction bridge. On a Jakarta EE server, add `noether-jpa-jta`:
 the provider finds the server's `java:comp/TransactionSynchronizationRegistry` and the
 server's JTA data source enlists the connections (see
-xref:reference.adoc[Reference, "Deploying on an application server"]). With Vauban CDI,
-`noether-jpa-cdi` binds the external Mansart transaction manager. The core does not
+xref:reference.adoc[Reference, "Deploying on an application server"]). On a CDI
+container, `noether-jpa-cdi` uses the same bridge: the container must provide a
+`jakarta.transaction.TransactionSynchronizationRegistry` bean and a `javax.sql.DataSource`
+bean whose connections it enlists in its transactions (see
+xref:reference.adoc[Reference, "JTA units on a CDI container"]). The core does not
 import CDI, JTA or Vauban. See
 xref:modules/noether-persistence.adoc[the detailed Persistence guide].
 

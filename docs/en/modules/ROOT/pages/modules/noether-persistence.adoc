@@ -89,7 +89,10 @@ caller-owned readers, writers and connections are not closed. `SchemaManager` cr
 table/column presence and truncates the unit's tables, reloading the initial load script.
 The provider accepts `PersistenceUnitInfo` without registering any `ClassTransformer`.
 
-`noether-jpa-cdi` bridges JTA through the existing Mansart transaction manager/JDBC XA adapter.
+`noether-jpa-cdi` bridges JTA through `noether-jpa-jta`, the bridge of Jakarta EE servers: the container's
+`TransactionSynchronizationRegistry` bean and its `DataSource` bean, whose connections the container enlists
+(Vidocq/noether#45, decision D45). It depends on no transaction manager: Quarkus and servers have both beans, the
+Vidocq runtime extension brings them, a bare Vauban application produces them itself.
 The core has no CDI, JTA, Inject or Vauban imports: `TransactionIntegration` is its isolated SPI.
 Transaction-scoped contexts share identity within the transaction; extended contexts belong to their CDI owner.
 Synchronized commit flushes and rollback detaches; unsynchronized contexts require explicit joining.

@@ -181,6 +181,10 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
   2026-11-11 (audit F6, #45, branch `fix/f6-f12-f14`): JDBC work no longer leaves the calling thread (decision
   D44), so the virtual worker of this bug is gone; the retained execution connection stays. The first
   reproduction is renamed `JtaIntegrationTest#autoQueryFlushUsesTheCallerTransaction`.
+  2026-11-11 (audit F4, #45, branch `feat/container-jta`, decision D45): `JtaIntegration` is removed;
+  `noether-jpa-cdi` uses `noether-jpa-jta`'s registry bridge. `JtaIntegrationTest` becomes
+  `ContainerEntityManagerTest` (same method names, over a registry and an enlisting data source); the caller-thread
+  test moves to `SynchronizationRegistryIntegrationTest#theJdbcWorkOfAJoinedContextRunsOnTheCallerThread`.
 
 ## BUG-20261009-13 — Failed JTA join leaks the acquired connection
 
@@ -196,6 +200,11 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
   2026-11-11 (audit F6, #45, branch `fix/f6-f12-f14`): the XA callbacks run on the thread of the transaction
   manager that calls them (decision D44); Mansart's `ConnectionXAResource` is enlisted without the
   `VirtualResource` wrapper.
+  2026-11-11 (audit F4, #45, branch `feat/container-jta`, decision D45): `JtaIntegration` is removed. The registry
+  bridge that replaces it acquires no connection when it joins, and a container refuses a synchronization on a
+  transaction marked for rollback: the join now fails with a `PersistenceException` and holds no connection,
+  `SynchronizationRegistryIntegrationTest#joiningATransactionMarkedForRollbackFailsWithoutTakingAConnection` (red
+  first: the registry's `IllegalStateException` escaped unwrapped).
 
 ## BUG-20261009-14 — Container query creation binds to the wrong transaction lifetime
 
@@ -215,6 +224,7 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
   sets, update counts and outputs (REF_CURSOR rows are already materialized by the core query) before that
   context ends, so they survive its closure. Paging is applied to the copy; closure follows the facade. H2 has no
   OUT/REF_CURSOR procedures, so those parameter modes rely on the core implementation's tests.
+  2026-11-11 (decision D45): the reproductions live in `ContainerEntityManagerTest`, same method names.
 
 ## BUG-20261009-15 — Shared container facade metadata races across virtual requests
 
@@ -229,6 +239,7 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
 - **Investigation**: 2026-10-09: the stress regression failed with `ArrayList.forEach` in `configured`.
   Publish immutable bounded-per-setting snapshots and guard only non-JDBC metadata operations with ReentrantLock;
   destroy/release occurs outside that lock. The regression now passes.
+  2026-11-11 (decision D45): the reproduction lives in `ContainerEntityManagerTest`, same method name.
 
 ## BUG-20261009-16 — Vauban cannot apply portable persistence injection enhancements
 
@@ -268,6 +279,7 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
 - **Cause hypothesis**: DROP guarded the constraint name but not the table.
 - **Investigation**: 2026-10-09: the new nested-flush regression first exposed this schema defect.
   The dialect renders `ALTER TABLE IF EXISTS ... DROP CONSTRAINT IF EXISTS`; fresh H2 bootstrap passes.
+  2026-11-11 (decision D45): the reproduction lives in `ContainerEntityManagerTest`, same method name.
 
 ## BUG-20261009-18 — Destroyed container contexts silently accept nontransactional operations
 
@@ -276,7 +288,8 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
 - **Module**: `mansart-jpa-cdi`, `ContainerEntityManager`
 - **Symptom**: `contains`, `clear` and `detach` without an associated transaction bypass closed-state checks.
 - **Minimal reproduction**: `JtaIntegrationTest#containerFactoryOwnershipAndContextConfigurationDoNotRequireATransaction`;
-  destroy the facade and call `contains(new Record(1))`.
+  destroy the facade and call `contains(new Record(1))`. Since decision D45 (2026-11-11) the test lives in
+  `ContainerEntityManagerTest`, same method name.
 - **Cause hypothesis**: the nontransactional no-op branch skipped the underlying entity manager's validation.
 - **Investigation**: 2026-10-09: the lifecycle regression was red. Require an open facade, and use a transient
   detached context to preserve entity argument validation for nontransactional `contains`/`detach`.

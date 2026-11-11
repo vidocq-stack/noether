@@ -25,7 +25,7 @@
 | Zero implementation library | Only `jakarta.persistence-api` (+ CDI/inject/transaction APIs in the integration module). JPQL parser hand-written, XML via StAX, no ORM borrowed. |
 | No runtime reflection on entities | Entity access, instantiation and metamodel are generated: APT for sources, Maven plugin for jars, Class-File API at bootstrap for opaque archives. |
 | No proxy / bytecode library | Lazy to-one via Class-File API generated subclasses, lazy collections via our own wrappers, dirty checking via snapshots. `ClassTransformer` is declined. |
-| Shared Noether bricks | JTA through `mansart-transactions`; any `DataSource` (e.g. `mansart-pool`). SQL through Noether JPA's own dialect SPI (D4: `noether-jpa-dialect-*`, H2 and PostgreSQL). |
+| Shared Noether bricks | JTA through the container's `TransactionSynchronizationRegistry` and enlisting `DataSource` (`noether-jpa-jta`, D45): the Vidocq runtime extension assembles `mansart-transactions`, Noether does not depend on it; any `DataSource` (e.g. `mansart-pool`). SQL through Noether JPA's own dialect SPI (D4: `noether-jpa-dialect-*`, H2 and PostgreSQL). |
 | Virtual threads | JDBC on the calling thread, never moved to another one, so a virtual-thread caller keeps its thread (D44); no `synchronized` around I/O; `ScopedValue` instead of `ThreadLocal`. |
 | Strict Java Modules | One `module-info.java` per module, provider published via `provides`, internals not exported. |
 | Measured performance | JMH from P12, vs Hibernate ORM and EclipseLink on the same JVM and database; numbers only in `BENCH.md`. |
@@ -127,9 +127,18 @@ noether-jpa-processor     io.vidocq.noether.jpa.processor   (APT, RELEASE_25)
 
 noether-jpa-maven-plugin  → same generation for entities in dependency jars
 
+noether-jpa-jta           io.vidocq.noether.jpa.jta
+  requires jakarta.transaction, java.naming, java.sql
+  → JTA bridge over the container's TransactionSynchronizationRegistry; the container's data source enlists
+
 noether-jpa-cdi           io.vidocq.noether.jpa.cdi
-  requires jakarta.cdi, jakarta.transaction, io.vidocq.mansart.transactions.api
-  → BuildCompatibleExtension: @PersistenceContext / @PersistenceUnit, JTA-bound contexts
+  requires jakarta.cdi, jakarta.transaction, io.vidocq.noether.jpa.jta   (no Mansart module: D45)
+  → BuildCompatibleExtension: @PersistenceContext / @PersistenceUnit, JTA-bound contexts on the container's
+    TransactionSynchronizationRegistry and DataSource beans
+
+noether-jpa-pool-mansart  io.vidocq.noether.jpa.pool.mansart   (optional, D7 amended)
+  provides io.vidocq.noether.jpa.core.spi.ConnectionPoolFactory with …
+  → mansart-pool for the units configured by jakarta.persistence.jdbc.* in Java SE
 
 noether-jpa-tck           (out of reactor — standalone Model 4.0.0 POM)
 ```
@@ -741,7 +750,8 @@ Spec: §7.7 (container-managed persistence contexts), ch. 9 (container / provide
 - [x] Schema generation: `jakarta.persistence.schema-generation.*` (database and scripts
       actions), DDL rendered by the dialect; `SchemaManager` (`create`/`drop`/`validate`/`truncate`).
 - [x] `noether-jpa-cdi`: Vauban BCE for `@PersistenceContext` / `@PersistenceUnit`, transaction-
-      scoped and extended contexts, `SynchronizationType`, JTA join via `mansart-transactions`.
+      scoped and extended contexts, `SynchronizationType`, JTA join via `mansart-transactions` (since D45,
+      through the container's `TransactionSynchronizationRegistry` and `DataSource` beans, `noether-jpa-jta`).
 - [x] Vidocq runtime extension: secure persistence-unit discovery, startup factory initialization,
       JTA and CDI-managed `DataSource` bootstrap, application-owned data-source pass-through, and
       CDI deployment lifecycle ownership.
@@ -2511,6 +2521,7 @@ Recorded before implementation; each entry: date, decision, reason.
 
 | # | Date | Decision | Status |
 |---|---|---|---|
+| D45 | 2026-11-11 | A JTA unit on a CDI container runs on the container's pieces (audit F4 and F10, #45). `noether-jpa-cdi` bound Mansart Transactions: it looked up a `TransactionManager` bean and enlisted its own JDBC connection through Mansart's `ConnectionXAResource`, so on Quarkus Noether bypassed Agroal and used a one-phase adapter inside Narayana. `noether-jpa-cdi` now depends on no Mansart module: it uses `noether-jpa-jta`'s bridge over the `TransactionSynchronizationRegistry` bean, and the unit's JTA data source is the container's `DataSource` bean (`@Named` after `jta-data-source`, else `@Default`), whose connections the container enlists. Missing beans fail the factory creation with a `PersistenceException` naming them; a resource-local unit needs neither. Quarkus uses Agroal and Narayana; the Vidocq runtime extension assembles Mansart. `JtaIntegration` is removed. | Actioned |
 | D44 | 2026-11-11 | JDBC work runs on the calling thread (audit F6, #45). `JdbcExecution` moved each call made from a platform thread to a new virtual thread and waited for it: the caller still blocked, each call paid about 7 µs (BENCH-20261111-02), and a context that a server binds to the calling thread, its transaction included, was lost. `JdbcExecution` and the JTA bridge's `VirtualResource` wrapper are removed; a caller on a virtual thread stays on it. | Actioned |
 | PERF1 | 2026-10-19 | User requests the first measured optimization: hydrate eligible plain single-table root selections through existing hydration columns and the staged loader, instead of per-result find reloads. Preserve managed/lazy/cache/lifecycle contracts and existing unsupported-shape fallbacks; keep query-template caching and allocation tuning separate. | Actioned |
 | PERF2 | 2026-10-22 | User requests metadata indexing following the post-PERF1 profile. Precompute owned-reference lookup by execution slot and inverse index-update mappings at bootstrap; preserve flush semantics and validate with unchanged workloads. Hibernate may inform the design, without a production dependency or copied implementation. | Actioned |
