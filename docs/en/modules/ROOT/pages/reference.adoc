@@ -47,7 +47,8 @@ Tested on Open Liberty 26.0.0.10 by `noether-it-openliberty`.
 * **Use `SEQUENCE` or `IDENTITY` identifiers on a JTA unit for now**, not `TABLE` (nor `AUTO` on an identifier that
   is not a `UUID` without a sequence generator, which resolves to a table generator). The table generator allocates
   on a connection of the server's JTA data source, which the server enlists in the transaction, and Open Liberty
-  refuses the allocation's own commit (BUG-20261111-04).
+  refuses the allocation's own commit (BUG-20261111-04). The same holds for a JTA unit on a CDI container, Quarkus
+  included (see "JTA units on a CDI container").
 * **Leave `noether-jpa-pool-mansart` out of the WAR**: the server's data source pools the connections.
 +
 [source,xml]
@@ -87,6 +88,8 @@ extension. It depends on no transaction manager: a JTA unit runs on what the con
   Noether's synchronization. A bean whose only qualifier is `@Named` is also `@Default` (CDI 4.1 §2.3.1): give the
   other data sources a qualifier of their own.
 * **A resource-local unit needs neither**, through `@PersistenceUnit` as through `Persistence`.
+* **Use `SEQUENCE` or `IDENTITY` identifiers on a JTA unit for now**, not `TABLE`: the table generator allocates on
+  a connection the container enlists, and the container refuses the allocation's own commit (BUG-20261111-04).
 
 Quarkus (`quarkus-narayana-jta`, `quarkus-agroal`) and Jakarta EE servers have both beans. On Vidocq the runtime
 extension brings them. A bare Vauban application, without the Vidocq extension, produces them itself. Without them,
