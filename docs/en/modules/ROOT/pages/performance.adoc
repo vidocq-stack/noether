@@ -226,3 +226,40 @@ machine than the entries above (Apple M5 Max, Temurin 25.0.3), with unchanged wo
 
 Noether is behind Hibernate 5.6 on every workload (-13% to -38%), with 1.5x to 3x its allocation
 per operation; JPQL materialization is the largest gap. Errors and allocation are in `BENCH.md`.
+
+== Hot paths (2026-11-11)
+
+A profile of those four workloads (BENCH-20261111-02) led to five changes, none of which removes a
+column, a row, a dirty or version check, a callback or a cache rule, or adds a setting:
+
+* a resource-local transaction returns its connection in the auto-commit mode it came with, so the
+  pool no longer resets it with a rollback after the commit. On H2 that rollback cost about 4.8 kB
+  per transaction and emptied the session's statement cache;
+* a flush reads the state of an entity once for the business-key validation and the dirty check,
+  and the persistence context keeps the snapshot it is handed instead of copying it;
+* the factory keeps the parse tree of a query string, its translations that no parameter value
+  shaped, and their rendered SQL (at most 1024 strings). A collection expanded by `IN`, a page, a
+  row lock and an entity graph are still translated by each execution;
+* the identity sets of a flush are sized to what it writes;
+* the rows of an entity without relationships or element collections become managed in one pass
+  instead of three.
+
+link:{repo-noether}/src/branch/main/noether-persistence/BENCH.md[BENCH-20261111-04] measures the
+result against Hibernate ORM 5.6.15 in one session (ops/s, JMH 99.9% error; allocation in B/op):
+
+[cols="2,>2,>2,>1,>1",options="header"]
+|===
+|Workload |Noether |Hibernate 5.6 |Noether B/op |Hibernate B/op
+|`findById` |822,141 +/- 21,202 |494,709 +/- 6,013 |5,534 |7,542
+|`jpqlQuery` |79,496 +/- 926 |67,585 +/- 221 |34,976 |26,506
+|`update` |406,857 +/- 7,647 |276,198 +/- 29,429 |12,424 |13,791
+|`createUpdateDelete` |272,638 +/- 12,879 |239,289 +/- 1,796 |22,000 |17,864
+|===
+
+Against BENCH-20261111-01, Noether's throughput rises 66% to 90% and its allocation falls 36% to
+56%; Hibernate's own scores move by -8% to +0.3% between the two sessions. Noether is ahead of
+Hibernate 5.6 on the four workloads in this session, and still allocates more on `jpqlQuery` and
+`createUpdateDelete`: about 29 small objects per result row, and the bookkeeping of three flushes.
+The entity of this harness has no relationship, which is the case the one-pass row load covers. One
+fork per provider, a single thread and in-memory H2: not a production latency or scalability
+claim. Hibernate 7.4 and EclipseLink were not rerun.
