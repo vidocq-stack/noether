@@ -289,24 +289,29 @@ public class NativeQuery extends AbstractQuery implements Query {
             types[i] = primitiveBox(type);
         }
         for (ResultConstructors.Candidate constructor : ResultConstructors.of(result.targetClass()).candidates()) {
-            Class<?>[] parameters = constructor.parameters();
-            if (parameters.length != types.length) {
-                continue;
-            }
-            boolean matches = true;
-            for (int i = 0; i < parameters.length; i++) {
-                if (!primitiveBox(parameters[i]).isAssignableFrom(types[i])) {
-                    matches = false;
-                    break;
-                }
-                arguments[i] = convert(arguments[i], parameters[i]);
-            }
-            if (matches) {
+            if (accepts(constructor.parameters(), types, arguments)) {
                 return constructor.newInstance(arguments);
             }
         }
         throw new PersistenceException("The SQL result-set mapping " + result.targetClass().getName()
             + " has no public constructor matching its column results");
+    }
+
+    /**
+     * Whether a constructor with these {@code parameters} takes values of {@code types}; each of the
+     * {@code arguments} is converted to the type of its parameter as soon as that parameter accepts it.
+     */
+    private static boolean accepts(Class<?>[] parameters, Class<?>[] types, Object[] arguments) {
+        if (parameters.length != types.length) {
+            return false;
+        }
+        for (int i = 0; i < parameters.length; i++) {
+            if (!primitiveBox(parameters[i]).isAssignableFrom(types[i])) {
+                return false;
+            }
+            arguments[i] = convert(arguments[i], parameters[i]);
+        }
+        return true;
     }
 
     private static Class<?> primitiveBox(Class<?> type) {
