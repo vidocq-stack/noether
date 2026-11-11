@@ -1,6 +1,16 @@
 = What's new
 :description: Noether extraction and compatibility changes.
 
+== 2026-11-11 — A JTA unit allocates TABLE identifiers through its non-JTA data source
+
+A JTA unit with a `TABLE` identifier generator (or `AUTO` resolved to one) now allocates its blocks through its
+`non-jta-data-source`, on a connection of its own that it commits itself. Before, it allocated on a connection of its
+JTA data source, and the container refused the commit: every persist failed on Open Liberty (DSRA9250E) and on
+Quarkus (BUG-20261111-04). Such a unit without a non-JTA data source is now refused when its `EntityManagerFactory`
+is created. Declare a `<non-jta-data-source>` (on Open Liberty a `dataSource` with `transactional="false"`, on Quarkus
+a datasource with `quarkus.datasource."name".jdbc.transactions=disabled`), or use `SEQUENCE` or `IDENTITY`
+identifiers. Resource-local units do not change. See xref:reference.adoc[Reference].
+
 == 2026-11-11 — A TABLE generator needs two pooled connections
 
 A unit with a `TABLE` identifier generator (or `AUTO` resolved to one) and a Noether pool whose

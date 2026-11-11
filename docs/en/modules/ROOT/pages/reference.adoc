@@ -44,11 +44,25 @@ Tested on Open Liberty 26.0.0.10 by `noether-it-openliberty`.
   `noether-jpa-processor` generated at compile time (in `annotationProcessorPaths`). The server brings the Jakarta
   APIs: exclude the Persistence API that `noether-jpa-core` declares at compile scope, keep the others `provided`.
   The JDBC driver belongs to the server's data source.
-* **Use `SEQUENCE` or `IDENTITY` identifiers on a JTA unit for now**, not `TABLE` (nor `AUTO` on an identifier that
-  is not a `UUID` without a sequence generator, which resolves to a table generator). The table generator allocates
-  on a connection of the server's JTA data source, which the server enlists in the transaction, and Open Liberty
-  refuses the allocation's own commit (BUG-20261111-04). The same holds for a JTA unit on a CDI container, Quarkus
-  included (see "JTA units on a CDI container").
+* **Give a JTA unit with `TABLE` identifiers a `<non-jta-data-source>`.** This includes `AUTO` on an identifier that
+  is not a `UUID` and names no sequence generator, which resolves to a table generator. The table generator commits
+  each block of identifiers on a connection of its own. The server enlists every connection of the JTA data source in
+  the transaction and refuses that commit, so Noether allocates through the unit's non-JTA data source instead. On
+  Open Liberty, that is a second `dataSource` on the same database with `transactional="false"` (tested). A JTA unit
+  with a table generator and no non-JTA data source is refused at deployment, with a `PersistenceException` that
+  names the unit and its table generators. `SEQUENCE` and `IDENTITY` identifiers need no second data source
+  (BUG-20261111-04).
++
+[source,xml]
+----
+<!-- server.xml -->
+<dataSource id="allocations" jndiName="jdbc/allocations" type="javax.sql.DataSource" transactional="false">
+    <jdbcDriver libraryRef="h2" javax.sql.DataSource="org.h2.jdbcx.JdbcDataSource"/>
+    <properties URL="jdbc:h2:mem:library;DB_CLOSE_DELAY=-1" user="sa" password=""/>
+</dataSource>
+<!-- persistence.xml, next to <jta-data-source>jdbc/library</jta-data-source> -->
+<non-jta-data-source>jdbc/allocations</non-jta-data-source>
+----
 * **Leave `noether-jpa-pool-mansart` out of the WAR**: the server's data source pools the connections.
 +
 [source,xml]
@@ -88,8 +102,12 @@ extension. It depends on no transaction manager: a JTA unit runs on what the con
   Noether's synchronization. A bean whose only qualifier is `@Named` is also `@Default` (CDI 4.1 §2.3.1): give the
   other data sources a qualifier of their own.
 * **A resource-local unit needs neither**, through `@PersistenceUnit` as through `Persistence`.
-* **Use `SEQUENCE` or `IDENTITY` identifiers on a JTA unit for now**, not `TABLE`: the table generator allocates on
-  a connection the container enlists, and the container refuses the allocation's own commit (BUG-20261111-04).
+* **For `TABLE` identifiers, a `javax.sql.DataSource` bean `@Named` after the unit's `non-jta-data-source`**, whose
+  connections take part in no transaction. The table generator commits each block of identifiers on a connection of
+  its own, and the container refuses that commit on a connection it enlisted, so Noether allocates through this bean.
+  Without the bean, the factory fails at creation with a `PersistenceException` that names it. A JTA unit with a table
+  generator (or `AUTO` resolved to one) and no `non-jta-data-source` is refused the same way. `SEQUENCE` and
+  `IDENTITY` identifiers need neither (BUG-20261111-04).
 
 Quarkus (`quarkus-narayana-jta`, `quarkus-agroal`) and Jakarta EE servers have both beans. On Vidocq the runtime
 extension brings them. A bare Vauban application, without the Vidocq extension, produces them itself. Without them,
@@ -114,6 +132,22 @@ Quarkus 3.40.1 by `noether-it-quarkus`.
   `quarkus.datasource.jdbc.url`, ...), not with `jakarta.persistence.jdbc.*` properties in `persistence.xml`. A unit
   without `jta-data-source` uses the default data source (tested). Quarkus gives a named data source the qualifier
   `@Named("name")`, so `<jta-data-source>name</jta-data-source>` selects it (not covered by `noether-it-quarkus`).
+* **For `TABLE` identifiers, add a named data source without transactions** and name it as the unit's
+  `non-jta-data-source`: Noether's table generator allocates through it and commits each allocation itself (tested,
+  on the same database as the default data source). Without it, a JTA unit with a table generator is refused when
+  its factory is created.
++
+[source,properties]
+----
+quarkus.datasource."allocations".db-kind=h2
+quarkus.datasource."allocations".jdbc.url=jdbc:h2:mem:library;DB_CLOSE_DELAY=-1
+quarkus.datasource."allocations".jdbc.transactions=disabled
+----
++
+[source,xml]
+----
+<non-jta-data-source>allocations</non-jta-data-source>
+----
 ====
 
 == Query entity graph hints

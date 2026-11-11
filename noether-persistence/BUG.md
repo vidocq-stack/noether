@@ -1361,7 +1361,7 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
 ## BUG-20261111-04 — TABLE allocation runs on an enlisted connection of a server's JTA data source
 
 - **Date**: 2026-11-11
-- **Status**: OPEN
+- **Status**: FIXED (branch `fix/table-non-jta`, pull request into `fix-proposals`, Vidocq/noether#45)
 - **Affected module**: `noether-jpa-core`, `generation.IdGenerators`, on a JTA unit bootstrapped by a server
   (`noether-jpa-jta`, `SynchronizationRegistryIntegration`)
 - **Symptom**: on Open Liberty 26.0.0.10, every persist of an entity with a `TABLE` generator in a JTA transaction
@@ -1423,6 +1423,20 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     an enlisted connection). The test data sources of `noether-jpa-jta`, `noether-jpa-cdi` and
     `noether-jpa-cdi-module-it` refuse them the same way since BUG-20261111-05. The options above apply unchanged;
     the `non-jta-data-source` of option (a) would be a second `DataSource` bean on a CDI container.
+  - 2026-11-11 (branch `fix/table-non-jta`): the maintainer chose option (a). A JTA unit allocates its TABLE blocks
+    (and those of `AUTO` resolved to TABLE) through its `non-jta-data-source`, on a connection of its own that it
+    commits itself, as a resource-local unit does. A server passes that data source as
+    `PersistenceUnitInfo.getNonJtaDataSource()` or the `jakarta.persistence.nonJtaDataSource` property; on a CDI
+    container `noether-jpa-cdi` looks up the `DataSource` bean `@Named` after the `non-jta-data-source` and passes it
+    as that property. A JTA unit with a TABLE generator and no non-JTA data source is refused when the factory is
+    created, with a `PersistenceException` that names the unit, its TABLE generators and the two ways out. Resource-local
+    units are unchanged, the refusal of a one-connection Noether pool (BUG-20261018-04) included. Red first, then
+    green: `noether-jpa-jta` `SynchronizationRegistryIntegrationTest` (allocation on a non-enlisted connection; a
+    rollback then 11 commits with no duplicate; the refusal), `noether-jpa-cdi-module-it` `DescriptorUnitModuleTest`
+    (the named bean on Vauban; the refusal without it), `noether-it-openliberty` `TableGeneratorIT` (red: Liberty's
+    `createContainerEntityManagerFactory` gets the refusal; green with a second `dataSource`, `transactional="false"`,
+    as the `non-jta-data-source`: no DSRA9250E, no duplicate after a rollback), and `noether-it-quarkus`
+    `TableGeneratorTest` (a datasource with `jdbc.transactions=disabled`; no duplicate, no Agroal warning).
 
 ## BUG-20261111-05 — On Quarkus, Agroal warns at every commit that Noether left a connection open
 
