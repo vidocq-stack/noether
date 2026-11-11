@@ -48,6 +48,7 @@ public final class MappedEntity {
     private final EntityStatements statements;
     private final int rank;
     private final Map<String, int[]> callbacks;
+    private final boolean relationships;
     private final Function<Class<?>, MappedEntity> entities;
     private final List<KeyPart> parts;
     private final boolean mapsId;
@@ -59,6 +60,8 @@ public final class MappedEntity {
         this.entities = entities;
         this.parts = parts(model, embeddedId, idClass);
         this.mapsId = model.attributes().stream().anyMatch(a -> a instanceof AssociationAttribute r && r.mapsId() != null);
+        this.relationships = model.attributes().stream().anyMatch(a -> a instanceof AssociationAttribute
+            || a instanceof io.vidocq.noether.jpa.core.model.ElementCollectionAttribute);
         this.idClass = idClass;
         this.state = state;
         this.access = access;
@@ -120,6 +123,14 @@ public final class MappedEntity {
                 access.callback(instance, index);
             }
         }
+    }
+
+    /**
+     * Whether an attribute is a relationship or an element collection: a row of an entity without any holds its whole
+     * state, nothing is resolved or loaded after it.
+     */
+    public boolean hasRelationships() {
+        return relationships;
     }
 
     /** Whether {@link #callback(String, Object)} of {@code kind} invokes anything: a load of many rows asks per row. */
