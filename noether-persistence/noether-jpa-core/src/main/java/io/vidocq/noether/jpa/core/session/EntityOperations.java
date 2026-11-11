@@ -466,7 +466,7 @@ final class EntityOperations {
      */
     void beforeFlush() {
         removeOrphans();
-        Set<Object> visited = visited();
+        Set<Object> visited = flushVisited();
         for (ManagedEntity entry : context.entries()) {
             if (io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(entry.instance())) continue;
             if (entry.status() != ManagedEntity.Status.MANAGED) {
@@ -520,7 +520,7 @@ final class EntityOperations {
      * owner that cascades persist is managed again.
      */
     private void removeOrphans() {
-        Set<Object> visited = visited();
+        Set<Object> visited = flushVisited();
         for (ManagedEntity entry : context.entries()) {
             if (entry.status() != ManagedEntity.Status.MANAGED || entry.snapshot() == null) {
                 continue;
@@ -610,5 +610,13 @@ final class EntityOperations {
 
     private static Set<Object> visited() {
         return Collections.newSetFromMap(new IdentityHashMap<>());
+    }
+
+    /**
+     * The visited set of a flush: every flush makes two, and only a cascade adds to them, so they start small and grow
+     * with the cascades instead of starting with the default table of 21 instances.
+     */
+    private static Set<Object> flushVisited() {
+        return Collections.newSetFromMap(new IdentityHashMap<>(4));
     }
 }

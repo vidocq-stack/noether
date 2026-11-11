@@ -170,11 +170,11 @@ public final class FlushEngine {
         orderRequiredInserts(inserts);
         deletes.sort(DELETE_ORDER);
         orderRequiredDeletes(deletes);
-        Set<Object> pending = identitySet();
-        Set<Object> removed = identitySet();
-        deletes.forEach(work -> removed.add(work.entry().instance()));
-        inserts.forEach(work -> pending.add(work.entry().instance()));
-        Map<Object, List<CollectionKeyWrite>> collectionInserts = new IdentityHashMap<>();
+        Set<Object> pending = identitySet(inserts.size());
+        Set<Object> removed = identitySet(deletes.size());
+        for (Work work : deletes) removed.add(work.entry().instance());
+        for (Work work : inserts) pending.add(work.entry().instance());
+        Map<Object, List<CollectionKeyWrite>> collectionInserts = new IdentityHashMap<>(inserts.size());
         // the key a foreign-key collection gives a member being inserted: nothing to find without an insert
         for (ManagedEntity entry : inserts.isEmpty() ? List.<ManagedEntity>of() : context.entries()) {
             if (io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(entry.instance())) continue;
@@ -253,6 +253,7 @@ public final class FlushEngine {
 
     /** Required business and MapsId foreign keys must never be deferred to SQL NULL. */
     private static void orderRequiredInserts(List<Work> inserts) {
+        if (inserts.isEmpty()) return;
         if (inserts.stream().noneMatch(w -> w.type().statements().references().stream()
                 .anyMatch(r -> requiredReference(w.type(), r)))) return;
         List<Work> remaining = new ArrayList<>(inserts);
@@ -279,6 +280,7 @@ public final class FlushEngine {
     }
 
     private static void orderRequiredDeletes(List<Work> deletes) {
+        if (deletes.isEmpty()) return;
         if (deletes.stream().noneMatch(w -> w.type().statements().references().stream()
                 .anyMatch(r -> requiredReference(w.type(), r)))) return;
         List<Work> remaining = new ArrayList<>(deletes);
@@ -910,6 +912,11 @@ public final class FlushEngine {
 
     private static Set<Object> identitySet() {
         return Collections.newSetFromMap(new IdentityHashMap<>());
+    }
+
+    /** An identity set for about {@code expected} instances: the default table holds 21, most flushes write a few. */
+    private static Set<Object> identitySet(int expected) {
+        return Collections.newSetFromMap(new IdentityHashMap<>(expected));
     }
 
     // ---- updates ------------------------------------------------------------------------------------------

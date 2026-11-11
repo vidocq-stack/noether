@@ -477,7 +477,7 @@ final class EntityManagerImpl implements EntityManager {
     private void flush(Connection connection) {
         if (context.size() > 0) {
             loadReplacedCollections();
-            Set<Object> newInstances = Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+            Set<Object> newInstances = Collections.newSetFromMap(new java.util.IdentityHashMap<>(4)); // few inserts per flush
             for (ManagedEntity entry : context.entries()) {
                 // one read of the instance serves the business-key validation and the dirty check
                 Object[] state = null;
