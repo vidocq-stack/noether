@@ -478,12 +478,13 @@ final class EntityManagerImpl implements EntityManager {
         if (context.size() > 0) {
             loadReplacedCollections();
             Set<Object> newInstances = Collections.newSetFromMap(new java.util.IdentityHashMap<>(4)); // few inserts per flush
+            Object[] reusable = null; // the state is only compared here: one array serves every instance of its size
             for (ManagedEntity entry : context.entries()) {
                 // one read of the instance serves the business-key validation and the dirty check
                 Object[] state = null;
                 boolean dirty = false;
                 if (validatesBusinessKey(entry)) {
-                    state = readState(entry);
+                    state = reusable = readState(entry, reusable);
                     dirty = entry.type().state().dirty(entry.snapshot(), state);
                     if (dirty) rejectBusinessKeyChange(entry, state);
                 }
@@ -491,8 +492,8 @@ final class EntityManagerImpl implements EntityManager {
                     newInstances.add(entry.instance());
                 }
                 if (entry.key() != null && (entry.status() == ManagedEntity.Status.REMOVED || !entry.inserted()
-                        || entry.snapshot() != null
-                            && (state != null ? dirty : entry.type().state().dirty(entry.snapshot(), readState(entry))))) {
+                        || entry.snapshot() != null && (state != null ? dirty
+                            : entry.type().state().dirty(entry.snapshot(), reusable = readState(entry, reusable))))) {
                     touch(entry.key());
                 }
             }
@@ -540,7 +541,16 @@ final class EntityManagerImpl implements EntityManager {
     }
 
     private static Object[] readState(ManagedEntity entry) {
-        Object[] state = new Object[entry.type().model().attributes().size()];
+        return readState(entry, null);
+    }
+
+    /**
+     * The state of the instance of {@code entry}, read into {@code reusable} when it has the size of that state, else
+     * into a new array. A read writes every attribute; the caller keeps nothing of the previous read.
+     */
+    private static Object[] readState(ManagedEntity entry, Object[] reusable) {
+        int size = entry.type().model().attributes().size();
+        Object[] state = reusable != null && reusable.length == size ? reusable : new Object[size];
         entry.type().access().read(entry.instance(), state);
         return state;
     }

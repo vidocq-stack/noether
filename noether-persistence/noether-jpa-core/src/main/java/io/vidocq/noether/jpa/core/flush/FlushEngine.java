@@ -128,6 +128,7 @@ public final class FlushEngine {
         List<Work> deletes = new ArrayList<>();
         List<ManagedEntity> checks = new ArrayList<>();
         List<Work> indexes = new ArrayList<>();
+        Object[] unchanged = null;
         for (ManagedEntity entry : context.entries()) {
             if (io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(entry.instance())) continue;
             MappedEntity type = entry.type();
@@ -136,7 +137,9 @@ public final class FlushEngine {
             }
             switch (entry.status()) {
                 case MANAGED -> {
-                    Object[] state = read(type, entry.instance());
+                    // most instances did not change: their state is read into one array, which the next one reuses
+                    Object[] state = read(type, entry.instance(), unchanged);
+                    unchanged = null; // the array belongs to this entry until it is known to need none
                     if (!entry.inserted()) {
                         inserts.add(new Work(entry, state));
                     } else if (type.state().dirty(entry.snapshot(), state)) {
@@ -144,7 +147,8 @@ public final class FlushEngine {
                         type.callback("PreUpdate", entry.instance());
                         type.validateMapsId(entry.instance(), entry.key().id());
                         validateUpdate.accept(entry);
-                        updates.add(new Work(entry, read(type, entry.instance())));
+                        type.access().read(entry.instance(), state);
+                        updates.add(new Work(entry, state));
                     } else if (Locks.forcesIncrement(entry.lockMode())) {
                         updates.add(new Work(entry, state)); // §3.5: a new version, without a change
                     } else {
@@ -153,6 +157,8 @@ public final class FlushEngine {
                         }
                         if (!type.statements().inverseIndexes().isEmpty()) {
                             indexes.add(new Work(entry, state)); // an inverse index changes nothing of its owner's row
+                        } else {
+                            unchanged = state; // nothing keeps it
                         }
                     }
                 }
@@ -1023,7 +1029,16 @@ public final class FlushEngine {
     }
 
     private static Object[] read(MappedEntity type, Object instance) {
-        Object[] state = new Object[type.model().attributes().size()];
+        return read(type, instance, null);
+    }
+
+    /**
+     * The state of {@code instance}, read into {@code reusable} when it has the size of that state, else into a new
+     * array: a read writes every attribute, so nothing of what the array held before remains.
+     */
+    private static Object[] read(MappedEntity type, Object instance, Object[] reusable) {
+        int size = type.model().attributes().size();
+        Object[] state = reusable != null && reusable.length == size ? reusable : new Object[size];
         type.access().read(instance, state);
         return state;
     }
