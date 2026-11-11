@@ -477,7 +477,8 @@ final class EntityManagerImpl implements EntityManager {
     private void flush(Connection connection) {
         if (context.size() > 0) {
             loadReplacedCollections();
-            Set<Object> newInstances = Collections.newSetFromMap(new java.util.IdentityHashMap<>(4)); // few inserts per flush
+            // few inserts per flush, none in most: a list once there is one; an instance has one entry, so it is in once
+            List<Object> newInstances = null;
             Object[] reusable = null; // the state is only compared here: one array serves every instance of its size
             for (ManagedEntity entry : context.entries()) {
                 // one read of the instance serves the business-key validation and the dirty check
@@ -489,6 +490,7 @@ final class EntityManagerImpl implements EntityManager {
                     if (dirty) rejectBusinessKeyChange(entry, state);
                 }
                 if (!entry.inserted()) {
+                    if (newInstances == null) newInstances = new ArrayList<>(4);
                     newInstances.add(entry.instance());
                 }
                 if (entry.key() != null && (entry.status() == ManagedEntity.Status.REMOVED || !entry.inserted()
@@ -503,9 +505,11 @@ final class EntityManagerImpl implements EntityManager {
                     validateBusinessKey(entry);
                     factory.validator().validate("pre-update", entry.instance());
                 });
-            for (Object instance : newInstances) {
-                context.entry(instance).map(ManagedEntity::key).filter(java.util.Objects::nonNull)
-                    .ifPresent(this::touch);
+            if (newInstances != null) {
+                for (Object instance : newInstances) {
+                    context.entry(instance).map(ManagedEntity::key).filter(java.util.Objects::nonNull)
+                        .ifPresent(this::touch);
+                }
             }
         }
     }
