@@ -263,3 +263,19 @@ Hibernate 5.6 on the four workloads in this session, and still allocates more on
 The entity of this harness has no relationship, which is the case the one-pass row load covers. One
 fork per provider, a single thread and in-memory H2: not a production latency or scalability
 claim. Hibernate 7.4 and EclipseLink were not rerun.
+
+=== On PostgreSQL
+
+The harness also runs against a database server: `BENCH_JDBC_URL`, `BENCH_JDBC_DRIVER`,
+`BENCH_JDBC_USER` and `BENCH_JDBC_PASSWORD` replace in-memory H2 for every provider of a run (see
+the bench `README.md`).
+link:{repo-noether}/src/branch/main/noether-persistence/BENCH.md[BENCH-20261111-05] runs Noether
+before and after these changes and Hibernate ORM 5.6.15 on PostgreSQL 17, in a container on the
+same machine, three rounds in different orders. A round trip and the commit's `fsync` cost 130 µs to
+1.1 ms per operation, against 1.2 to 13 µs on H2, and the providers come out at parity within the
+run-to-run variation: medians of Noether after these changes +3.5% on `findById`, +1.3% on
+`jpqlQuery` and +1.4% on `createUpdateDelete` against Hibernate 5.6, while Hibernate's own runs
+span 5,579 to 7,500 ops/s on `findById`. `update` is bimodal for every provider and gives no
+ranking. The one difference that holds in every run is `jpqlQuery`, about 9% faster after these
+changes than before. The gains measured on H2 are the provider's own path; they do not carry over
+to a database round trip.
