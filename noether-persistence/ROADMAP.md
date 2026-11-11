@@ -656,7 +656,7 @@ with inheritance (P6) as much as with this milestone.
       arithmetic (`ABS`, `SQRT`, `MOD`, `SIZE`, `INDEX`, `CEILING`, `FLOOR`, `EXP`, `LN`, `POWER`, `ROUND`, `SIGN`),
       date and time (`CURRENT_*`, `LOCAL DATE|TIME|DATETIME`, `EXTRACT`), `ID()`, `VERSION()` — typed as §4.8 says,
       with numeric promotion; `CASE`, `COALESCE`, `NULLIF`; constructor expressions (a public constructor of the
-      application's class, called reflectively: not an entity); subqueries (`EXISTS`, `IN`, `ALL` / `ANY`, scalar,
+      application's class, not an entity: found reflectively once per class, called through a method handle); subqueries (`EXISTS`, `IN`, `ALL` / `ANY`, scalar,
       correlated over a collection of an enclosing variable); `IS [NOT] EMPTY`, `[NOT] MEMBER OF`, `SIZE` over
       relationships and element collections; joins over element collections; enum constants and JDBC date literals,
       bound through the binders of what they meet; `ORDER BY … NULLS FIRST|LAST`; an entity named by a keyword;

@@ -117,6 +117,8 @@ Incremental builds regenerate JPA-owned canonical output and preserve helpers fo
 Opaque canonical classes are populated with method handles on public static fields; already explicitly opened
 packages may use their existing private lookup permission. Entity state is never read or written reflectively;
 `getJavaMember()` supplies the reflective metadata required by the standard API.
+Constructor results (`SELECT NEW`, `@ConstructorResult`) name application classes that are not entities: their public
+constructors are read once per class and called through method handles, never looked up per row.
 
 Criteria is a second frontend for the *same immutable JPQL AST, SQL dialect and virtual-thread execution path*.
 This includes correlated subqueries, association/entity joins, `TREAT`, map keys/list indexes, predicates, aggregates,
