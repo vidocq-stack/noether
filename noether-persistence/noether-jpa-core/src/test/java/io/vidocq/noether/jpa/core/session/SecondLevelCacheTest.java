@@ -135,6 +135,61 @@ class SecondLevelCacheTest {
         assertThat(cache.contains(CacheEntry.class, 82L)).isTrue();
     }
 
+    /** An entity manager keeps what a transaction read and wrote for the shared cache only if the cache can hold it. */
+    @Test
+    void aCacheHoldsEntitiesOnlyIfItsModeCachesOneOfTheUnit() {
+        var cacheable = ((EntityManagerFactoryImpl) emf).mapping(); // CacheEntry is @Cacheable, others are not
+        assertThat(new SecondLevelCache(cacheable, SharedCacheMode.NONE).holdsEntities()).isFalse();
+        assertThat(new SecondLevelCache(cacheable, SharedCacheMode.ALL).holdsEntities()).isTrue();
+        assertThat(new SecondLevelCache(cacheable, SharedCacheMode.ENABLE_SELECTIVE).holdsEntities()).isTrue();
+        assertThat(new SecondLevelCache(cacheable, SharedCacheMode.UNSPECIFIED).holdsEntities()).isTrue();
+        assertThat(new SecondLevelCache(cacheable, SharedCacheMode.DISABLE_SELECTIVE).holdsEntities()).isTrue();
+        var plain = io.vidocq.noether.jpa.core.mapping.MappedUnit.of(java.util.List.of(
+            io.vidocq.noether.jpa.core.model.build.fixtures.Customer.class.getName()), getClass().getClassLoader());
+        assertThat(new SecondLevelCache(plain, SharedCacheMode.NONE).holdsEntities()).isFalse();
+        assertThat(new SecondLevelCache(plain, SharedCacheMode.ENABLE_SELECTIVE).holdsEntities()).isFalse();
+        assertThat(new SecondLevelCache(plain, SharedCacheMode.UNSPECIFIED).holdsEntities()).isFalse();
+        assertThat(new SecondLevelCache(plain, SharedCacheMode.DISABLE_SELECTIVE).holdsEntities()).isTrue();
+        assertThat(new SecondLevelCache(plain, SharedCacheMode.ALL).holdsEntities()).isTrue();
+    }
+
+    /** With a cache that holds nothing, reads, writes, bulk updates and evictions behave as with one that does. */
+    @Test
+    void aUnitWhoseCacheHoldsNothingReadsAndWritesAsUsual() throws Exception {
+        emf.close();
+        String url = "jdbc:h2:mem:l2-cache-" + DATABASES.incrementAndGet() + ";DB_CLOSE_DELAY=-1";
+        try (Connection keep = DriverManager.getConnection(url, "sa", "")) {
+            emf = factory(url, SharedCacheMode.NONE, Map.of());
+            assertThat(((SecondLevelCache) ((EntityManagerFactoryImpl) emf).cache()).holdsEntities()).isFalse();
+            try (EntityManager em = emf.createEntityManager()) {
+                em.getTransaction().begin();
+                em.persist(new CacheEntry(90L, "first"));
+                em.persist(new CacheEntry(91L, "second"));
+                em.getTransaction().commit();
+            }
+            try (EntityManager em = emf.createEntityManager()) {
+                em.getTransaction().begin();
+                CacheEntry found = em.find(CacheEntry.class, 90L);
+                assertThat(em.createQuery("select e from CacheEntry e order by e.id", CacheEntry.class).getResultList())
+                    .hasSize(2).first().isSameAs(found);
+                found.name = "changed";
+                em.flush();
+                assertThat(em.createQuery("update CacheEntry e set e.name = 'bulk' where e.id = 91").executeUpdate()).isEqualTo(1);
+                em.getTransaction().commit();
+            }
+            assertThat(emf.getCache().contains(CacheEntry.class, 90L)).isFalse();
+            emf.getCache().evictAll();
+            try (EntityManager em = emf.createEntityManager()) {
+                assertThat(em.find(CacheEntry.class, 90L).name).isEqualTo("changed");
+                assertThat(em.find(CacheEntry.class, 91L).name).isEqualTo("bulk");
+                em.getTransaction().begin();
+                em.remove(em.find(CacheEntry.class, 91L));
+                em.getTransaction().rollback();
+                assertThat(em.find(CacheEntry.class, 91L)).isNotNull();
+            }
+        }
+    }
+
     @Test
     void storageUsesActualSubtypeAndItsCacheabilityForEverySharedCacheMode() {
         EntityManagerFactoryImpl implementation = (EntityManagerFactoryImpl) emf;
