@@ -1229,15 +1229,37 @@ measurements, not a general provider ranking or a production-performance guarant
   and discarded: the loop over the rows kept in `loadRows` (16,808 to 16,824), and the loop with the making of
   a new instance in it, as in `f706085` (16,800 to 16,848). Neither gives the objects back, so the shape with
   the lowest complexity stays.
+- **Final code**, `ad9fe8d`: three more conditions moved to methods of their own after the campaign
+  (`FlushEngine.validateMapsId`, `JpqlQuery.uniqueOwners`, `EntityManagerImpl.added`). Two more alternating
+  runs, same command (`BENCH_RUN_ID=20261111-sonar-<side>-4` and `-5`), jar `13beee7e52db` after:
+  ```text
+  f706085 (before), runs 4 / 5
+  createUpdateDelete 345522.805 +/- 4045.820 | 336361.124 +/- 3502.269 ops/s; 14824.018 | 14728.019 B/op
+  findById           920304.986 +/- 5599.649 | 902397.951 +/- 2724.177 ops/s;  4206.379 |  4206.379 B/op
+  jpqlQuery          128672.860 +/-  259.921 | 129547.944 +/-  122.493 ops/s; 17520.028 | 17464.028 B/op
+  update             457756.136 +/- 3486.028 | 461210.092 +/- 4389.625 ops/s; 10111.824 | 10023.823 B/op
+  ad9fe8d (after), runs 4 / 5
+  createUpdateDelete 353098.930 +/- 3648.950 | 333760.864 +/- 1052.997 ops/s; 14576.018 | 14888.019 B/op
+  findById           904105.492 +/- 2991.801 | 917025.046 +/- 4600.407 ops/s;  4158.379 |  4174.379 B/op
+  jpqlQuery          133424.036 +/-  786.776 | 134110.606 +/-  500.817 ops/s; 17592.028 | 17616.027 B/op
+  update             465758.306 +/- 2982.283 | 474519.509 +/- 4053.151 ops/s; 10007.822 | 10055.823 B/op
+  ```
+  The same picture: `jpqlQuery` +3.6% in throughput and +0.6% in allocation (mean of the two runs), the other
+  workloads inside the variation of one side. Run 5 of `createUpdateDelete` after allocates 14,888 B/op where
+  the four other runs after give 14,576: 312 B/op between two forks of the same jar, more than any delta of
+  this entry.
 - **Comparison with previous run**: against the Noether figures of BENCH-20261111-07 (`6970119`), the "before"
-  mean is -1.3% / -2.6% / -1.7% / +2.2% in throughput and -0.3% / +2.1% / -0.2% / +1.3% in allocation: the
-  commits of `fix-proposals` after `6970119` and another session of the machine.
+  mean of runs 1 to 3 is -1.3% / -2.6% / -1.7% / +2.2% in throughput and -0.3% / +2.1% / -0.2% / +1.3% in
+  allocation: the commits of `fix-proposals` after `6970119` and another session of the machine.
 - **Noise**: shared machine, other sessions building; load averages (1 min) 3.14 before the first run, 4.18
-  before "after 1", then 5.58 / 5.61 / 5.81 / 6.49 before the four alternating runs.
-- **Interpretation**: splitting the hot methods costs no throughput on the four workloads. Allocation goes
-  down on three of them and up by 0.7% on `jpqlQuery`, below the 4.7% that workload moves between two forks of
-  the same code in BENCH-20261111-07, and an effect of what the JIT removes, not of an object the code makes.
-  `./mvnw -ntp clean verify` passes on `828bf08` (1215 tests, as on `f706085`). The official TCK was not rerun.
+  before "after 1", then 5.58 / 5.61 / 5.81 / 6.49 before the alternating runs 2 and 3, and
+  6.33 / 4.34 / 3.50 / 3.02 before runs 4 and 5.
+- **Interpretation**: splitting the hot methods costs no throughput on the four workloads; `jpqlQuery` is 2.2%
+  to 3.8% faster in each of the five pairs of runs. Its allocation is 0.6% to 0.7% higher, an effect of what the JIT
+  removes and not of an object the code makes, below the 4.7% that workload moves between two forks of the same
+  code in BENCH-20261111-07. The allocation of the three other workloads stays inside what two forks of the
+  same jar give. `./mvnw -ntp clean verify` passes on `ad9fe8d` (1215 tests, as on `f706085`). The official
+  TCK was not rerun.
 - **Limitations**: as BENCH-20261111-07; Noether alone, no other provider rerun. The commit-by-commit and the
   `-XX:-EliminateAllocations` figures come from shorter runs and are not comparable with the campaign figures.
-  Raw evidence: `noether-jpa-bench/target/bench-reports/20261111-sonar-{before,after}[-2|-3]/noether/`.
+  Raw evidence: `noether-jpa-bench/target/bench-reports/20261111-sonar-{before,after}[-2|-3|-4|-5]/noether/`.
