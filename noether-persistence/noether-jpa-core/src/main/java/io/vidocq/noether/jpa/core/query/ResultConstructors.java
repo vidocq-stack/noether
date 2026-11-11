@@ -113,7 +113,8 @@ final class ResultConstructors {
                     + denied.getMessage(), denied);
             }
             try {
-                return (Object) handle.invokeExact(arguments);
+                // without a cast, a signature-polymorphic call returns Object (JLS 15.12.3): the type of the handle
+                return handle.invokeExact(arguments);
             } catch (Error e) {
                 throw e;
             } catch (Throwable e) {
