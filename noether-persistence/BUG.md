@@ -1236,6 +1236,18 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     Evidence: session artifact `java25-review/c/TablePoolRepro.java` and `c/output.txt`.
     Persist as the first transaction operation was not evaluated. No production
     fix or tracked regression has been applied.
+  - 2026-11-11 (audit F14, #45, branch `fix/f6-f12-f14`): allocating on the transaction's connection, as decided,
+    fixes the reproduction but is not safe with the factory-wide block cache of `IdGenerators`, so it was not
+    applied. A scratch change that runs the TABLE allocation on the caller's transaction connection makes the
+    reproduction above pass (H2, `Badge`, max-size 1, `PT0.5S`). A second scratch test then fails on the same
+    change: a first transaction allocates `Badge` ids 100–109 and rolls back, which removes the generator row
+    again; a second transaction takes 101–109 from the block the factory kept and commits; a third transaction
+    allocates 100–109 again and its commit fails with `EntityExistsException`, duplicate primary key 101. The ids
+    of a rolled-back allocation are not private to that transaction: the factory cache hands them to others before
+    the rollback. Options for the maintainer: a block private to its transaction (each inserting transaction then
+    holds the generator row until it ends, so concurrent inserting transactions serialize), a block private until
+    its transaction commits and shared after that (needs a completion hook for resource-local and JTA), or the
+    current separate connection with a documented or enforced minimum pool size of 2. No production change.
 
 ## BUG-20261111-01 — A JTA unit bootstrapped by a Jakarta EE server is refused
 
