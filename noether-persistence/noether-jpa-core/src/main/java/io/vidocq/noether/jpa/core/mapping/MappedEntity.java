@@ -122,6 +122,11 @@ public final class MappedEntity {
         }
     }
 
+    /** Whether {@link #callback(String, Object)} of {@code kind} invokes anything: a load of many rows asks per row. */
+    public boolean hasCallback(String kind) {
+        return callbacks.containsKey(kind);
+    }
+
     /** How its state is kept in snapshots and compared at flush. */
     public StatePolicy state() {
         return state;
@@ -135,6 +140,11 @@ public final class MappedEntity {
     /** The indexes, in {@link EntityModel#attributes()}, of the attributes that make the identifier. */
     public int[] idAttributes() {
         return idAttributes.clone();
+    }
+
+    /** The first of {@link #idAttributes()}, without the copy: the one a single-attribute identifier is read from. */
+    public int firstIdAttribute() {
+        return idAttributes[0];
     }
 
     // ---- identity (§2.4) ---------------------------------------------------------------------------------

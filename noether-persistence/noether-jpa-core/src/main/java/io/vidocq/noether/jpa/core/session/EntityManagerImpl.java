@@ -479,12 +479,20 @@ final class EntityManagerImpl implements EntityManager {
             loadReplacedCollections();
             Set<Object> newInstances = Collections.newSetFromMap(new java.util.IdentityHashMap<>());
             for (ManagedEntity entry : context.entries()) {
-                validateBusinessKey(entry);
+                // one read of the instance serves the business-key validation and the dirty check
+                Object[] state = null;
+                boolean dirty = false;
+                if (validatesBusinessKey(entry)) {
+                    state = readState(entry);
+                    dirty = entry.type().state().dirty(entry.snapshot(), state);
+                    if (dirty) rejectBusinessKeyChange(entry, state);
+                }
                 if (!entry.inserted()) {
                     newInstances.add(entry.instance());
                 }
                 if (entry.key() != null && (entry.status() == ManagedEntity.Status.REMOVED || !entry.inserted()
-                        || entry.snapshot() != null && entry.type().state().dirty(entry.snapshot(), readState(entry)))) {
+                        || entry.snapshot() != null
+                            && (state != null ? dirty : entry.type().state().dirty(entry.snapshot(), readState(entry))))) {
                     touch(entry.key());
                 }
             }
@@ -502,9 +510,16 @@ final class EntityManagerImpl implements EntityManager {
     }
 
     private void validateBusinessKey(ManagedEntity entry) {
-        if (!entry.inserted() || entry.snapshot() == null
-                || io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(entry.instance())) return;
-        Object[] state = readState(entry);
+        if (validatesBusinessKey(entry)) rejectBusinessKeyChange(entry, readState(entry));
+    }
+
+    /** Whether {@code entry} has a row and a snapshot its referenced business keys are compared with. */
+    private static boolean validatesBusinessKey(ManagedEntity entry) {
+        return entry.inserted() && entry.snapshot() != null
+            && !io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(entry.instance());
+    }
+
+    private void rejectBusinessKeyChange(ManagedEntity entry, Object[] state) {
         for (int i : entry.type().state().changes(entry.snapshot(), state)) {
             if (factory.mapping().businessKeyAttribute(entry.type(), i)) {
                 throw new jakarta.persistence.PersistenceException("Referenced business-key attribute "

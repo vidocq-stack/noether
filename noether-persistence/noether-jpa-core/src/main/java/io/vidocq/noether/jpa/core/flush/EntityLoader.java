@@ -220,8 +220,9 @@ public final class EntityLoader {
                 Object instance = type.access().instantiate();
                 Object[] state = state(type, instance, row);
                 if (type.keepsFoundIdentifier()) {
-                    state[type.idAttributes()[0]] = fetched.id();
-                    type.access().set(instance, type.idAttributes()[0], fetched.id());
+                    int index = type.firstIdAttribute();
+                    state[index] = fetched.id();
+                    type.access().set(instance, index, fetched.id());
                 }
                 pending.put(context.loaded(instance, type, fetched.id(), type.state().snapshot(state)), row);
             }
@@ -231,7 +232,8 @@ public final class EntityLoader {
             MappedEntity type = entry.type();
             Object[] state = new Object[type.model().attributes().size()];
             type.access().read(entry.instance(), state);
-            java.util.Set<Integer> fetched = new java.util.HashSet<>();
+            // only read by the relationships: rows without a fetched collection share the empty set
+            java.util.Set<Integer> fetched = collections.isEmpty() ? java.util.Set.of() : new java.util.HashSet<>();
             for (FetchedCollection collection : collections) {
                 if (collection.owner() == type && collection.elements().stream()
                         .anyMatch(e -> Objects.equals(e.ownerId(), entry.key().id()))) fetched.add(collection.attribute());
@@ -248,7 +250,10 @@ public final class EntityLoader {
             entry.type().access().read(entry.instance(), state);
             context.updated(entry, entry.type().state().snapshot(state));
         }
-        for (ManagedEntity entry : pending.keySet()) context.postLoad(() -> entry.type().callback("PostLoad", entry.instance()));
+        for (ManagedEntity entry : pending.keySet()) {
+            if (!entry.type().hasCallback("PostLoad")) continue; // nothing to defer
+            context.postLoad(() -> entry.type().callback("PostLoad", entry.instance()));
+        }
     }
 
     private void completeRows(MappedEntity owner, int attribute, List<FetchedElement> elements,
@@ -297,7 +302,7 @@ public final class EntityLoader {
         Object[] state = state(type, instance, row);
         if (type.keepsFoundIdentifier()) {
             // the identifier object the application found it with, as other providers keep it (equal to the one read)
-            int index = type.idAttributes()[0];
+            int index = type.firstIdAttribute();
             state[index] = id;
             type.access().set(instance, index, id);
         }
