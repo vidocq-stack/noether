@@ -202,12 +202,15 @@ public final class EntityLoader {
     private void loadRows(List<FetchedEntity> rows, List<FetchedCollection> collections,
             Connection connection, PersistenceContext context, ManagedEntity initializing) {
         Map<ManagedEntity, Row> pending = new LinkedHashMap<>();
+        // whether a row still has relationships to resolve, a reference to complete or a collection to receive
+        boolean relational = !collections.isEmpty();
         for (FetchedEntity fetched : rows) {
             MappedEntity type = fetched.type();
             var known = context.find(new EntityKey(type.root(), fetched.id()));
             if (known.isPresent() && !LazyReference.unloaded(known.get().instance())) continue;
             Row row = new Row(fetched.values(), fetched.nulls());
             if (known.isPresent()) {
+                relational = true;
                 ManagedEntity entry = known.get();
                 if (entry == initializing) {
                     state(type, entry.instance(), row);
@@ -224,8 +227,18 @@ public final class EntityLoader {
                     state[index] = fetched.id();
                     type.access().set(instance, index, fetched.id());
                 }
+                if (type.hasRelationships()) {
+                    relational = true;
+                } else {
+                    // nothing more will be written into it: its snapshot is, now, the state the instance gives back
+                    type.access().read(instance, state);
+                }
                 pending.put(context.loaded(instance, type, fetched.id(), type.state().snapshot(state)), row);
             }
+        }
+        if (!relational) { // only new instances of entities without relationships: each is complete with its row
+            postLoad(pending, context);
+            return;
         }
         for (var item : pending.entrySet()) {
             ManagedEntity entry = item.getKey();
@@ -250,6 +263,11 @@ public final class EntityLoader {
             entry.type().access().read(entry.instance(), state);
             context.updated(entry, entry.type().state().snapshot(state));
         }
+        postLoad(pending, context);
+    }
+
+    /** §3.6.3: the PostLoad callbacks of the rows just loaded, in their order. */
+    private static void postLoad(Map<ManagedEntity, Row> pending, PersistenceContext context) {
         for (ManagedEntity entry : pending.keySet()) {
             if (!entry.type().hasCallback("PostLoad")) continue; // nothing to defer
             context.postLoad(() -> entry.type().callback("PostLoad", entry.instance()));

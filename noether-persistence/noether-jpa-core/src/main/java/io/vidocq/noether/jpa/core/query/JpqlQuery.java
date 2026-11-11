@@ -622,18 +622,27 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
             }
             try (ResultSet results = statement.executeQuery()) {
                 List<Compiled.Item> items = compiled.items();
+                int[] column = new int[1]; // the cursor over the columns of a row, one for all the rows
+                boolean single = items.size() == 1;
                 while (results.next()) {
-                    int[] column = {1};
-                    Object[] row = new Object[items.size()];
-                    for (int i = 0; i < row.length; i++) {
-                        row[i] = read(items.get(i), results, column);
+                    column[0] = 1;
+                    Object first;
+                    if (single) { // the item is the row: no array around it
+                        first = read(items.getFirst(), results, column);
+                        rows.add(first);
+                    } else {
+                        Object[] row = new Object[items.size()];
+                        for (int i = 0; i < row.length; i++) {
+                            row[i] = read(items.get(i), results, column);
+                        }
+                        first = row[0];
+                        rows.add(row);
                     }
-                    rows.add(row.length == 1 ? row[0] : row);
                     if (!compiled.hydrations().isEmpty()) {
                         fetchedRows.add(fetched(compiled.hydrations(), results, column));
                     }
                     if (compiled.collection() != null) {
-                        collectionRows.add(fetchedElement(compiled.collection(), ((EntityKey) row[0]).id(),
+                        collectionRows.add(fetchedElement(compiled.collection(), ((EntityKey) first).id(),
                             fetchedRows.getLast(), results, column));
                     }
                 }
