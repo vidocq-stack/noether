@@ -1263,3 +1263,77 @@ measurements, not a general provider ranking or a production-performance guarant
 - **Limitations**: as BENCH-20261111-07; Noether alone, no other provider rerun. The commit-by-commit and the
   `-XX:-EliminateAllocations` figures come from shorter runs and are not comparable with the campaign figures.
   Raw evidence: `noether-jpa-bench/target/bench-reports/20261111-sonar-{before,after}[-2|-3|-4|-5]/noether/`.
+
+## BENCH-20261111-10 — The pool moves to noether-jpa-pool-mansart, before and after (Vidocq/noether#45)
+
+- **Date**: 2026-11-11
+- **Commits**: before `628d5e1` (`fix-proposals`: `noether-jpa-core` requires `mansart-pool-core` and pools a
+  `jakarta.persistence.jdbc.*` unit itself); after `feat/optional-pool` (audit finding F7: the core finds a
+  `ConnectionPoolFactory` through `ServiceLoader`, `noether-jpa-pool-mansart` provides one with the same
+  `MansartDataSource`, and the `noether` profile of the harness adds that module). Each side installed in its own
+  scratch local repository (`-Dmaven.repo.local=<scratch> -Dmaven.repo.local.tail=~/.m2/repository`); the SHA-256
+  of the `noether-jpa-core` jar starts with `924b68ae7a10` before and `df8964011a10` after, the one of
+  `noether-jpa-pool-mansart` with `bdb6a312ddee`. `~/.m2` was not written.
+- **The bench still pools**: `test-classpath.txt` of the "after" run names `noether-jpa-pool-mansart` and
+  `mansart-pool-core`; `jmh.log` of both runs holds no "has no connection pool" line (the line the core logs when
+  it finds no factory) and no "not visible to DriverManager" line. `run-bench.sh noether` now stops when the
+  module is missing from the class path.
+- **JVM**: Temurin 25.0.3+9 (2026-04-21 LTS), 64-Bit Server VM, default flags.
+- **Hardware**: Apple M5 Max / 18 cores / 128 GB RAM.
+- **OS**: macOS 27.2, arm64.
+- **Providers / configuration**: Noether 0.4.0-SNAPSHOT alone, H2 2.3.232 in memory, unchanged harness and
+  preflight checks.
+- **Exact command**, from `noether-persistence/noether-jpa-bench` of each side, once per side (before first):
+  ```sh
+  export MAVEN_ARGS="-Dmaven.repo.local=<scratch> -Dmaven.repo.local.tail=$HOME/.m2/repository"
+  BENCH_RUN_ID=20261111-optional-pool-<side> ./run-bench.sh noether
+  ```
+  JMH settings unchanged: `-wi 3 -i 5 -w 2s -r 2s -f 1 -t 1 -foe true -prof gc -rf json`.
+- **Results**, ops/s +/- JMH 99.9% error; normalized allocation:
+  ```text
+  628d5e1 (before)
+  createUpdateDelete 340962.587 +/- 10609.770 ops/s; 14576.018 B/op
+  findById           905442.504 +/- 34534.279 ops/s;  4174.379 B/op
+  jpqlQuery          131043.017 +/-  5660.110 ops/s; 17592.028 B/op
+  update             461264.254 +/- 30013.706 ops/s; 10055.824 B/op
+  feat/optional-pool (after)
+  createUpdateDelete 344212.985 +/-  7408.343 ops/s; 14576.018 B/op
+  findById           900478.761 +/-  8465.320 ops/s;  4238.379 B/op
+  jpqlQuery          133113.342 +/-  1698.395 ops/s; 17592.028 B/op
+  update             452803.536 +/-  3437.922 ops/s;  9999.824 B/op
+  ```
+- **Delta**, after against before, order `createUpdateDelete / findById / jpqlQuery / update`: throughput
+  **+1.0% / -0.5% / +1.6% / -1.8%**, allocation **0 / +64 B/op (+1.5%) / 0 / -56 B/op (-0.6%)**.
+- **Checks on `findById` and `update`**, shorter runs from the same two builds
+  (`java -cp <test-classes>:<classes>:<test-classpath> org.openjdk.jmh.Main
+  'JpaProviderBenchmark.(findById|update)$' -wi 2 -i 3 -w 1s -r 1s -t 1 -foe true -prof gc`):
+  ```text
+  -f 3, before then after
+  findById 931266.302 +/- 25621.078 | 904367.379 +/- 45940.915 ops/s; B/op per fork 4206/4158/4222 | 4174/4142/4158
+  update   481706.014 +/- 10015.741 | 450949.746 +/-  9904.932 ops/s; B/op per fork 9974/10054/9974 | 10022/10030/9974
+  -f 3, after, before, after
+  findById 924302.730 +/- 15440.125 | 917727.134 +/- 15410.241 | 925599.786 +/- 6629.736 ops/s
+  update   473450.343 +/- 11337.056 | 474806.717 +/-  9988.233 | 472335.330 +/- 12420.770 ops/s
+  -f 2 -jvmArgsAppend -XX:-EliminateAllocations, before then after
+  findById 5686.759 | 5686.759 B/op; update 13004.971 | 13004.698 B/op
+  ```
+  With the scalar replacement of the JIT off, both sides allocate the same bytes per operation: the `+64` and
+  `-56` B/op of the campaign are what the JIT removes in one fork, and two forks of the same jar differ by up to
+  144 B/op on `findById` (4,158 to 4,302 in the second check). The 6.4% lower `update` of the first check comes from
+  the order of the runs: with the sides alternated, the three runs lie within 0.5% of each other.
+- **Comparison with previous run**: against the "after" side of BENCH-20261111-09 (`828bf08`, runs 1 to 3), the
+  "before" run here is -1.9% / -0.2% / -1.1% / -1.7% in throughput and 0 / +0.3% / +0.1% / +0.7% in allocation:
+  the same hot paths a few commits later, another load on the machine.
+- **Noise**: shared machine, another session building; load averages (1 min) 2.56 before the "before" run, 4.82
+  before the "after" run, 2.19 to 3.88 during the checks.
+- **Interpretation**: moving the pool behind a `ServiceLoader` provider costs nothing measurable. The pooled
+  path adds one interface call per connection acquisition (`ConnectionPool.getConnection`, then
+  `MansartDataSource.getConnection`) and no allocation. `./mvnw -ntp clean verify` passes on the branch. The
+  official TCK was not rerun.
+- **Limitations**: one fork per side for the campaign; the checks are shorter runs and are not comparable with
+  the campaign figures. H2 in memory only, PostgreSQL not rerun. Noether alone, no other provider rerun.
+  Raw evidence: before
+  `<scratch>/optional-pool-before-src/noether-persistence/noether-jpa-bench/target/bench-reports/20261111-optional-pool-before/noether/`
+  (a `git archive` copy of `628d5e1`), after
+  `noether-jpa-bench/target/bench-reports/20261111-optional-pool-after/noether/`; the checks in
+  `<scratch>/logs/optional-pool-alloc-probe{,2}.log`.

@@ -445,10 +445,11 @@ cache publication and unloaded-reference exclusions remain; detach/clear/close s
 disconnect pending state. SQL-count regressions are correctness tests, not benchmarks.
 
 Java module descriptors expose minimal public contracts and qualified
-processor access. Dialects, generated entity accesses, CDI extensions and
-Persistence/Validation providers are registered through the appropriate
-`provides`/`uses` contracts; service resource files retain classpath discovery
-for the standalone official TCK harness.
+processor access. Dialects, generated entity accesses, CDI extensions, the
+optional connection pool (`ConnectionPoolFactory`, provided by
+`noether-jpa-pool-mansart`) and Persistence/Validation providers are registered
+through the appropriate `provides`/`uses` contracts; service resource files
+retain classpath discovery for the standalone official TCK harness.
 
 JDBC work runs on the thread that calls Noether: Noether starts no thread for
 it. A caller on a virtual thread stays on it, and a context that a container

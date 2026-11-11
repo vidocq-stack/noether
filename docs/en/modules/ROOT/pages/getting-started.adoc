@@ -12,7 +12,9 @@ sdk env
 ----
 
 Applications use `io.vidocq.noether:noether-jpa-core`, a dialect adapter such
-as `noether-jpa-dialect-h2` and optionally `noether-jpa-cdi`.
+as `noether-jpa-dialect-h2` and optionally `noether-jpa-cdi`. In Java SE, a unit
+configured by `jakarta.persistence.jdbc.*` gets a connection pool from
+`noether-jpa-pool-mansart`; without it, each transaction opens its own connection.
 For generated entity access, configure `noether-jpa-processor` as the annotation
 processor. See xref:modules/noether-persistence.adoc[Persistence] for the
 Java module contracts and xref:usage.adoc[bootstrap].

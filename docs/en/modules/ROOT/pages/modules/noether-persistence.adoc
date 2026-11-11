@@ -191,7 +191,7 @@ Purely scalar pessimistic queries over these union ranges are explicitly refused
 
 An application adds the dialect of its database at run time: `io.vidocq.noether:noether-jpa-dialect-postgresql` or `noether-jpa-dialect-h2`. The dialect is detected from the JDBC metadata; the property `io.vidocq.noether.jpa.dialect` names it explicitly.
 
-In Java SE, a persistence unit configured by the `jakarta.persistence.jdbc.*` properties gets its connections from a `mansart-pool` pool, closed with the `EntityManagerFactory`. It is sized by `io.vidocq.noether.jpa.pool.max-size` (default 10), `io.vidocq.noether.jpa.pool.min-idle` (default 0) and `io.vidocq.noether.jpa.pool.acquire-timeout` (ISO-8601, default `PT5S`), and turned off by `io.vidocq.noether.jpa.pool=false`. A `javax.sql.DataSource` passed as `jakarta.persistence.nonJtaDataSource` or `jakarta.persistence.dataSource` is used as is — that is what the Vidocq runtime does with its own pool.
+In Java SE, a persistence unit configured by the `jakarta.persistence.jdbc.*` properties gets its connections from a pool when the application adds `io.vidocq.noether:noether-jpa-pool-mansart` (a `mansart-pool` pool, closed with the `EntityManagerFactory`). `noether-jpa-core` finds it through `ServiceLoader` (the `io.vidocq.noether.jpa.core.spi.ConnectionPoolFactory` service): on the module path the jar is enough, the application module does not `requires` it. The pool is sized by `io.vidocq.noether.jpa.pool.max-size` (default 10), `io.vidocq.noether.jpa.pool.min-idle` (default 0) and `io.vidocq.noether.jpa.pool.acquire-timeout` (ISO-8601, default `PT5S`), and turned off by `io.vidocq.noether.jpa.pool=false`. Without the module, each transaction opens its own connection through `DriverManager` (or the driver named by `jakarta.persistence.jdbc.driver`), and the factory logs one line at `INFO` that says so. A `javax.sql.DataSource` passed as `jakarta.persistence.nonJtaDataSource` or `jakarta.persistence.dataSource` is used as is — that is what the Vidocq runtime does with its own pool, and what an application server does with its data sources; neither needs `noether-jpa-pool-mansart`.
 
 == Configuring an application
 
@@ -245,8 +245,9 @@ An access generated at build time is used only if it still matches the entity cl
 [#target-modules]
 == Implemented modules and remaining boundaries
 
-Production artifacts are `noether-jpa-core`, `noether-jpa-dialect-spi`, `noether-jpa-dialect-h2`,
-`noether-jpa-dialect-postgresql`, `noether-jpa-processor` and `noether-jpa-cdi`.
+Production artifacts are `noether-jpa-core`, `noether-jpa-pool-mansart` (optional connection pool),
+`noether-jpa-dialect-spi`, `noether-jpa-dialect-h2`, `noether-jpa-dialect-postgresql`, `noether-jpa-processor`,
+`noether-jpa-jta` and `noether-jpa-cdi`.
 `noether-jpa` is their POM aggregator, not a runtime dependency.
 The official TCK runner and comparative benchmark harness remain outside the production reactor.
 

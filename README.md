@@ -11,14 +11,18 @@ work transformed abstract algebra and connected symmetries with conservation law
 | Directory | Maven coordinates | Role |
 | --- | --- | --- |
 | `.` | `io.vidocq.noether:noether-root` | Independent reactor, parent `io.vidocq:vidocq-parent:0.4.0-SNAPSHOT` |
-| `noether-persistence` | `io.vidocq.noether:noether-jpa` | Persistence provider, dialects, APT, CDI/JTA integration and Java module integration tests |
+| `noether-persistence` | `io.vidocq.noether:noether-jpa` | Persistence provider, dialects, APT, CDI/JTA integration, the optional connection pool (`noether-jpa-pool-mansart`) and Java module integration tests |
 | `noether-validation` | `io.vidocq.noether:noether-validation` | Local Validation stopgap, not a complete implementation and **not published** |
 | `noether-it-other-containers` | `io.vidocq.noether:noether-it-other-containers` | Noether, unchanged, on other containers (`noether-it-openliberty`, `noether-it-quarkus`); test vehicles, **not published** |
 
 All implementation packages and Java modules use `io.vidocq.noether`.
 The provider is `io.vidocq.noether.jpa.core.NoetherPersistenceProvider`.
 Pool and transaction integration retain their external `io.vidocq.mansart`
-dependencies. Jakarta Data remains in Mansart; no Data/JPA bridge is introduced.
+dependencies. `noether-jpa-core` itself does not depend on Mansart: the pool of
+a unit configured by `jakarta.persistence.jdbc.*` comes from the optional
+`noether-jpa-pool-mansart`, found through `ServiceLoader`; without it, each
+transaction opens its own connection. Jakarta Data remains in Mansart; no
+Data/JPA bridge is introduced.
 
 ## Build
 
