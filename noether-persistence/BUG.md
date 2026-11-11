@@ -1191,7 +1191,7 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
 ## BUG-20261018-03 — Persistence-context property maps can share a binding key
 
 - **Date**: 2026-10-18
-- **Status**: OPEN
+- **Status**: FIXED (fix/binding-key, #45)
 - **Affected module**: `noether-jpa-cdi`, `NoetherPersistenceExtension.binding`
 - **Symptom**: distinct persistence-context configurations receive the same
   qualifier; only the first configuration survives registration.
@@ -1206,6 +1206,10 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     and one retained configuration reproduce the defect. Evidence:
     session artifact `java25-review/a/BindingCollisionRepro.java` and `a/output.txt`.
     No production fix or tracked regression has been applied.
+  - 2026-11-11: fixed during the audit (#45). `PersistenceBindingKeyTest` reproduces both
+    collisions (`Map.toString()` of `{x="a, y=b"}` and `{x="a", y="b"}`, separators inside a unit
+    name or a value), red on the extracted original key, green once every part of the key is
+    written as its length, a colon and itself.
 
 ## BUG-20261018-04 — TABLE generation cannot allocate with an occupied one-slot pool
 

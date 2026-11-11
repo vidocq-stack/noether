@@ -66,8 +66,25 @@ public final class NoetherPersistenceExtension implements BuildCompatibleExtensi
         return binding;
     }
 
+    /**
+     * One key per configuration, never shared by two (BUG-20261018-03): every part is written as its length, a colon and
+     * itself, so no character inside a unit name, a property name or a value can be read as a separator. Properties are
+     * sorted, so the same configuration always gives the same key.
+     */
     static String contextBinding(String unit, String type, String synchronization, Map<String, String> properties) {
-        return "context:" + unit + ":" + type + ":" + synchronization + ":" + new TreeMap<>(properties);
+        StringBuilder key = new StringBuilder("context:");
+        part(key, unit);
+        part(key, type);
+        part(key, synchronization);
+        new TreeMap<>(properties).forEach((name, value) -> {
+            part(key, name);
+            part(key, value);
+        });
+        return key.toString();
+    }
+
+    private static void part(StringBuilder key, String value) {
+        key.append(value.length()).append(':').append(value);
     }
 
     /**
