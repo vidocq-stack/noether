@@ -41,6 +41,9 @@ public final class ManagedEntity {
     private boolean inserted;
     private Object[] snapshot;
     private LockModeType lockMode = LockModeType.NONE;
+    /** Its neighbours in the order of its persistence context, which alone reads and writes them. */
+    ManagedEntity previous;
+    ManagedEntity next;
 
     ManagedEntity(Object instance, MappedEntity type, long sequence, EntityKey key, Status status, boolean inserted,
             Object[] snapshot) {

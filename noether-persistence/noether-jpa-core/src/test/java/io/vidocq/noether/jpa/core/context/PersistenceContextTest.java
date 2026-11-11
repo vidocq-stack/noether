@@ -177,6 +177,47 @@ class PersistenceContextTest {
     }
 
     @Test
+    void entriesAreTheContextAsItWasWhenTheyWereAsked() { // a flush walks them while it changes the context
+        Object first = customer(20);
+        Object second = customer(21);
+        Object third = customer(22);
+        context.persist(first, type(Customer.class));
+        context.persist(second, type(Customer.class));
+        List<ManagedEntity> before = context.entries();
+        assertThat(context.entries()).containsExactlyElementsOf(before);
+        context.persist(third, type(Customer.class));
+        context.detach(first);
+        assertThat(before).extracting(ManagedEntity::instance).containsExactly(first, second);
+        assertThat(context.entries()).extracting(ManagedEntity::instance).containsExactly(second, third);
+        List<ManagedEntity> filled = context.entries();
+        context.clear();
+        assertThat(filled).extracting(ManagedEntity::instance).containsExactly(second, third);
+        assertThat(context.entries()).isEmpty();
+        assertThat(context.size()).isZero();
+    }
+
+    @Test
+    void theOrderSurvivesTheRemovalOfTheFirstTheLastAndTheOnlyInstance() {
+        Object first = customer(30);
+        Object second = customer(31);
+        Object third = customer(32);
+        context.persist(first, type(Customer.class));
+        context.detach(first);
+        assertThat(context.entries()).isEmpty();
+        context.persist(first, type(Customer.class));
+        context.persist(second, type(Customer.class));
+        context.persist(third, type(Customer.class));
+        context.detach(third);
+        assertThat(context.entries()).extracting(ManagedEntity::instance).containsExactly(first, second);
+        context.detach(first);
+        assertThat(context.entries()).extracting(ManagedEntity::instance).containsExactly(second);
+        context.persist(third, type(Customer.class));
+        context.persist(first, type(Customer.class));
+        assertThat(context.entries()).extracting(ManagedEntity::instance).containsExactly(second, third, first);
+        assertThat(context.size()).isEqualTo(3);
+    }
+
+    @Test
     void instancesAreComparedByIdentityNotByEquals() { // Twin.equals compares identifiers
         MappedUnit unit = MappedUnit.of(List.of(Twin.class.getName()), PersistenceContextTest.class.getClassLoader());
         Twin twin = new Twin(13);
