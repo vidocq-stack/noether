@@ -37,7 +37,7 @@ public final class JndiTransactionIntegrationProvider implements TransactionInte
     public Optional<TransactionIntegration> integration() {
         try {
             return Optional.of(new SynchronizationRegistryIntegration(InitialContext.<TransactionSynchronizationRegistry>doLookup(NAME)));
-        } catch (NamingException | ClassCastException absent) {
+        } catch (NamingException | ClassCastException _) {
             return Optional.empty();
         }
     }
