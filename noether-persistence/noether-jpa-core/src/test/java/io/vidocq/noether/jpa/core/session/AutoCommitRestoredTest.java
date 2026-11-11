@@ -25,6 +25,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.vidocq.noether.jpa.core.model.build.fixtures.Customer;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
+import jakarta.persistence.EntityTransaction;
 import jakarta.persistence.PersistenceConfiguration;
 import jakarta.persistence.RollbackException;
 import java.lang.reflect.InvocationTargetException;
@@ -78,8 +79,9 @@ class AutoCommitRestoredTest {
         EntityManager em = factory(true).createEntityManager();
         em.getTransaction().begin();
         em.getTransaction().setRollbackOnly();
+        EntityTransaction transaction = em.getTransaction();
 
-        assertThatThrownBy(() -> em.getTransaction().commit()).isInstanceOf(RollbackException.class);
+        assertThatThrownBy(transaction::commit).isInstanceOf(RollbackException.class);
         assertThat(events).containsExactly("setAutoCommit(false)", "rollback", "setAutoCommit(true)", "close");
     }
 
@@ -104,7 +106,9 @@ class AutoCommitRestoredTest {
                         switch (method.getName()) {
                             case "setAutoCommit" -> events.add("setAutoCommit(" + args[0] + ")");
                             case "commit", "rollback", "close" -> events.add(method.getName());
-                            default -> { }
+                            default -> {
+                                // not a call that completes the transaction or returns the connection
+                            }
                         }
                         try {
                             return method.invoke(connection, args);
