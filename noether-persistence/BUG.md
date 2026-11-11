@@ -1414,6 +1414,15 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     one) on a JTA unit bootstrapped by a server, pointing to `SEQUENCE` or `IDENTITY`; (d) allocate on the
     transaction's connection without committing: this brings back the duplicate after a rollback of BUG-20261018-04
     unless each block stays private to its transaction.
+  - 2026-11-11 (branch `feat/container-jta`, decision D45): item 3 above no longer holds. A JTA unit on a CDI container
+    now takes its connections from the container's `DataSource` bean, which enlists them, so the allocation fails there
+    too. Scratch experiment on `noether-it-quarkus` (an entity with a `TABLE` generator, persist then flush in
+    `@Transactional`, 3 times; not committed, session artifacts `cj-quarkus-table-experiment.diff` and
+    `cj-quarkus-table-experiment.log`): every persist fails with `PersistenceException: Unable to generate an
+    identifier: Attempting to rollback while enlisted in a transaction` (Agroal refuses `commit()` and `rollback()` on
+    an enlisted connection). The test data sources of `noether-jpa-jta`, `noether-jpa-cdi` and
+    `noether-jpa-cdi-module-it` refuse them the same way since BUG-20261111-05. The options above apply unchanged;
+    the `non-jta-data-source` of option (a) would be a second `DataSource` bean on a CDI container.
 
 ## BUG-20261111-05 — On Quarkus, Agroal warns at every commit that Noether left a connection open
 
