@@ -16,6 +16,8 @@
         <jmh.version>1.37</jmh.version>
         <jakarta.persistence.version>3.2.0</jakarta.persistence.version>
         <h2.version>2.3.232</h2.version>
+        <!-- the driver the official TCK runner uses (noether-jpa-tck) -->
+        <postgresql.version>42.7.4</postgresql.version>
         <hibernate.version>7.4.12.Final</hibernate.version>
         <eclipselink.version>5.0.2</eclipselink.version>
         <!--
@@ -50,6 +52,12 @@
             <scope>test</scope>
         </dependency>
         <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>${postgresql.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>org.openjdk.jmh</groupId>
             <artifactId>jmh-core</artifactId>
             <version>${jmh.version}</version>
@@ -69,6 +77,12 @@
                 <dependency>
                     <groupId>io.vidocq.noether</groupId>
                     <artifactId>noether-jpa-dialect-h2</artifactId>
+                    <version>${noether.version}</version>
+                    <scope>test</scope>
+                </dependency>
+                <dependency>
+                    <groupId>io.vidocq.noether</groupId>
+                    <artifactId>noether-jpa-dialect-postgresql</artifactId>
                     <version>${noether.version}</version>
                     <scope>test</scope>
                 </dependency>

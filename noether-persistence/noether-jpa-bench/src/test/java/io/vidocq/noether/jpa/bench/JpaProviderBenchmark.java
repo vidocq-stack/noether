@@ -55,7 +55,14 @@ public class JpaProviderBenchmark {
      * predate 3.2 (Hibernate ORM 5.6 implements Persistence 3.0).
      */
     private static final String BOOTSTRAP = System.getProperty("bench.bootstrap", "configuration");
-    private static final String JDBC_URL = "jdbc:h2:mem:jpa_bench;DB_CLOSE_DELAY=-1";
+    /**
+     * The database, in-memory H2 by default. {@code -Dbench.jdbc.url}, {@code .driver}, {@code .user} and
+     * {@code .password} point every provider at another one, e.g. a PostgreSQL server (see {@code run-bench.sh}).
+     */
+    private static final String JDBC_URL = System.getProperty("bench.jdbc.url", "jdbc:h2:mem:jpa_bench;DB_CLOSE_DELAY=-1");
+    private static final String JDBC_DRIVER = System.getProperty("bench.jdbc.driver", "org.h2.Driver");
+    private static final String JDBC_USER = System.getProperty("bench.jdbc.user", "sa");
+    private static final String JDBC_PASSWORD = System.getProperty("bench.jdbc.password", "");
 
     @State(Scope.Benchmark)
     public static class Database {
@@ -67,10 +74,10 @@ public class JpaProviderBenchmark {
                 throw new IllegalStateException("Set -Dbench.provider to one explicit PersistenceProvider class");
             }
             Map<String, Object> properties = new HashMap<>();
-            properties.put("jakarta.persistence.jdbc.driver", "org.h2.Driver");
+            properties.put("jakarta.persistence.jdbc.driver", JDBC_DRIVER);
             properties.put("jakarta.persistence.jdbc.url", JDBC_URL);
-            properties.put("jakarta.persistence.jdbc.user", "sa");
-            properties.put("jakarta.persistence.jdbc.password", "");
+            properties.put("jakarta.persistence.jdbc.user", JDBC_USER);
+            properties.put("jakarta.persistence.jdbc.password", JDBC_PASSWORD);
             properties.put("jakarta.persistence.schema-generation.database.action", "none");
             properties.put("jakarta.persistence.sharedCache.mode", "NONE");
             properties.put("jakarta.persistence.validation.mode", "NONE");
@@ -92,7 +99,7 @@ public class JpaProviderBenchmark {
                 .managedClass(BenchRecord.class);
             properties.forEach(configuration::property);
 
-            try (var connection = java.sql.DriverManager.getConnection(JDBC_URL, "sa", "");
+            try (var connection = java.sql.DriverManager.getConnection(JDBC_URL, JDBC_USER, JDBC_PASSWORD);
                     var statement = connection.createStatement()) {
                 statement.execute("DROP TABLE IF EXISTS bench_record");
                 statement.execute("CREATE TABLE bench_record (id BIGINT PRIMARY KEY, category INTEGER NOT NULL, "
@@ -103,10 +110,10 @@ public class JpaProviderBenchmark {
                 case "configuration" -> provider.createEntityManagerFactory(configuration);
                 case "unit-info" -> {
                     // A 3.0 provider reads its own connection keys; same database and settings as above.
-                    properties.put("hibernate.connection.driver_class", "org.h2.Driver");
+                    properties.put("hibernate.connection.driver_class", JDBC_DRIVER);
                     properties.put("hibernate.connection.url", JDBC_URL);
-                    properties.put("hibernate.connection.username", "sa");
-                    properties.put("hibernate.connection.password", "");
+                    properties.put("hibernate.connection.username", JDBC_USER);
+                    properties.put("hibernate.connection.password", JDBC_PASSWORD);
                     yield provider.createContainerEntityManagerFactory(
                         new BenchUnitInfo("jpa-benchmark", PROVIDER, BenchRecord.class, properties), properties);
                 }
@@ -216,7 +223,7 @@ public class JpaProviderBenchmark {
             }
             em.getTransaction().commit();
         }
-        try (var connection = java.sql.DriverManager.getConnection(JDBC_URL, "sa", "");
+        try (var connection = java.sql.DriverManager.getConnection(JDBC_URL, JDBC_USER, JDBC_PASSWORD);
                 var statement = connection.createStatement();
                 var result = statement.executeQuery("SELECT COUNT(*) FROM bench_record")) {
             result.next();
@@ -293,7 +300,7 @@ public class JpaProviderBenchmark {
     }
 
     private static RowState readRow(long id) throws Exception {
-        try (var connection = java.sql.DriverManager.getConnection(JDBC_URL, "sa", "");
+        try (var connection = java.sql.DriverManager.getConnection(JDBC_URL, JDBC_USER, JDBC_PASSWORD);
                 var statement = connection.prepareStatement("SELECT label, revision FROM bench_record WHERE id = ?")) {
             statement.setLong(1, id);
             try (var result = statement.executeQuery()) {

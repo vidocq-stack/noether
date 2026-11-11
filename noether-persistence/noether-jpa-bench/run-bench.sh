@@ -74,9 +74,17 @@ if [ "$provider" = noether ]; then
 fi
 classpath="$build_dir/test-classes:$build_dir/classes:$(cat "$build_dir/test-classpath.txt")"
 log="$report_dir/jmh.log"
+# The database: in-memory H2 unless BENCH_JDBC_URL (with BENCH_JDBC_DRIVER, BENCH_JDBC_USER, BENCH_JDBC_PASSWORD)
+# names another one, e.g. a disposable PostgreSQL server. Every provider of a run must get the same one.
+set --
+if [ -n "${BENCH_JDBC_URL:-}" ]; then set -- "$@" "-Dbench.jdbc.url=$BENCH_JDBC_URL"; fi
+if [ -n "${BENCH_JDBC_DRIVER:-}" ]; then set -- "$@" "-Dbench.jdbc.driver=$BENCH_JDBC_DRIVER"; fi
+if [ -n "${BENCH_JDBC_USER:-}" ]; then set -- "$@" "-Dbench.jdbc.user=$BENCH_JDBC_USER"; fi
+if [ -n "${BENCH_JDBC_PASSWORD:-}" ]; then set -- "$@" "-Dbench.jdbc.password=$BENCH_JDBC_PASSWORD"; fi
+echo "${BENCH_JDBC_URL:-jdbc:h2:mem:jpa_bench (default)}" >"$report_dir/database.txt"
 results="$report_dir/jmh.json"
 # -foe true: a failing setup/preflight or benchmark makes JMH exit non-zero instead of skipping it.
-if "$java_bin" -Dbench.provider="$provider_class" -Dbench.bootstrap="$bootstrap" -cp "$classpath" org.openjdk.jmh.Main \
+if "$java_bin" "$@" -Dbench.provider="$provider_class" -Dbench.bootstrap="$bootstrap" -cp "$classpath" org.openjdk.jmh.Main \
     'io.vidocq.noether.jpa.bench.JpaProviderBenchmark.*' -wi 3 -i 5 -w 2s -r 2s -f 1 -t 1 \
     -foe true -prof gc -rf json -rff "$results" >"$log" 2>&1; then
     grep -E '^Benchmark[[:space:]]+Mode|^JpaProviderBenchmark' "$log"
