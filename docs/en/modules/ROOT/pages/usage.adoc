@@ -23,6 +23,11 @@ xref:reference.adoc[Reference, "Deploying on an application server"]). With Vaub
 import CDI, JTA or Vauban. See
 xref:modules/noether-persistence.adoc[the detailed Persistence guide].
 
+On Vauban, put `noether-jpa-cdi` on the annotation processor path next to
+`vauban-processor`, so that its build compatible extension runs at build time,
+and boot with `VaubanContainer.builder().scanClasspath()`, which reads what the
+build recorded. This needs a Vauban that includes Vidocq/vauban#285.
+
 == Composite business tuples in a target secondary table
 
 D43 permits owning `ManyToOne`/`OneToOne` joins to a composite tuple of
