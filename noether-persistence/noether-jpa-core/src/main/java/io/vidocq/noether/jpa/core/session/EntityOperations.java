@@ -466,7 +466,7 @@ final class EntityOperations {
      */
     void beforeFlush() {
         removeOrphans();
-        Set<Object> visited = flushVisited();
+        Set<Object> visited = null; // only a cascade adds to it: made for the first entity that has one
         for (ManagedEntity entry : context.entries()) {
             if (io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(entry.instance())) continue;
             if (entry.status() != ManagedEntity.Status.MANAGED) {
@@ -474,7 +474,11 @@ final class EntityOperations {
             }
             Object entity = entry.instance();
             MappedEntity type = entry.type();
-            cascade(entity, type, CascadeType.PERSIST, target -> persist(target, visited));
+            if (cascades(type, CascadeType.PERSIST)) {
+                if (visited == null) visited = flushVisited();
+                Set<Object> reached = visited;
+                cascade(entity, type, CascadeType.PERSIST, target -> persist(target, reached));
+            }
             List<AttributeModel> attributes = type.model().attributes();
             for (int i = 0; i < attributes.size(); i++) {
                 var reference = type.statements().reference(i).orElse(null);
@@ -520,7 +524,7 @@ final class EntityOperations {
      * owner that cascades persist is managed again.
      */
     private void removeOrphans() {
-        Set<Object> visited = flushVisited();
+        Set<Object> visited = null; // only the removal of an orphan adds to it: made for the first one
         for (ManagedEntity entry : context.entries()) {
             if (entry.status() != ManagedEntity.Status.MANAGED || entry.snapshot() == null) {
                 continue;
@@ -534,6 +538,7 @@ final class EntityOperations {
                 if (association.singleValued()) {
                     Object previous = entry.snapshot()[i];
                     if (previous != null && previous != current && context.contains(previous)) {
+                        if (visited == null) visited = flushVisited();
                         remove(previous, visited);
                     }
                 } else {
@@ -544,6 +549,7 @@ final class EntityOperations {
                     kept.addAll(CollectionMapping.elements(current));
                     for (Object previous : CollectionMapping.elements(StatePolicy.snapshotValue(entry.snapshot()[i]))) {
                         if (previous != null && !kept.contains(previous) && context.contains(previous)) {
+                            if (visited == null) visited = flushVisited();
                             remove(previous, visited);
                         }
                     }
@@ -566,6 +572,21 @@ final class EntityOperations {
     }
 
     // ---- cascades -----------------------------------------------------------------------------------------
+
+    /**
+     * Whether a relationship or an element collection of {@code type} cascades {@code operation}: without one,
+     * {@link #cascade} reaches nothing and has nothing to do, the initialization of an unloaded reference included.
+     */
+    private static boolean cascades(MappedEntity type, CascadeType operation) {
+        List<AttributeModel> attributes = type.model().attributes();
+        for (int i = 0; i < attributes.size(); i++) {
+            if (attributes.get(i) instanceof AssociationAttribute association && association.cascades(operation)) {
+                return true;
+            }
+        }
+        // cascade() decides for each element collection, with what it holds
+        return !type.statements().elementCollections().isEmpty();
+    }
 
     /** Applies {@code operation} to the instances that the relationships of {@code entity} cascading it reach. */
     private void cascade(Object entity, MappedEntity type, CascadeType operation, Consumer<Object> apply) {
@@ -608,14 +629,15 @@ final class EntityOperations {
         }
     }
 
+    /**
+     * The visited set of an operation: the instance and what its cascades reach, most often the instance alone, so it
+     * starts small and grows with the cascades instead of starting with the default table of 21 instances.
+     */
     private static Set<Object> visited() {
-        return Collections.newSetFromMap(new IdentityHashMap<>());
+        return Collections.newSetFromMap(new IdentityHashMap<>(4));
     }
 
-    /**
-     * The visited set of a flush: every flush makes two, and only a cascade adds to them, so they start small and grow
-     * with the cascades instead of starting with the default table of 21 instances.
-     */
+    /** The visited set of a flush: only a cascade or the removal of an orphan adds to it, and it is made for the first. */
     private static Set<Object> flushVisited() {
         return Collections.newSetFromMap(new IdentityHashMap<>(4));
     }
