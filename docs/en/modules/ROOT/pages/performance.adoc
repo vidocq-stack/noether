@@ -264,6 +264,50 @@ The entity of this harness has no relationship, which is the case the one-pass r
 fork per provider, a single thread and in-memory H2: not a production latency or scalability
 claim. Hibernate 7.4 and EclipseLink were not rerun.
 
+=== Allocation
+
+A second profile, of the objects those two workloads still made
+(link:{repo-noether}/src/branch/main/noether-persistence/BENCH.md[BENCH-20261111-06]), led to five
+more changes, under the same rule: no column, row, snapshot, dirty or version check, callback, flush
+order, lazy reference or cascade changes.
+
+* The persistence context finds an instance through an identity table whose keys are the instances
+  themselves, and links its entries in the order it met them: no wrapper and no map entry per managed
+  instance. `entries()` answers with the same unmodifiable list until an instance joins or leaves.
+* A flush reads the state of an instance that did not change into one array, reused for the next
+  instance; the array is handed over to the insert, update or inverse-index work that keeps it.
+* A flush makes a work list at its first element, the identity sets of its inserts and deletes when
+  it has some, the visited sets of its cascades for the first entity that cascades; a flush with
+  nothing to write returns after its walk of the context.
+* When the shared cache mode lets the cache hold no entity of the unit (`NONE`, or the default
+  `ENABLE_SELECTIVE` without a `@Cacheable` entity), an entity manager keeps nothing about what its
+  transaction read and wrote, and a commit stages nothing.
+* A row fetched with its select item goes from the result set to the persistence context as one
+  record, which carries the identity key it is looked up and registered with; a simple identifier is
+  its column, without an array; the state read back from a loaded instance becomes its snapshot in
+  place where nothing reads it afterwards.
+
+link:{repo-noether}/src/branch/main/noether-persistence/BENCH.md[BENCH-20261111-07], same harness
+and settings, one session:
+
+[cols="2,>2,>2,>1,>1",options="header"]
+|===
+|Workload |Noether |Hibernate 5.6 |Noether B/op |Hibernate B/op
+|`findById` |935,077 +/- 10,404 |517,832 +/- 2,187 |4,126 |7,486
+|`jpqlQuery` |130,653 +/- 912 |67,493 +/- 566 |17,488 |26,658
+|`update` |458,971 +/- 11,120 |287,314 +/- 6,738 |9,896 |13,767
+|`createUpdateDelete` |348,522 +/- 5,271 |236,883 +/- 4,501 |14,824 |17,960
+|===
+
+Noether now allocates less than Hibernate 5.6 on the four workloads (0.55x to 0.83x), and 20% to 50%
+less than in BENCH-20261111-04; its throughput rises 13% to 64% while Hibernate's moves by -1% to
++5% between the two sessions. The allocation of `jpqlQuery` varies by about 5% from one fork to
+another. On PostgreSQL 17 the allocation is 0.61x to 0.78x Hibernate's
+(link:{repo-noether}/src/branch/main/noether-persistence/BENCH.md[BENCH-20261111-08]); no throughput
+claim is made there. The shared cache is off for both providers in this harness. What remains per
+result row is the placeholder of the select item and the key that resolves it, and the boxing of
+primitive attributes at each read of the state, which the small identifiers of this harness hide.
+
 === On PostgreSQL
 
 The harness also runs against a database server: `BENCH_JDBC_URL`, `BENCH_JDBC_DRIVER`,
