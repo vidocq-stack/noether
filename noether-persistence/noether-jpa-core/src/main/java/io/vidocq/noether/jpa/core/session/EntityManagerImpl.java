@@ -533,13 +533,17 @@ final class EntityManagerImpl implements EntityManager {
                 dirty = entry.type().state().dirty(entry.snapshot(), reusable);
             }
             if (validates && dirty) rejectBusinessKeyChange(entry, reusable);
-            if (!entry.inserted()) {
-                if (newInstances == null) newInstances = new ArrayList<>(4);
-                newInstances.add(entry.instance());
-            }
+            if (!entry.inserted()) newInstances = added(newInstances, entry.instance());
             if (written(entry, dirty)) touch(entry.key());
         }
         return newInstances;
+    }
+
+    /** {@code list} with {@code instance} added: a list is made for the first one. */
+    private static List<Object> added(List<Object> list, Object instance) {
+        List<Object> instances = list == null ? new ArrayList<>(4) : list;
+        instances.add(instance);
+        return instances;
     }
 
     /** Whether the flush writes the row of {@code entry}, whose identity is known: removed, new, or changed. */
