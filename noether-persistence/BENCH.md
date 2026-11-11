@@ -1164,3 +1164,80 @@ measurements, not a general provider ranking or a production-performance guarant
   showed that a single run on this set-up ranks nothing; no throughput claim is made here.
 - **Limitations**: as BENCH-20261111-05; one run per provider.
   Raw evidence: `noether-jpa-bench/target/bench-reports/20261111-allocation-pg/{noether,hibernate5}/`.
+
+## BENCH-20261111-09 — Hot paths split into methods for the SonarQube gate, before and after (Vidocq/noether#45)
+
+- **Date**: 2026-11-11
+- **Commits**: before `f706085` (`fix-proposals`); after `828bf08` (`fix/sonar-pr56`), twelve commits that
+  split `FlushEngine.flush` and `insert`, `EntityLoader.loadRows` and `completeRows`, the execution of a JPQL
+  query, the constructor, flush and find of `EntityManagerImpl` and `EntityOperations.beforeFlush` into private
+  methods, without a change of behavior. Each side installed in a scratch local repository
+  (`./mvnw -ntp install -DskipTests -Dmaven.repo.local=<scratch> -Dmaven.repo.local.tail=~/.m2/repository`) and
+  kept; the SHA-256 of the `noether-jpa-core` jar starts with `a68377618c9e` before and `02c0a3444a59` after,
+  and `test-classpath.txt` of each run names the scratch jar. `~/.m2` was not written.
+- **JVM**: Temurin 25.0.3+9 (2026-04-21 LTS), 64-Bit Server VM, default flags.
+- **Hardware**: Apple M5 Max / 18 cores / 128 GB RAM.
+- **OS**: macOS 27.2, arm64.
+- **Providers / configuration**: Noether 0.4.0-SNAPSHOT alone, H2 2.3.232 in memory, unchanged harness and
+  preflight checks.
+- **Exact command**, from `noether-persistence/noether-jpa-bench`, three times per side, the sides alternating
+  from the second run on (before 1, after 1, before 2, after 2, before 3, after 3), the artifacts of the side
+  copied into the scratch repository before each run:
+  ```sh
+  export MAVEN_ARGS="-Dmaven.repo.local=<scratch> -Dmaven.repo.local.tail=$HOME/.m2/repository"
+  BENCH_RUN_ID=20261111-sonar-<side>[-<run>] ./run-bench.sh noether
+  ```
+  JMH settings unchanged: `-wi 3 -i 5 -w 2s -r 2s -f 1 -t 1 -foe true -prof gc -rf json`.
+- **Results**, ops/s +/- JMH 99.9% error; normalized allocation (+/- 0.04 B/op or less within a fork):
+  ```text
+  f706085 (before), runs 1 / 2 / 3
+  createUpdateDelete 339411.114 +/-  3723.173 | 347287.404 +/- 2050.178 | 345209.949 +/-  1952.806 ops/s; 14824.018 | 14752.018 | 14776.018 B/op
+  findById           900194.358 +/- 11421.777 | 921648.986 +/- 2615.935 | 911341.260 +/-  4184.280 ops/s;  4278.379 |  4190.379 |  4174.379 B/op
+  jpqlQuery          129129.481 +/-   331.279 | 127761.714 +/- 1066.704 | 128463.189 +/-   852.047 ops/s; 17448.028 | 17416.029 | 17496.028 B/op
+  update             474057.121 +/-  5836.079 | 462927.912 +/- 2943.849 | 470396.219 +/- 10961.367 ops/s; 10007.823 | 10023.824 | 10031.822 B/op
+  828bf08 (after), runs 1 / 2 / 3
+  createUpdateDelete 349259.646 +/-  5637.271 | 349813.968 +/-  963.144 | 344147.704 +/-  2553.140 ops/s; 14576.018 | 14576.018 | 14576.018 B/op
+  findById           912261.115 +/- 35374.754 | 894594.428 +/- 3952.138 | 916056.640 +/-  5908.770 ops/s;  4174.379 |  4158.379 |  4158.379 B/op
+  jpqlQuery          134017.195 +/-   335.802 | 130532.758 +/- 1441.868 | 132891.480 +/-   602.647 ops/s; 17592.027 | 17560.028 | 17592.028 B/op
+  update             472261.761 +/-  1897.584 | 463305.110 +/- 6754.611 | 472674.555 +/-  4927.163 ops/s;  9991.822 |  9991.823 |  9975.822 B/op
+  ```
+- **Delta**, mean of the three runs, after against before, order
+  `createUpdateDelete / findById / jpqlQuery / update`:
+  - throughput 343,969 to 347,741 (**+1.1%**), 911,061 to 907,637 (**-0.4%**), 128,451 to 132,480 (**+3.1%**),
+    469,127 to 469,414 (**+0.1%**). The runs of one side differ by up to 2.4% (`findById`, 900,194 to 921,649
+    before): only `jpqlQuery`, whose three runs after are all above its three runs before, is outside that.
+  - allocation 14,784 to 14,576 B/op (**-1.4%**), 4,214 to 4,164 (**-1.2%**), 17,453 to 17,581 (**+0.7%**),
+    10,021 to 9,987 (**-0.3%**).
+- **The +128 B/op of `jpqlQuery` is the JIT's, not the code's**: the diff of the production sources adds no
+  allocation site and no lambda, and removes two sites (the list of the two entity graph hint names of a find,
+  now a constant, and the `EntityItem` made per row for an entity inside an embeddable result). Checked with
+  the scalar replacement of the JIT off, where the figure no longer depends on what the JIT removes
+  (`-wi 3 -i 3 -w 1s -r 1s -f 1 -t 1 -foe true -prof gc -jvmArgsAppend -XX:-EliminateAllocations`, the
+  `noether-jpa-core` jar of each commit ahead of the installed one, three forks each, the same figure in the
+  three forks to 0.003 B/op):
+  ```text
+  f706085  createUpdateDelete 19496.038 B/op; jpqlQuery 20656.060 B/op
+  828bf08  createUpdateDelete 19416.039 B/op; jpqlQuery 20640.058 B/op
+  ```
+  The code allocates 80 B/op less on `createUpdateDelete` and 16 B/op less on `jpqlQuery`; which objects these
+  are was not looked for. With the default flags the JIT therefore removes about 140 B/op less of the temporary
+  objects of `jpqlQuery` than it did; the likely reason, methods of another size to inline, was not verified.
+  Commit by commit (same short settings, default flags, three forks each, B/op):
+  `f706085` 16,680 to 16,752 (nine forks); `f75d188` (EntityLoader) 16,776 to 16,800; `b7c9455` (FlushEngine) 16,696 to
+  16,800; `853626b` (JpqlQuery) 16,800 to 16,832; `190bbde` (EntityManagerImpl) 16,824 to 16,848; `e8b7171`
+  (EntityOperations) 16,816 to 16,872. Two other shapes of `EntityLoader.loadRows` were measured the same way
+  and discarded: the loop over the rows kept in `loadRows` (16,808 to 16,824), and the loop with the making of
+  a new instance in it, as in `f706085` (16,800 to 16,848). Neither gives the objects back, so the shape with
+  the lowest complexity stays.
+- **Comparison with previous run**: against the Noether figures of BENCH-20261111-07 (`6970119`), the "before"
+  mean is -1.3% / -2.6% / -1.7% / +2.2% in throughput and -0.3% / +2.1% / -0.2% / +1.3% in allocation: the
+  commits of `fix-proposals` after `6970119` and another session of the machine.
+- **Noise**: shared machine, other sessions building; load averages (1 min) 3.14 before the first run, 4.18
+  before "after 1", then 5.58 / 5.61 / 5.81 / 6.49 before the four alternating runs.
+- **Interpretation**: splitting the hot methods costs no throughput on the four workloads. Allocation goes
+  down on three of them and up by 0.7% on `jpqlQuery`, below the 4.7% that workload moves between two forks of
+  the same code in BENCH-20261111-07, and an effect of what the JIT removes, not of an object the code makes.
+  `./mvnw -ntp clean verify` passes on `828bf08` (1215 tests, as on `f706085`). The official TCK was not rerun.
+- **Limitations**: as BENCH-20261111-07; Noether alone, no other provider rerun. The commit-by-commit and the
+  `-XX:-EliminateAllocations` figures come from shorter runs and are not comparable with the campaign figures.
+  Raw evidence: `noether-jpa-bench/target/bench-reports/20261111-sonar-{before,after}[-2|-3]/noether/`.
