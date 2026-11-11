@@ -334,11 +334,15 @@ public final class EntityLoader {
         }
     }
 
+    /**
+     * Gives each owner its fetched collection. {@code owner} is never null: a {@link FetchedCollection} comes from the
+     * collection hydration of a translated query, whose owner is a resolved entity, or from a fetch with an owner.
+     */
     private void completeRows(MappedEntity owner, int attribute, List<FetchedElement> elements,
             java.util.Set<ManagedEntity> pending, Connection connection, PersistenceContext context) {
-        AttributeModel model = owner == null ? null : owner.model().attributes().get(attribute);
+        AttributeModel model = owner.model().attributes().get(attribute);
         MappedEntity target = model instanceof AssociationAttribute a ? entity(a.targetEntity()) : null;
-        IndexMapping index = owner == null ? null : target == null ? owner.statements().elementCollection(attribute).orElseThrow().index()
+        IndexMapping index = target == null ? owner.statements().elementCollection(attribute).orElseThrow().index()
             : indexOf(owner.statements().collection(attribute).orElseThrow());
         Map<Object, List<Indexed>> grouped = groupByOwner(elements, target, index, connection, context);
         for (var group : grouped.entrySet()) {
