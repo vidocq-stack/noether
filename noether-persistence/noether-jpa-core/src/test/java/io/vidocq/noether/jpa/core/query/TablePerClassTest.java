@@ -34,7 +34,7 @@ class TablePerClassTest {
     private EntityManagerFactory factory(Class<?>... types) {
         var configuration = new PersistenceConfiguration("table-per-class")
             .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
-            .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:tpc" + DATABASES.incrementAndGet())
+            .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:tpc" + DATABASES.incrementAndGet() + ";DB_CLOSE_DELAY=-1")
             .property(PersistenceConfiguration.JDBC_USER, "sa")
             .property(PersistenceConfiguration.SCHEMAGEN_DATABASE_ACTION, "drop-and-create");
         for (Class<?> type : types) configuration.managedClass(type);

@@ -26,7 +26,7 @@ class AssociationTablesTest {
     private void open(String mapping, Class<?>... types) {
         var configuration = new PersistenceConfiguration("association-tables")
             .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
-            .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:association-tables-" + DATABASES.incrementAndGet())
+            .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:association-tables-" + DATABASES.incrementAndGet() + ";DB_CLOSE_DELAY=-1")
             .property(PersistenceConfiguration.JDBC_USER, "sa")
             .property("jakarta.persistence.schema-generation.database.action", "create");
         for (Class<?> type : types) configuration.managedClass(type);

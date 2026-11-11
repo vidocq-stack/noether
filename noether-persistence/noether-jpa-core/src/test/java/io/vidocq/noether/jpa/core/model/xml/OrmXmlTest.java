@@ -234,7 +234,7 @@ class OrmXmlTest {
                 .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
                 .managedClass(EmbeddedLinks.RecordHolder.class).managedClass(EmbeddedLinks.Holder.class)
                 .managedClass(EmbeddedLinks.Target.class)
-                .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:embedded-record")
+                .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:embedded-record;DB_CLOSE_DELAY=-1")
                 .property(PersistenceConfiguration.SCHEMAGEN_DATABASE_ACTION, "drop-and-create").createEntityManagerFactory()) {
             emf.runInTransaction(em -> {
                 EmbeddedLinks.RecordHolder holder = new EmbeddedLinks.RecordHolder();
@@ -263,7 +263,7 @@ class OrmXmlTest {
                 .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
                 .managedClass(EmbeddedLinks.UnsupportedHolder.class).managedClass(EmbeddedLinks.Holder.class)
                 .managedClass(EmbeddedLinks.Target.class)
-                .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:embedded-foreign-key-children")
+                .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:embedded-foreign-key-children;DB_CLOSE_DELAY=-1")
                 .property(PersistenceConfiguration.SCHEMAGEN_DATABASE_ACTION, "create").createEntityManagerFactory()) {
             emf.runInTransaction(em -> {
                 var holder = new EmbeddedLinks.UnsupportedHolder();

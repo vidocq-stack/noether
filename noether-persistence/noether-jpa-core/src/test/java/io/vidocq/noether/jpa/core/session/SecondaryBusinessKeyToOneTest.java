@@ -76,7 +76,7 @@ class SecondaryBusinessKeyToOneTest {
         var configuration = new PersistenceConfiguration("secondary-business")
             .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
             .property(PersistenceConfiguration.JDBC_URL,
-                System.getProperty("secondary.business.jdbc", "jdbc:h2:mem:secondary-business-" + DATABASES.incrementAndGet()))
+                System.getProperty("secondary.business.jdbc", "jdbc:h2:mem:secondary-business-" + DATABASES.incrementAndGet() + ";DB_CLOSE_DELAY=-1"))
             .property(PersistenceConfiguration.JDBC_USER, System.getProperty("secondary.business.user", "sa"))
             .property(PersistenceConfiguration.JDBC_PASSWORD, System.getProperty("secondary.business.password", ""))
             .property(PersistenceConfiguration.SCHEMAGEN_DATABASE_ACTION, "drop-and-create")

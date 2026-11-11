@@ -38,7 +38,7 @@ class SchemaGenerationTest {
     @Test
     void inheritanceDiscriminatorsAndYearAreSchemaColumns() { // §2.14 and §2.8
         try (var factory = new PersistenceConfiguration("p9-inheritance").managedClass(Parent.class).managedClass(Child.class)
-                .property("jakarta.persistence.jdbc.url", "jdbc:h2:mem:p9-inheritance")
+                .property("jakarta.persistence.jdbc.url", "jdbc:h2:mem:p9-inheritance;DB_CLOSE_DELAY=-1")
                 .property("jakarta.persistence.schema-generation.database.action", "create").createEntityManagerFactory()) {
             Child child = new Child();
             child.id = 1;
