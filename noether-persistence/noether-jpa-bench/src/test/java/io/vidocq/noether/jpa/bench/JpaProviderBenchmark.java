@@ -49,6 +49,12 @@ import org.openjdk.jmh.annotations.Mode;
 public class JpaProviderBenchmark {
     private static final int INITIAL_ROWS = 128;
     private static final String PROVIDER = System.getProperty("bench.provider", "");
+    /**
+     * {@code configuration} (default): the Persistence 3.2 {@code PersistenceConfiguration} bootstrap.
+     * {@code unit-info}: the container contract {@code createContainerEntityManagerFactory}, for providers that
+     * predate 3.2 (Hibernate ORM 5.6 implements Persistence 3.0).
+     */
+    private static final String BOOTSTRAP = System.getProperty("bench.bootstrap", "configuration");
     private static final String JDBC_URL = "jdbc:h2:mem:jpa_bench;DB_CLOSE_DELAY=-1";
 
     @State(Scope.Benchmark)
@@ -93,7 +99,19 @@ public class JpaProviderBenchmark {
                     + "label VARCHAR(100) NOT NULL, revision BIGINT NOT NULL)");
             }
 
-            factory = provider.createEntityManagerFactory(configuration);
+            factory = switch (BOOTSTRAP) {
+                case "configuration" -> provider.createEntityManagerFactory(configuration);
+                case "unit-info" -> {
+                    // A 3.0 provider reads its own connection keys; same database and settings as above.
+                    properties.put("hibernate.connection.driver_class", "org.h2.Driver");
+                    properties.put("hibernate.connection.url", JDBC_URL);
+                    properties.put("hibernate.connection.username", "sa");
+                    properties.put("hibernate.connection.password", "");
+                    yield provider.createContainerEntityManagerFactory(
+                        new BenchUnitInfo("jpa-benchmark", PROVIDER, BenchRecord.class, properties), properties);
+                }
+                default -> throw new IllegalStateException("Unknown -Dbench.bootstrap: " + BOOTSTRAP);
+            };
             if (factory == null) {
                 throw new IllegalStateException("Selected provider declined the benchmark persistence unit: " + PROVIDER);
             }
