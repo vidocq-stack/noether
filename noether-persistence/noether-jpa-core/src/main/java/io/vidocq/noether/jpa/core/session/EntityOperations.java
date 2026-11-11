@@ -468,8 +468,8 @@ final class EntityOperations {
         removeOrphans();
         Set<Object> visited = null; // only a cascade adds to it: made for the first entity that has one
         for (ManagedEntity entry : context.entries()) {
-            if (io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(entry.instance())) continue;
-            if (entry.status() != ManagedEntity.Status.MANAGED) {
+            if (io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(entry.instance())
+                    || entry.status() != ManagedEntity.Status.MANAGED) {
                 continue;
             }
             Object entity = entry.instance();
@@ -479,42 +479,66 @@ final class EntityOperations {
                 Set<Object> reached = visited;
                 cascade(entity, type, CascadeType.PERSIST, target -> persist(target, reached));
             }
-            List<AttributeModel> attributes = type.model().attributes();
-            for (int i = 0; i < attributes.size(); i++) {
-                var reference = type.statements().reference(i).orElse(null);
-                if (reference != null && reference.businessKey()) {
-                    Object target = type.access().get(entity, i);
-                    if (target != null && context.entry(target).isEmpty()) {
-                        Object managed = managedReference(target);
-                        if (managed != target) {
-                            MappedEntity targetType = factory.mapping().entity(reference.target()).orElseThrow();
-                            io.vidocq.noether.jpa.core.spi.LazyReference.initialize(managed);
-                            for (var column : type.statements().referencedColumns(reference)) {
-                                int attribute = column.attribute();
-                                if (!java.util.Objects.deepEquals(
-                                        targetType.state().copy(attribute, targetType.access().get(target, attribute)),
-                                        targetType.state().copy(attribute, targetType.access().get(managed, attribute)))) {
-                                    throw new jakarta.persistence.PersistenceException(
-                                        "Detached business-key values contradict the target's JPA identity");
-                                }
-                            }
-                            type.access().set(entity, i, managed);
-                        }
-                    }
-                }
-                // any relationship from X, the inverse side as well as the owning one
-                if (attributes.get(i) instanceof AssociationAttribute association && !association.cascades(CascadeType.PERSIST)
-                        && !LazyCollection.unloaded(type.access().get(entity, i))) {
-                    targets(type.access().get(entity, i), target -> requireNotNew(entity, association, target));
-                }
+            checkRelationships(entity, type);
+            checkElementCollections(entity, type);
+        }
+    }
+
+    /**
+     * The relationships of a managed {@code entity} at a flush: a detached target of a business-key reference gives
+     * way to its managed instance, and no relationship that does not cascade persist may hold a new instance.
+     */
+    private void checkRelationships(Object entity, MappedEntity type) {
+        List<AttributeModel> attributes = type.model().attributes();
+        for (int i = 0; i < attributes.size(); i++) {
+            var reference = type.statements().reference(i).orElse(null);
+            if (reference != null && reference.businessKey()) {
+                manageBusinessKeyTarget(entity, type, i, reference);
             }
-            for (var elements : type.statements().elementCollections()) {
-                Object value = type.access().get(entity, elements.attribute());
-                if (LazyCollection.unloaded(value)) continue;
-                elements.references(value, (association, target) -> {
-                    if (!association.cascades(CascadeType.PERSIST)) requireNotNew(entity, association, target);
-                });
+            // any relationship from X, the inverse side as well as the owning one
+            if (attributes.get(i) instanceof AssociationAttribute association && !association.cascades(CascadeType.PERSIST)
+                    && !LazyCollection.unloaded(type.access().get(entity, i))) {
+                targets(type.access().get(entity, i), target -> requireNotNew(entity, association, target));
             }
+        }
+    }
+
+    /**
+     * Replaces the target of the business-key {@code reference} at {@code attribute}, when the context does not hold
+     * it, with the managed instance of its identity, whose business-key values must be the ones the target has.
+     */
+    private void manageBusinessKeyTarget(Object entity, MappedEntity type, int attribute,
+            io.vidocq.noether.jpa.core.mapping.EntityStatements.Reference reference) {
+        Object target = type.access().get(entity, attribute);
+        if (target == null || context.entry(target).isPresent()) {
+            return;
+        }
+        Object managed = managedReference(target);
+        if (managed == target) {
+            return;
+        }
+        MappedEntity targetType = factory.mapping().entity(reference.target()).orElseThrow();
+        io.vidocq.noether.jpa.core.spi.LazyReference.initialize(managed);
+        for (var column : type.statements().referencedColumns(reference)) {
+            int referenced = column.attribute();
+            if (!java.util.Objects.deepEquals(
+                    targetType.state().copy(referenced, targetType.access().get(target, referenced)),
+                    targetType.state().copy(referenced, targetType.access().get(managed, referenced)))) {
+                throw new jakarta.persistence.PersistenceException(
+                    "Detached business-key values contradict the target's JPA identity");
+            }
+        }
+        type.access().set(entity, attribute, managed);
+    }
+
+    /** No entity an element collection of a managed {@code entity} references without cascading persist may be new. */
+    private void checkElementCollections(Object entity, MappedEntity type) {
+        for (var elements : type.statements().elementCollections()) {
+            Object value = type.access().get(entity, elements.attribute());
+            if (LazyCollection.unloaded(value)) continue;
+            elements.references(value, (association, target) -> {
+                if (!association.cascades(CascadeType.PERSIST)) requireNotNew(entity, association, target);
+            });
         }
     }
 
@@ -531,31 +555,44 @@ final class EntityOperations {
             }
             List<AttributeModel> attributes = entry.type().model().attributes();
             for (int i = 0; i < attributes.size(); i++) {
-                if (!(attributes.get(i) instanceof AssociationAttribute association) || !association.orphanRemoval()) {
-                    continue;
-                }
-                Object current = entry.type().access().get(entry.instance(), i);
-                if (association.singleValued()) {
-                    Object previous = entry.snapshot()[i];
-                    if (previous != null && previous != current && context.contains(previous)) {
-                        if (visited == null) visited = flushVisited();
-                        remove(previous, visited);
-                    }
-                } else {
-                    if (LazyCollection.unloaded(current) && current == entry.snapshot()[i]) {
-                        continue; // not loaded, hence not changed
-                    }
-                    Set<Object> kept = visited();
-                    kept.addAll(CollectionMapping.elements(current));
-                    for (Object previous : CollectionMapping.elements(StatePolicy.snapshotValue(entry.snapshot()[i]))) {
-                        if (previous != null && !kept.contains(previous) && context.contains(previous)) {
-                            if (visited == null) visited = flushVisited();
-                            remove(previous, visited);
-                        }
-                    }
+                if (attributes.get(i) instanceof AssociationAttribute association && association.orphanRemoval()) {
+                    visited = removeOrphans(entry, i, association.singleValued(), visited);
                 }
             }
         }
+    }
+
+    /**
+     * Removes what the orphan-removal relationship at {@code attribute} of {@code entry} held at the last flush and no
+     * longer holds. Gives the visited set of the flush: {@code visited}, or the one made for the first orphan.
+     */
+    private Set<Object> removeOrphans(ManagedEntity entry, int attribute, boolean singleValued, Set<Object> visited) {
+        Object current = entry.type().access().get(entry.instance(), attribute);
+        Set<Object> reached = visited;
+        if (singleValued) {
+            Object previous = entry.snapshot()[attribute];
+            if (previous != null && previous != current && context.contains(previous)) {
+                reached = removeOrphan(previous, reached);
+            }
+            return reached;
+        }
+        if (LazyCollection.unloaded(current) && current == entry.snapshot()[attribute]) {
+            return reached; // not loaded, hence not changed
+        }
+        Set<Object> kept = visited();
+        kept.addAll(CollectionMapping.elements(current));
+        for (Object previous : CollectionMapping.elements(StatePolicy.snapshotValue(entry.snapshot()[attribute]))) {
+            if (previous != null && !kept.contains(previous) && context.contains(previous)) {
+                reached = removeOrphan(previous, reached);
+            }
+        }
+        return reached;
+    }
+
+    private Set<Object> removeOrphan(Object orphan, Set<Object> visited) {
+        Set<Object> reached = visited == null ? flushVisited() : visited;
+        remove(orphan, reached);
+        return reached;
     }
 
     private void requireNotNew(Object owner, AssociationAttribute association, Object target) {
