@@ -1,3 +1,10 @@
+## D7 amended — the runner adds noether-jpa-pool-mansart — 2026-11-11
+
+`noether-jpa-core` no longer carries the pool of decision D7 (Vidocq/noether#45, finding F7). The runner declares
+`noether-jpa-pool-mansart` (test scope) and `run-official-tck-persistence-3.2.sh` installs it with the core, so the
+TCK units, configured by `jakarta.persistence.jdbc.*`, keep their `mansart-pool` pool. The TCK was not rerun for this
+change; the last measured result (below) stands until the next run.
+
 ## Noether metadata indexing (PERF2) — 2026-10-22
 
 `EntityStatements` indexes owned references by execution-state slot and

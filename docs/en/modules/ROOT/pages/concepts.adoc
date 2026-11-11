@@ -6,7 +6,9 @@ schema generation and generated entity access. Its SQL uses a dedicated sealed
 AST and dialect SPI, not the Jakarta Data dialect SPI.
 
 Mansart Data remains a direct JDBC repository implementation. Pool and
-Transactions are independent Mansart building blocks reused by Noether.
+Transactions are independent Mansart building blocks reused by Noether: the
+pool through the optional `noether-jpa-pool-mansart`, a `ServiceLoader`
+provider that `noether-jpa-core` does not depend on.
 Data/JPA integration and processor mutualisation remain deferred.
 
 `SINGLE_TABLE`, `JOINED` and `TABLE_PER_CLASS` are within the delivered engineering scope.

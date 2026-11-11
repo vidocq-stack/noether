@@ -19,9 +19,9 @@ symmetries and conservation laws.
 | Item | Value
 | Runtime | Java 25, Maven 3.9.16
 | Coordinates | `io.vidocq.noether:noether-root`, version `{project-version}`
-| Persistence | `noether-jpa-core`, dialects, APT and CDI/JTA integration
+| Persistence | `noether-jpa-core`, dialects, APT, CDI/JTA integration and an optional connection pool
 | Validation | `noether-validation-core`, provisional and not published
-| External integrations | Mansart Pool/Transactions, Vauban CDI
+| External integrations | Mansart Pool (through the optional `noether-jpa-pool-mansart`) and Transactions, Vauban CDI
 | Source | {repo-noether}
 |===
 

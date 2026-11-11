@@ -32,7 +32,8 @@
 
 - Modules in the reactor: `noether-jpa-dialects` (`-spi`: the SQL AST and dialect SPI of decision D4; `-h2`,
   `-postgresql`), `noether-jpa-core` (provider, bootstrap, entity model, accesses, JDBC binders, persistence
-  context, flush engine),
+  context, flush engine; no Mansart dependency), `noether-jpa-pool-mansart` (the optional connection pool of
+  decision D7, a `ConnectionPoolFactory` found through `ServiceLoader`),
   `noether-jpa-processor` (APT, entity accesses at build time) and two module-path test vehicles,
   `noether-jpa-module-it` (runtime path, `opens`) and `noether-jpa-processor-module-it` (build-time path,
   `provides`), plus `noether-jpa-jta` (Jakarta EE server JTA bridge), `noether-jpa-cdi` and the actual-Vauban/H2
@@ -74,6 +75,7 @@
 | Module (artifactId) | Java module | Role |
 | --- | --- | --- |
 | `noether-jpa-core` | `io.vidocq.noether.jpa.core` | `PersistenceProvider`, EMF/EM, persistence context, entity model, flush, JDBC execution; the query engine (JPQL parser with a sealed AST, translation, Criteria API, SQL through the dialect SPI — decision D8). No CDI, no JTA import. |
+| `noether-jpa-pool-mansart` | `io.vidocq.noether.jpa.pool.mansart` | Optional connection pool of the `jakarta.persistence.jdbc.*` units in Java SE (decision D7): `provides io.vidocq.noether.jpa.core.spi.ConnectionPoolFactory` with a `mansart-pool` pool. Exports nothing. Never added to an application-server or Quarkus deployment. |
 | `noether-jpa-processor` | `io.vidocq.noether.jpa.processor` | APT: canonical JPA metamodel `Entity_`, application-module initialization helpers and generated entity accessors/instantiators. Retain other producers' canonical output; do not change delivered Data to reconcile incompatible fields without a maintainer decision. |
 | `noether-jpa-maven-plugin` | — | Build-time generation for entities living in pre-compiled jars (mirror of `mansart-data-maven-plugin`). |
 | `noether-jpa-jta` | `io.vidocq.noether.jpa.jta` | JTA bridge of a Jakarta EE server: `java:comp/TransactionSynchronizationRegistry`, container-enlisted JTA data source; found by `ServiceLoader` (`TransactionIntegrationProvider`) when the container passes no bridge. |
@@ -110,7 +112,8 @@ Module names are a plan, not a contract: a module is only created when a milesto
   subclasses generated with the Class-File API (entity classes are non-final, §2.1), lazy
   collections use our own collection wrappers, dirty checking uses state snapshots.
 - `noether-jpa-core` must **never import** `jakarta.enterprise.*`, `jakarta.inject.*`,
-  `jakarta.transaction.*`, nor any Vauban class. Container integration lives in `noether-jpa-cdi`.
+  `jakarta.transaction.*`, nor any Vauban or Mansart class. Container integration lives in `noether-jpa-cdi`,
+  the connection pool in `noether-jpa-pool-mansart`.
 - **No `synchronized` around blocking I/O** — use `ReentrantLock`, `Semaphore`, atomics.
 - **No new `ThreadLocal`** — the delivered `mansart-transactions` manager currently uses one.
   Never move JDBC work to another thread: that association, and a server's transaction context, would be lost.

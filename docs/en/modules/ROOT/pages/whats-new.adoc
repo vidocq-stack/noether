@@ -1,6 +1,16 @@
 = What's new
 :description: Noether extraction and compatibility changes.
 
+== 2026-11-11 — The connection pool becomes an optional module
+
+`noether-jpa-core` no longer depends on Mansart. The pool of a unit configured by
+`jakarta.persistence.jdbc.*` (decision D7) moves to `noether-jpa-pool-mansart`, which the core finds
+through `ServiceLoader` (`io.vidocq.noether.jpa.core.spi.ConnectionPoolFactory`). A Java SE application that
+wants its connections pooled adds that module; on the module path the jar is enough. Without it, each
+transaction opens its own connection and the factory logs one line that says so. The
+`io.vidocq.noether.jpa.pool*` properties keep their names and meaning. Units given a `javax.sql.DataSource`
+(application servers, the Vidocq runtime) do not change, and no longer carry an unused pool.
+
 == 2026-10-15 — SQL collection fetch joins
 
 One eligible JPQL or Criteria inner/left collection fetch now returns owner and elements

@@ -9,6 +9,7 @@ All Noether artifacts are under `io.vidocq.noether`:
 | `noether-root` | Repository reactor
 | `noether-jpa` | Persistence aggregator (directory `noether-persistence`)
 | `noether-jpa-core` | Persistence provider
+| `noether-jpa-pool-mansart` | Optional connection pool of the `jakarta.persistence.jdbc.*` units in Java SE (`mansart-pool`), found through `ServiceLoader`
 | `noether-jpa-dialect-spi` | SQL AST and dialect contract
 | `noether-jpa-dialect-h2`, `noether-jpa-dialect-postgresql` | Dialect adapters
 | `noether-jpa-processor` | APT and generated entity access
@@ -39,11 +40,11 @@ Tested on Open Liberty 26.0.0.10 by `noether-it-openliberty`.
 * **Leave `noether-jpa-cdi` out of the WAR**: the server injects `@PersistenceContext` itself, and
   `noether-jpa-cdi` binds Vauban CDI to the Mansart transaction manager.
 * **The WAR carries** `noether-jpa-core`, `noether-jpa-jta` and a dialect (`noether-jpa-dialect-h2` or
-  `-postgresql`), with what they bring transitively (`noether-jpa-dialect-spi`, `mansart-pool-api`,
-  `mansart-pool-core`), and the entity accesses that `noether-jpa-processor` generated at compile time (in
-  `annotationProcessorPaths`). The server brings the Jakarta APIs: exclude the Persistence API that
-  `noether-jpa-core` declares at compile scope, keep the others `provided`. The JDBC driver belongs to the
-  server's data source.
+  `-postgresql`), with what they bring transitively (`noether-jpa-dialect-spi`), and the entity accesses that
+  `noether-jpa-processor` generated at compile time (in `annotationProcessorPaths`). The server brings the Jakarta
+  APIs: exclude the Persistence API that `noether-jpa-core` declares at compile scope, keep the others `provided`.
+  The JDBC driver belongs to the server's data source.
+* **Leave `noether-jpa-pool-mansart` out of the WAR**: the server's data source pools the connections.
 +
 [source,xml]
 ----
@@ -75,9 +76,10 @@ build compatible extension at build time, Narayana drives the transactions. Test
   `@PersistenceContext`.
 * **Declare** `noether-jpa-cdi`, a dialect, `quarkus-arc` and `quarkus-narayana-jta`; the entity accesses come from
   `noether-jpa-processor` in `annotationProcessorPaths`.
-* **The unit's connections come from Noether's own pool** (`jakarta.persistence.jdbc.url`), not from an Agroal
-  data source: `noether-jpa-cdi` enlists each transaction's connection in Narayana as a one-phase resource. Keep
-  it the only resource of its transactions.
+* **The unit's connections come from its `jakarta.persistence.jdbc.url`**, not from an Agroal data source:
+  `noether-jpa-cdi` enlists each transaction's connection in Narayana as a one-phase resource. Keep it the only
+  resource of its transactions. Each transaction opens its own connection; add `noether-jpa-pool-mansart` to pool
+  them (`noether-it-quarkus` runs without it).
 ====
 
 == Query entity graph hints
