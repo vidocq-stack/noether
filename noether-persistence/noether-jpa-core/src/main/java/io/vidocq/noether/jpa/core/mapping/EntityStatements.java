@@ -1406,6 +1406,12 @@ public final class EntityStatements {
         return values.length == 1 ? values[0] : CompositeId.of(values);
     }
 
+    /** {@link #key(Object[])} for a key of one column, whose value is the identity: no array to carry it. */
+    public Object simpleKey(Object value) {
+        check();
+        return value;
+    }
+
     /** The key columns, in the order of {@link #keyValues(Object)}: the parameters of a select by identifier. */
     public List<Column> keyColumns() {
         check();

@@ -229,6 +229,18 @@ public final class StatePolicy {
         return snapshot;
     }
 
+    /**
+     * {@code state} made its own {@link #snapshot(Object[]) snapshot}: each value is replaced by its copy, and the
+     * array is returned. For a caller that read {@code state} from an instance and hands it over: it must not read it
+     * as the state nor write it afterwards.
+     */
+    public Object[] asSnapshot(Object[] state) {
+        for (int i = 0; i < state.length; i++) {
+            state[i] = copiers[i].copy(state[i]);
+        }
+        return state;
+    }
+
     /** The indexes of the attributes whose current value differs from the snapshot, in order. */
     public List<Integer> changes(Object[] snapshot, Object[] state) {
         List<Integer> changes = new ArrayList<>();

@@ -95,6 +95,24 @@ class StatePolicyTest {
     }
 
     @Test
+    void aStateHandedOverBecomesItsOwnSnapshot() { // the same array, its mutable values copied as snapshot() copies them
+        MappedEntity type = type(Customer.class);
+        Object customer = customer();
+        Object[] state = state(type, customer);
+        Object[] copied = type.state().snapshot(state(type, customer));
+        Object[] snapshot = type.state().asSnapshot(state);
+        assertThat(snapshot).isSameAs(state);
+        assertThat(snapshot).usingRecursiveComparison().isEqualTo(copied);
+        assertThat(snapshot[index(type, "picture")]).isNotSameAs(type.access().get(customer, index(type, "picture")));
+        assertThat(snapshot[index(type, "legacy")]).isNotSameAs(type.access().get(customer, index(type, "legacy")));
+        assertThat(type.state().changes(snapshot, state(type, customer))).isEmpty();
+        ((byte[]) type.access().get(customer, index(type, "picture")))[0] = 9;
+        ((Date) type.access().get(customer, index(type, "legacy"))).setTime(2_000);
+        assertThat(type.state().changes(snapshot, state(type, customer)))
+            .containsExactlyInAnyOrder(index(type, "picture"), index(type, "legacy"));
+    }
+
+    @Test
     void numbersAreComparedByValueNotByScale() {
         MappedEntity type = type(Customer.class);
         Object customer = customer();

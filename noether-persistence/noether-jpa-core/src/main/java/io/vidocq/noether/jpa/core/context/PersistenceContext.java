@@ -112,6 +112,14 @@ public final class PersistenceContext {
         if (key == null) {
             throw new IllegalArgumentException("A loaded instance of " + type.model().entityName() + " has no identifier");
         }
+        return loadedAs(key, instance, type, snapshot);
+    }
+
+    /**
+     * Like {@link #loaded(Object, MappedEntity, Object, Object[])}, with the identity as the {@code key} the caller
+     * already looked the context up with: the root of {@code type} and the identifier of the row.
+     */
+    public ManagedEntity loadedAs(EntityKey key, Object instance, MappedEntity type, Object[] snapshot) {
         ManagedEntity known = byKey.get(key);
         if (known != null) {
             return known;
