@@ -25,6 +25,7 @@
 
     <modules>
         <module>noether-it-openliberty</module>
+        <module>noether-it-quarkus</module>
     </modules>
 
     <build>

@@ -70,6 +70,7 @@ jobs:
             noether-jpa-cdi-module-it
             noether-it-other-containers
             noether-it-openliberty
+            noether-it-quarkus
             noether-validation
             noether-validation-core
             noether-validation-core-module-it
