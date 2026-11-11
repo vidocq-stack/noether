@@ -142,6 +142,13 @@
                 <artifactId>mansart-data-dialect-spi</artifactId>
                 <version>${mansart.version}</version>
             </dependency>
+            <!-- Tests only: the coexistence of noether-jpa-processor with the ecosystem's Jakarta Data processor. -->
+            <dependency>
+                <groupId>io.vidocq.mansart</groupId>
+                <artifactId>mansart-data-processor</artifactId>
+                <version>${mansart.version}</version>
+                <scope>test</scope>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 </project>
