@@ -100,9 +100,14 @@ final class EntityManagerImpl implements EntityManager {
     private CacheRetrieveMode cacheRetrieveMode = CacheRetrieveMode.USE;
     private CacheStoreMode cacheStoreMode = CacheStoreMode.USE;
     private Connection executionConnection;
-    private final Set<EntityKey> transactionTouched = new HashSet<>();
-    private final Set<EntityKey> transactionCacheCandidates = new HashSet<>();
-    private final Set<EntityKey> bypassStore = new HashSet<>();
+    /**
+     * Whether the shared cache of the factory can hold an entity of the unit. Without one, nothing is kept about what
+     * the transaction read and wrote: the three sets below are the empty set, never added to, and nothing is staged.
+     */
+    private final boolean cached;
+    private final Set<EntityKey> transactionTouched;
+    private final Set<EntityKey> transactionCacheCandidates;
+    private final Set<EntityKey> bypassStore;
     private long transactionCacheGeneration = -1;
     private boolean cacheInvalidationPending;
     private SecondLevelCache.Publication cachePublication;
@@ -113,6 +118,10 @@ final class EntityManagerImpl implements EntityManager {
 
     EntityManagerImpl(EntityManagerFactoryImpl factory, Map<?, ?> map, jakarta.persistence.SynchronizationType synchronization) {
         this.factory = factory;
+        this.cached = factory.cache().holdsEntities();
+        this.transactionTouched = cached ? new HashSet<>() : Collections.emptySet();
+        this.transactionCacheCandidates = cached ? new HashSet<>() : Collections.emptySet();
+        this.bypassStore = cached ? new HashSet<>() : Collections.emptySet();
         this.operations = new EntityOperations(factory, context, new EntityOperations.Connections() {
             @Override
             public <T> T on(Function<Connection, T> work) {
@@ -126,8 +135,10 @@ final class EntityManagerImpl implements EntityManager {
             public void beforeCommit(Connection connection) {
                 withConnection(connection, current -> {
                     flush(current);
-                    cachePublication = factory.cache().stage(context, storeMode(), bypassStore, transactionTouched,
-                        transactionCacheCandidates, transactionCacheGeneration);
+                    if (cached) {
+                        cachePublication = factory.cache().stage(context, storeMode(), bypassStore, transactionTouched,
+                            transactionCacheCandidates, transactionCacheGeneration);
+                    }
                     return null;
                 });
             }
@@ -534,6 +545,7 @@ final class EntityManagerImpl implements EntityManager {
     }
 
     private void touch(EntityKey key) {
+        if (!cached) return;
         captureCacheGeneration(factory.cache().generation());
         transactionTouched.add(key);
     }
@@ -854,7 +866,7 @@ final class EntityManagerImpl implements EntityManager {
                 fetch(found, plan, connection);
                 return found;
             }));
-            if (result != null) {
+            if (result != null && cached) {
                 if (transaction.isActive()) {
                     if (store == CacheStoreMode.BYPASS) {
                         bypassStore.add(new EntityKey(type.root(), id));
@@ -1238,6 +1250,10 @@ final class EntityManagerImpl implements EntityManager {
         @Override
         public void hydrateCollections(List<io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedEntity> rows,
                 List<io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedCollection> collections, Connection connection) {
+            if (!cached) { // nothing is restored from the shared cache, nothing is kept for it
+                factory.loader(connection).loadCollections(rows, collections, connection, context);
+                return;
+            }
             Map<EntityKey, MappedEntity> fresh = new java.util.LinkedHashMap<>();
             for (var row : rows) {
                 EntityKey key = new EntityKey(row.type().root(), row.id());
@@ -1257,7 +1273,7 @@ final class EntityManagerImpl implements EntityManager {
 
         /** Records a newly loaded instance for the shared cache, as a find by identifier does (§3.10). */
         private Object stored(MappedEntity type, Object id, Object loaded, long cacheGeneration) {
-            return loaded == null ? null : stored(type, new EntityKey(type.root(), id), loaded, cacheGeneration);
+            return loaded == null || !cached ? loaded : stored(type, new EntityKey(type.root(), id), loaded, cacheGeneration);
         }
 
         /** {@link #stored(MappedEntity, Object, Object, long)} with the identity already at hand, the key of its root. */

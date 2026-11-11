@@ -79,12 +79,29 @@ final class SecondLevelCache implements Cache {
 
     private final MappedUnit mapping;
     private final SharedCacheMode mode;
+    private final boolean holdsEntities;
     private final ConcurrentMap<EntityKey, Graph> entries = new ConcurrentHashMap<>();
     private final AtomicLong generation = new AtomicLong();
 
     SecondLevelCache(MappedUnit mapping, SharedCacheMode mode) {
         this.mapping = mapping;
         this.mode = mode == SharedCacheMode.UNSPECIFIED ? SharedCacheMode.ENABLE_SELECTIVE : mode;
+        boolean any = false;
+        if (this.mode != SharedCacheMode.NONE) {
+            for (var entity : mapping.model().entities()) {
+                any |= enabled(mapping.entity(entity.javaType()).orElseThrow());
+            }
+        }
+        this.holdsEntities = any;
+    }
+
+    /**
+     * Whether the mode of this cache (§3.10.1) caches an entity of the unit. Without one, it stores and restores
+     * nothing, whatever the cache modes of an operation: an entity manager has nothing to keep for it about what its
+     * transaction read and wrote.
+     */
+    boolean holdsEntities() {
+        return holdsEntities;
     }
 
     boolean enabled(MappedEntity type) {
