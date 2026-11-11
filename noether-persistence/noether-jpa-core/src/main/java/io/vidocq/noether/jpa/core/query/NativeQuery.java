@@ -41,7 +41,6 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Types;
-import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Collections;
@@ -289,29 +288,25 @@ public class NativeQuery extends AbstractQuery implements Query {
             arguments[i] = convert(value, type);
             types[i] = primitiveBox(type);
         }
-        try {
-            for (var constructor : result.targetClass().getConstructors()) {
-                Class<?>[] parameters = constructor.getParameterTypes();
-                if (parameters.length != types.length) {
-                    continue;
-                }
-                boolean matches = true;
-                for (int i = 0; i < parameters.length; i++) {
-                    if (!primitiveBox(parameters[i]).isAssignableFrom(types[i])) {
-                        matches = false;
-                        break;
-                    }
-                    arguments[i] = convert(arguments[i], parameters[i]);
-                }
-                if (matches) {
-                    return constructor.newInstance(arguments);
-                }
+        for (ResultConstructors.Candidate constructor : ResultConstructors.of(result.targetClass()).candidates()) {
+            Class<?>[] parameters = constructor.parameters();
+            if (parameters.length != types.length) {
+                continue;
             }
-            throw new PersistenceException("The SQL result-set mapping " + result.targetClass().getName()
-                + " has no public constructor matching its column results");
-        } catch (InstantiationException | IllegalAccessException | InvocationTargetException e) {
-            throw new PersistenceException("The SQL result-set constructor for " + result.targetClass().getName() + " failed", e);
+            boolean matches = true;
+            for (int i = 0; i < parameters.length; i++) {
+                if (!primitiveBox(parameters[i]).isAssignableFrom(types[i])) {
+                    matches = false;
+                    break;
+                }
+                arguments[i] = convert(arguments[i], parameters[i]);
+            }
+            if (matches) {
+                return constructor.newInstance(arguments);
+            }
         }
+        throw new PersistenceException("The SQL result-set mapping " + result.targetClass().getName()
+            + " has no public constructor matching its column results");
     }
 
     private static Class<?> primitiveBox(Class<?> type) {

@@ -906,12 +906,13 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
 
     /**
      * {@code NEW type(arguments)} (§4.8.2): a public constructor of the application's class whose parameters take the
-     * arguments. The class is not an entity — no access is generated for it — so the constructor is called reflectively:
-     * on the module path, its package must be exported (or opened) to this module, as for any provider.
+     * arguments. The class is not an entity — no access is generated for it — so its constructors are found
+     * reflectively, once per class, and called through method handles ({@link ResultConstructors}): on the module path,
+     * its package must be exported to this module, as for any provider.
      */
     private Object construct(Class<?> type, Object[] arguments) {
-        for (java.lang.reflect.Constructor<?> constructor : type.getConstructors()) {
-            Class<?>[] parameters = constructor.getParameterTypes();
+        for (ResultConstructors.Candidate constructor : ResultConstructors.of(type).candidates()) {
+            Class<?>[] parameters = constructor.parameters();
             if (parameters.length != arguments.length) {
                 continue;
             }
@@ -923,13 +924,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
                 fits = converted[i] == null ? !parameters[i].isPrimitive() : parameter.isInstance(converted[i]);
             }
             if (fits) {
-                try {
-                    return constructor.newInstance(converted);
-                } catch (java.lang.reflect.InvocationTargetException e) {
-                    throw new PersistenceException("The constructor of " + type.getName() + " failed: " + e.getCause(), e.getCause());
-                } catch (ReflectiveOperationException e) {
-                    throw new PersistenceException("The constructor of " + type.getName() + " cannot be called: " + e.getMessage(), e);
-                }
+                return constructor.newInstance(converted);
             }
         }
         throw new PersistenceException("No public constructor of " + type.getName() + " takes the arguments of the query: " + jpql);
