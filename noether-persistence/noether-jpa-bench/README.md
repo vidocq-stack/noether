@@ -12,8 +12,8 @@ optimization is included in those measurements. PERF1 (2026-10-19) implements
 the first proposed result-row hydration improvement; its new measurements are
 recorded separately in `../BENCH.md`, without changing these workloads.
 
-Standalone JMH harness (outside the Noether reactor) comparing Noether, Hibernate ORM and
-EclipseLink on identical H2 workloads. Methodology and limitations:
+Standalone JMH harness (outside the Noether reactor) comparing Noether, Hibernate ORM (7.x and
+5.6) and EclipseLink on identical H2 workloads. Methodology and limitations:
 `docs/en/modules/ROOT/pages/performance.adoc`. Recorded results: `../BENCH.md`.
 
 ## Run
@@ -26,6 +26,7 @@ cd noether-persistence/noether-jpa-bench
 export BENCH_RUN_ID=$(date -u +%Y%m%dT%H%M%SZ)   # optional; groups the three providers
 ./run-bench.sh noether
 ./run-bench.sh hibernate
+./run-bench.sh hibernate5    # Hibernate ORM 5.6 (Persistence 3.0): PersistenceUnitInfo bootstrap
 ./run-bench.sh eclipselink
 ```
 
