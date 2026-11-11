@@ -33,13 +33,32 @@ export BENCH_RUN_ID=$(date -u +%Y%m%dT%H%M%SZ)   # optional; groups the three pr
 JMH settings: `-wi 3 -i 5 -w 2s -r 2s -f 1 -t 1 -foe true -prof gc -rf json`. With `-foe true` a
 failing setup, preflight or benchmark exits non-zero and the runner prints the full JMH log.
 
+## On PostgreSQL
+
+The same workloads run against any database the providers can reach: `BENCH_JDBC_URL`,
+`BENCH_JDBC_DRIVER`, `BENCH_JDBC_USER` and `BENCH_JDBC_PASSWORD` replace the in-memory H2 default for
+every provider of the run. The setup drops and recreates `bench_record`, so use a disposable database:
+
+```bash
+docker run -d --rm --name noether-bench-pg -e POSTGRES_PASSWORD=bench -e POSTGRES_DB=bench \
+  -p 127.0.0.1:55432:5432 postgres:17-alpine
+export BENCH_JDBC_URL=jdbc:postgresql://127.0.0.1:55432/bench BENCH_JDBC_DRIVER=org.postgresql.Driver \
+  BENCH_JDBC_USER=postgres BENCH_JDBC_PASSWORD=bench
+./run-bench.sh noether && ./run-bench.sh hibernate5
+docker stop noether-bench-pg
+```
+
+Noether needs `noether-jpa-dialect-postgresql` installed with the other modules (a full
+`./mvnw -ntp install -DskipTests` from the root). The database name is recorded in
+`target/bench-reports/<run-id>/<provider>/database.txt`.
+
 ## Output locations
 
 - Build per provider: `target/<provider>/` (POM property `bench.build.directory`); the runner
   cleans only this directory.
 - Raw evidence, never cleaned or overwritten by the runner:
   `target/bench-reports/<run-id>/<provider>/` containing `jmh.log`, `jmh.json`, `maven.log`,
-  `java-version.txt`, `test-dependencies.txt` and `test-classpath.txt`.
+  `java-version.txt`, `database.txt`, `test-dependencies.txt` and `test-classpath.txt`.
 
 ## Preflight
 
