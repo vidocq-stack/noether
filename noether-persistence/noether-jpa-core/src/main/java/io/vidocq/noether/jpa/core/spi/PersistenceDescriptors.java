@@ -20,8 +20,12 @@
 package io.vidocq.noether.jpa.core.spi;
 
 import io.vidocq.noether.jpa.core.bootstrap.PersistenceUnits;
+import io.vidocq.noether.jpa.core.bootstrap.UnitSettings;
 import jakarta.persistence.PersistenceException;
+import jakarta.persistence.PersistenceUnitTransactionType;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 /**
  * The persistence units a deployment declares, read by the provider's own {@code persistence.xml} parser, for the
@@ -29,7 +33,32 @@ import java.util.List;
  */
 public final class PersistenceDescriptors {
 
+    /**
+     * How a declared unit meets transactions (§8.2.1.2, §8.2.1.5).
+     *
+     * @param type the effective transaction type: the {@code jakarta.persistence.transactionType} property of the unit,
+     *        else its {@code transaction-type} attribute
+     * @param jtaDataSourceName the {@code jta-data-source} element, or {@code null} when the unit names none
+     */
+    public record UnitTransactions(PersistenceUnitTransactionType type, String jtaDataSourceName) {
+        public boolean jta() {
+            return type == PersistenceUnitTransactionType.JTA;
+        }
+    }
+
     private PersistenceDescriptors() {
+    }
+
+    /**
+     * The transactions of the unit {@code name}, as the {@code META-INF/persistence.xml} files of {@code loader} declare
+     * them: what a container needs to hand a JTA unit its data source and transaction bridge before it creates the
+     * factory. Empty if no file declares the unit.
+     *
+     * @throws PersistenceException if a file cannot be read
+     */
+    public static Optional<UnitTransactions> transactions(String name, ClassLoader loader) {
+        return PersistenceUnits.find(name, loader).map(unit -> new UnitTransactions(
+            UnitSettings.of(unit, Map.of(), Map.of()).transactionType(), unit.jtaDataSourceName()));
     }
 
     /**

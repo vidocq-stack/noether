@@ -2,24 +2,47 @@ package io.vidocq.noether.jpa.cdi;
 
 import io.vidocq.noether.jpa.core.spi.PersistenceDescriptors;
 import io.vidocq.noether.jpa.core.spi.TransactionIntegration;
+import io.vidocq.noether.jpa.jta.SynchronizationRegistryIntegration;
 import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.inject.build.compatible.spi.*;
 import jakarta.persistence.*;
-import jakarta.transaction.TransactionManager;
 import java.util.*;
 
-/** Factory ownership is the CDI deployment's, not a static per-JVM cache. */
+/**
+ * Factory ownership is the CDI deployment's, not a static per-JVM cache. A JTA unit of {@code persistence.xml} runs on
+ * the container's data source bean and transaction synchronization registry bean ({@link ContainerTransactions});
+ * a resource-local unit needs neither. A {@link PersistenceUnitBootstrap} bean supplies its own data sources and gets
+ * the registry's bridge.
+ */
 public final class PersistenceFactoryCreator implements SyntheticBeanCreator<EntityManagerFactory> {
     @Override public EntityManagerFactory create(Instance<Object> lookup, Parameters params) {
         String unit = params.get("unit", String.class);
-        JtaIntegration integration = new JtaIntegration(lookup.select(TransactionManager.class).get());
         var bootstrap = lookup.select(PersistenceUnitBootstrap.class);
-        if (bootstrap.isUnsatisfied() && unit.isEmpty()) {
-            ClassLoader loader = Thread.currentThread().getContextClassLoader();
-            unit = PersistenceDescriptors.defaultUnitName(loader == null ? PersistenceFactoryCreator.class.getClassLoader() : loader);
+        if (!bootstrap.isUnsatisfied()) {
+            return new ContainerEntityManagerFactory(bootstrap.get().create(unit, bridge(lookup, unit)));
         }
-        EntityManagerFactory factory = bootstrap.isUnsatisfied() ? Persistence.createEntityManagerFactory(unit, Map.of(TransactionIntegration.PROPERTY, integration))
-            : bootstrap.get().create(unit, integration);
-        return new ContainerEntityManagerFactory(factory);
+        ClassLoader loader = loader();
+        String name = unit.isEmpty() ? PersistenceDescriptors.defaultUnitName(loader) : unit;
+        Map<String, Object> properties = PersistenceDescriptors.transactions(name, loader)
+            .filter(PersistenceDescriptors.UnitTransactions::jta)
+            .map(transactions -> jtaProperties(lookup, name, transactions))
+            .orElse(Map.of());
+        return new ContainerEntityManagerFactory(Persistence.createEntityManagerFactory(name, properties));
+    }
+
+    /** §9.6: the container's JTA data source and its transaction bridge, as a container passes them to the provider. */
+    private static Map<String, Object> jtaProperties(Instance<Object> lookup, String unit, PersistenceDescriptors.UnitTransactions transactions) {
+        TransactionIntegration bridge = bridge(lookup, unit);
+        return Map.of(TransactionIntegration.PROPERTY, bridge,
+            "jakarta.persistence.jtaDataSource", ContainerTransactions.dataSource(lookup, unit, transactions.jtaDataSourceName()));
+    }
+
+    private static TransactionIntegration bridge(Instance<Object> lookup, String unit) {
+        return new SynchronizationRegistryIntegration(ContainerTransactions.registry(lookup, unit));
+    }
+
+    private static ClassLoader loader() {
+        ClassLoader loader = Thread.currentThread().getContextClassLoader();
+        return loader == null ? PersistenceFactoryCreator.class.getClassLoader() : loader;
     }
 }

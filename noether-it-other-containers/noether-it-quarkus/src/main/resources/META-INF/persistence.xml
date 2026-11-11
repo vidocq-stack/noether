@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-    A JTA unit on Quarkus: Noether as the provider, Narayana's transactions through noether-jpa-cdi.
+    A JTA unit on Quarkus: Noether as the provider, on Quarkus' default data source (Agroal, configured in
+    application.properties), which enlists its connections in Narayana's transactions. It names no jta-data-source,
+    so noether-jpa-cdi takes the @Default javax.sql.DataSource bean.
 -->
 <persistence xmlns="https://jakarta.ee/xml/ns/persistence"
              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -11,9 +13,6 @@
         <class>io.vidocq.noether.it.quarkus.Book</class>
         <exclude-unlisted-classes>true</exclude-unlisted-classes>
         <properties>
-            <property name="jakarta.persistence.jdbc.url" value="jdbc:h2:mem:noether-quarkus;DB_CLOSE_DELAY=-1"/>
-            <property name="jakarta.persistence.jdbc.user" value="sa"/>
-            <property name="jakarta.persistence.jdbc.password" value=""/>
             <property name="jakarta.persistence.schema-generation.database.action" value="drop-and-create"/>
         </properties>
     </persistence-unit>

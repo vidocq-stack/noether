@@ -11,7 +11,10 @@
         <dependency><groupId>io.vidocq.noether</groupId><artifactId>noether-jpa-core</artifactId></dependency>
         <!-- Decision D7: the pool of the jakarta.persistence.jdbc.* units, bound as a service (not required). -->
         <dependency><groupId>io.vidocq.noether</groupId><artifactId>noether-jpa-pool-mansart</artifactId><scope>runtime</scope></dependency>
+        <!-- What a container assembles for a JTA unit (the Vidocq runtime extension will): a transaction manager and data
+             sources that enlist their connections. noether-jpa-cdi itself depends on no Mansart module. -->
         <dependency><groupId>io.vidocq.mansart</groupId><artifactId>mansart-transactions-core</artifactId><version>${mansart.version}</version></dependency>
+        <dependency><groupId>io.vidocq.mansart</groupId><artifactId>mansart-transactions-jdbc</artifactId><version>${mansart.version}</version></dependency>
         <!-- This is a non-release application test vehicle, not a production integration dependency. -->
         <dependency><groupId>io.vidocq.vauban</groupId><artifactId>vauban-core</artifactId><version>0.4.0-SNAPSHOT</version></dependency>
         <dependency><groupId>io.vidocq.vauban</groupId><artifactId>vauban-classloader-spi</artifactId><version>0.4.0-SNAPSHOT</version><scope>runtime</scope></dependency>

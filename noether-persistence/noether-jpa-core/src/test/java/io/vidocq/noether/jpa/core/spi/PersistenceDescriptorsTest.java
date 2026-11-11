@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import jakarta.persistence.PersistenceException;
+import jakarta.persistence.PersistenceUnitTransactionType;
 import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -86,6 +87,34 @@ class PersistenceDescriptorsTest {
         try (var both = new URLClassLoader(new URL[] {root("both", units("c", "d"))}, null)) {
             assertThatThrownBy(() -> PersistenceDescriptors.defaultUnitName(both))
                 .isInstanceOf(PersistenceException.class).hasMessageContaining("found [c, d]");
+        }
+    }
+
+    /**
+     * §8.2.1.2, §8.2.1.5: a container hands a JTA unit its JTA data source and its transaction bridge before the
+     * factory exists, so it asks the descriptor for the effective transaction type and the {@code jta-data-source}.
+     */
+    @Test
+    void theTransactionsOfAUnitAreItsEffectiveTypeAndItsJtaDataSource() throws IOException {
+        String descriptor = "<persistence xmlns=\"https://jakarta.ee/xml/ns/persistence\" version=\"3.2\">"
+            + "<persistence-unit name=\"named\" transaction-type=\"JTA\"><jta-data-source>ledger</jta-data-source></persistence-unit>"
+            + "<persistence-unit name=\"unnamed\" transaction-type=\"JTA\"/>"
+            + "<persistence-unit name=\"local\"/>"
+            + "<persistence-unit name=\"overridden\" transaction-type=\"RESOURCE_LOCAL\"><properties>"
+            + "<property name=\"jakarta.persistence.transactionType\" value=\"JTA\"/></properties></persistence-unit>"
+            + "</persistence>";
+        try (var loader = new URLClassLoader(new URL[] {root("transactions", descriptor)}, null)) {
+            assertThat(PersistenceDescriptors.transactions("named", loader))
+                .contains(new PersistenceDescriptors.UnitTransactions(PersistenceUnitTransactionType.JTA, "ledger"));
+            assertThat(PersistenceDescriptors.transactions("unnamed", loader))
+                .contains(new PersistenceDescriptors.UnitTransactions(PersistenceUnitTransactionType.JTA, null));
+            assertThat(PersistenceDescriptors.transactions("local", loader)).hasValueSatisfying(local -> {
+                assertThat(local.type()).isEqualTo(PersistenceUnitTransactionType.RESOURCE_LOCAL);
+                assertThat(local.jta()).isFalse();
+            });
+            assertThat(PersistenceDescriptors.transactions("overridden", loader))
+                .hasValueSatisfying(overridden -> assertThat(overridden.jta()).isTrue());
+            assertThat(PersistenceDescriptors.transactions("missing", loader)).isEmpty();
         }
     }
 

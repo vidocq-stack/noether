@@ -94,7 +94,18 @@ public final class SynchronizationRegistryIntegration implements TransactionInte
             if (current == null) throw new TransactionRequiredException("No active JTA transaction to join");
             if (current.equals(joined)) return;
             if (joined != null) throw new PersistenceException("The persistence context is already associated with a different transaction");
-            registry.registerInterposedSynchronization(new Synchronization() {
+            try {
+                registry.registerInterposedSynchronization(completionOf());
+            } catch (IllegalStateException e) {
+                // a transaction marked for rollback, for instance, takes no new synchronization (JTA 2.0 §3.4.4)
+                throw new PersistenceException("Unable to join the JTA transaction: " + e.getMessage(), e);
+            }
+            joined = current;
+        }
+
+        /** Flushes before the container completes the transaction, detaches and releases the connection after. */
+        private Synchronization completionOf() {
+            return new Synchronization() {
                 @Override
                 public void beforeCompletion() {
                     // §7.9.1: flush before the container commits; a transaction marked for rollback is not flushed.
@@ -110,8 +121,7 @@ public final class SynchronizationRegistryIntegration implements TransactionInte
                         release();
                     }
                 }
-            });
-            joined = current;
+            };
         }
 
         @Override
