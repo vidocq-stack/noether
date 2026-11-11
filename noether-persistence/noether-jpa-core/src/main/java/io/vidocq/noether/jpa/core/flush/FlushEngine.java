@@ -175,9 +175,11 @@ public final class FlushEngine {
         deletes.forEach(work -> removed.add(work.entry().instance()));
         inserts.forEach(work -> pending.add(work.entry().instance()));
         Map<Object, List<CollectionKeyWrite>> collectionInserts = new IdentityHashMap<>();
-        for (ManagedEntity entry : context.entries()) {
+        // the key a foreign-key collection gives a member being inserted: nothing to find without an insert
+        for (ManagedEntity entry : inserts.isEmpty() ? List.<ManagedEntity>of() : context.entries()) {
             if (io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(entry.instance())) continue;
             if (entry.status() != ManagedEntity.Status.MANAGED) continue;
+            if (!hasForeignKeyCollection(entry.type())) continue; // its state is not read for nothing
             Work owner = new Work(entry, read(entry.type(), entry.instance()));
             for (CollectionMapping mapping : owner.type().statements().collections()) {
                 if (!(mapping instanceof CollectionMapping.ForeignKey foreign)) continue;
@@ -237,6 +239,14 @@ public final class FlushEngine {
         for (ManagedEntity entry : checks) {
             locks.checkVersion(entry.type(), entry, connection);
         }
+    }
+
+    private static boolean hasForeignKeyCollection(MappedEntity type) {
+        List<CollectionMapping> collections = type.statements().collections();
+        for (int i = 0; i < collections.size(); i++) {
+            if (collections.get(i) instanceof CollectionMapping.ForeignKey) return true;
+        }
+        return false;
     }
 
     // ---- inserts ------------------------------------------------------------------------------------------
