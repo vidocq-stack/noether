@@ -1089,6 +1089,11 @@ final class EntityManagerImpl implements EntityManager {
         }
 
         @Override
+        public io.vidocq.noether.jpa.core.query.QueryPlans plans() {
+            return factory.queryPlans();
+        }
+
+        @Override
         public void fetch(Object entity, FetchPlan plan, Connection connection) {
             EntityManagerImpl.this.fetch(entity, plan, connection);
         }

@@ -49,6 +49,9 @@ public interface QueryRuntime {
     /** The mapped persistence unit. */
     MappedUnit mapping();
 
+    /** The parsed and translated query strings of the factory, shared by its entity managers. */
+    QueryPlans plans();
+
     /** Checks the unit and root context of a fetch/load graph hint before execution. */
     default void validateGraph(Object graph, Class<?> root) {
         if (!(graph instanceof jakarta.persistence.EntityGraph<?>)) {
