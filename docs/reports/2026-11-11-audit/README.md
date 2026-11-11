@@ -6,8 +6,9 @@ Noether is sound at its core: strict Java Modules, generated entity access, a po
 found blocking defects on application servers and on Quarkus, and a performance gap against Hibernate 5.6: all of
 them are fixed. In pure provider work, measured on in-memory H2, Noether is now 47% to 94% faster than
 Hibernate 5.6 and allocates less memory. On PostgreSQL, the database's input/output is the limit, and both
-providers reach the same level. Every fix is proposed on the `fix-proposals` branch; merging it into `main` is
-still to be decided.
+providers reach the same level. Every fix is proposed on the `fix-proposals` branch. The maintainer decided the
+open points on 2026-11-11, and those decisions are applied on the same branch; merging it into `main` is still to
+be decided.
 
 ## Verdict per axis
 
@@ -15,12 +16,12 @@ The seven axes are compliant or fixed, and the upstream fixes, Vauban #285 and M
 
 | Axis | Expected | Finding | State | Pull requests |
 |---|---|---|---|---|
-| A1 Architecture | Coherent modules, strict Java Modules, a brick depends on APIs | Sound split: core, dialect SPI and dialects, APT processor, CDI, JTA bridge. Only the `spi` package is exported without qualification, no unqualified `opens`. Open points F4, F6, F7, F12. | Compliant | — |
+| A1 Architecture | Coherent modules, strict Java Modules, a brick depends on APIs | Sound split: core, dialect SPI and dialects, APT processor, CDI, JTA bridge. Only the `spi` package is exported without qualification, no unqualified `opens`. The four open points are decided and applied: Mansart is out of the core (F7) and of the CDI bridge (F4), JDBC work runs on the calling thread (F6), and only the core reads `persistence.xml` (F12). | Compliant | [#60](https://codefloe.com/Vidocq/noether/pulls/60), [#61](https://codefloe.com/Vidocq/noether/pulls/61), [#63](https://codefloe.com/Vidocq/noether/pulls/63) |
 | A2 Reflection | The specification minimum, nothing per row | `SELECT NEW` and `@ConstructorResult` looked their constructors up on every row (F3). The rest is the specification minimum (F8). | Fixed | [#49](https://codefloe.com/Vidocq/noether/pulls/49) |
 | A3 Static generation | APT and the Class-File API | Entity access, listeners, converters and the canonical metamodel are generated. No gap a generator would fill. | Compliant | — |
 | A4 The most in the build compatible extension | A portable CDI Lite extension, no container-specific path | Entirely a build compatible extension. It broke on ArC and visited every class; fixed. On Vauban, the build-time path broke on two Vauban bugs (F9), fixed by Vauban #285, merged. A binding-key collision is fixed (F13). | Fixed | [#48](https://codefloe.com/Vidocq/noether/pulls/48), [#50](https://codefloe.com/Vidocq/noether/pulls/50), [#51](https://codefloe.com/Vidocq/noether/pulls/51), [Vauban #285](https://codefloe.com/Vidocq/vauban/pulls/285) |
-| A5 Open Liberty | Noether as the provider of a WAR, with the server's JTA | A JTA unit was refused at bootstrap: there was no bridge for a Jakarta EE server (F1). New module `noether-jpa-jta`. | Fixed | [#47](https://codefloe.com/Vidocq/noether/pulls/47) |
-| A6 Quarkus | ArC and Narayana, without Hibernate ORM | Two defects of the extension on ArC (F11), fixed with portable CDI; no Quarkus setting is needed. | Fixed | [#48](https://codefloe.com/Vidocq/noether/pulls/48) |
+| A5 Open Liberty | Noether as the provider of a WAR, with the server's JTA | A JTA unit was refused at bootstrap: there was no bridge for a Jakarta EE server (F1). New module `noether-jpa-jta`. TABLE identifiers then failed on the server's enlisted connection (F18): they now go through the unit's non-JTA data source. | Fixed | [#47](https://codefloe.com/Vidocq/noether/pulls/47), [#65](https://codefloe.com/Vidocq/noether/pulls/65) |
+| A6 Quarkus | ArC and Narayana, without Hibernate ORM | Two defects of the extension on ArC (F11), fixed with portable CDI. Noether now takes Quarkus' own pieces, the Agroal data source and Narayana's `TransactionSynchronizationRegistry` (F10), with no Mansart jar in the application; 16 Quarkus tests. | Fixed | [#48](https://codefloe.com/Vidocq/noether/pulls/48), [#63](https://codefloe.com/Vidocq/noether/pulls/63), [#65](https://codefloe.com/Vidocq/noether/pulls/65) |
 | A7 Performance | At least Hibernate 5.6 | On H2: 13% to 38% below Hibernate 5.6 at the start (F2), 47% to 94% above after optimization, with less allocation on all four workloads. On PostgreSQL: at the same level, within the run-to-run variation. | Fixed | [#46](https://codefloe.com/Vidocq/noether/pulls/46) (measurement), [#52](https://codefloe.com/Vidocq/noether/pulls/52), [#53](https://codefloe.com/Vidocq/noether/pulls/53) (PostgreSQL), [#54](https://codefloe.com/Vidocq/noether/pulls/54) (allocation) |
 
 ## Proposed fixes
@@ -45,6 +46,24 @@ Pull requests into `fix-proposals` do not trigger the CI, so each was validated 
 validated together: chained in their merge order, they pass `./mvnw clean verify` with 1215 tests and no failure,
 against the latest Vauban and Mansart snapshots (Vauban #285 and Mansart #93 included). The pull request from
 `fix-proposals` into `main` runs the full validation and SonarQube.
+
+### After the review
+
+Nine more pull requests followed, merged into `fix-proposals` the same day:
+
+| Pull request | Topic | Local validation |
+|---|---|---|
+| [#57](https://codefloe.com/Vidocq/noether/pulls/57), [#58](https://codefloe.com/Vidocq/noether/pulls/58), [#59](https://codefloe.com/Vidocq/noether/pulls/59) | The SonarQube issues of the pull request into `main`: 58 reported over three analyses, 47 fixed in code, 11 resolved in SonarQube with their reason | 1215 tests; BENCH-20261111-09: no throughput change |
+| [#60](https://codefloe.com/Vidocq/noether/pulls/60) | F6, F12: JDBC work on the calling thread, one `persistence.xml` parser; the evidence that F14's first option reuses identifiers | 1224 tests |
+| [#61](https://codefloe.com/Vidocq/noether/pulls/61) | F7: the Mansart pool becomes the optional module `noether-jpa-pool-mansart` | 1237 tests; BENCH-20261111-10 |
+| [#62](https://codefloe.com/Vidocq/noether/pulls/62) | F14: a TABLE generator refuses a Noether pool below 2 connections at bootstrap | 1248 tests |
+| [#63](https://codefloe.com/Vidocq/noether/pulls/63) | F4, F10: JTA units on a CDI container use the container's registry and data source; Quarkus on Agroal and Narayana. Fixes BUG-20261111-05: Agroal warned at every commit, a connection is now given back after each unit of work | 1273 tests, Quarkus 15 |
+| [#65](https://codefloe.com/Vidocq/noether/pulls/65) | F18: TABLE identifiers of a JTA unit through its non-JTA data source | 1284 tests, Open Liberty 5, Quarkus 16 |
+| [#64](https://codefloe.com/Vidocq/noether/pulls/64) | F15: Noether owns `Entity_` beside the real Mansart Data processor, after [Mansart #95](https://codefloe.com/Vidocq/mansart/pulls/95) | 1285 tests |
+
+Each was validated locally before its merge; the head of `fix-proposals` passes `./mvnw clean verify` with 1285
+tests and no failure. The test of [#64](https://codefloe.com/Vidocq/noether/pulls/64) found one more Mansart Data defect, BUG-20261111-06: its `_Entity` does
+not compile for an entity with a collection field. It is reported to Mansart; the test works around it.
 
 ## Performance against Hibernate 5.6
 
@@ -106,28 +125,33 @@ In other words, the lead measured on H2 is the provider's code; behind a real da
 
 The split is sound: the core exports only its `spi`, and each family of containers goes through its own bridge.
 
-![Three containers validated, two Mansart couplings to decide: Vauban and Quarkus reach noether-jpa-core through noether-jpa-cdi, Open Liberty through noether-jpa-jta; noether-jpa-cdi depends on mansart-transactions (F4) and noether-jpa-core on mansart-pool-core (F7)](architecture.svg)
+![Three containers validated, Mansart only behind an optional module: Vauban and Quarkus reach noether-jpa-core through noether-jpa-cdi, which uses noether-jpa-jta; Open Liberty goes through noether-jpa-jta; the optional noether-jpa-pool-mansart module brings mansart-pool-core](architecture.svg)
 
 A CDI container (Vauban, Quarkus) goes through `noether-jpa-cdi`, a Jakarta EE server through `noether-jpa-jta`.
-Mansart enters at two points only, the core's pool (F7) and the CDI bridge (F4): these are the two architecture
-decisions to take.
+Before the decisions, Mansart entered at two points: the core required its pool (F7), and the CDI bridge installed
+its transaction manager (F4). Since #61 and #63, the core has no Mansart dependency: an optional module,
+`noether-jpa-pool-mansart`, brings the Java SE pool, found by `ServiceLoader`. A JTA unit on a CDI container uses
+the container's `TransactionSynchronizationRegistry` and `DataSource`, as on a server. On Vidocq, the runtime
+extension will bring Mansart's transactions and an enlisting data source (axis A8, to port).
 
-## Decisions to take
+## Decisions
 
-Eight points still need a decision; the first one conditions all the others. The ninth, F17, is settled: Mansart
-#93 is merged.
+The maintainer decided the open points on 2026-11-11; the table gives each decision and where it is applied. Only
+the merge into `main` remains to decide.
 
 | Point | Finding | Proposed option | Decision |
 |---|---|---|---|
-| Merging `fix-proposals` into `main` | The fixes are isolated on `fix-proposals`; nothing touched `main`. | Review the pull requests, then a pull request from `fix-proposals` into `main` with CI and SonarQube. | To decide |
-| F7 — the Mansart pool in the core | `noether-jpa-core` depends on `mansart-pool-core`: a server or Quarkus deployment ships an unused pool. | Make the pool optional (`requires static`, discovery through `ServiceLoader`). | To decide |
-| F4 — Mansart Transactions in `noether-jpa-cdi` | The extension installs the Mansart transaction manager and its XA adapter. The Vidocq rule is that a brick depends on APIs and its runtime extension assembles. | On a container that already has JTA, go through `noether-jpa-jta`; leave Mansart to the Vidocq runtime extension. | To decide |
-| F6 — a thread hop per JDBC call | `JdbcExecution` moves every JDBC task to a new virtual thread and waits for it: no gain, and a server's transaction context is lost. | Run on the calling thread: the hop costs about 7 µs per call from a platform thread, five times a whole `findById` (BENCH-20261111-02). Off the bench paths, which are all transactional; it changes a documented behavior. | To decide |
-| F14 — TABLE generation and a one-connection pool | BUG-20261018-04, open: identifier allocation asks for a second connection while the transaction holds the pool's only one, and times out. | Allocate on the transaction's connection, or document a minimum pool size. | To decide |
-| F15 — the metamodel produced by Mansart Data | BUG-20261009-09, open: when Mansart Data writes `Entity_`, its plural attributes come out as `SingularAttribute`. | To handle on the Mansart Data side; the decision is already pending there. | To decide |
-| F10 — a native Quarkus path | On Quarkus, Noether opens its own pool and enlists in Narayana through the Mansart adapter. | Optional: the Agroal data source and the `TransactionSynchronizationRegistry`. | To decide |
-| F12 — `persistence.xml` read twice | `noether-jpa-cdi` has its own parser to find the default unit, beside the core's. | Minor: ask the core for the default unit through the `spi`. | To decide |
+| Merging `fix-proposals` into `main` | The fixes are isolated on `fix-proposals`; nothing touched `main`. | Review the pull requests, then [#56](https://codefloe.com/Vidocq/noether/pulls/56), from `fix-proposals` into `main`, with CI and SonarQube; the merge bot fast-forwards `main` without rewriting the signed commits. | To decide |
+| F7 — the Mansart pool in the core | `noether-jpa-core` depends on `mansart-pool-core`: a server or Quarkus deployment ships an unused pool. | Make the pool optional, found through `ServiceLoader`. | Accepted: new module `noether-jpa-pool-mansart`, the core has no Mansart dependency, no throughput change (BENCH-20261111-10), [#61](https://codefloe.com/Vidocq/noether/pulls/61) |
+| F4 — Mansart Transactions in `noether-jpa-cdi` | The extension installs the Mansart transaction manager and its XA adapter. The Vidocq rule is that a brick depends on APIs and its runtime extension assembles. | On a container that already has JTA, go through `noether-jpa-jta`; leave Mansart to the Vidocq runtime extension. | Accepted: the container's registry and data source, [#63](https://codefloe.com/Vidocq/noether/pulls/63) |
+| F6 — a thread hop per JDBC call | `JdbcExecution` moves every JDBC task to a new virtual thread and waits for it: no gain, and a server's transaction context is lost. | Run on the calling thread: the hop costs about 7 µs per call from a platform thread, five times a whole `findById` (BENCH-20261111-02). Off the bench paths, which are all transactional; it changes a documented behavior. | Accepted: `JdbcExecution` is removed, [#60](https://codefloe.com/Vidocq/noether/pulls/60) |
+| F14 — TABLE generation and a one-connection pool | BUG-20261018-04, open: identifier allocation asks for a second connection while the transaction holds the pool's only one, and times out. | Allocate on the transaction's connection, or document a minimum pool size. | Accepted first, then changed: on the transaction's connection, a rollback handed the same identifiers out twice, because a block is shared by the whole factory (test in [#60](https://codefloe.com/Vidocq/noether/pulls/60)). Decided instead: keep the separate connection, and refuse at bootstrap a Noether pool below 2 connections, [#62](https://codefloe.com/Vidocq/noether/pulls/62) |
+| F15 — the metamodel produced by Mansart Data | BUG-20261009-09, open: when Mansart Data writes `Entity_`, its plural attributes come out as `SingularAttribute`. | Mansart Data emits the plural kinds, or stops writing `Entity_`. | Accepted, the second: [Mansart #95](https://codefloe.com/Vidocq/mansart/pulls/95), merged; a two-processor test in [#64](https://codefloe.com/Vidocq/noether/pulls/64) |
+| F10 — a native Quarkus path | On Quarkus, Noether opens its own pool and enlists in Narayana through the Mansart adapter. | Optional: the Agroal data source and the `TransactionSynchronizationRegistry`. | Accepted, with more Quarkus tests (3 to 16), [#63](https://codefloe.com/Vidocq/noether/pulls/63) |
+| F12 — `persistence.xml` read twice | `noether-jpa-cdi` has its own parser to find the default unit, beside the core's. | Minor: ask the core for the default unit through the `spi`. | Accepted, [#60](https://codefloe.com/Vidocq/noether/pulls/60) |
 | F17 — the Mansart pool reset | The pool reset a connection returned out of auto-commit mode with a rollback. #52 restores auto-commit before returning it, which still cost one H2 commit per transaction. | Fixed in [Mansart #93](https://codefloe.com/Vidocq/mansart/pulls/93), merged: the pool rolls back only when a statement ran since the last commit or rollback, on par with HikariCP. | Accepted |
+| F18 — TABLE identifiers on a JTA unit | BUG-20261111-04, found while checking F14: the allocation went through the container's JTA data source, whose connection is enlisted in the transaction. On Open Liberty, 12 of 12 TABLE persists failed (`DSRA9250E`); after [#63](https://codefloe.com/Vidocq/noether/pulls/63), the same on Quarkus. | Allocate through the unit's non-JTA data source; refuse at bootstrap a JTA unit with a TABLE generator and none. | Accepted, [#65](https://codefloe.com/Vidocq/noether/pulls/65) |
+| A8 — the Vidocq runtime extension | Missing from Vidocq's `main`: its two commits (October) stayed on a documentation branch, while the Noether README presents it as existing. | Port it onto Vidocq's `main` once #56 is merged, adapted to the Noether of this audit: `noether-jpa-jta`, one binding per configuration, the optional pool, and Mansart's transactions with an enlisting data source. Correct the README with it. | Accepted, after the merge |
 
 ## Validation and limits
 
@@ -135,8 +159,9 @@ Everything stated here was run locally; three checks remain before a merge into 
 
 Run on an Apple M5 Max, Temurin 25.0.3, macOS 27.2:
 
-- The full reactor, `./mvnw clean verify`, on each branch: 1180 to 1193 tests, no failure; and on the nine
-  branches chained together: 1215 tests, no failure.
+- The full reactor, `./mvnw clean verify`, on each branch: 1180 to 1193 tests, no failure; on the nine
+  branches chained together: 1215 tests, no failure; after the decisions, on the head of `fix-proposals`: 1285
+  tests, no failure.
 - A real Open Liberty 26.0.0.10 (`persistenceContainer-3.2`), with the WAR packaged as an application ships it.
 - A real Quarkus 3.40.1 (`@QuarkusTest`, ArC, Narayana), without `quarkus-hibernate-orm`.
 - Vauban on the module path: the 4 existing scenarios and the new build-time one, red before the fix, green on
@@ -150,21 +175,27 @@ Not run yet:
 
 - The local SonarQube analysis: it could not be started during the audit.
 - The official Jakarta Persistence TCK on the fixed branches.
-- The CI: it runs only for pull requests into `main`.
+- The CI runs only for pull requests into `main`: on [#56](https://codefloe.com/Vidocq/noether/pulls/56), it was
+  green and the SonarQube gate passed before the decisions; it runs again on the head with them.
 
 ## Links
 
-- [Tracking issue Vidocq/noether#45](https://codefloe.com/Vidocq/noether/issues/45): axes A1 to A7, findings F1
-  to F17, state of each pull request.
+- [Tracking issue Vidocq/noether#45](https://codefloe.com/Vidocq/noether/issues/45): axes A1 to A8, findings F1
+  to F18, state of each pull request.
 - Pull requests into `fix-proposals`: [#46](https://codefloe.com/Vidocq/noether/pulls/46),
   [#47](https://codefloe.com/Vidocq/noether/pulls/47), [#48](https://codefloe.com/Vidocq/noether/pulls/48),
   [#49](https://codefloe.com/Vidocq/noether/pulls/49), [#50](https://codefloe.com/Vidocq/noether/pulls/50),
   [#51](https://codefloe.com/Vidocq/noether/pulls/51), [#52](https://codefloe.com/Vidocq/noether/pulls/52),
-  [#53](https://codefloe.com/Vidocq/noether/pulls/53), [#54](https://codefloe.com/Vidocq/noether/pulls/54); in
-  Vauban, [#285](https://codefloe.com/Vidocq/vauban/pulls/285), merged; in Mansart,
-  [#93](https://codefloe.com/Vidocq/mansart/pulls/93) (F17), merged.
+  [#53](https://codefloe.com/Vidocq/noether/pulls/53), [#54](https://codefloe.com/Vidocq/noether/pulls/54), then
+  [#57](https://codefloe.com/Vidocq/noether/pulls/57) to [#65](https://codefloe.com/Vidocq/noether/pulls/65); in Vauban, [#285](https://codefloe.com/Vidocq/vauban/pulls/285), merged; in Mansart,
+  [#93](https://codefloe.com/Vidocq/mansart/pulls/93) (F17) and [#95](https://codefloe.com/Vidocq/mansart/pulls/95)
+  (F15), merged.
 - [`noether-persistence/BENCH.md`](../../../noether-persistence/BENCH.md): BENCH-20261111-01 (reference), -02
   (profile), -03 (gain per commit), -04 (after optimization, H2), -05 (PostgreSQL), -06 (allocation per commit),
-  -07 (after the allocation work, H2), -08 (allocation on PostgreSQL).
+  -07 (after the allocation work, H2), -08 (allocation on PostgreSQL), -09 (after the SonarQube fixes), -10 (the
+  optional pool).
 - [`noether-persistence/BUG.md`](../../../noether-persistence/BUG.md): BUG-20261111-01 (Open Liberty),
-  BUG-20261111-02 (Quarkus), BUG-20261111-03 (Vauban build time), BUG-20261018-03 (binding key, fixed).
+  BUG-20261111-02 (Quarkus), BUG-20261111-03 (Vauban build time), BUG-20261018-03 (binding key, fixed),
+  BUG-20261018-04 (TABLE and a one-connection pool, fixed), BUG-20261111-04 (TABLE on a JTA unit, fixed),
+  BUG-20261111-05 (Agroal warning, fixed), BUG-20261009-09 (Mansart Data `Entity_`, fixed upstream),
+  BUG-20261111-06 (Mansart Data `_Entity` with a collection, open upstream).
