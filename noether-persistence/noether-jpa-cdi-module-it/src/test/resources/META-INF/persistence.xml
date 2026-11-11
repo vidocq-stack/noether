@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Units without a container bootstrap: noether-jpa-cdi hands a JTA unit the container's DataSource bean, the
+    @Default one or the one @Named after its jta-data-source, and its TransactionSynchronizationRegistry bean.
+-->
+<persistence xmlns="https://jakarta.ee/xml/ns/persistence" version="3.2">
+    <persistence-unit name="xml-default" transaction-type="JTA">
+        <class>io.vidocq.noether.jpa.cdi.moduleit.Record</class>
+        <exclude-unlisted-classes>true</exclude-unlisted-classes>
+        <properties>
+            <property name="jakarta.persistence.schema-generation.database.action" value="drop-and-create"/>
+        </properties>
+    </persistence-unit>
+    <persistence-unit name="xml-ledger" transaction-type="JTA">
+        <jta-data-source>ledger</jta-data-source>
+        <class>io.vidocq.noether.jpa.cdi.moduleit.Record</class>
+        <exclude-unlisted-classes>true</exclude-unlisted-classes>
+        <properties>
+            <property name="jakarta.persistence.schema-generation.database.action" value="drop-and-create"/>
+        </properties>
+    </persistence-unit>
+    <persistence-unit name="xml-local" transaction-type="RESOURCE_LOCAL">
+        <class>io.vidocq.noether.jpa.cdi.moduleit.Record</class>
+        <exclude-unlisted-classes>true</exclude-unlisted-classes>
+        <properties>
+            <property name="jakarta.persistence.jdbc.url" value="jdbc:h2:mem:moduleit-local;DB_CLOSE_DELAY=-1"/>
+            <property name="jakarta.persistence.schema-generation.database.action" value="drop-and-create"/>
+        </properties>
+    </persistence-unit>
+</persistence>

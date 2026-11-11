@@ -2,22 +2,23 @@ package io.vidocq.noether.jpa.cdi.moduleit;
 
 import io.vidocq.noether.jpa.cdi.PersistenceUnitBootstrap;
 import io.vidocq.noether.jpa.core.spi.TransactionIntegration;
-import io.vidocq.mansart.transactions.core.MansartTransactionManager;
 import jakarta.enterprise.context.Dependent;
 import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Singleton;
 import jakarta.persistence.*;
 import jakarta.transaction.TransactionManager;
 
-/** Real container configuration and actual transaction manager; production bootstrap is supplied through an SPI. */
+/**
+ * Real container configuration: production bootstrap is supplied through an SPI, with one JTA data source per unit
+ * whose connections the container's transaction manager enlists.
+ */
 @Dependent
 public class Services {
-    private final TransactionManager manager = new MansartTransactionManager();
-    @Produces @Singleton public TransactionManager transactionManager() { return manager; }
-    @Produces @Singleton public PersistenceUnitBootstrap persistenceUnits() {
+    @Produces @Singleton public PersistenceUnitBootstrap persistenceUnits(TransactionManager manager) {
         return (unit, transactions) -> new PersistenceConfiguration(unit).managedClass(Record.class)
             .transactionType(PersistenceUnitTransactionType.JTA)
-            .property("jakarta.persistence.jdbc.url", "jdbc:h2:mem:container-" + unit + ";DB_CLOSE_DELAY=-1")
+            .property("jakarta.persistence.jtaDataSource",
+                new EnlistingDataSource("jdbc:h2:mem:container-" + unit + ";DB_CLOSE_DELAY=-1", manager))
             .property(TransactionIntegration.PROPERTY, transactions)
             .property("jakarta.persistence.schema-generation.database.action", "drop-and-create").createEntityManagerFactory();
     }

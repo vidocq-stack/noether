@@ -3,18 +3,23 @@ package io.vidocq.noether.jpa.cdi;
 import jakarta.persistence.*;
 import jakarta.persistence.criteria.*;
 import jakarta.persistence.metamodel.Metamodel;
-import jakarta.transaction.Transaction;
+import jakarta.transaction.Status;
 import jakarta.transaction.Synchronization;
+import jakarta.transaction.TransactionSynchronizationRegistry;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
-/** §7.7 container facade: transaction identity is shared per factory; an extended context belongs to its owner. */
+/**
+ * §7.7 container facade: transaction identity is shared per factory; an extended context belongs to its owner. The
+ * transaction is the one of the container's {@link TransactionSynchronizationRegistry} (JTA 2.0 §3.4.4): its key
+ * identifies the transaction-scoped contexts, an interposed synchronization releases them after completion.
+ */
 public final class ContainerEntityManager implements EntityManager {
-    private static final Map<Transaction, Map<Key, EntityManager>> CONTEXTS = new ConcurrentHashMap<>();
+    private static final Map<Object, Map<Key, EntityManager>> CONTEXTS = new ConcurrentHashMap<>();
     private record Key(EntityManagerFactory factory, SynchronizationType synchronization) {}
     private final EntityManagerFactory factory;
-    private final JtaIntegration integration;
+    private final TransactionSynchronizationRegistry registry;
     private final PersistenceContextType type;
     private final SynchronizationType synchronization;
     private final Map<String, Object> properties;
@@ -25,10 +30,10 @@ public final class ContainerEntityManager implements EntityManager {
     private final Map<String,java.util.function.Consumer<EntityManager>> settingDefinitions = new LinkedHashMap<>();
     private volatile List<java.util.function.Consumer<EntityManager>> settings = List.of();
 
-    public ContainerEntityManager(EntityManagerFactory factory, JtaIntegration integration, PersistenceContextType type,
-            SynchronizationType synchronization, Map<String, Object> properties) {
+    public ContainerEntityManager(EntityManagerFactory factory, TransactionSynchronizationRegistry registry,
+            PersistenceContextType type, SynchronizationType synchronization, Map<String, Object> properties) {
         this.factory = Objects.requireNonNull(factory);
-        this.integration = Objects.requireNonNull(integration);
+        this.registry = Objects.requireNonNull(registry);
         this.type = Objects.requireNonNull(type);
         this.synchronization = Objects.requireNonNull(synchronization);
         this.properties = Map.copyOf(properties);
@@ -38,16 +43,22 @@ public final class ContainerEntityManager implements EntityManager {
         if (type == PersistenceContextType.EXTENDED) extended = factory.createEntityManager(synchronization, properties);
     }
 
+    /** The key of the current transaction while it can still do work, otherwise {@code null}. */
+    private Object currentTransaction() {
+        int status = registry.getTransactionStatus();
+        return status == Status.STATUS_ACTIVE || status == Status.STATUS_MARKED_ROLLBACK ? registry.getTransactionKey() : null;
+    }
+
     private EntityManager delegate() {
         checkOpen();
         if (extended != null) return configured(extended);
-        Transaction transaction = integration.current();
+        Object transaction = currentTransaction();
         if (transaction == null) throw new TransactionRequiredException("A transaction-scoped persistence context requires an active JTA transaction");
         Map<Key, EntityManager> contexts = CONTEXTS.computeIfAbsent(transaction, current -> {
             var created = new ConcurrentHashMap<Key, EntityManager>();
             try {
-                current.registerSynchronization(new Synchronization() {
-                    @Override public void beforeCompletion() {}
+                registry.registerInterposedSynchronization(new Synchronization() {
+                    @Override public void beforeCompletion() { /* the contexts flush through their own synchronization */ }
                     @Override public void afterCompletion(int status) {
                         CONTEXTS.remove(current, created);
                         created.values().forEach(em -> {
@@ -95,11 +106,11 @@ public final class ContainerEntityManager implements EntityManager {
             settings = List.copyOf(settingDefinitions.values());
             return null;
         });
-        if (extended != null || integration.current() != null) setting.accept(delegate());
+        if (extended != null || currentTransaction() != null) setting.accept(delegate());
     }
 
     private <T> T read(Function<EntityManager, T> operation) {
-        if (type == PersistenceContextType.TRANSACTION && integration.current() == null) {
+        if (type == PersistenceContextType.TRANSACTION && currentTransaction() == null) {
             if (!isOpen()) throw new IllegalStateException("The container persistence context has been destroyed");
             try (var transientContext = factory.createEntityManager(synchronization, properties)) {
                 T value = operation.apply(configured(transientContext));
@@ -123,7 +134,7 @@ public final class ContainerEntityManager implements EntityManager {
 
     void ensureOpen() { checkOpen(); }
 
-    boolean inTransaction() { return integration.current() != null; }
+    boolean inTransaction() { return currentTransaction() != null; }
 
     /** Called only by the CDI owner/disposer, never by application code. */
     public void destroy() {
@@ -165,7 +176,7 @@ public final class ContainerEntityManager implements EntityManager {
     @Override public void refresh(Object entity, LockModeType lock) { delegate().refresh(entity, lock); }
     @Override public void refresh(Object entity, LockModeType lock, Map<String,Object> hints) { delegate().refresh(entity, lock, hints); }
     @Override public void refresh(Object entity, RefreshOption... options) { delegate().refresh(entity, options); }
-    @Override public void clear() { checkOpen(); if (extended != null || integration.current() != null) delegate().clear(); }
+    @Override public void clear() { checkOpen(); if (extended != null || currentTransaction() != null) delegate().clear(); }
     @Override public void detach(Object entity) { read(em -> { em.detach(entity); return null; }); }
     @Override public boolean contains(Object entity) { return read(em -> em.contains(entity)); }
     @Override public LockModeType getLockMode(Object entity) { return delegate().getLockMode(entity); }
@@ -192,7 +203,7 @@ public final class ContainerEntityManager implements EntityManager {
     @Override public StoredProcedureQuery createStoredProcedureQuery(String name, Class<?>... classes) { return procedure(em -> em.createStoredProcedureQuery(name, classes)); }
     @Override public StoredProcedureQuery createStoredProcedureQuery(String name, String... mappings) { return procedure(em -> em.createStoredProcedureQuery(name, mappings)); }
     @Override public void joinTransaction() { delegate().joinTransaction(); }
-    @Override public boolean isJoinedToTransaction() { checkOpen(); return integration.current() != null && delegate().isJoinedToTransaction(); }
+    @Override public boolean isJoinedToTransaction() { checkOpen(); return currentTransaction() != null && delegate().isJoinedToTransaction(); }
     @Override public <T> T unwrap(Class<T> cls) { checkOpen(); if (cls.isInstance(this)) return cls.cast(this); return delegate().unwrap(cls); }
     @Override public Object getDelegate() { return delegate().getDelegate(); }
     @Override public CriteriaBuilder getCriteriaBuilder() { checkOpen(); return factory.getCriteriaBuilder(); }

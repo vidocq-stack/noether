@@ -4,10 +4,14 @@
     <parent><groupId>io.vidocq.noether</groupId><artifactId>noether-jpa</artifactId><version>0.4.0-SNAPSHOT</version></parent>
     <artifactId>noether-jpa-cdi</artifactId>
     <name>Noether :: Persistence :: CDI and JTA integration</name>
+    <description>
+        Persistence injection on a CDI 4.1 Lite container. A JTA unit runs on the container's DataSource bean, whose
+        connections the container enlists, and its TransactionSynchronizationRegistry bean (noether-jpa-jta).
+    </description>
     <dependencies>
         <dependency><groupId>io.vidocq.noether</groupId><artifactId>noether-jpa-core</artifactId></dependency>
-        <!-- Existing JDBC XA adapter; production integration does not reimplement the transaction manager. -->
-        <dependency><groupId>io.vidocq.mansart</groupId><artifactId>mansart-transactions-jdbc</artifactId><version>${mansart.version}</version></dependency>
+        <!-- The JTA bridge: the container's TransactionSynchronizationRegistry, the container's data source enlists. -->
+        <dependency><groupId>io.vidocq.noether</groupId><artifactId>noether-jpa-jta</artifactId><version>${project.version}</version></dependency>
         <!-- Jakarta platform APIs: the container (Vauban through the Vidocq runtime, Quarkus, a server) brings them. -->
         <dependency><groupId>jakarta.transaction</groupId><artifactId>jakarta.transaction-api</artifactId><version>2.0.1</version><scope>provided</scope></dependency>
         <dependency><groupId>jakarta.enterprise</groupId><artifactId>jakarta.enterprise.cdi-api</artifactId><version>4.1.0</version><scope>provided</scope></dependency>
@@ -16,6 +20,8 @@
         <dependency><groupId>org.assertj</groupId><artifactId>assertj-core</artifactId><scope>test</scope></dependency>
         <dependency><groupId>com.h2database</groupId><artifactId>h2</artifactId><scope>test</scope></dependency>
         <dependency><groupId>io.vidocq.noether</groupId><artifactId>noether-jpa-dialect-h2</artifactId><scope>test</scope></dependency>
+        <!-- Test stand-in for a container: a real transaction manager and its JDBC XA adapter. -->
+        <dependency><groupId>io.vidocq.mansart</groupId><artifactId>mansart-transactions-jdbc</artifactId><version>${mansart.version}</version><scope>test</scope></dependency>
     </dependencies>
     <build><plugins>
         <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId>

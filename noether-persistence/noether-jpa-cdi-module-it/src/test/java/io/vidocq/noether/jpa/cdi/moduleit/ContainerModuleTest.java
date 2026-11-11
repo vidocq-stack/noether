@@ -1,10 +1,11 @@
 package io.vidocq.noether.jpa.cdi.moduleit;
 
 import io.vidocq.noether.jpa.cdi.*;
-import io.vidocq.noether.jpa.core.spi.TransactionIntegration;
+import io.vidocq.noether.jpa.jta.SynchronizationRegistryIntegration;
 import io.vidocq.vauban.core.container.VaubanContainer;
 import jakarta.persistence.*;
 import jakarta.transaction.TransactionManager;
+import jakarta.transaction.TransactionSynchronizationRegistry;
 import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.*;
 
@@ -13,7 +14,7 @@ class ContainerModuleTest {
     @Test
     void existingInjectionPointsResolveSynthesizedPersistenceFields() throws Exception {
         try (var container = VaubanContainer.builder().addBeanClass(NoetherPersistenceExtension.class)
-                .addBeanClass(Services.class).addBeanClass(ExplicitInjectionRepository.class).build()) {
+                .addBeanClass(Transactions.class).addBeanClass(Services.class).addBeanClass(ExplicitInjectionRepository.class).build()) {
             var repository = container.select(ExplicitInjectionRepository.class);
             assertThat(repository.manager).isNotNull();
             assertThat(repository.factory).isNotNull();
@@ -30,7 +31,7 @@ class ContainerModuleTest {
     @Test
     void persistenceSetterParametersReceiveTheirEnhancedQualifier() {
         try (var container = VaubanContainer.builder().addBeanClass(NoetherPersistenceExtension.class)
-                .addBeanClass(Services.class).addBeanClass(SetterRepository.class).build()) {
+                .addBeanClass(Transactions.class).addBeanClass(Services.class).addBeanClass(SetterRepository.class).build()) {
             assertThat(container.select(SetterRepository.class).manager).isNotNull();
         }
     }
@@ -38,7 +39,7 @@ class ContainerModuleTest {
     @Test
     void persistenceAnnotationsInjectThroughTheActualContainer() throws Exception {
         try (var container = VaubanContainer.builder().addBeanClass(NoetherPersistenceExtension.class)
-                .addBeanClass(Services.class).addBeanClass(Repository.class).build()) {
+                .addBeanClass(Transactions.class).addBeanClass(Services.class).addBeanClass(Repository.class).build()) {
             Repository repository = container.select(Repository.class);
             assertThat(repository.manager).isNotNull();
             assertThat(repository.factory).isNotNull();
@@ -51,14 +52,15 @@ class ContainerModuleTest {
     }
 
     @Test
-    void actualContainerTransactionManagerDrivesScopedIdentityAndExtendedLifecycle() throws Exception {
-        try (var container = VaubanContainer.builder().addBeanClass(Services.class).build()) {
+    void actualContainerRegistryDrivesScopedIdentityAndExtendedLifecycle() throws Exception {
+        try (var container = VaubanContainer.builder().addBeanClass(Transactions.class).addBeanClass(Services.class).build()) {
             TransactionManager tm = container.select(TransactionManager.class);
-            var integration = new JtaIntegration(tm);
+            TransactionSynchronizationRegistry registry = container.select(TransactionSynchronizationRegistry.class);
+            var integration = new SynchronizationRegistryIntegration(registry);
             try (var factory = container.select(PersistenceUnitBootstrap.class).create("scope-tests", integration)) {
-                var first = new ContainerEntityManager(factory, integration, PersistenceContextType.TRANSACTION,
+                var first = new ContainerEntityManager(factory, registry, PersistenceContextType.TRANSACTION,
                     SynchronizationType.SYNCHRONIZED, java.util.Map.of());
-                var second = new ContainerEntityManager(factory, integration, PersistenceContextType.TRANSACTION,
+                var second = new ContainerEntityManager(factory, registry, PersistenceContextType.TRANSACTION,
                     SynchronizationType.SYNCHRONIZED, java.util.Map.of());
                 assertThatThrownBy(first::close).isInstanceOf(IllegalStateException.class);
                 assertThatThrownBy(() -> first.persist(new Record(1))).isInstanceOf(TransactionRequiredException.class);
@@ -71,7 +73,7 @@ class ContainerModuleTest {
                 Record different = first.find(Record.class, 1);
                 assertThat(different).isNotSameAs(record);
                 tm.rollback();
-                var extended = new ContainerEntityManager(factory, integration, PersistenceContextType.EXTENDED,
+                var extended = new ContainerEntityManager(factory, registry, PersistenceContextType.EXTENDED,
                     SynchronizationType.UNSYNCHRONIZED, java.util.Map.of());
                 var deferred = new Record(2);
                 extended.persist(deferred);

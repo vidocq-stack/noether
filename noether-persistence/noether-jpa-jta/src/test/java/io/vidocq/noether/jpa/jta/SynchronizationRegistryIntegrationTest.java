@@ -20,15 +20,21 @@
 package io.vidocq.noether.jpa.jta;
 
 import io.vidocq.mansart.transactions.core.MansartTransactionManager;
+import io.vidocq.noether.jpa.core.spi.TransactionIntegration;
 import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.PersistenceException;
 import jakarta.persistence.SynchronizationType;
 import jakarta.persistence.TransactionRequiredException;
 import jakarta.persistence.spi.PersistenceProvider;
 import jakarta.persistence.spi.PersistenceProviderResolverHolder;
+import jakarta.transaction.Transaction;
+import java.sql.Connection;
 import java.sql.DriverManager;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -174,5 +180,103 @@ class SynchronizationRegistryIntegrationTest {
         assertThatThrownBy(() -> factory("registry-no-jndi", false))
             .isInstanceOf(PersistenceException.class)
             .hasMessageContaining("noether-jpa-jta");
+    }
+
+    /** A session of the bridge whose connections and completion steps record the thread that runs them. */
+    private TransactionIntegration.Session session(SynchronizationType synchronization, Map<String, Thread> threads,
+            List<Connection> acquired, List<Boolean> completions) {
+        return new SynchronizationRegistryIntegration(registry).open(synchronization,
+            () -> {
+                threads.put("acquire", Thread.currentThread());
+                Connection connection = DriverManager.getConnection(url("registry-session"), "sa", "");
+                acquired.add(connection);
+                return connection;
+            },
+            new TransactionIntegration.Completion() {
+                @Override
+                public void beforeCommit(Connection connection) {
+                    threads.put("flush", Thread.currentThread());
+                }
+
+                @Override
+                public void afterCompletion(boolean committed) {
+                    threads.put("detach", Thread.currentThread());
+                    completions.add(committed);
+                }
+            });
+    }
+
+    /** Decision D44: the container associates its transaction with the caller's thread; no JDBC work leaves it. */
+    @Test
+    void theJdbcWorkOfAJoinedContextRunsOnTheCallerThread() throws Exception {
+        assertThat(Thread.currentThread().isVirtual()).isFalse();
+        Map<String, Thread> threads = new ConcurrentHashMap<>();
+        List<Connection> acquired = new ArrayList<>();
+        var session = session(SynchronizationType.SYNCHRONIZED, threads, acquired, new ArrayList<>());
+        manager.begin();
+        session.join();
+        threads.put("work", session.onConnection(connection -> Thread.currentThread()));
+        manager.commit();
+
+        assertThat(threads).containsOnlyKeys("acquire", "work", "flush", "detach")
+            .allSatisfy((step, thread) -> assertThat(thread).as(step).isSameAs(Thread.currentThread()));
+        assertThat(acquired).singleElement().satisfies(connection -> assertThat(connection.isClosed()).isTrue());
+    }
+
+    /** §3.3.2, §7.9.1: a context marked for rollback is not flushed, and its instances are detached after completion. */
+    @Test
+    void aJoinedContextMarksTheTransactionForRollbackAndIsNotFlushed() throws Exception {
+        Map<String, Thread> threads = new ConcurrentHashMap<>();
+        List<Boolean> completions = new ArrayList<>();
+        var session = session(SynchronizationType.SYNCHRONIZED, threads, new ArrayList<>(), completions);
+        manager.begin();
+        session.join();
+        assertThat(session.isRollbackOnly()).isFalse();
+        session.rollbackOnly();
+        assertThat(session.isRollbackOnly()).isTrue();
+        assertThat(registry.getRollbackOnly()).isTrue();
+        assertThatThrownBy(manager::commit).isInstanceOf(jakarta.transaction.RollbackException.class);
+
+        assertThat(threads).doesNotContainKey("flush");
+        assertThat(completions).containsExactly(false);
+        assertThat(session.joined()).isFalse();
+    }
+
+    /** A transaction already marked for rollback refuses new synchronizations: the join fails and holds no connection. */
+    @Test
+    void joiningATransactionMarkedForRollbackFailsWithoutTakingAConnection() throws Exception {
+        List<Connection> acquired = new ArrayList<>();
+        var session = session(SynchronizationType.SYNCHRONIZED, new ConcurrentHashMap<>(), acquired, new ArrayList<>());
+        manager.begin();
+        manager.setRollbackOnly();
+        try {
+            assertThatThrownBy(session::join).isInstanceOf(PersistenceException.class)
+                .hasMessageContaining("Unable to join the JTA transaction");
+            assertThat(session.joined()).isFalse();
+            assertThat(acquired).isEmpty();
+        } finally {
+            manager.rollback();
+        }
+    }
+
+    /** §7.6.1: a persistence context is associated with one transaction at a time. */
+    @Test
+    void aContextJoinedToOneTransactionRefusesAnother() throws Exception {
+        var session = session(SynchronizationType.SYNCHRONIZED, new ConcurrentHashMap<>(), new ArrayList<>(), new ArrayList<>());
+        manager.begin();
+        session.join();
+        Transaction first = manager.suspend();
+        manager.begin();
+        try {
+            assertThatThrownBy(session::active).isInstanceOf(PersistenceException.class)
+                .hasMessageContaining("different JTA transaction");
+            assertThatThrownBy(session::join).isInstanceOf(PersistenceException.class)
+                .hasMessageContaining("different transaction");
+        } finally {
+            manager.rollback();
+            manager.resume(first);
+            manager.rollback();
+        }
+        assertThat(session.joined()).isFalse();
     }
 }

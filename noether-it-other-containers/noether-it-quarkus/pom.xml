@@ -11,7 +11,8 @@
     <name>Noether :: Quarkus integration test</name>
     <description>
         Noether as the Jakarta Persistence provider of a Quarkus application: ArC runs Noether's build compatible
-        extension, Narayana drives the transactions. Quarkus' own Hibernate ORM extension is absent. Never released.
+        extension, the JTA unit runs on Agroal's default data source and Narayana's transactions. Quarkus' own
+        Hibernate ORM extension is absent. Never released.
     </description>
 
     <properties>
@@ -49,13 +50,19 @@
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-arc</artifactId>
         </dependency>
+        <!-- Quarkus' own transactions and data source: Narayana's TransactionSynchronizationRegistry, and Agroal's
+             default data source, which enlists its connections in Narayana's transactions. -->
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-narayana-jta</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.h2database</groupId>
-            <artifactId>h2</artifactId>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-agroal</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jdbc-h2</artifactId>
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>

@@ -2,12 +2,21 @@ package io.vidocq.noether.jpa.cdi;
 
 import io.vidocq.mansart.transactions.core.MansartTransactionManager;
 import io.vidocq.noether.jpa.core.spi.PersistenceDescriptors;
+import io.vidocq.noether.jpa.core.spi.TransactionIntegration;
+import io.vidocq.noether.jpa.jta.SynchronizationRegistryIntegration;
 import jakarta.persistence.*;
 import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.*;
 
-/** §7.6/§7.7 and §3.3.2: real Noether JTA completion drives real H2 persistence, not API mocks. */
-class JtaIntegrationTest {
+/**
+ * §7.6/§7.7 and §3.3.2: the container facades of noether-jpa-cdi over what a CDI container hands a JTA unit, its
+ * {@code TransactionSynchronizationRegistry} and a data source whose connections it enlists. A real transaction
+ * manager completes real H2 connections; no API mock.
+ */
+class ContainerEntityManagerTest {
+    private final MansartTransactionManager tm = new MansartTransactionManager();
+    private final RegistryOverTransactionManager registry = new RegistryOverTransactionManager(tm);
+
     @Entity @Table(name = "jta_record")
     @NamedStoredProcedureQuery(name = "record.addOne", procedureName = "ADD_ONE", resultClasses = Integer.class,
         parameters = @StoredProcedureParameter(name = "value", mode = ParameterMode.IN, type = Integer.class))
@@ -18,12 +27,16 @@ class JtaIntegrationTest {
         Record(int id) { this.id = id; description = "before"; }
     }
 
-    private EntityManagerFactory factory(MansartTransactionManager manager, String name) {
+    private static String url(String name) {
+        return "jdbc:h2:mem:" + name + ";DB_CLOSE_DELAY=-1";
+    }
+
+    private EntityManagerFactory factory(String name) {
         return new PersistenceConfiguration(name).managedClass(Record.class).managedClass(Owner.class)
             .transactionType(PersistenceUnitTransactionType.JTA)
-            .property("jakarta.persistence.jdbc.url", "jdbc:h2:mem:" + name + ";DB_CLOSE_DELAY=-1")
+            .property("jakarta.persistence.jtaDataSource", new EnlistingDataSource(url(name), tm))
             .property("jakarta.persistence.schema-generation.database.action", "drop-and-create")
-            .property("io.vidocq.noether.jpa.transaction-integration", new JtaIntegration(manager))
+            .property(TransactionIntegration.PROPERTY, new SynchronizationRegistryIntegration(registry))
             .createEntityManagerFactory();
     }
 
@@ -38,8 +51,7 @@ class JtaIntegrationTest {
     void nestedFlushReadsReuseTheEnlistedConnectionForAutoQueriesAndCommit() throws Exception {
         assertThat(Thread.currentThread().isVirtual()).isFalse();
         for (boolean autoQuery : new boolean[] {true, false}) {
-            var tm = new MansartTransactionManager();
-            try (var factory = factory(tm, "p9-nested-flush-" + autoQuery); var em = factory.createEntityManager()) {
+            try (var factory = factory("p9-nested-flush-" + autoQuery); var em = factory.createEntityManager()) {
                 tm.begin();
                 Record record = new Record(1);
                 em.persist(record);
@@ -60,8 +72,7 @@ class JtaIntegrationTest {
 
     @Test
     void synchronizedCommitFlushesRollbackDetachesAndCloseDefersRelease() throws Exception {
-        var tm = new MansartTransactionManager();
-        try (var factory = factory(tm, "p9-jta-commit")) {
+        try (var factory = factory("p9-jta-commit")) {
             var em = factory.createEntityManager();
             assertThatThrownBy(em::getTransaction).isInstanceOf(IllegalStateException.class);
             assertThat(em.isJoinedToTransaction()).isFalse();
@@ -87,8 +98,7 @@ class JtaIntegrationTest {
 
     @Test
     void unsynchronizedContextDoesNotFlushUntilExplicitJoin() throws Exception {
-        var tm = new MansartTransactionManager();
-        try (var factory = factory(tm, "p9-jta-unsync"); var em = factory.createEntityManager(SynchronizationType.UNSYNCHRONIZED)) {
+        try (var factory = factory("p9-jta-unsync"); var em = factory.createEntityManager(SynchronizationType.UNSYNCHRONIZED)) {
             tm.begin();
             em.persist(new Record(1));
             assertThat(em.isJoinedToTransaction()).isFalse();
@@ -105,8 +115,7 @@ class JtaIntegrationTest {
 
     @Test
     void autoQueryFlushUsesTheCallerTransaction() throws Exception { // §3.11.2
-        var tm = new MansartTransactionManager();
-        try (var factory = factory(tm, "p9-jta-auto-query"); var em = factory.createEntityManager()) {
+        try (var factory = factory("p9-jta-auto-query"); var em = factory.createEntityManager()) {
             tm.begin();
             em.persist(new Record(1));
             long count = em.createQuery("SELECT COUNT(r) FROM Record r", Long.class).getSingleResult();
@@ -117,10 +126,8 @@ class JtaIntegrationTest {
 
     @Test
     void contextQueriesResolveIdentityAtExecutionAndReadDetachedWithoutATransaction() throws Exception { // §7.7.1
-        var tm = new MansartTransactionManager();
-        try (var factory = factory(tm, "p9-context-query")) {
-            var em = new ContainerEntityManager(factory, new JtaIntegration(tm), PersistenceContextType.TRANSACTION,
-                SynchronizationType.SYNCHRONIZED, java.util.Map.of());
+        try (var factory = factory("p9-context-query")) {
+            var em = facade(factory);
             var query = em.createQuery("SELECT r FROM Record r WHERE r.id = :id", Record.class).setParameter("id", 1);
             tm.begin();
             var record = new Record(1);
@@ -134,26 +141,50 @@ class JtaIntegrationTest {
         }
     }
 
+    /** §7.6.2, §7.9.1: one context per transaction, released with it; a rollback-only transaction is not flushed. */
+    @Test
+    void theTransactionScopedContextFollowsTheRegistryTransaction() throws Exception {
+        try (var factory = factory("p9-registry-scope")) {
+            var first = facade(factory);
+            var second = facade(factory);
+            try {
+                tm.begin();
+                var record = new Record(1);
+                first.persist(record);
+                assertThat(second.contains(record)).isTrue();
+                assertThat(first.isJoinedToTransaction()).isTrue();
+                registry.setRollbackOnly();
+                assertThatThrownBy(tm::commit).isInstanceOf(jakarta.transaction.RollbackException.class);
+                assertThat(first.contains(record)).isFalse();
+                tm.begin();
+                assertThat(first.find(Record.class, 1)).isNull();
+                tm.rollback();
+            } finally {
+                first.destroy();
+                second.destroy();
+            }
+        }
+    }
+
     private static void alias(String name, String definition) throws Exception {
-        try (var connection = java.sql.DriverManager.getConnection("jdbc:h2:mem:" + name + ";DB_CLOSE_DELAY=-1");
+        try (var connection = java.sql.DriverManager.getConnection(url(name), "sa", "");
              var statement = connection.createStatement()) {
             statement.execute("CREATE ALIAS IF NOT EXISTS " + definition);
         }
     }
 
-    private ContainerEntityManager facade(EntityManagerFactory factory, MansartTransactionManager tm) {
-        return new ContainerEntityManager(factory, new JtaIntegration(tm), PersistenceContextType.TRANSACTION,
+    private ContainerEntityManager facade(EntityManagerFactory factory) {
+        return new ContainerEntityManager(factory, registry, PersistenceContextType.TRANSACTION,
             SynchronizationType.SYNCHRONIZED, java.util.Map.of());
     }
 
     @Test
     void storedProcedureCreatedOutsideATransactionKeepsMetadataAndExecutesBoundToTheCurrentTransaction() throws Exception { // §3.11.12, §7.7.1
-        var tm = new MansartTransactionManager();
-        try (var factory = factory(tm, "p9-sp-context")) {
+        try (var factory = factory("p9-sp-context")) {
             alias("p9-sp-context", "ADD_ONE AS 'int addOne(int value) { return value + 1; }'");
             alias("p9-sp-context", "RECORD_COUNT AS 'ResultSet recordCount(Connection c) throws SQLException {"
                 + " return c.createStatement().executeQuery(\"SELECT COUNT(*) FROM jta_record\"); }'");
-            var em = facade(factory, tm);
+            var em = facade(factory);
             try {
                 StoredProcedureQuery add = em.createStoredProcedureQuery("ADD_ONE", Integer.class);
                 add.registerStoredProcedureParameter(1, Integer.class, ParameterMode.IN);
@@ -182,10 +213,9 @@ class JtaIntegrationTest {
 
     @Test
     void namedStoredProcedureIsCreatedOutsideATransactionAndExecutedLater() throws Exception {
-        var tm = new MansartTransactionManager();
-        try (var factory = factory(tm, "p9-sp-named")) {
+        try (var factory = factory("p9-sp-named")) {
             alias("p9-sp-named", "ADD_ONE AS 'int addOne(int value) { return value + 1; }'");
-            var em = facade(factory, tm);
+            var em = facade(factory);
             try {
                 StoredProcedureQuery query = em.createNamedStoredProcedureQuery("record.addOne");
                 assertThat(query.getParameters()).hasSize(1);
@@ -199,10 +229,9 @@ class JtaIntegrationTest {
 
     @Test
     void storedProcedureResultsSurviveTheirTransactionAndPagingAppliesToThem() throws Exception {
-        var tm = new MansartTransactionManager();
-        try (var factory = factory(tm, "p9-sp-outputs")) {
+        try (var factory = factory("p9-sp-outputs")) {
             alias("p9-sp-outputs", "ADD_ONE AS 'int addOne(int value) { return value + 1; }'");
-            var em = facade(factory, tm);
+            var em = facade(factory);
             try {
                 StoredProcedureQuery query = em.createStoredProcedureQuery("ADD_ONE", Integer.class);
                 query.registerStoredProcedureParameter(1, Integer.class, ParameterMode.IN);
@@ -225,11 +254,10 @@ class JtaIntegrationTest {
 
     @Test
     void storedProcedureExecuteUpdateRequiresATransactionAndIsClosedWithItsFacade() throws Exception {
-        var tm = new MansartTransactionManager();
-        try (var factory = factory(tm, "p9-sp-update")) {
+        try (var factory = factory("p9-sp-update")) {
             alias("p9-sp-update", "TOUCH AS 'void touch(Connection c) throws SQLException {"
                 + " c.createStatement().executeUpdate(\"UPDATE jta_record SET description = ''touched''\"); }'");
-            var em = facade(factory, tm);
+            var em = facade(factory);
             StoredProcedureQuery query = em.createStoredProcedureQuery("TOUCH");
             assertThatThrownBy(query::executeUpdate).isInstanceOf(TransactionRequiredException.class);
             tm.begin();
@@ -245,11 +273,9 @@ class JtaIntegrationTest {
 
     @Test
     void containerFacadeMetadataIsSafeWhenOwnedByASharedCdiBean() throws Exception {
-        var tm = new MansartTransactionManager();
-        try (var factory = factory(tm, "p9-shared-facade");
+        try (var factory = factory("p9-shared-facade");
              var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
-            var em = new ContainerEntityManager(factory, new JtaIntegration(tm), PersistenceContextType.TRANSACTION,
-                SynchronizationType.SYNCHRONIZED, java.util.Map.of());
+            var em = facade(factory);
             try {
                 var work = new java.util.ArrayList<java.util.concurrent.Future<?>>();
                 for (int i = 0; i < 100; i++) {
@@ -274,9 +300,8 @@ class JtaIntegrationTest {
 
     @Test
     void containerFactoryOwnershipAndContextConfigurationDoNotRequireATransaction() throws Exception {
-        var tm = new MansartTransactionManager();
-        var factory = new ContainerEntityManagerFactory(factory(tm, "p9-container-ownership"));
-        var em = new ContainerEntityManager(factory, new JtaIntegration(tm), PersistenceContextType.TRANSACTION,
+        var factory = new ContainerEntityManagerFactory(factory("p9-container-ownership"));
+        var em = new ContainerEntityManager(factory, registry, PersistenceContextType.TRANSACTION,
             SynchronizationType.SYNCHRONIZED, java.util.Map.of());
         try {
             assertThatThrownBy(factory::close).isInstanceOf(IllegalStateException.class);
@@ -298,44 +323,5 @@ class JtaIntegrationTest {
             factory.destroy();
         }
         assertThat(factory.isOpen()).isFalse();
-    }
-
-    @Test
-    void jdbcWorkOfAJoinedContextRunsOnTheCallerThread() throws Exception {
-        assertThat(Thread.currentThread().isVirtual()).isFalse();
-        var tm = new MansartTransactionManager();
-        var threads = new java.util.concurrent.ConcurrentHashMap<String, Thread>();
-        var session = new JtaIntegration(tm).open(SynchronizationType.SYNCHRONIZED,
-            () -> {
-                threads.put("acquire", Thread.currentThread());
-                return java.sql.DriverManager.getConnection("jdbc:h2:mem:p9-caller-thread");
-            },
-            new io.vidocq.noether.jpa.core.spi.TransactionIntegration.Completion() {
-                @Override public void beforeCommit(java.sql.Connection connection) { threads.put("flush", Thread.currentThread()); }
-                @Override public void afterCompletion(boolean committed) { threads.put("detach", Thread.currentThread()); }
-            });
-        tm.begin();
-        session.join();
-        threads.put("work", session.onConnection(connection -> Thread.currentThread()));
-        tm.commit();
-        assertThat(threads).containsOnlyKeys("acquire", "work", "flush", "detach").allSatisfy(
-            (step, thread) -> assertThat(thread).as(step).isSameAs(Thread.currentThread()));
-    }
-
-    @Test
-    void failedJoinToRollbackOnlyTransactionReleasesItsRealJdbcConnection() throws Exception {
-            var tm = new MansartTransactionManager();
-            java.sql.Connection[] acquired = {null};
-            var session = new JtaIntegration(tm).open(SynchronizationType.SYNCHRONIZED,
-                () -> acquired[0] = java.sql.DriverManager.getConnection("jdbc:h2:mem:p9-failed-join"),
-                new io.vidocq.noether.jpa.core.spi.TransactionIntegration.Completion() {
-                    @Override public void beforeCommit(java.sql.Connection connection) {}
-                    @Override public void afterCompletion(boolean committed) {}
-                });
-            tm.begin();
-            tm.setRollbackOnly();
-            assertThatThrownBy(session::join).isInstanceOf(PersistenceException.class);
-            assertThat(acquired[0].isClosed()).isTrue();
-            tm.rollback();
     }
 }
