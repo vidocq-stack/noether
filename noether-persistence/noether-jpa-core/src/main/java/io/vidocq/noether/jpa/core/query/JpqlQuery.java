@@ -67,6 +67,9 @@ import java.util.stream.Stream;
  */
 public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
 
+    /** What a criteria query has in the place of a query string. */
+    private static final String CRITERIA = "Criteria";
+
     /**
      * Executes only an eligible graph-aware primary-key read. Returns false without SQL for ordinary-find
      * fallbacks. The caller retains find's cache, locks, graph completion and no-auto-flush semantics.
@@ -83,27 +86,10 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         }
         Compiled compiled = Translator.graphFind(unit, type, id, graph, load);
         if (compiled == null) return false;
-        Dialect.Rendered rendered = dialect.renderQuery(compiled.sql());
         List<io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedEntity> entities = new ArrayList<>();
         List<io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedElement> collectionRows = new ArrayList<>();
-        try (PreparedStatement statement = connection.prepareStatement(rendered.sql())) {
-            for (int i = 0; i < rendered.parameters().size(); i++) {
-                Compiled.Slot slot = (Compiled.Slot) rendered.parameters().get(i).slot();
-                slot.binder().bind(dialect, statement, i + 1, slot.constant());
-            }
-            try (ResultSet results = statement.executeQuery()) {
-                EntityLoader.FetchedEntity[] row = new EntityLoader.FetchedEntity[compiled.hydrations().size()];
-                while (results.next()) {
-                    int[] column = {compiled.items().getFirst().width() + 1};
-                    fetched(compiled.hydrations(), results, column, row);
-                    for (EntityLoader.FetchedEntity fetched : row) {
-                        if (fetched != null) entities.add(fetched);
-                    }
-                    if (compiled.collection() != null && row[0] != null) {
-                        collectionRows.add(fetchedElement(compiled.collection(), row[0].id(), row, results, column));
-                    }
-                }
-            }
+        try {
+            readGraphRows(compiled, dialect, connection, entities, collectionRows);
         } catch (SQLException failure) {
             throw new PersistenceException("The graph find failed: " + failure.getMessage(), failure);
         }
@@ -162,38 +148,59 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
                 MappedEntity owner = ((Compiled.EntityItem) template.items().getFirst()).type();
                 List<Object> ids = stage == 0 ? rootIds : owners.stream().filter(row -> row.type() == owner)
                     .map(EntityLoader.FetchedEntity::id).distinct().toList();
-                int bound = batchBound.applyAsInt(owner);
-                List<EntityLoader.FetchedElement> elements = new ArrayList<>();
-                for (int from = 0; from < ids.size(); from += bound) {
-                    Compiled compiled = Translator.graphOwners(template, ids.subList(from, Math.min(ids.size(), from + bound)));
-                    Dialect.Rendered rendered = dialect.renderQuery(compiled.sql());
-                    try (PreparedStatement statement = connection.prepareStatement(rendered.sql())) {
-                        for (int i = 0; i < rendered.parameters().size(); i++) {
-                            Compiled.Slot slot = (Compiled.Slot) rendered.parameters().get(i).slot();
-                            slot.binder().bind(dialect, statement, i + 1, slot.constant());
-                        }
-                        try (ResultSet results = statement.executeQuery()) {
-                            EntityLoader.FetchedEntity[] row = new EntityLoader.FetchedEntity[compiled.hydrations().size()];
-                            while (results.next()) {
-                                int[] column = {compiled.items().getFirst().width() + 1};
-                                fetched(compiled.hydrations(), results, column, row);
-                                for (EntityLoader.FetchedEntity fetched : row) {
-                                    if (fetched != null) entities.add(fetched);
-                                }
-                                if (compiled.collection() != null && row[0] != null) {
-                                    elements.add(fetchedElement(compiled.collection(), row[0].id(), row, results, column));
-                                }
-                            }
-                        }
-                    } catch (SQLException failure) {
-                        throw new PersistenceException("The split graph read failed: " + failure.getMessage(), failure);
-                    }
-                }
+                List<EntityLoader.FetchedElement> elements =
+                    readBranch(template, ids, batchBound.applyAsInt(owner), dialect, connection, entities);
                 if (template.collection() != null) collections.add(new EntityLoader.FetchedCollection(
                     template.collection().owner(), template.collection().attribute(), elements));
             }
         }
         return new GraphRows(entities, collections);
+    }
+
+    /**
+     * One branch of a split graph read for the owners {@code ids}, at most {@code bound} of them per statement: its
+     * entities are added to {@code entities}, the elements of its collection are returned.
+     */
+    private static List<EntityLoader.FetchedElement> readBranch(Compiled template, List<Object> ids, int bound, Dialect dialect,
+            Connection connection, List<EntityLoader.FetchedEntity> entities) {
+        List<EntityLoader.FetchedElement> elements = new ArrayList<>();
+        for (int from = 0; from < ids.size(); from += bound) {
+            Compiled compiled = Translator.graphOwners(template, ids.subList(from, Math.min(ids.size(), from + bound)));
+            try {
+                readGraphRows(compiled, dialect, connection, entities, elements);
+            } catch (SQLException failure) {
+                throw new PersistenceException("The split graph read failed: " + failure.getMessage(), failure);
+            }
+        }
+        return elements;
+    }
+
+    /**
+     * Runs a graph read, whose parameters are all constants: the entities its rows fetch are added to {@code entities}
+     * and, if it fetches a collection, the element of each row that has an owner to {@code elements}.
+     */
+    private static void readGraphRows(Compiled compiled, Dialect dialect, Connection connection,
+            List<EntityLoader.FetchedEntity> entities, List<EntityLoader.FetchedElement> elements) throws SQLException {
+        Dialect.Rendered rendered = dialect.renderQuery(compiled.sql());
+        try (PreparedStatement statement = connection.prepareStatement(rendered.sql())) {
+            for (int i = 0; i < rendered.parameters().size(); i++) {
+                Compiled.Slot slot = (Compiled.Slot) rendered.parameters().get(i).slot();
+                slot.binder().bind(dialect, statement, i + 1, slot.constant());
+            }
+            try (ResultSet results = statement.executeQuery()) {
+                EntityLoader.FetchedEntity[] row = new EntityLoader.FetchedEntity[compiled.hydrations().size()];
+                while (results.next()) {
+                    int[] column = {compiled.items().getFirst().width() + 1};
+                    fetched(compiled.hydrations(), results, column, row);
+                    for (EntityLoader.FetchedEntity fetched : row) {
+                        if (fetched != null) entities.add(fetched);
+                    }
+                    if (compiled.collection() != null && row[0] != null) {
+                        elements.add(fetchedElement(compiled.collection(), row[0].id(), row, results, column));
+                    }
+                }
+            }
+        }
     }
 
     /** A parameter of the query: {@code :name}, or {@code ?position}, and the Java type it is compared with if known. */
@@ -239,7 +246,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     JpqlQuery(Ast.Statement statement, Class<X> resultClass, FlushModeType flushMode, QueryRuntime runtime,
             Set<jakarta.persistence.criteria.ParameterExpression<?>> declared,
             List<jakarta.persistence.criteria.Selection<?>> tupleElements) {
-        this("Criteria", null, statement, resultClass, flushMode, runtime);
+        this(CRITERIA, null, statement, resultClass, flushMode, runtime);
         Map<Parameter<?>, Object> identities = new java.util.IdentityHashMap<>();
         for (var parameter : declared) {
             Ast.Parameter syntax = (Ast.Parameter) CriteriaExpressions.ast(parameter);
@@ -265,6 +272,19 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         if (!(statement instanceof Ast.Query) && resultClass != null && resultClass != Object.class) {
             throw new IllegalArgumentException("An UPDATE or a DELETE has no results of type " + resultClass.getName() + ": " + jpql);
         }
+        declareParameters(compiled);
+        if (resultClass != null && resultClass != Object.class && resultClass != jakarta.persistence.Tuple.class
+                && compiled.resultType() != null
+                && !resultClass.isAssignableFrom(compiled.resultType())
+                && !(jpql.equals(CRITERIA) && Number.class.isAssignableFrom(boxed(resultClass))
+                    && Number.class.isAssignableFrom(boxed(compiled.resultType())))) {
+            throw new IllegalArgumentException("The query " + jpql + " gives results of type " + compiled.resultType().getName()
+                + ", not " + resultClass.getName() + " (§3.11.1)");
+        }
+    }
+
+    /** The parameters of the query, each once, with the Java type of what it is compared with. */
+    private void declareParameters(Compiled compiled) {
         for (Compiled.Slot slot : compiled.slots()) {
             if (slot.literal()) {
                 continue;
@@ -274,14 +294,6 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
                 : slot.parameterType() != null ? slot.parameterType() : slot.type();
             Class<?> parameterType = type == null ? Object.class : boxed(type);
             parameters.putIfAbsent(key, declared(slot.parameter(), parameterType));
-        }
-        if (resultClass != null && resultClass != Object.class && resultClass != jakarta.persistence.Tuple.class
-                && compiled.resultType() != null
-                && !resultClass.isAssignableFrom(compiled.resultType())
-                && !(jpql.equals("Criteria") && Number.class.isAssignableFrom(boxed(resultClass))
-                    && Number.class.isAssignableFrom(boxed(compiled.resultType())))) {
-            throw new IllegalArgumentException("The query " + jpql + " gives results of type " + compiled.resultType().getName()
-                + ", not " + resultClass.getName() + " (§3.11.1)");
         }
     }
 
@@ -299,7 +311,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
             List<jakarta.persistence.criteria.Selection<?>> selections) {}
 
     CriteriaDefinition criteriaDefinition() {
-        if (!jpql.equals("Criteria")) return null;
+        if (!jpql.equals(CRITERIA)) return null;
         Set<jakarta.persistence.criteria.ParameterExpression<?>> declared = new LinkedHashSet<>();
         for (Parameter<?> parameter : criteriaParameters.keySet())
             declared.add((jakarta.persistence.criteria.ParameterExpression<?>) parameter);
@@ -535,48 +547,80 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     /** Runs the query for at most {@code maxResults} results. */
     @SuppressWarnings("unchecked")
     private List<X> run(int maxResults) {
-        if (!(statement instanceof Ast.Query)) {
-            throw new IllegalStateException("An UPDATE or a DELETE has no results: run it with executeUpdate() (§3.11): " + jpql);
-        }
-        checkBound();
-        boolean collectionFetch = collectionFetch();
-        boolean paginateCollection = collectionFetch && (getFirstResult() > 0 || getMaxResults() < Integer.MAX_VALUE);
-        if (paginateCollection && lockMode != LockModeType.NONE) throw Translator.collectionPagination();
-        if (lockMode != LockModeType.NONE && !runtime.inTransaction()) {
-            throw new jakarta.persistence.TransactionRequiredException("A query with the lock mode " + lockMode
-                + " runs in a transaction (§3.11)");
-        }
+        checkReadable();
         if (maxResults == 0) {
             return new ArrayList<>();
         }
         Object graph = getHints().containsKey(FETCH_GRAPH) ? getHints().get(FETCH_GRAPH) : getHints().get(LOAD_GRAPH);
-        List<List<Compiled>> split = graph != null && lockMode == LockModeType.NONE && !collectionFetch
+        // a graph is read with the query only without a lock and without a collection fetch of the query itself
+        boolean graphRead = graph != null && lockMode == LockModeType.NONE && !collectionFetch();
+        List<List<Compiled>> split = graphRead
             ? Translator.splitGraph(statement, runtime.mapping(), runtime.plan(graph))
             : List.of();
-        Ast.Statement execution = split.isEmpty() && graph != null && lockMode == LockModeType.NONE && !collectionFetch
+        Ast.Statement execution = split.isEmpty() && graphRead
             ? Translator.graphSelect(statement, runtime.mapping(), runtime.plan(graph), !getHints().containsKey(FETCH_GRAPH))
             : statement;
         boolean graphRows = execution != statement;
         // the query string as it is, without an entity graph: its translation is shared unless a value shaped it
         QueryPlans.Plan plan = parsed != null && !graphRows
             ? parsed.plan(runtime.mapping(), p -> values.get(key(p)), lockMode == LockModeType.NONE, false) : null;
-        Compiled compiled = plan != null ? plan.compiled() : Translator.translate(execution, runtime.mapping(),
+        Compiled translated = plan != null ? plan.compiled() : Translator.translate(execution, runtime.mapping(),
             p -> values.get(key(p)), null, null, lockMode == LockModeType.NONE, graphRows);
-        if (!split.isEmpty() && (getFirstResult() > 0 || getMaxResults() < Integer.MAX_VALUE)) {
-            compiled = Translator.paginateCollection(statement, runtime.mapping(), p -> values.get(key(p)),
-                getFirstResult() > 0 ? getFirstResult() : null, getMaxResults() < Integer.MAX_VALUE ? getMaxResults() : null);
-        } else if (compiled.collectionFetch() && (getFirstResult() > 0 || getMaxResults() < Integer.MAX_VALUE)) {
-            // the owner page of a graph-synthesized collection needs none of its LEFT joins
-            compiled = Translator.paginateCollection(graphRows ? statement : execution, runtime.mapping(), p -> values.get(key(p)),
-                getFirstResult() > 0 ? getFirstResult() : null, getMaxResults() < Integer.MAX_VALUE ? getMaxResults() : null);
-        } else if (!compiled.collectionFetch() && (getFirstResult() > 0 || maxResults < Integer.MAX_VALUE)) {
-            compiled = Translator.translate(execution, runtime.mapping(), p -> values.get(key(p)),
-                getFirstResult() > 0 ? getFirstResult() : null, maxResults < Integer.MAX_VALUE ? maxResults : null,
-                lockMode == LockModeType.NONE, graphRows);
-        }
-        Compiled read = compiled;
-        QueryPlans.Plan shared = plan != null && plan.compiled() == compiled ? plan : null; // not the page translated above
+        Compiled read = page(translated, execution, graphRows, !split.isEmpty(), maxResults);
+        QueryPlans.Plan shared = plan != null && plan.compiled() == read ? plan : null; // not a page translated for this run
         return (List<X>) runtime.read(getFlushMode(), connection -> execute(read, shared, split, connection));
+    }
+
+    /** What must hold before a query reads: it is a select, its parameters are bound, its lock has a transaction. */
+    private void checkReadable() {
+        if (!(statement instanceof Ast.Query)) {
+            throw new IllegalStateException("An UPDATE or a DELETE has no results: run it with executeUpdate() (§3.11): " + jpql);
+        }
+        checkBound();
+        boolean paginateCollection = collectionFetch() && paged(getMaxResults());
+        if (paginateCollection && lockMode != LockModeType.NONE) throw Translator.collectionPagination();
+        if (lockMode != LockModeType.NONE && !runtime.inTransaction()) {
+            throw new jakarta.persistence.TransactionRequiredException("A query with the lock mode " + lockMode
+                + " runs in a transaction (§3.11)");
+        }
+    }
+
+    /**
+     * {@code compiled}, or the translation of the page asked for: of the owners when the query fetches a collection,
+     * by a split graph read or by itself, else of the rows.
+     *
+     * @param maxResults the rows this run reads at most, which a single result lowers below {@link #getMaxResults()}
+     */
+    private Compiled page(Compiled compiled, Ast.Statement execution, boolean graphRows, boolean split, int maxResults) {
+        if (split && paged(getMaxResults())) {
+            return Translator.paginateCollection(statement, runtime.mapping(), p -> values.get(key(p)),
+                offset(), limit(getMaxResults()));
+        }
+        if (compiled.collectionFetch() && paged(getMaxResults())) {
+            // the owner page of a graph-synthesized collection needs none of its LEFT joins
+            return Translator.paginateCollection(graphRows ? statement : execution, runtime.mapping(), p -> values.get(key(p)),
+                offset(), limit(getMaxResults()));
+        }
+        if (!compiled.collectionFetch() && paged(maxResults)) {
+            return Translator.translate(execution, runtime.mapping(), p -> values.get(key(p)),
+                offset(), limit(maxResults), lockMode == LockModeType.NONE, graphRows);
+        }
+        return compiled;
+    }
+
+    /** Whether the query skips results or reads at most {@code maxResults} of them. */
+    private boolean paged(int maxResults) {
+        return getFirstResult() > 0 || maxResults < Integer.MAX_VALUE;
+    }
+
+    /** The results to skip, {@code null} for none. */
+    private Integer offset() {
+        return getFirstResult() > 0 ? getFirstResult() : null;
+    }
+
+    /** The results to read at most, {@code null} for all of them. */
+    private static Integer limit(int maxResults) {
+        return maxResults < Integer.MAX_VALUE ? maxResults : null;
     }
 
     /** A collection fetch anywhere in the query must never receive a SQL row limit. */
@@ -596,8 +640,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         Dialect dialect = runtime.dialect(connection);
         boolean pessimistic = io.vidocq.noether.jpa.core.flush.Locks.pessimistic(lockMode);
         io.vidocq.noether.jpa.dialect.sql.Statement sql = compiled.sql();
-        boolean followOn = pessimistic && sql instanceof io.vidocq.noether.jpa.dialect.sql.Query query
-            && query.from().stream().anyMatch(f -> f.table().query() != null || f.joins().stream().anyMatch(j -> j.table().query() != null));
+        boolean followOn = pessimistic && readsDerivedTable(sql);
         if (followOn && compiled.items().stream().noneMatch(JpqlQuery::entityItem)) {
             throw new PersistenceException("A pessimistic TABLE_PER_CLASS query must select an entity for follow-on row locking");
         }
@@ -607,87 +650,18 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         // a row lock makes another statement of it, rendered for this execution
         Dialect.Rendered rendered = plan != null && sql == compiled.sql() ? plan.rendered(dialect) : dialect.renderQuery(sql);
         List<Object> rows = new ArrayList<>();
-        // the entities the rows fetched with their select items, in row order; one array serves the reading of each row
+        // the entities the rows fetched with their select items, in row order
         List<EntityLoader.FetchedEntity> entities = new ArrayList<>();
-        EntityLoader.FetchedEntity[] fetchedRow = new EntityLoader.FetchedEntity[compiled.hydrations().size()];
-        boolean fetchedRows = false;
         List<io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedElement> collectionRows = new ArrayList<>();
-        try (PreparedStatement statement = connection.prepareStatement(rendered.sql())) {
-            if (pessimistic) {
-                io.vidocq.noether.jpa.core.flush.Locks.timeout(dialect, lockTimeout, connection);
-            }
-            List<io.vidocq.noether.jpa.dialect.sql.Expression.Parameter> parameters = rendered.parameters();
-            for (int i = 0; i < parameters.size(); i++) {
-                bind(dialect, statement, i + 1, (Compiled.Slot) parameters.get(i).slot());
-            }
-            if (getTimeout() != null) {
-                statement.setQueryTimeout(Math.max(1, (getTimeout() + 999) / 1000));
-            }
-            try (ResultSet results = statement.executeQuery()) {
-                List<Compiled.Item> items = compiled.items();
-                int[] column = new int[1]; // the cursor over the columns of a row, one for all the rows
-                boolean single = items.size() == 1;
-                while (results.next()) {
-                    column[0] = 1;
-                    Object first;
-                    if (single) { // the item is the row: no array around it
-                        first = read(items.getFirst(), results, column);
-                        rows.add(first);
-                    } else {
-                        Object[] row = new Object[items.size()];
-                        for (int i = 0; i < row.length; i++) {
-                            row[i] = read(items.get(i), results, column);
-                        }
-                        first = row[0];
-                        rows.add(row);
-                    }
-                    if (fetchedRow.length > 0) {
-                        fetched(compiled.hydrations(), results, column, fetchedRow);
-                        fetchedRows = true;
-                        for (EntityLoader.FetchedEntity fetched : fetchedRow) {
-                            if (fetched != null) entities.add(fetched);
-                        }
-                    }
-                    if (compiled.collection() != null) {
-                        collectionRows.add(fetchedElement(compiled.collection(), ((EntityKey) first).id(),
-                            fetchedRow, results, column));
-                    }
-                }
-            }
-        } catch (SQLException e) {
-            if (pessimistic) {
-                throw io.vidocq.noether.jpa.core.flush.Locks.failure(dialect, e, null);
-            }
-            throw new PersistenceException("The query failed: " + e.getMessage() + " — " + jpql, e);
-        }
+        readRows(compiled, rendered, dialect, connection, rows, entities, collectionRows);
         // entities found, and results constructed, once the rows are read: the loader runs statements of its own
         List<Object> resultList = new ArrayList<>(rows.size());
         FetchPlan[] plans = fetchPlans();
-        if (!split.isEmpty() && !rows.isEmpty()) {
-            List<Object> ids = rows.stream().map(r -> ((EntityKey) r).id()).distinct().toList();
-            GraphRows collected = splitRows(split, ids, owner -> runtime.graphBatchBound(owner, connection), dialect, connection);
-            runtime.hydrateCollections(collected.entities(), collected.collections(), connection);
-        }
-        if (fetchedRows) {
-            if (compiled.collection() != null) {
-                runtime.hydrateCollection(entities, compiled.collection().owner(), compiled.collection().attribute(), collectionRows, connection);
-            } else {
-                runtime.hydrateCollections(entities, List.of(), connection);
-            }
-        }
+        hydrate(compiled, split, rows, entities, collectionRows, dialect, connection);
         for (int r = 0; r < rows.size(); r++) {
-            Object row = rows.get(r);
-            Object resolved = resolve(row, connection, followOn);
+            Object resolved = resolve(rows.get(r), connection, followOn);
             fetch(resolved, plans, connection);
-            if (!tupleElements.isEmpty()) {
-                if (resolved instanceof Object[] array && array.length == tupleElements.size()) {
-                    for (int i = 0; i < array.length; i++) array[i] = convert(array[i], boxed(tupleElements.get(i).getJavaType()));
-                } else if (tupleElements.size() == 1) {
-                    resolved = convert(resolved, boxed(tupleElements.getFirst().getJavaType()));
-                }
-            }
-            resultList.add(resultClass == jakarta.persistence.Tuple.class
-                ? new CriteriaTuple(resolved instanceof Object[] array ? array : new Object[]{resolved}, tupleElements) : resolved);
+            resultList.add(selected(resolved));
         }
         if (lockMode != LockModeType.NONE) {
             resultList.forEach(this::lockEntities);
@@ -697,6 +671,119 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
             return uniqueReferences(resultList);
         }
         return resultList;
+    }
+
+    /** Whether {@code sql} reads a derived table, as a TABLE_PER_CLASS union: its rows cannot be locked by it. */
+    private static boolean readsDerivedTable(io.vidocq.noether.jpa.dialect.sql.Statement sql) {
+        return sql instanceof io.vidocq.noether.jpa.dialect.sql.Query query
+            && query.from().stream().anyMatch(f -> f.table().query() != null || f.joins().stream().anyMatch(j -> j.table().query() != null));
+    }
+
+    /**
+     * Runs the rendered statement with the values bound to its parameters and reads its rows: the select items of each
+     * into {@code rows}, the entities fetched with them into {@code entities} and, when the query fetches a
+     * collection, its element in each row into {@code collectionRows}.
+     */
+    private void readRows(Compiled compiled, Dialect.Rendered rendered, Dialect dialect, Connection connection,
+            List<Object> rows, List<EntityLoader.FetchedEntity> entities, List<EntityLoader.FetchedElement> collectionRows) {
+        boolean pessimistic = io.vidocq.noether.jpa.core.flush.Locks.pessimistic(lockMode);
+        try (PreparedStatement statement = connection.prepareStatement(rendered.sql())) {
+            if (pessimistic) {
+                io.vidocq.noether.jpa.core.flush.Locks.timeout(dialect, lockTimeout, connection);
+            }
+            List<io.vidocq.noether.jpa.dialect.sql.Expression.Parameter> bound = rendered.parameters();
+            for (int i = 0; i < bound.size(); i++) {
+                bind(dialect, statement, i + 1, (Compiled.Slot) bound.get(i).slot());
+            }
+            if (getTimeout() != null) {
+                statement.setQueryTimeout(Math.max(1, (getTimeout() + 999) / 1000));
+            }
+            try (ResultSet results = statement.executeQuery()) {
+                readResults(compiled, results, rows, entities, collectionRows);
+            }
+        } catch (SQLException e) {
+            if (pessimistic) {
+                throw io.vidocq.noether.jpa.core.flush.Locks.failure(dialect, e, null);
+            }
+            throw new PersistenceException("The query failed: " + e.getMessage() + " — " + jpql, e);
+        }
+    }
+
+    private static void readResults(Compiled compiled, ResultSet results, List<Object> rows,
+            List<EntityLoader.FetchedEntity> entities, List<EntityLoader.FetchedElement> collectionRows) throws SQLException {
+        List<Compiled.Item> items = compiled.items();
+        int[] column = new int[1]; // the cursor over the columns of a row, one for all the rows
+        // one array serves the reading of the fetched entities of each row
+        EntityLoader.FetchedEntity[] fetchedRow = new EntityLoader.FetchedEntity[compiled.hydrations().size()];
+        while (results.next()) {
+            column[0] = 1;
+            Object first = readItems(items, results, column, rows);
+            if (fetchedRow.length > 0) {
+                fetched(compiled.hydrations(), results, column, fetchedRow);
+                for (EntityLoader.FetchedEntity fetched : fetchedRow) {
+                    if (fetched != null) entities.add(fetched);
+                }
+            }
+            if (compiled.collection() != null) {
+                // the single item of a collection fetch is its root entity (Translator.collectionHydration): a key
+                collectionRows.add(fetchedElement(compiled.collection(), ((EntityKey) first).id(),
+                    fetchedRow, results, column));
+            }
+        }
+    }
+
+    /** Reads the select items of the current row and adds the row to {@code rows}; gives its first item. */
+    private static Object readItems(List<Compiled.Item> items, ResultSet results, int[] column, List<Object> rows)
+            throws SQLException {
+        if (items.size() == 1) { // the item is the row: no array around it
+            Object first = read(items.getFirst(), results, column);
+            rows.add(first);
+            return first;
+        }
+        Object[] row = new Object[items.size()];
+        for (int i = 0; i < row.length; i++) {
+            row[i] = read(items.get(i), results, column);
+        }
+        rows.add(row);
+        return row[0];
+    }
+
+    /** Hands the loader what the rows fetched, once they are all read: the loader runs statements of its own. */
+    private void hydrate(Compiled compiled, List<List<Compiled>> split, List<Object> rows,
+            List<EntityLoader.FetchedEntity> entities, List<EntityLoader.FetchedElement> collectionRows, Dialect dialect,
+            Connection connection) {
+        if (!split.isEmpty() && !rows.isEmpty()) {
+            List<Object> ids = rows.stream().map(r -> ((EntityKey) r).id()).distinct().toList();
+            GraphRows collected = splitRows(split, ids, owner -> runtime.graphBatchBound(owner, connection), dialect, connection);
+            runtime.hydrateCollections(collected.entities(), collected.collections(), connection);
+        }
+        if (compiled.hydrations().isEmpty() || rows.isEmpty()) {
+            return; // no row fetched an entity with its select items
+        }
+        if (compiled.collection() != null) {
+            runtime.hydrateCollection(entities, compiled.collection().owner(), compiled.collection().attribute(), collectionRows, connection);
+        } else {
+            runtime.hydrateCollections(entities, List.of(), connection);
+        }
+    }
+
+    /** The result a resolved row gives: a tuple of it if the query was asked for tuples, else the row. */
+    private Object selected(Object resolved) {
+        Object row = typed(resolved);
+        return resultClass == jakarta.persistence.Tuple.class
+            ? new CriteriaTuple(row instanceof Object[] array ? array : new Object[]{row}, tupleElements) : row;
+    }
+
+    /** A resolved row of a criteria query, each selection as its Java type; a row of any other query as it is. */
+    private Object typed(Object resolved) {
+        if (tupleElements.isEmpty()) {
+            return resolved;
+        }
+        if (resolved instanceof Object[] array && array.length == tupleElements.size()) {
+            for (int i = 0; i < array.length; i++) array[i] = convert(array[i], boxed(tupleElements.get(i).getJavaType()));
+            return resolved;
+        }
+        return tupleElements.size() == 1 ? convert(resolved, boxed(tupleElements.getFirst().getJavaType())) : resolved;
     }
 
     private static io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedElement fetchedElement(
@@ -750,34 +837,39 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     private static void fetched(List<Compiled.Hydration> hydrations, ResultSet results, int[] column,
             EntityLoader.FetchedEntity[] fetched) throws SQLException {
         for (int h = 0; h < fetched.length; h++) {
-            Compiled.Hydration hydration = hydrations.get(h);
-            List<io.vidocq.noether.jpa.core.mapping.EntityStatements.Column> columns = hydration.type().statements().columns();
-            Object[] values = new Object[columns.size()];
-            boolean[] nulls = new boolean[values.length];
-            java.util.Arrays.fill(nulls, true);
-            for (int c : hydration.columns()) {
-                values[c] = columns.get(c).binder().read(results, column[0]++);
-                nulls[c] = results.wasNull();
-                if (nulls[c] && columns.get(c).foreignKey() != null) {
-                    values[c] = null;
-                }
-            }
-            int[] keyColumns = hydration.key();
-            Object id;
-            boolean empty = true;
-            if (keyColumns.length == 1) { // a simple identifier is its one column: no array around it
-                empty = nulls[keyColumns[0]];
-                id = empty ? null : hydration.type().statements().simpleKey(values[keyColumns[0]]);
-            } else {
-                Object[] key = new Object[keyColumns.length];
-                for (int k = 0; k < key.length; k++) {
-                    key[k] = values[keyColumns[k]];
-                    empty &= nulls[keyColumns[k]];
-                }
-                id = empty ? null : hydration.type().statements().key(key);
-            }
-            fetched[h] = empty ? null : new EntityLoader.FetchedEntity(hydration.type(), id, values, nulls);
+            fetched[h] = fetchedEntity(hydrations.get(h), results, column);
         }
+    }
+
+    /** The entity of one hydration in the current row, with its columns and its identity; {@code null} without a key. */
+    private static EntityLoader.FetchedEntity fetchedEntity(Compiled.Hydration hydration, ResultSet results, int[] column)
+            throws SQLException {
+        List<io.vidocq.noether.jpa.core.mapping.EntityStatements.Column> columns = hydration.type().statements().columns();
+        Object[] values = new Object[columns.size()];
+        boolean[] nulls = new boolean[values.length];
+        java.util.Arrays.fill(nulls, true);
+        for (int c : hydration.columns()) {
+            values[c] = columns.get(c).binder().read(results, column[0]++);
+            nulls[c] = results.wasNull();
+            if (nulls[c] && columns.get(c).foreignKey() != null) {
+                values[c] = null;
+            }
+        }
+        int[] keyColumns = hydration.key();
+        if (keyColumns.length == 1) { // a simple identifier is its one column: no array around it
+            if (nulls[keyColumns[0]]) {
+                return null;
+            }
+            Object id = hydration.type().statements().simpleKey(values[keyColumns[0]]);
+            return new EntityLoader.FetchedEntity(hydration.type(), id, values, nulls);
+        }
+        Object[] key = new Object[keyColumns.length];
+        boolean empty = true;
+        for (int k = 0; k < key.length; k++) {
+            key[k] = values[keyColumns[k]];
+            empty &= nulls[keyColumns[k]];
+        }
+        return empty ? null : new EntityLoader.FetchedEntity(hydration.type(), hydration.type().statements().key(key), values, nulls);
     }
 
     /** The identity of an entity read in a row, found once the rows are read. */
@@ -839,24 +931,8 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
 
     private static Object read(Compiled.Item item, ResultSet results, int[] column) throws SQLException {
         return switch (item) {
-            case Compiled.EntityItem entity -> {
-                if (entity.width() == 1) { // a simple identifier is its one column: no array around it
-                    Object value = entity.keyBinders().getFirst().read(results, column[0]++);
-                    yield results.wasNull() ? null : new EntityKey(entity.type(), entity.type().statements().simpleKey(value));
-                }
-                Object[] key = new Object[entity.width()];
-                boolean empty = true;
-                for (int k = 0; k < key.length; k++) {
-                    key[k] = entity.keyBinders().get(k).read(results, column[0]++);
-                    empty &= results.wasNull();
-                }
-                yield empty ? null : new EntityKey(entity.type(), entity.type().statements().key(key));
-            }
-            case Compiled.ValueItem value -> {
-                Object read = value.binder() != null ? value.binder().read(results, column[0]) : results.getObject(column[0]);
-                column[0]++;
-                yield results.wasNull() ? null : value.binder() != null ? read : convert(read, value.type());
-            }
+            case Compiled.EntityItem entity -> readKey(entity.type(), entity.keyBinders(), results, column);
+            case Compiled.ValueItem value -> readValue(value.binder(), value.type(), results, column);
             case Compiled.ConstructorItem constructor -> {
                 Object[] arguments = new Object[constructor.arguments().size()];
                 for (int i = 0; i < arguments.length; i++) {
@@ -869,20 +945,46 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
             case Compiled.EmbeddedItem embedded -> {
                 Object[] components = new Object[embedded.parts().size()];
                 for (int i = 0; i < components.length; i++) {
-                    Compiled.EmbeddedPart part = embedded.parts().get(i);
-                    if (part instanceof Compiled.ScalarEmbedded scalar) {
-                        Object value = scalar.binder() != null ? scalar.binder().read(results, column[0]) : results.getObject(column[0]);
-                        column[0]++;
-                        components[i] = results.wasNull() ? null : scalar.binder() != null ? value : convert(value, scalar.type());
-                    } else if (part instanceof Compiled.NestedEmbedded nested) {
-                        components[i] = read(nested.item(), results, column);
-                    } else {
-                        Compiled.EntityEmbedded entity = (Compiled.EntityEmbedded) part;
-                        components[i] = read(new Compiled.EntityItem(entity.type(), entity.keyBinders()), results, column);
-                    }
+                    components[i] = readPart(embedded.parts().get(i), results, column);
                 }
                 yield new EmbeddedBuilt(embedded, components);
             }
+        };
+    }
+
+    /** The identity of an entity of {@code type}, read from its key columns; {@code null} if they are all NULL. */
+    private static EntityKey readKey(MappedEntity type, List<io.vidocq.noether.jpa.core.jdbc.type.ValueBinder> keyBinders,
+            ResultSet results, int[] column) throws SQLException {
+        if (keyBinders.size() == 1) { // a simple identifier is its one column: no array around it
+            Object value = keyBinders.getFirst().read(results, column[0]++);
+            return results.wasNull() ? null : new EntityKey(type, type.statements().simpleKey(value));
+        }
+        Object[] key = new Object[keyBinders.size()];
+        boolean empty = true;
+        for (int k = 0; k < key.length; k++) {
+            key[k] = keyBinders.get(k).read(results, column[0]++);
+            empty &= results.wasNull();
+        }
+        return empty ? null : new EntityKey(type, type.statements().key(key));
+    }
+
+    /** One column, read through {@code binder}, or as the driver gives it then converted to {@code type} (§4.8.5). */
+    private static Object readValue(io.vidocq.noether.jpa.core.jdbc.type.ValueBinder binder, Class<?> type, ResultSet results,
+            int[] column) throws SQLException {
+        Object read = binder != null ? binder.read(results, column[0]) : results.getObject(column[0]);
+        column[0]++;
+        if (results.wasNull()) {
+            return null;
+        }
+        return binder != null ? read : convert(read, type);
+    }
+
+    /** A component of an embeddable result: a value, a nested embeddable or the identity of an entity. */
+    private static Object readPart(Compiled.EmbeddedPart part, ResultSet results, int[] column) throws SQLException {
+        return switch (part) {
+            case Compiled.ScalarEmbedded scalar -> readValue(scalar.binder(), scalar.type(), results, column);
+            case Compiled.NestedEmbedded nested -> read(nested.item(), results, column);
+            case Compiled.EntityEmbedded entity -> readKey(entity.type(), entity.keyBinders(), results, column);
         };
     }
 
@@ -912,16 +1014,16 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
      */
     private Object construct(Class<?> type, Object[] arguments) {
         for (ResultConstructors.Candidate constructor : ResultConstructors.of(type).candidates()) {
-            Class<?>[] parameters = constructor.parameters();
-            if (parameters.length != arguments.length) {
+            Class<?>[] types = constructor.parameters();
+            if (types.length != arguments.length) {
                 continue;
             }
             Object[] converted = new Object[arguments.length];
             boolean fits = true;
             for (int i = 0; i < arguments.length && fits; i++) {
-                Class<?> parameter = boxed(parameters[i]);
+                Class<?> parameter = boxed(types[i]);
                 converted[i] = convert(arguments[i], parameter);
-                fits = converted[i] == null ? !parameters[i].isPrimitive() : parameter.isInstance(converted[i]);
+                fits = converted[i] == null ? !types[i].isPrimitive() : parameter.isInstance(converted[i]);
             }
             if (fits) {
                 return constructor.newInstance(converted);
