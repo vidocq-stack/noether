@@ -379,9 +379,13 @@ public final class EntityLoader {
         return grouped;
     }
 
-    /** The collection of one owner, of the Java type of its attribute: a relationship or an element collection. */
+    /**
+     * The collection of one owner, of the Java type of its attribute: a relationship, whose {@code target} entity is
+     * never null, or an element collection, which has none.
+     */
     private Object assembleFetched(AttributeModel model, IndexMapping index, List<Indexed> elements, MappedEntity target) {
-        if (model instanceof AssociationAttribute a) {
+        if (target != null) {
+            AssociationAttribute a = (AssociationAttribute) model;
             return assemble(a.javaType(), index, elements, target, a.orderBy(),
                 target.model().attributes(), target.access(), target::id, describe(a));
         }
