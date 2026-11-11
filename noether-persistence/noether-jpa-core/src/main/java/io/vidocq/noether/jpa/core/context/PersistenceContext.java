@@ -23,9 +23,10 @@ import io.vidocq.noether.jpa.core.mapping.LazyCollection;
 import io.vidocq.noether.jpa.core.mapping.MappedEntity;
 import jakarta.persistence.EntityExistsException;
 import jakarta.persistence.LockModeType;
+import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -38,8 +39,17 @@ import java.util.Optional;
 public final class PersistenceContext {
 
     private final Map<EntityKey, ManagedEntity> byKey = new HashMap<>();
-    /** By instance, compared by identity, in the order the context met them: the flush follows it without sorting. */
-    private final Map<Instance, ManagedEntity> byInstance = new LinkedHashMap<>();
+    /**
+     * By instance, compared by identity: entities may define equals and hashCode, a persistence context compares
+     * identities. The table holds the instances themselves, without a key or an entry object for each, and starts
+     * small: most contexts hold a few instances.
+     */
+    private final IdentityHashMap<Object, ManagedEntity> byInstance = new IdentityHashMap<>(2);
+    /** The entries in the order the context met them, linked through themselves: the flush follows it without sorting. */
+    private ManagedEntity first;
+    private ManagedEntity last;
+    /** What {@link #entries()} last returned, as long as no instance joined or left the context since. */
+    private List<ManagedEntity> entries;
     private long sequence;
     private LazyCollection.Loader lazyLoader;
     private java.util.function.Consumer<Object> referenceLoader;
@@ -72,7 +82,7 @@ public final class PersistenceContext {
      * managed one is left as it is. Another instance with the same identity is an {@link EntityExistsException}.
      */
     public ManagedEntity persist(Object instance, MappedEntity type) {
-        ManagedEntity known = byInstance.get(new Instance(instance));
+        ManagedEntity known = byInstance.get(instance);
         if (known != null) {
             known.status(ManagedEntity.Status.MANAGED);
             return known;
@@ -148,7 +158,7 @@ public final class PersistenceContext {
      * the instance: it is new or detached, which the entity operations tell apart.
      */
     public boolean remove(Object instance) {
-        ManagedEntity known = byInstance.get(new Instance(instance));
+        ManagedEntity known = byInstance.get(instance);
         if (known == null) {
             return false;
         }
@@ -163,18 +173,20 @@ public final class PersistenceContext {
 
     /** The locks end with the transaction: every instance is back to {@link LockModeType#NONE}. */
     public void releaseLocks() {
-        byInstance.values().forEach(entry -> entry.lockMode(LockModeType.NONE));
+        for (ManagedEntity entry = first; entry != null; entry = entry.next) {
+            entry.lockMode(LockModeType.NONE);
+        }
     }
 
     /** §3.2.8: whether {@code instance} is managed; a removed instance is not. */
     public boolean contains(Object instance) {
-        ManagedEntity known = byInstance.get(new Instance(instance));
+        ManagedEntity known = byInstance.get(instance);
         return known != null && known.status() == ManagedEntity.Status.MANAGED;
     }
 
     /** The entry of {@code instance}, managed or removed. */
     public Optional<ManagedEntity> entry(Object instance) {
-        return Optional.ofNullable(byInstance.get(new Instance(instance)));
+        return Optional.ofNullable(byInstance.get(instance));
     }
 
     /** The entry with this identity, managed or removed. */
@@ -184,7 +196,7 @@ public final class PersistenceContext {
 
     /** §3.2.7: detaches one instance; changes not flushed are lost. */
     public void detach(Object instance) {
-        ManagedEntity known = byInstance.get(new Instance(instance));
+        ManagedEntity known = byInstance.get(instance);
         if (known != null) {
             forget(known);
         }
@@ -230,6 +242,15 @@ public final class PersistenceContext {
         disconnectAll();
         byKey.clear();
         byInstance.clear();
+        for (ManagedEntity entry = first; entry != null; ) { // an entry a caller still holds keeps no other alive
+            ManagedEntity next = entry.next;
+            entry.previous = null;
+            entry.next = null;
+            entry = next;
+        }
+        first = null;
+        last = null;
+        entries = null;
     }
 
     /**
@@ -237,12 +258,33 @@ public final class PersistenceContext {
      * their next access instead of loading (§3.2.7, a closed entity manager), and do not retain it.
      */
     public void disconnectAll() {
-        byInstance.values().forEach(PersistenceContext::disconnect);
+        for (ManagedEntity entry = first; entry != null; entry = entry.next) {
+            disconnect(entry);
+        }
     }
 
-    /** The entries, in the order the context met their instances. */
+    /**
+     * The entries, in the order the context met their instances, as they are now: an instance that joins or leaves
+     * the context afterwards does not change the list returned, which cannot be modified. A flush asks for them
+     * several times without changing the context in between: the same list answers until an instance joins or leaves.
+     */
     public List<ManagedEntity> entries() {
-        return new ArrayList<>(byInstance.values());
+        List<ManagedEntity> current = entries;
+        if (current == null) {
+            int size = byInstance.size();
+            if (size == 0) {
+                current = List.of();
+            } else {
+                ManagedEntity[] array = new ManagedEntity[size];
+                int i = 0;
+                for (ManagedEntity entry = first; entry != null; entry = entry.next) {
+                    array[i++] = entry;
+                }
+                current = new Entries(array);
+            }
+            entries = current;
+        }
+        return current;
     }
 
     /** How many instances the context holds. */
@@ -251,7 +293,15 @@ public final class PersistenceContext {
     }
 
     private ManagedEntity register(ManagedEntity entry) {
-        byInstance.put(new Instance(entry.instance()), entry);
+        byInstance.put(entry.instance(), entry);
+        entry.previous = last;
+        if (last == null) {
+            first = entry;
+        } else {
+            last.next = entry;
+        }
+        last = entry;
+        entries = null;
         if (entry.key() != null) {
             byKey.put(entry.key(), entry);
         }
@@ -260,7 +310,22 @@ public final class PersistenceContext {
 
     private void forget(ManagedEntity entry) {
         disconnect(entry);
-        byInstance.remove(new Instance(entry.instance()));
+        ManagedEntity held = byInstance.remove(entry.instance());
+        if (held != null) {
+            if (held.previous == null) {
+                first = held.next;
+            } else {
+                held.previous.next = held.next;
+            }
+            if (held.next == null) {
+                last = held.previous;
+            } else {
+                held.next.previous = held.previous;
+            }
+            held.previous = null;
+            held.next = null;
+            entries = null;
+        }
         if (entry.key() != null) {
             byKey.remove(entry.key(), entry);
         }
@@ -279,16 +344,22 @@ public final class PersistenceContext {
         }
     }
 
-    /** An instance as a map key: entities may define equals and hashCode, a persistence context compares identities. */
-    private record Instance(Object instance) {
-        @Override
-        public boolean equals(Object other) {
-            return other instanceof Instance that && that.instance == instance;
+    /** The entries of a context at one point in time: a fixed array behind a list that cannot be modified. */
+    private static final class Entries extends AbstractList<ManagedEntity> implements java.util.RandomAccess {
+        private final ManagedEntity[] array;
+
+        Entries(ManagedEntity[] array) {
+            this.array = array;
         }
 
         @Override
-        public int hashCode() {
-            return System.identityHashCode(instance);
+        public ManagedEntity get(int index) {
+            return array[index];
+        }
+
+        @Override
+        public int size() {
+            return array.length;
         }
     }
 
