@@ -25,5 +25,14 @@
         <properties URL="jdbc:h2:mem:noether-it;DB_CLOSE_DELAY=-1" user="sa" password=""/>
     </dataSource>
 
+    <!--
+        jdbc/allocations, the unit's non-jta-data-source, on the same database: transactional="false" keeps its
+        connections out of every transaction, so a TABLE generator commits its allocations on them (BUG-20261111-04).
+    -->
+    <dataSource id="allocations" jndiName="jdbc/allocations" type="javax.sql.DataSource" transactional="false">
+        <jdbcDriver libraryRef="h2" javax.sql.DataSource="org.h2.jdbcx.JdbcDataSource"/>
+        <properties URL="jdbc:h2:mem:noether-it;DB_CLOSE_DELAY=-1" user="sa" password=""/>
+    </dataSource>
+
     <webApplication location="noether-it-openliberty.war" contextRoot="/noether"/>
 </server>

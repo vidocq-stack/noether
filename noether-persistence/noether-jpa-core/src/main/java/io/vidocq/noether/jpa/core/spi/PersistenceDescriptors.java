@@ -39,8 +39,11 @@ public final class PersistenceDescriptors {
      * @param type the effective transaction type: the {@code jakarta.persistence.transactionType} property of the unit,
      *        else its {@code transaction-type} attribute
      * @param jtaDataSourceName the {@code jta-data-source} element, or {@code null} when the unit names none
+     * @param nonJtaDataSourceName the {@code non-jta-data-source} element, or {@code null} when the unit names none:
+     *        where a JTA unit allocates its TABLE identifiers
      */
-    public record UnitTransactions(PersistenceUnitTransactionType type, String jtaDataSourceName) {
+    public record UnitTransactions(PersistenceUnitTransactionType type, String jtaDataSourceName,
+            String nonJtaDataSourceName) {
         public boolean jta() {
             return type == PersistenceUnitTransactionType.JTA;
         }
@@ -58,7 +61,8 @@ public final class PersistenceDescriptors {
      */
     public static Optional<UnitTransactions> transactions(String name, ClassLoader loader) {
         return PersistenceUnits.find(name, loader).map(unit -> new UnitTransactions(
-            UnitSettings.of(unit, Map.of(), Map.of()).transactionType(), unit.jtaDataSourceName()));
+            UnitSettings.of(unit, Map.of(), Map.of()).transactionType(), unit.jtaDataSourceName(),
+            unit.nonJtaDataSourceName()));
     }
 
     /**

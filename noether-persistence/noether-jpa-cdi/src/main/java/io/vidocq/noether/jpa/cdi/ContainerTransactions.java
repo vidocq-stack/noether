@@ -33,6 +33,22 @@ final class ContainerTransactions {
         return source.get();
     }
 
+    /**
+     * The data source bean {@code @Named} after the unit's {@code non-jta-data-source}, through which a JTA unit
+     * allocates its TABLE identifiers on connections the container does not enlist (BUG-20261111-04).
+     */
+    static DataSource nonJtaDataSource(Instance<Object> lookup, String unit, String nonJtaDataSourceName) {
+        String name = nonJtaDataSourceName.strip();
+        Instance<DataSource> source = lookup.select(DataSource.class, NamedLiteral.of(name));
+        if (source.isUnsatisfied()) {
+            throw new PersistenceException("Persistence unit " + unit + " names the non-jta-data-source '" + name
+                + "' and the CDI container has no javax.sql.DataSource bean @Named(\"" + name + "\"). Produce one whose "
+                + "connections take part in no JTA transaction (on Quarkus, a datasource with quarkus.datasource.\""
+                + name + "\".jdbc.transactions=disabled), or remove the non-jta-data-source.");
+        }
+        return source.get();
+    }
+
     private static PersistenceException missing(String unit, String what) {
         return new PersistenceException("Persistence unit " + unit + " is JTA and the CDI container has no " + what
             + ". A JTA unit needs a jakarta.transaction.TransactionSynchronizationRegistry bean and a javax.sql.DataSource"

@@ -194,6 +194,78 @@ class SynchronizationRegistryIntegrationTest {
         }
     }
 
+    /** A JTA unit of {@link Voucher}, whose identifiers a generator table allocates; with a non-JTA data source or not. */
+    private EntityManagerFactory voucherFactory(String name, NonJtaDataSource nonJta) {
+        return noether().createContainerEntityManagerFactory(new ContainerUnitInfo(name,
+                new EnlistingDataSource(url(name), manager), nonJta, List.of(Voucher.class)),
+            Map.of("io.vidocq.noether.jpa.transaction-integration", new SynchronizationRegistryIntegration(registry)));
+    }
+
+    private static List<Long> committedVouchers(String name) throws Exception {
+        List<Long> ids = new ArrayList<>();
+        try (var connection = DriverManager.getConnection(url(name), "sa", "");
+                var statement = connection.createStatement();
+                var result = statement.executeQuery("SELECT id FROM jta_voucher ORDER BY id")) {
+            while (result.next()) ids.add(result.getLong(1));
+        }
+        return ids;
+    }
+
+    private long persistVoucher(EntityManagerFactory factory, String code, boolean commit) throws Exception {
+        manager.begin();
+        Voucher voucher = new Voucher(code);
+        try (var em = factory.createEntityManager()) {
+            em.persist(voucher);
+            em.flush();
+        }
+        if (commit) manager.commit(); else manager.rollback();
+        return voucher.id;
+    }
+
+    /**
+     * BUG-20261111-04: the server enlists every connection of the JTA data source and refuses their commit, so a JTA unit
+     * allocates its TABLE identifiers on a connection of its non-JTA data source, which it commits on its own.
+     */
+    @Test
+    void aJtaUnitAllocatesTableIdentifiersOnAConnectionOfItsNonJtaDataSource() throws Exception {
+        NonJtaDataSource nonJta = new NonJtaDataSource(url("registry-table"));
+        try (var factory = voucherFactory("registry-table", nonJta)) {
+            long id = persistVoucher(factory, "first", true);
+
+            assertThat(id).isEqualTo(1);
+            assertThat(committedVouchers("registry-table")).containsExactly(1L);
+            assertThat(nonJta.handedOut).as("the allocation").singleElement()
+                .satisfies(connection -> assertThat(connection.isClosed()).isTrue());
+        }
+    }
+
+    /** §11.1.52: the block an allocation committed stays allocated when the business transaction rolls back. */
+    @Test
+    void identifiersAllocatedForARolledBackTransactionAreNeverHandedOutAgain() throws Exception {
+        NonJtaDataSource nonJta = new NonJtaDataSource(url("registry-table-rollback"));
+        try (var factory = voucherFactory("registry-table-rollback", nonJta)) {
+            List<Long> handedOut = new ArrayList<>();
+            handedOut.add(persistVoucher(factory, "doomed", false));
+            for (int i = 0; i < 11; i++) handedOut.add(persistVoucher(factory, "voucher " + i, true));
+
+            assertThat(handedOut).doesNotHaveDuplicates().hasSize(12);
+            assertThat(committedVouchers("registry-table-rollback"))
+                .containsExactly(2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L, 11L, 12L);
+            assertThat(nonJta.handedOut).as("two blocks of 10").hasSize(2);
+        }
+    }
+
+    @Test
+    void aJtaUnitWithATableGeneratorAndNoNonJtaDataSourceIsRefused() {
+        assertThatThrownBy(() -> voucherFactory("registry-table-refused", null))
+            .isInstanceOf(PersistenceException.class)
+            .hasMessageContaining("Persistence unit registry-table-refused")
+            .hasMessageContaining("Voucher (TABLE, generator vouchers)")
+            .hasMessageContaining("<non-jta-data-source>")
+            .hasMessageContaining("quarkus.datasource.\"name\".jdbc.transactions=disabled")
+            .hasMessageContaining("SEQUENCE or IDENTITY");
+    }
+
     @Test
     void withoutJndiAJtaUnitWithoutABridgeIsStillRefused() {
         assertThatThrownBy(() -> factory("registry-no-jndi", false))

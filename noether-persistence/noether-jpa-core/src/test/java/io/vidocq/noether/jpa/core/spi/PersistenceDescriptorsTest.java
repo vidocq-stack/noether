@@ -95,9 +95,10 @@ class PersistenceDescriptorsTest {
      * factory exists, so it asks the descriptor for the effective transaction type and the {@code jta-data-source}.
      */
     @Test
-    void theTransactionsOfAUnitAreItsEffectiveTypeAndItsJtaDataSource() throws IOException {
+    void theTransactionsOfAUnitAreItsEffectiveTypeAndItsDataSources() throws IOException {
         String descriptor = "<persistence xmlns=\"https://jakarta.ee/xml/ns/persistence\" version=\"3.2\">"
-            + "<persistence-unit name=\"named\" transaction-type=\"JTA\"><jta-data-source>ledger</jta-data-source></persistence-unit>"
+            + "<persistence-unit name=\"named\" transaction-type=\"JTA\"><jta-data-source>ledger</jta-data-source>"
+            + "<non-jta-data-source>allocations</non-jta-data-source></persistence-unit>"
             + "<persistence-unit name=\"unnamed\" transaction-type=\"JTA\"/>"
             + "<persistence-unit name=\"local\"/>"
             + "<persistence-unit name=\"overridden\" transaction-type=\"RESOURCE_LOCAL\"><properties>"
@@ -105,9 +106,9 @@ class PersistenceDescriptorsTest {
             + "</persistence>";
         try (var loader = new URLClassLoader(new URL[] {root("transactions", descriptor)}, null)) {
             assertThat(PersistenceDescriptors.transactions("named", loader))
-                .contains(new PersistenceDescriptors.UnitTransactions(PersistenceUnitTransactionType.JTA, "ledger"));
+                .contains(new PersistenceDescriptors.UnitTransactions(PersistenceUnitTransactionType.JTA, "ledger", "allocations"));
             assertThat(PersistenceDescriptors.transactions("unnamed", loader))
-                .contains(new PersistenceDescriptors.UnitTransactions(PersistenceUnitTransactionType.JTA, null));
+                .contains(new PersistenceDescriptors.UnitTransactions(PersistenceUnitTransactionType.JTA, null, null));
             assertThat(PersistenceDescriptors.transactions("local", loader)).hasValueSatisfying(local -> {
                 assertThat(local.type()).isEqualTo(PersistenceUnitTransactionType.RESOURCE_LOCAL);
                 assertThat(local.jta()).isFalse();

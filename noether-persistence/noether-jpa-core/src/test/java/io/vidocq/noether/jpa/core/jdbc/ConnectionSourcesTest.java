@@ -182,6 +182,31 @@ class ConnectionSourcesTest {
             .isInstanceOf(PersistenceException.class).hasMessageContaining(ConnectionSources.POOL_ACQUIRE_TIMEOUT + " must be an ISO-8601 duration");
     }
 
+    /**
+     * BUG-20261111-04: a table generator allocates through the unit's own connections when it is resource-local, through
+     * the non-JTA data source of a JTA unit, and has nowhere to allocate in a JTA unit without one.
+     */
+    @Test
+    void tableGeneratorsAllocateThroughTheConnectionsOfAResourceLocalUnitOrTheNonJtaDataSourceOfAJtaUnit() throws SQLException {
+        ConnectionSource own = () -> {
+            throw new AssertionError("not acquired");
+        };
+        assertThat(ConnectionSources.allocations(unit(Map.of()), own)).containsSame(own);
+
+        DataSource nonJta = new CountingDataSource("jdbc:h2:mem:allocations;DB_CLOSE_DELAY=-1");
+        PersistenceConfiguration configuration = new PersistenceConfiguration("allocations")
+            .property(UnitSettings.TRANSACTION_TYPE, "JTA");
+        UnitSettings jta = UnitSettings.of(Definitions.from(configuration, loader()), Map.of(), Map.of());
+        UnitSettings jtaWithNonJta = UnitSettings.of(Definitions.from(configuration, loader()), Map.of(),
+            Map.of(Definitions.NON_JTA_DATA_SOURCE, nonJta));
+
+        assertThat(ConnectionSources.allocations(jta, own)).isEmpty();
+        ConnectionSource allocations = ConnectionSources.allocations(jtaWithNonJta, own).orElseThrow();
+        try (Connection connection = allocations.acquire()) { // from the data source: own refuses
+            assertThat(connection.isValid(1)).isTrue();
+        }
+    }
+
     /** A hand-written connection pool factory: it records what it is given, its pools open plain H2 connections. */
     private static final class RecordingPools implements ConnectionPoolFactory {
         private final AtomicInteger acquired = new AtomicInteger();

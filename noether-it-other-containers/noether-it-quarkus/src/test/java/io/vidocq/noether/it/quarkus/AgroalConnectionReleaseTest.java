@@ -23,12 +23,6 @@ import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import java.sql.SQLException;
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.logging.Handler;
-import java.util.logging.Level;
-import java.util.logging.LogRecord;
-import java.util.logging.Logger;
-import java.util.logging.SimpleFormatter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -44,21 +38,19 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 @QuarkusTest
 class AgroalConnectionReleaseTest {
 
-    /** Agroal's pool logs under this category; Quarkus' log manager backs {@code java.util.logging}. */
-    private final Logger agroal = Logger.getLogger("io.agroal.pool");
-    private final Warnings warnings = new Warnings();
+    private final AgroalWarnings warnings = new AgroalWarnings();
 
     @Inject
     Library library;
 
     @BeforeEach
     void listen() {
-        agroal.addHandler(warnings);
+        warnings.listen();
     }
 
     @AfterEach
     void stopListening() {
-        agroal.removeHandler(warnings);
+        warnings.stop();
     }
 
     @Test
@@ -107,28 +99,5 @@ class AgroalConnectionReleaseTest {
 
         assertEquals(1, library.committedRows("La Débâcle"));
         assertEquals(List.of(), warnings.messages);
-    }
-
-    /** The warnings Agroal's pool logs. */
-    private static final class Warnings extends Handler {
-        private final SimpleFormatter formatter = new SimpleFormatter();
-        final List<String> messages = new CopyOnWriteArrayList<>();
-
-        @Override
-        public void publish(LogRecord logRecord) {
-            if (logRecord.getLevel().intValue() >= Level.WARNING.intValue()) {
-                messages.add(formatter.formatMessage(logRecord));
-            }
-        }
-
-        @Override
-        public void flush() {
-            // the messages are kept in memory
-        }
-
-        @Override
-        public void close() {
-            // nothing to release
-        }
     }
 }

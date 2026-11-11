@@ -45,6 +45,7 @@ import jakarta.persistence.spi.LoadState;
 import jakarta.persistence.spi.PersistenceProvider;
 import jakarta.persistence.spi.PersistenceUnitInfo;
 import jakarta.persistence.spi.ProviderUtil;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -173,9 +174,14 @@ public final class NoetherPersistenceProvider implements PersistenceProvider {
         MappedUnit mapping = mapping(settings, loader);
         BeanValidation.Validator validator = BeanValidation.open(settings, loader, mapping);
         var connections = ConnectionSources.of(settings, loader);
-        var factory = new EntityManagerFactoryImpl(settings, connections, mapping, validator);
+        var allocations = ConnectionSources.allocations(settings, connections);
+        String unitName = settings.unitName();
+        var factory = new EntityManagerFactoryImpl(settings, connections, allocations.orElse(() -> {
+            throw new SQLException("Persistence unit " + unitName + " has no non-JTA data source to allocate through");
+        }), mapping, validator);
         try {
-            IdGenerators.checkConnections(settings.unitName(), mapping.model().entities(), connections);
+            IdGenerators.checkAllocations(unitName, mapping.model().entities(), allocations);
+            IdGenerators.checkConnections(unitName, mapping.model().entities(), connections);
             ((io.vidocq.noether.jpa.core.bootstrap.SchemaGeneration) factory.getSchemaManager()).generate();
             return factory;
         } catch (RuntimeException | Error failure) {

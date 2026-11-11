@@ -29,19 +29,27 @@ import java.util.List;
 import java.util.Properties;
 import javax.sql.DataSource;
 
-/** What a Jakarta EE container hands the provider for a JTA unit (§9.6): its own JTA data source. */
-record ContainerUnitInfo(String name, DataSource jtaDataSource) implements PersistenceUnitInfo {
+/**
+ * What a Jakarta EE container hands the provider for a JTA unit (§9.6): its own JTA data source, and the unit's
+ * non-JTA data source when it declares one.
+ */
+record ContainerUnitInfo(String name, DataSource jtaDataSource, DataSource nonJtaDataSource, List<Class<?>> classes)
+        implements PersistenceUnitInfo {
+    ContainerUnitInfo(String name, DataSource jtaDataSource) {
+        this(name, jtaDataSource, null, List.of(Ledger.class));
+    }
+
     @Override public String getPersistenceUnitName() { return name; }
     @Override public String getPersistenceProviderClassName() { return "io.vidocq.noether.jpa.core.NoetherPersistenceProvider"; }
     @Override public String getScopeAnnotationName() { return null; }
     @Override public List<String> getQualifierAnnotationNames() { return List.of(); }
     @Override public PersistenceUnitTransactionType getTransactionType() { return PersistenceUnitTransactionType.JTA; }
     @Override public DataSource getJtaDataSource() { return jtaDataSource; }
-    @Override public DataSource getNonJtaDataSource() { return null; }
+    @Override public DataSource getNonJtaDataSource() { return nonJtaDataSource; }
     @Override public List<String> getMappingFileNames() { return List.of(); }
     @Override public List<URL> getJarFileUrls() { return List.of(); }
     @Override public URL getPersistenceUnitRootUrl() { return Ledger.class.getProtectionDomain().getCodeSource().getLocation(); }
-    @Override public List<String> getManagedClassNames() { return List.of(Ledger.class.getName()); }
+    @Override public List<String> getManagedClassNames() { return classes.stream().map(Class::getName).toList(); }
     @Override public boolean excludeUnlistedClasses() { return true; }
     @Override public SharedCacheMode getSharedCacheMode() { return SharedCacheMode.NONE; }
     @Override public ValidationMode getValidationMode() { return ValidationMode.NONE; }

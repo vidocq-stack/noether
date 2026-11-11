@@ -30,11 +30,20 @@ public final class PersistenceFactoryCreator implements SyntheticBeanCreator<Ent
         return new ContainerEntityManagerFactory(Persistence.createEntityManagerFactory(name, properties));
     }
 
-    /** §9.6: the container's JTA data source and its transaction bridge, as a container passes them to the provider. */
+    /**
+     * §9.6: the container's JTA data source and its transaction bridge, as a container passes them to the provider, and
+     * the unit's non-JTA data source when it names one (BUG-20261111-04: its TABLE generators allocate through it).
+     */
     private static Map<String, Object> jtaProperties(Instance<Object> lookup, String unit, PersistenceDescriptors.UnitTransactions transactions) {
-        TransactionIntegration bridge = bridge(lookup, unit);
-        return Map.of(TransactionIntegration.PROPERTY, bridge,
-            "jakarta.persistence.jtaDataSource", ContainerTransactions.dataSource(lookup, unit, transactions.jtaDataSourceName()));
+        Map<String, Object> properties = new HashMap<>();
+        properties.put(TransactionIntegration.PROPERTY, bridge(lookup, unit));
+        properties.put("jakarta.persistence.jtaDataSource",
+            ContainerTransactions.dataSource(lookup, unit, transactions.jtaDataSourceName()));
+        String nonJta = transactions.nonJtaDataSourceName();
+        if (nonJta != null && !nonJta.isBlank()) {
+            properties.put("jakarta.persistence.nonJtaDataSource", ContainerTransactions.nonJtaDataSource(lookup, unit, nonJta));
+        }
+        return properties;
     }
 
     private static TransactionIntegration bridge(Instance<Object> lookup, String unit) {

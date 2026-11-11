@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
     A container-managed JTA unit, as an application on an application server writes it: Noether as
-    the provider, Liberty's data source by its JNDI name, Liberty's transactions.
+    the provider, Liberty's data source by its JNDI name, Liberty's transactions. The non-JTA data
+    source is where the TABLE generator of Voucher commits its allocations (BUG-20261111-04).
 -->
 <persistence xmlns="https://jakarta.ee/xml/ns/persistence"
              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -10,7 +11,9 @@
     <persistence-unit name="library" transaction-type="JTA">
         <provider>io.vidocq.noether.jpa.core.NoetherPersistenceProvider</provider>
         <jta-data-source>jdbc/library</jta-data-source>
+        <non-jta-data-source>jdbc/allocations</non-jta-data-source>
         <class>io.vidocq.noether.it.openliberty.Book</class>
+        <class>io.vidocq.noether.it.openliberty.Voucher</class>
         <exclude-unlisted-classes>true</exclude-unlisted-classes>
         <properties>
             <property name="jakarta.persistence.schema-generation.database.action" value="drop-and-create"/>
