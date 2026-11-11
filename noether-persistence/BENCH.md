@@ -898,3 +898,88 @@ measurements, not a general provider ranking or a production-performance guarant
   operation, the entity has no relationship (the one-pass row load of `bf4a3cb` applies to exactly that
   case). Not a production latency or scalability claim. Hibernate 7.4 and EclipseLink were not rerun.
   Raw evidence: `noether-jpa-bench/target/bench-reports/20261111-hot-paths/{noether,hibernate5}/`.
+
+## BENCH-20261111-05 — Before and after the hot-path optimizations, against Hibernate ORM 5.6, on PostgreSQL 17 (Vidocq/noether#45)
+
+- **Date**: 2026-11-11
+- **Code**: "after" = `00074aa` (`bench/postgresql`: `c74687f` of #52 plus the configurable-database harness);
+  "before" = `45880aa` (#46, without the optimizations) with the harness of `00074aa` applied on top,
+  uncommitted. Each version was installed into its own scratch local repository
+  (`-Dmaven.repo.local=<scratch> -Dmaven.repo.local.tail=~/.m2/repository`), handed to `run-bench.sh`
+  through `MAVEN_ARGS`; `~/.m2` was not written.
+- **JVM**: Temurin 25.0.3 (2026-04-21 LTS), 64-Bit Server VM, default flags.
+- **Hardware**: Apple M5 Max / 18 cores / 128 GB RAM.
+- **OS**: macOS 27.2, arm64.
+- **Database**: PostgreSQL 17.11 (`postgres:17-alpine`, default settings: `shared_buffers` 128 MB, `fsync`
+  and `synchronous_commit` on) in a disposable OrbStack container (Docker 29.8.2) on `127.0.0.1:55432`,
+  sharing the machine with the JVM; PostgreSQL JDBC driver 42.7.4. Every JMH trial drops and recreates
+  `bench_record`.
+- **Providers**: as BENCH-20261111-01 (Noether 0.4.0-SNAPSHOT, Hibernate ORM 5.6.15.Final). Noether runs
+  with `noether-jpa-dialect-postgresql`; Hibernate 5.6 detects its dialect.
+- **Exact command**, from `noether-persistence/noether-jpa-bench`:
+  ```sh
+  docker run -d --rm --name noether-bench-pg -e POSTGRES_PASSWORD=bench -e POSTGRES_DB=bench \
+    -p 127.0.0.1:55432:5432 postgres:17-alpine
+  export BENCH_JDBC_URL=jdbc:postgresql://127.0.0.1:55432/bench BENCH_JDBC_DRIVER=org.postgresql.Driver \
+    BENCH_JDBC_USER=postgres BENCH_JDBC_PASSWORD=bench
+  export MAVEN_ARGS="-Dmaven.repo.local=<scratch repository of the version> -Dmaven.repo.local.tail=$HOME/.m2/repository"
+  BENCH_RUN_ID=<run> ./run-bench.sh noether   # or hibernate5
+  ```
+  JMH settings unchanged: `-wi 3 -i 5 -w 2s -r 2s -f 1 -t 1 -foe true -prof gc -rf json`.
+- **Order**: three rounds, ten runs. Round 1: after, Hibernate 5.6, before, Hibernate 5.6. Round 2: before,
+  after, Hibernate 5.6. Round 3: Hibernate 5.6, after, before. Hibernate 5.6 is the same code in both
+  trees, so its four runs are one configuration.
+- **Results**, mean of the 5 measured iterations of each run, ops/s, rounds 1 / 2 / 3:
+  ```text
+                      Noether before          Noether after           Hibernate 5.6
+  findById            5,715 / 6,908 / 7,650   7,433 / 7,548 / 7,601   5,579 + 6,077 / 7,500 / 7,462
+  jpqlQuery           6,243 / 5,595 / 5,291   6,435 / 6,451 / 6,432   6,514 + 4,801 / 6,324 / 6,349
+  update              1,293 / 1,002 / 1,285   1,339 /   884 / 1,343     872 +   882 / 1,186 / 1,151
+  createUpdateDelete  1,047 /   998 / 1,241   1,125 / 1,053 / 1,222   1,131 +   842 / 1,128 / 1,172
+  ```
+  All measured iterations pooled (15 per Noether version, 20 for Hibernate 5.6), median ± standard deviation:
+  ```text
+                      Noether before   Noether after   Hibernate 5.6
+  findById            6,882 ± 968      7,528 ± 109     7,273 ± 1,060
+  jpqlQuery           5,894 ± 542      6,440 ±  74     6,356 ±   748
+  update              1,254 ± 175      1,325 ± 302       956 ±   209
+  createUpdateDelete  1,091 ± 122      1,147 ± 107     1,132 ±   145
+  ```
+  Normalized allocation, B/op (the same in every run within 3%):
+  ```text
+                      Noether before   Noether after   Hibernate 5.6
+  findById             6,370            4,202           4,682-4,738
+  jpqlQuery           71,617           41,561          30,867-31,074
+  update               8,798            6,992           6,438-6,629
+  createUpdateDelete  18,132           13,499           8,583-8,630
+  ```
+- **Comparison**: medians of the pooled iterations, order `findById / jpqlQuery / update /
+  createUpdateDelete`: after versus before **+9.4% / +9.3% / +5.7% / +5.2%**; after versus Hibernate 5.6
+  **+3.5% / +1.3% / +38.6% / +1.4%**; before versus Hibernate 5.6 -5.4% / -7.3% / +31.1% / -3.6%.
+  Allocation after versus before -34.0% / -42.0% / -20.5% / -25.6%.
+- **Reading**:
+  - The database dominates: 130 µs to 1.1 ms per operation here, against 1.2 to 13 µs on in-memory H2
+    (BENCH-20261111-04). The CPU and allocation differences between providers become a few percent.
+  - Only one difference holds in every run: on `jpqlQuery` every "after" run (6,432 to 6,451) is above every
+    "before" run (5,291 to 6,243). Everywhere else the runs of the configurations overlap; Hibernate 5.6
+    alone spans 5,579 to 7,500 on `findById` across its four runs.
+  - `update` is bimodal for every configuration (about 880 or about 1,340 ops/s per run) and the mode
+    follows when the run happened, not the provider (round 2: Noether after 884, Hibernate 5.6 1,186). The
+    +38.6% median is not a ranking.
+  - Noether after #52 is the steadiest configuration on reads (standard deviation 109 on `findById` and 74
+    on `jpqlQuery`, against 968 and 542 before and 1,060 and 748 for Hibernate 5.6). Not explained by this
+    entry.
+  - Conclusion: on this PostgreSQL set-up, Noether before or after #52 and Hibernate 5.6 are at parity
+    within the run-to-run variation. The +14% to +66% of BENCH-20261111-04 measures the provider's own path
+    on H2 and does not carry over to a database round trip. Noether still allocates more than
+    Hibernate 5.6 except on `findById`.
+- **Noise**: shared machine. Sampled once during round 1: load averages 6.85 / 5.45 / 4.69 (1 / 5 / 15
+  min), `mediaanalysisd` at about 68% CPU, the container runtime at about 124%.
+- **Limitations**: one fork per run, single thread, one entity without relationships, the database on the
+  same machine behind a virtual machine (no physical network). Hibernate 7.4 and EclipseLink not run. Not a
+  production latency or scalability claim.
+- **Raw evidence**, in the `bench/postgresql` worktree, `noether-jpa-bench/target/bench-reports/`:
+  `20261111-pg-after/`, `20261111-pg-r2/`, `20261111-pg-r3/` (the "after" tree, and the Hibernate 5.6
+  runs started from it); `20261111-pg-before/`, `20261111-pg-r2-before-code/`,
+  `20261111-pg-r3-before-code/` (the "before" tree, and the Hibernate 5.6 runs started from it). Each
+  provider directory has `database.txt` naming the PostgreSQL URL.
