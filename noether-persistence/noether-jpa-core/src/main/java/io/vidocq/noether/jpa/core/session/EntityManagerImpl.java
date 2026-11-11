@@ -130,7 +130,26 @@ final class EntityManagerImpl implements EntityManager {
         });
         context.lazyLoader(this::loadLazy);
         context.referenceLoader(this::loadReference);
-        TransactionListener listener = new TransactionListener() {
+        TransactionListener listener = transactionListener();
+        if (factory.getTransactionType() == jakarta.persistence.PersistenceUnitTransactionType.JTA) {
+            var integration = (io.vidocq.noether.jpa.core.spi.TransactionIntegration)
+                factory.settings().property(io.vidocq.noether.jpa.core.spi.TransactionIntegration.PROPERTY);
+            transaction = new ContainerTransaction(integration.open(synchronization, factory.connections()::acquire,
+                completion(listener)));
+            transaction.isActive();
+        } else transaction = new ResourceLocalTransaction(factory, listener);
+        if (map != null) {
+            map.forEach((key, value) -> {
+                if (key != null) {
+                    setPropertyUnchecked(String.valueOf(key), value);
+                }
+            });
+        }
+    }
+
+    /** What this entity manager does around the completion of its transaction: the flush, then the shared cache. */
+    private TransactionListener transactionListener() {
+        return new TransactionListener() {
             @Override
             public void beforeCommit(Connection connection) {
                 withConnection(connection, current -> {
@@ -173,26 +192,17 @@ final class EntityManagerImpl implements EntityManager {
                 }
             }
         };
-        if (factory.getTransactionType() == jakarta.persistence.PersistenceUnitTransactionType.JTA) {
-            var integration = (io.vidocq.noether.jpa.core.spi.TransactionIntegration)
-                factory.settings().property(io.vidocq.noether.jpa.core.spi.TransactionIntegration.PROPERTY);
-            transaction = new ContainerTransaction(integration.open(synchronization, factory.connections()::acquire,
-                new io.vidocq.noether.jpa.core.spi.TransactionIntegration.Completion() {
-                    @Override public void beforeCommit(Connection connection) { listener.beforeCommit(connection); }
-                    @Override public void afterCompletion(boolean committed) {
-                        if (committed) listener.afterCommit(); else listener.afterRollback();
-                        if (closed) context.clear();
-                    }
-                }));
-            transaction.isActive();
-        } else transaction = new ResourceLocalTransaction(factory, listener);
-        if (map != null) {
-            map.forEach((key, value) -> {
-                if (key != null) {
-                    setPropertyUnchecked(String.valueOf(key), value);
-                }
-            });
-        }
+    }
+
+    /** The completion of a container transaction, as {@code listener} hears the one of a resource-local transaction. */
+    private io.vidocq.noether.jpa.core.spi.TransactionIntegration.Completion completion(TransactionListener listener) {
+        return new io.vidocq.noether.jpa.core.spi.TransactionIntegration.Completion() {
+            @Override public void beforeCommit(Connection connection) { listener.beforeCommit(connection); }
+            @Override public void afterCompletion(boolean committed) {
+                if (committed) listener.afterCommit(); else listener.afterRollback();
+                if (closed) context.clear();
+            }
+        };
     }
 
     // ---- life cycle --------------------------------------------------------------------------------------
@@ -486,43 +496,65 @@ final class EntityManagerImpl implements EntityManager {
 
     /** An empty persistence context has nothing to write: no flush engine, hence no dialect, is needed for it. */
     private void flush(Connection connection) {
-        if (context.size() > 0) {
-            loadReplacedCollections();
-            // few inserts per flush, none in most: a list once there is one; an instance has one entry, so it is in once
-            List<Object> newInstances = null;
-            Object[] reusable = null; // the state is only compared here: one array serves every instance of its size
-            for (ManagedEntity entry : context.entries()) {
-                // one read of the instance serves the business-key validation and the dirty check
-                Object[] state = null;
-                boolean dirty = false;
-                if (validatesBusinessKey(entry)) {
-                    state = reusable = readState(entry, reusable);
-                    dirty = entry.type().state().dirty(entry.snapshot(), state);
-                    if (dirty) rejectBusinessKeyChange(entry, state);
-                }
-                if (!entry.inserted()) {
-                    if (newInstances == null) newInstances = new ArrayList<>(4);
-                    newInstances.add(entry.instance());
-                }
-                if (entry.key() != null && (entry.status() == ManagedEntity.Status.REMOVED || !entry.inserted()
-                        || entry.snapshot() != null && (state != null ? dirty
-                            : entry.type().state().dirty(entry.snapshot(), reusable = readState(entry, reusable))))) {
-                    touch(entry.key());
-                }
-            }
-            operations.beforeFlush();
-            factory.flushEngine(connection).flush(context, connection,
-                entry -> {
-                    validateBusinessKey(entry);
-                    factory.validator().validate("pre-update", entry.instance());
-                });
-            if (newInstances != null) {
-                for (Object instance : newInstances) {
-                    context.entry(instance).map(ManagedEntity::key).filter(java.util.Objects::nonNull)
-                        .ifPresent(this::touch);
-                }
+        if (context.size() == 0) {
+            return;
+        }
+        loadReplacedCollections();
+        List<Object> newInstances = checkBeforeFlush();
+        operations.beforeFlush();
+        factory.flushEngine(connection).flush(context, connection,
+            entry -> {
+                validateBusinessKey(entry);
+                factory.validator().validate("pre-update", entry.instance());
+            });
+        if (newInstances != null) {
+            for (Object instance : newInstances) {
+                context.entry(instance).map(ManagedEntity::key).filter(java.util.Objects::nonNull)
+                    .ifPresent(this::touch);
             }
         }
+    }
+
+    /**
+     * Before a flush writes: a changed business key that is referenced is refused, and what the flush will write is
+     * marked as touched by the transaction for the shared cache. Gives the instances the flush will insert, whose
+     * identity may only be known after it: few per flush, none in most, hence a list once there is one, else
+     * {@code null}; an instance has one entry, so it is in once.
+     */
+    private List<Object> checkBeforeFlush() {
+        List<Object> newInstances = null;
+        Object[] reusable = null; // the state is only compared here: one array serves every instance of its size
+        for (ManagedEntity entry : context.entries()) {
+            // one read of the instance serves the business-key validation and the dirty check
+            boolean validates = validatesBusinessKey(entry);
+            boolean dirty = false;
+            if (validates || comparedForCache(entry)) {
+                reusable = readState(entry, reusable);
+                dirty = entry.type().state().dirty(entry.snapshot(), reusable);
+            }
+            if (validates && dirty) rejectBusinessKeyChange(entry, reusable);
+            if (!entry.inserted()) {
+                if (newInstances == null) newInstances = new ArrayList<>(4);
+                newInstances.add(entry.instance());
+            }
+            if (written(entry, dirty)) touch(entry.key());
+        }
+        return newInstances;
+    }
+
+    /** Whether the flush writes the row of {@code entry}, whose identity is known: removed, new, or changed. */
+    private static boolean written(ManagedEntity entry, boolean dirty) {
+        return entry.key() != null && (entry.status() == ManagedEntity.Status.REMOVED || !entry.inserted()
+            || entry.snapshot() != null && dirty);
+    }
+
+    /**
+     * Whether only a comparison with its snapshot tells if the flush writes {@code entry}: it has an identity, a row
+     * and a snapshot, and is not removed. A removed or a new instance is written whatever its state.
+     */
+    private static boolean comparedForCache(ManagedEntity entry) {
+        return entry.key() != null && entry.status() != ManagedEntity.Status.REMOVED && entry.inserted()
+            && entry.snapshot() != null;
     }
 
     private void validateBusinessKey(ManagedEntity entry) {
@@ -787,19 +819,9 @@ final class EntityManagerImpl implements EntityManager {
     public <T> T find(Class<T> entityClass, Object primaryKey, LockModeType lockMode, Map<String, Object> properties) {
         checkOpen();
         try {
-            FetchPlan plan = new FetchPlan();
-            if (properties != null) {
-                for (String name : List.of("jakarta.persistence.fetchgraph", "jakarta.persistence.loadgraph")) {
-                    if (properties.containsKey(name)) {
-                        EntityGraphs.validateHint(properties.get(name), entityClass, factory.getMetamodel());
-                        plan.merge(EntityGraphs.plan(properties.get(name)));
-                    }
-                }
-            }
-            boolean graph = properties != null && (properties.containsKey("jakarta.persistence.fetchgraph")
-                || properties.containsKey("jakarta.persistence.loadgraph"));
-            boolean loadGraph = properties != null && properties.containsKey("jakarta.persistence.loadgraph");
-            boolean locking = lockMode != null && lockMode != LockModeType.NONE;
+            FetchPlan plan = graphPlan(properties, entityClass);
+            boolean graph = hasGraph(properties);
+            boolean locking = locking(lockMode);
             if (locking) {
                 requireTransaction("find with a lock mode");
             }
@@ -807,25 +829,7 @@ final class EntityManagerImpl implements EntityManager {
             Object id = type.key(primaryKey);
             Optional<ManagedEntity> known = context.find(new EntityKey(type.root(), id));
             if (known.isPresent()) {
-                return context.loading(() -> {
-                    // a removed instance or an incompatible concrete subtype is not found
-                    Object instance = known.get().instance();
-                    if (known.get().status() != ManagedEntity.Status.MANAGED || !entityClass.isInstance(instance)) {
-                        return null;
-                    }
-                    if (!locking && graph && io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(instance)) {
-                        onConnection(connection -> JpqlQuery.findGraph(factory.mapping(), type, id, plan, loadGraph,
-                            factory.flushEngine(connection).dialect(), connection, factory.loader(connection), context));
-                    }
-                    io.vidocq.noether.jpa.core.spi.LazyReference.initialize(instance);
-                    if (locking) {
-                        lock(instance, lockMode, properties);
-                    }
-                    if (!locking && graph) {
-                        completeGraph(instance, type, plan);
-                    } else fetch(instance, plan, null);
-                    return entityClass.cast(instance);
-                });
+                return context.loading(() -> findManaged(known.get(), entityClass, type, id, plan, lockMode, properties));
             }
             CacheRetrieveMode retrieve = retrieveMode(properties);
             CacheStoreMode store = storeMode(properties);
@@ -833,16 +837,9 @@ final class EntityManagerImpl implements EntityManager {
             if (!locking && !cacheInvalidationPending && !transactionTouched.contains(lookupKey)
                     && retrieve == CacheRetrieveMode.USE
                     && store != CacheStoreMode.REFRESH) {
-                Optional<Object> cached = context.loading(() -> {
-                    Optional<Object> restored = factory.cache().restore(type, id, context);
-                    restored.ifPresent(instance -> {
-                        if (graph) completeGraph(instance, type, plan);
-                        else fetch(instance, plan, null);
-                    });
-                    return restored;
-                });
-                if (cached.isPresent()) {
-                    return entityClass.cast(cached.get());
+                Optional<Object> restored = context.loading(() -> findCached(type, id, plan, graph));
+                if (restored.isPresent()) {
+                    return entityClass.cast(restored.get());
                 }
             }
             Integer timeout = lockTimeout(properties, null);
@@ -850,36 +847,114 @@ final class EntityManagerImpl implements EntityManager {
             if (transaction.isActive() && store != CacheStoreMode.BYPASS) {
                 captureCacheGeneration(cacheGeneration);
             }
-            Object result = onConnection(connection -> context.loading(() -> {
-                var loader = factory.loader(connection);
-                Object found = !locking && graph && JpqlQuery.findGraph(factory.mapping(), type, id, plan, loadGraph,
-                    factory.flushEngine(connection).dialect(), connection, loader, context)
-                    ? context.find(lookupKey).map(ManagedEntity::instance).orElse(null)
-                    : loader.load(type, id, connection, context, lockMode, timeout);
-                if (found != null && locking) {
-                    // the row is locked by the select already for a pessimistic mode: record the mode, check nothing
-                    ManagedEntity entry = context.entry(found).orElseThrow();
-                    factory.locks(connection).lock(type, entry, Locks.pessimistic(lockMode) ? LockModeType.NONE : lockMode, timeout,
-                        false, connection, context);
-                    context.lock(entry, lockMode);
-                }
-                fetch(found, plan, connection);
-                return found;
-            }));
-            if (result != null && cached) {
-                if (transaction.isActive()) {
-                    if (store == CacheStoreMode.BYPASS) {
-                        bypassStore.add(new EntityKey(type.root(), id));
-                    } else {
-                        transactionCacheCandidates.add(new EntityKey(type.root(), id));
-                    }
-                } else if (store != CacheStoreMode.BYPASS) {
-                    factory.cache().store(type, result, cacheGeneration);
-                }
-            }
+            Object result = onConnection(connection -> context.loading(
+                () -> findLoaded(connection, type, lookupKey, plan, lockMode, timeout, properties)));
+            rememberFound(type, id, result, store, cacheGeneration);
             return entityClass.cast(result);
         } catch (RuntimeException e) {
             throw failed(e);
+        }
+    }
+
+    private static final String FETCH_GRAPH = "jakarta.persistence.fetchgraph";
+    private static final String LOAD_GRAPH = "jakarta.persistence.loadgraph";
+    private static final List<String> GRAPH_HINTS = List.of(FETCH_GRAPH, LOAD_GRAPH);
+
+    /** What the entity graph hints of a find fetch (§3.7.4), each validated against {@code entityClass}. */
+    private FetchPlan graphPlan(Map<String, Object> properties, Class<?> entityClass) {
+        FetchPlan plan = new FetchPlan();
+        if (properties != null) {
+            for (String name : GRAPH_HINTS) {
+                if (properties.containsKey(name)) {
+                    EntityGraphs.validateHint(properties.get(name), entityClass, factory.getMetamodel());
+                    plan.merge(EntityGraphs.plan(properties.get(name)));
+                }
+            }
+        }
+        return plan;
+    }
+
+    private static boolean hasGraph(Map<String, Object> properties) {
+        return properties != null && (properties.containsKey(FETCH_GRAPH) || properties.containsKey(LOAD_GRAPH));
+    }
+
+    private static boolean hasLoadGraph(Map<String, Object> properties) {
+        return properties != null && properties.containsKey(LOAD_GRAPH);
+    }
+
+    private static boolean locking(LockModeType lockMode) {
+        return lockMode != null && lockMode != LockModeType.NONE;
+    }
+
+    /** The find of an identity the context holds: its instance, completed, locked and fetched as the find asks. */
+    private <T> T findManaged(ManagedEntity known, Class<T> entityClass, MappedEntity type, Object id, FetchPlan plan,
+            LockModeType lockMode, Map<String, Object> properties) {
+        // a removed instance or an incompatible concrete subtype is not found
+        Object instance = known.instance();
+        if (known.status() != ManagedEntity.Status.MANAGED || !entityClass.isInstance(instance)) {
+            return null;
+        }
+        boolean locking = locking(lockMode);
+        boolean graph = hasGraph(properties);
+        boolean loadGraph = hasLoadGraph(properties);
+        if (!locking && graph && io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(instance)) {
+            onConnection(connection -> JpqlQuery.findGraph(factory.mapping(), type, id, plan, loadGraph,
+                factory.flushEngine(connection).dialect(), connection, factory.loader(connection), context));
+        }
+        io.vidocq.noether.jpa.core.spi.LazyReference.initialize(instance);
+        if (locking) {
+            lock(instance, lockMode, properties);
+        }
+        if (!locking && graph) {
+            completeGraph(instance, type, plan);
+        } else fetch(instance, plan, null);
+        return entityClass.cast(instance);
+    }
+
+    /** The instance the shared cache restores for a find, with what the find fetches; empty if it holds none. */
+    private Optional<Object> findCached(MappedEntity type, Object id, FetchPlan plan, boolean graph) {
+        Optional<Object> restored = factory.cache().restore(type, id, context);
+        restored.ifPresent(instance -> {
+            if (graph) completeGraph(instance, type, plan);
+            else fetch(instance, plan, null);
+        });
+        return restored;
+    }
+
+    /** The instance a find reads from the database on {@code connection}, locked and fetched as the find asks. */
+    private Object findLoaded(Connection connection, MappedEntity type, EntityKey lookupKey, FetchPlan plan,
+            LockModeType lockMode, Integer timeout, Map<String, Object> properties) {
+        boolean locking = locking(lockMode);
+        Object id = lookupKey.id();
+        var loader = factory.loader(connection);
+        Object found = !locking && hasGraph(properties) && JpqlQuery.findGraph(factory.mapping(), type, id, plan,
+            hasLoadGraph(properties), factory.flushEngine(connection).dialect(), connection, loader, context)
+            ? context.find(lookupKey).map(ManagedEntity::instance).orElse(null)
+            : loader.load(type, id, connection, context, lockMode, timeout);
+        if (found != null && locking) {
+            // the row is locked by the select already for a pessimistic mode: record the mode, check nothing
+            ManagedEntity entry = context.entry(found).orElseThrow();
+            factory.locks(connection).lock(type, entry, Locks.pessimistic(lockMode) ? LockModeType.NONE : lockMode, timeout,
+                false, connection, context);
+            context.lock(entry, lockMode);
+        }
+        fetch(found, plan, connection);
+        return found;
+    }
+
+    /** What a find read from the database goes to the shared cache: with the transaction, or at once without one. */
+    private void rememberFound(MappedEntity type, Object id, Object result, CacheStoreMode store, long cacheGeneration) {
+        if (result == null || !cached) {
+            return;
+        }
+        if (transaction.isActive()) {
+            if (store == CacheStoreMode.BYPASS) {
+                bypassStore.add(new EntityKey(type.root(), id));
+            } else {
+                transactionCacheCandidates.add(new EntityKey(type.root(), id));
+            }
+        } else if (store != CacheStoreMode.BYPASS) {
+            factory.cache().store(type, result, cacheGeneration);
         }
     }
 
@@ -910,7 +985,7 @@ final class EntityManagerImpl implements EntityManager {
         }
         // 3.2: the graph is applied as a fetch graph, its attribute nodes loaded with the instance
         Map<String, Object> properties = new HashMap<>();
-        properties.put("jakarta.persistence.fetchgraph", graph);
+        properties.put(FETCH_GRAPH, graph);
         return find(graph.type, primaryKey, properties, options);
     }
 
