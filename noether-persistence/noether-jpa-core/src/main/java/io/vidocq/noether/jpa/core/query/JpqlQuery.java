@@ -666,11 +666,13 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         if (lockMode != LockModeType.NONE) {
             resultList.forEach(this::lockEntities);
         }
-        if (compiled.collection() != null && (!collectionFetch
-                || statement instanceof Ast.Select select && select.distinct())) {
-            return uniqueReferences(resultList);
-        }
-        return resultList;
+        return uniqueOwners(compiled) ? uniqueReferences(resultList) : resultList;
+    }
+
+    /** Whether the owners of a hydrated collection are given once each: a graph read, or a distinct fetch join. */
+    private boolean uniqueOwners(Compiled compiled) {
+        return compiled.collection() != null && (!collectionFetch
+            || statement instanceof Ast.Select select && select.distinct());
     }
 
     /** Whether {@code sql} reads a derived table, as a TABLE_PER_CLASS union: its rows cannot be locked by it. */

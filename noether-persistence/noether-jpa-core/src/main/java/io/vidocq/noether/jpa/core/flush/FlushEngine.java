@@ -141,15 +141,12 @@ public final class FlushEngine {
         Object[] unchanged = null;
         for (ManagedEntity entry : context.entries()) {
             if (io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(entry.instance())) continue;
-            MappedEntity type = entry.type();
-            if (entry.key() != null) {
-                type.validateMapsId(entry.instance(), entry.key().id());
-            }
+            validateMapsId(entry);
             if (entry.status() == ManagedEntity.Status.REMOVED) {
                 deletes = removed(entry, context, deletes);
             } else {
                 // most instances did not change: their state is read into one array, which the next one reuses
-                Object[] state = read(type, entry.instance(), unchanged);
+                Object[] state = read(entry.type(), entry.instance(), unchanged);
                 unchanged = null; // the array belongs to this entry until it is known to need none
                 int change = change(entry, state, validateUpdate);
                 if ((change & CHECK) != 0) checks = added(checks, entry);
@@ -162,6 +159,13 @@ public final class FlushEngine {
             }
         }
         write(context, connection, inserts, updates, deletes, checks, indexes);
+    }
+
+    /** §2.4: the derived identity of an instance that has an identity was not reassigned or cleared. */
+    private static void validateMapsId(ManagedEntity entry) {
+        if (entry.key() != null) {
+            entry.type().validateMapsId(entry.instance(), entry.key().id());
+        }
     }
 
     /**
