@@ -1289,3 +1289,23 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     `QuarkusPortabilityTest` 3/3 without any Quarkus setting, Vauban `ContainerModuleTest` 4/4,
     `JtaIntegrationTest` 13/13, clean reactor 1188 tests green.
 
+## BUG-20261111-03 — On Vauban, the extension run at build time injects no persistence context
+
+- **Date**: 2026-11-11
+- **Status**: FIXED upstream, Vidocq/vauban#285 (Vauban BUG-20261111-01 and BUG-20261111-02); found by the Noether audit (#45, F9)
+- **Affected module**: `noether-jpa-cdi` on Vauban; the cause is in `vauban-core`
+- **Symptom**: with `noether-jpa-cdi` on the annotation processor path, as a Vauban
+  application declares it, the container boot fails: `Unsatisfied dependency: field
+  Repository.factory of type EntityManagerFactory with qualifiers [@PersistenceBinding("unit:container")]`.
+  A container of a subset of the processed classes fails earlier:
+  `IllegalStateException: Enhanced class is missing from the index`.
+- **Minimal reproduction**: `noether-jpa-cdi-module-it`, `BuildTimeExtensionModuleTest`:
+  `VaubanContainer.builder().scanClasspath().build()`, then select `Repository`.
+- **Confirmed cause**: Vauban's build-time synthetic-bean metadata kept the qualifier
+  type and dropped its members, so none of the six synthetic beans matched; and the frozen
+  enhancement patch failed the boot for a class outside the deployment.
+- **Investigations**:
+  - 2026-11-11: the module-path IT only registered the extension at runtime
+    (`addBeanClass(NoetherPersistenceExtension.class)`), so the build-time path was never
+    run. With the extension on the processor path: red on the current Vauban snapshot
+    (5 errors), green on Vidocq/vauban#285 (5/5), installed in a scratch local repository.
