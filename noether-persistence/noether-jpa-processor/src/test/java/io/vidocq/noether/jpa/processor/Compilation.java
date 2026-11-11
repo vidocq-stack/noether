@@ -47,8 +47,12 @@ record Compilation(boolean success, List<Diagnostic<? extends JavaFileObject>> d
         return compile(out, List.of("-classpath", dependencies()), roots);
     }
 
+    /**
+     * Compiles {@code roots} on the class path with {@code processors}, against everything the tests run with: the
+     * code another processor generates may need a test-scope library (Mansart Data's {@code _Book} needs its dialect SPI).
+     */
     static Compilation withProcessors(Path out, List<javax.annotation.processing.Processor> processors, Path... roots) {
-        return compile(out, List.of("-classpath", dependencies()), processors, roots);
+        return compile(out, List.of("-classpath", testPaths()), processors, roots);
     }
 
     /** Compiles {@code roots} against the classes of an earlier compilation, as an incremental build does. */
@@ -65,6 +69,13 @@ record Compilation(boolean success, List<Diagnostic<? extends JavaFileObject>> d
     private static String dependencies() {
         String modulePath = System.getProperty("jdk.module.path");
         return modulePath != null ? modulePath : System.getProperty("java.class.path");
+    }
+
+    /** The module path and the class path of the tests, as one class path. */
+    private static String testPaths() {
+        String modulePath = System.getProperty("jdk.module.path");
+        String classPath = System.getProperty("java.class.path");
+        return modulePath != null ? modulePath + File.pathSeparator + classPath : classPath;
     }
 
     private static Compilation compile(Path out, List<String> options, Path... roots) {

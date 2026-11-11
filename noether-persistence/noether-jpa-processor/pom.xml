@@ -29,6 +29,16 @@
             <artifactId>assertj-core</artifactId>
             <scope>test</scope>
         </dependency>
+        <!--
+            Test scope only: MansartDataCoexistenceTest compiles an entity with this processor and the ecosystem's
+            Jakarta Data processor together, as a Vidocq application declares them (BUG-20261009-09). Since
+            Vidocq/mansart#95 Mansart Data writes _Book only and Book_ is Noether's. Noether does not depend on it.
+        -->
+        <dependency>
+            <groupId>io.vidocq.mansart</groupId>
+            <artifactId>mansart-data-processor</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

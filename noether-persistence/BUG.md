@@ -121,7 +121,8 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
 ## BUG-20261009-09 — Frozen Data canonical collection fields have singular kinds
 
 - **Date**: 2026-10-09
-- **Status**: OPEN (producer-owned; maintainer decision required, Data unchanged)
+- **Status**: FIXED upstream, Vidocq/mansart#95 (MANSART-048); pinned by `MansartDataCoexistenceTest` (branch
+  `test/metamodel-coexistence`, pull request into `fix-proposals`, Vidocq/noether#45)
 - **Module**: `mansart-data-processor`, `JpaMetamodelWriter` (consumer impact in persistence)
 - **Symptom**: when Data owns `Entity_`, its plural attributes are emitted as `SingularAttribute`; a runtime
   `ListAttribute`/`SetAttribute`/`MapAttribute` cannot populate those fields.
@@ -133,6 +134,17 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     orders. JPA delays emission, retains foreign canonical ownership, and diagnoses incompatible field kinds.
     Coexistence tests also cover a claiming producer in both orders; no Data implementation is modified.
   - Reconciling plural field kinds belongs to the frozen Data producer's authorized workstream, not P8.
+  - 2026-11-11 (audit F15, #45): fixed upstream by Vidocq/mansart#95 (MANSART-048, 5d5fd8e6): the maintainer chose
+    that Mansart Data stops writing `Book_`; it writes its Jakarta Data metamodel `_Book` only, and the JPA canonical
+    metamodel belongs to the persistence provider's processor. New `MansartDataCoexistenceTest` (noether-jpa-processor)
+    compiles one entity with the real `mansart-data-processor` (test scope) and `NoetherJpaProcessor`, in both orders:
+    the compilation succeeds, `Book_` is Noether's with `ListAttribute<datacoexist.Book, java.lang.String> tags`, and
+    `_Book` is Mansart's. Green on mansart-data-processor 0.4.0-20261111.191239-69. Red on the earlier
+    0.4.0-20261111.124140-68 (temporary pin): `Book_` carries `@Generated("…MansartProcessor")` and has no `tags`. With a
+    raw `List` field instead, the same build printed this bug's diagnostic: "Existing canonical metamodel
+    datacoexist.Book_.tags was emitted with jakarta.persistence.metamodel.SingularAttribute instead of ListAttribute
+    … Noether JPA does not overwrite it". The fixture maps its plural attribute by property access over a
+    `@Transient` field, because Mansart Data cannot yet write `_Book` for a collection-valued field (BUG-20261111-06).
 
 ## BUG-20261009-10 — Converted string/number literals bypass query conversion
 
@@ -1464,3 +1476,35 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     `EntityManager.unwrap(Connection.class)` stays open until Noether's synchronization. `AgroalConnectionReleaseTest`
     5/5, `SynchronizationRegistryIntegrationTest` 15/15; the test data sources of `noether-jpa-jta`, `noether-jpa-cdi`
     and `noether-jpa-cdi-module-it` now share one enlisted connection per transaction, as a container does.
+
+## BUG-20261111-06 — Mansart Data cannot compile an entity with a collection-valued field
+
+- **Date**: 2026-11-11
+- **Status**: OPEN (cause upstream in `mansart-data-processor`; Mansart decision required)
+- **Affected module**: `mansart-data-processor`, `EntityScanner` and `MansartMetamodelWriter` (consumer impact: a
+  Vidocq application that runs Noether's and Mansart Data's processors on its entities)
+- **Symptom**: with `mansart-data-processor` on the processor path, an entity with a collection field does not
+  compile, because the Jakarta Data metamodel `_Book` that Mansart writes is invalid. For
+  `@ElementCollection List<String> tags`: `_Book.java:29: error: <identifier> expected` on
+  `NumericAttribute<Book, java.util.List<java.lang.String>> tags = new NumericAttribute<>(…,
+  java.util.List<java.lang.String>.class, …)`. For a raw `List` with `targetClass`: `type argument java.util.List is not
+  within bounds of type-variable V`. The parameterized case fails on 0.4.0-20261111.124140-68 and on
+  0.4.0-20261111.191239-69 (the build of Vidocq/mansart#95); the raw case was run on -68 only.
+- **Minimal reproduction**: in `noether-jpa-processor`, point `MansartDataCoexistenceTest` at the `coexist` fixture
+  (an entity with `@ElementCollection public java.util.List<String> tags`) instead of `datacoexist`:
+  ```sh
+  ./mvnw -ntp -pl noether-persistence/noether-jpa-processor -am -Dtest=MansartDataCoexistenceTest \
+    -Dsurefire.failIfNoSpecifiedTests=false test
+  ```
+- **Confirmed cause**: `EntityScanner` takes every non-transient field as an attribute and has no plural kind; a
+  field that is not an identifier, version, reference, enum, text, boolean or temporal falls to `NUMERIC`.
+  `MansartMetamodelWriter` then writes `typeMirror.toString()` followed by `.class`, which is not a class literal for a
+  parameterized type, and `NumericAttribute` bounds its value type to numbers. An `@OneToMany` or `@ManyToMany`
+  collection takes the same path.
+- **Investigations**:
+  - 2026-11-11 (audit F15, #45): found while writing `MansartDataCoexistenceTest` for BUG-20261009-09. Evidence:
+    session artifacts `logs/coexistence-red-68-elementcollection.txt` and `logs/coexistence-latest.log`. The test
+    keeps a plural attribute by mapping it through property access over a `@Transient` field, which Mansart skips.
+    Options for Mansart: skip collection-valued attributes in `_Book` (the Jakarta Data 1.0 static metamodel has no
+    attribute type for a collection), or give them a kind of their own with the erased type in the class literal. No
+    Mansart code is changed here.

@@ -146,9 +146,7 @@ See xref:reference.adoc[] for exact boundaries and retained cache/hint contracts
 [IMPORTANT]
 ====
 Data and JPA processors can run together in either order without duplicate canonical-class generation.
-JPA retains canonical output owned by another producer. The frozen Data producer still emits singular canonical
-fields for collections: those incompatible fields are diagnosed and cannot be populated.
-Reconciliation requires a maintainer decision in the Data workstream; P8 does not modify delivered Data.
+JPA retains canonical output owned by another producer. Since Vidocq/mansart#95, Mansart Data writes only its Jakarta Data metamodel `_Book` and `Book_` comes from `noether-jpa-processor`, plural attributes included (BUG-20261009-09); Mansart Data does not yet compile an entity with a collection field (BUG-20261111-06).
 ====
 
 == Inheritance

@@ -732,9 +732,9 @@ Spec: ch. 5 (metamodel), ch. 6 (criteria), §3.8 (entity graphs).
       milestone attribution are recorded in `TCK.md`. No tests or exclusions were changed.
 
 **Frozen Data producer boundary:** both processors safely coexist in either discovery order without duplicate
-`Entity_` output. JPA does not overwrite canonical classes owned by another producer. The existing Data generator
-still emits singular fields for plural attributes; incompatible fields are diagnosed and cannot be populated.
-Reconciling those Data-owned field kinds requires a maintainer decision; Data is unchanged (see `BUG.md`).
+`Entity_` output. JPA does not overwrite canonical classes owned by another producer. Since Vidocq/mansart#95 the
+Data generator no longer writes `Entity_`, so plural attributes get their plural kinds (BUG-20261009-09, pinned by
+`MansartDataCoexistenceTest`); Data still cannot compile a collection-valued field in `_Entity` (BUG-20261111-06).
 The standalone JPA processor and official P8 gate have no such dependency.
 
 **TCK gate**: `core.metamodelapi.*`, `core.criteriaapi.*`, `core.EntityGraph`,
