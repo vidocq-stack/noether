@@ -13,7 +13,7 @@ work transformed abstract algebra and connected symmetries with conservation law
 | `.` | `io.vidocq.noether:noether-root` | Independent reactor, parent `io.vidocq:vidocq-parent:0.4.0-SNAPSHOT` |
 | `noether-persistence` | `io.vidocq.noether:noether-jpa` | Persistence provider, dialects, APT, CDI/JTA integration and Java module integration tests |
 | `noether-validation` | `io.vidocq.noether:noether-validation` | Local Validation stopgap, not a complete implementation and **not published** |
-| `noether-it-other-containers` | `io.vidocq.noether:noether-it-other-containers` | Noether, unchanged, on other containers (`noether-it-openliberty`); test vehicles, **not published** |
+| `noether-it-other-containers` | `io.vidocq.noether:noether-it-other-containers` | Noether, unchanged, on other containers (`noether-it-openliberty`, `noether-it-quarkus`); test vehicles, **not published** |
 
 All implementation packages and Java modules use `io.vidocq.noether`.
 The provider is `io.vidocq.noether.jpa.core.NoetherPersistenceProvider`.

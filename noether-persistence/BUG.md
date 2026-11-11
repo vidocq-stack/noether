@@ -1258,3 +1258,30 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     thread; `JndiTransactionIntegrationProvider` reads `java:comp/TransactionSynchronizationRegistry`.
     `SynchronizationRegistryIntegrationTest` 7/7 (real transaction manager, enlisting test data source), Liberty
     IT 3/3.
+
+## BUG-20261111-02 — `noether-jpa-cdi` cannot inject a persistence context on Quarkus
+
+- **Date**: 2026-11-11
+- **Status**: FIXED (branch `feat/quarkus`, pull request into `fix-proposals`, Vidocq/noether#45)
+- **Affected module**: `noether-jpa-cdi`, `NoetherPersistenceExtension`
+- **Symptom**: a Quarkus 3.40.1 application with `noether-jpa-cdi` and `@PersistenceContext EntityManager em`
+  fails at build: `UnsatisfiedResolutionException: Unsatisfied dependency for type jakarta.persistence.EntityManager
+  and qualifiers [@Default]`. Once that is fixed, the first injection fails at run time:
+  `No bean found for required type EntityManagerFactory and qualifiers [@PersistenceBinding("unit:library")]`.
+- **Minimal reproduction**:
+  ```sh
+  ./mvnw -ntp -pl noether-it-other-containers/noether-it-quarkus -am \
+    -Dtest=QuarkusPortabilityTest -Dsurefire.failIfNoSpecifiedTests=false verify
+  ```
+- **Confirmed causes**:
+  1. ArC indexes the application, not every dependency: it never saw that `PersistenceBinding`, the annotation the
+     extension adds to each injection point, is a qualifier, and resolved the injection as `@Default`.
+  2. ArC removes the beans no injection point uses. The per-unit `EntityManagerFactory` synthetic bean is only looked
+     up programmatically by the persistence-context creator, so it was removed. Proven by running the same test with
+     `quarkus.arc.remove-unused-beans=none`: 3/3 green.
+- **Investigations**:
+  - 2026-11-11: fix in the extension, portable CDI 4.1 Lite API only: `@Discovery` declares `PersistenceBinding`
+    through `MetaAnnotations.addQualifier`; each factory bean gets an internal name (a named bean is never removed).
+    `QuarkusPortabilityTest` 3/3 without any Quarkus setting, Vauban `ContainerModuleTest` 4/4,
+    `JtaIntegrationTest` 13/13, clean reactor 1188 tests green.
+
