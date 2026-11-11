@@ -273,7 +273,7 @@ final class ResourceLocalTransaction implements SessionTransaction {
         if (!restoreAutoCommit) return;
         try {
             current.setAutoCommit(true);
-        } catch (SQLException ignored) {
+        } catch (SQLException _) {
             // the transaction is complete: the DataSource resets or discards the connection it gets back
         }
     }
