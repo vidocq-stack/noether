@@ -18,6 +18,13 @@
         <h2.version>2.3.232</h2.version>
         <hibernate.version>7.4.12.Final</hibernate.version>
         <eclipselink.version>5.0.2</eclipselink.version>
+        <!--
+            Hibernate ORM 5.6 is the last 5.x line; its Jakarta Persistence 3.0 build is a separate
+            artifact (hibernate-core-jakarta). Its own Byte Buddy (1.12) predates Java 25 class files,
+            so the profile replaces it with a release that reads them.
+        -->
+        <hibernate5.version>5.6.15.Final</hibernate5.version>
+        <hibernate5.byte-buddy.version>1.17.8</hibernate5.byte-buddy.version>
         <noether.version>0.4.0-SNAPSHOT</noether.version>
         <!-- run-bench.sh sets target/<provider> so each provider's clean leaves the others intact. -->
         <bench.build.directory>${project.basedir}/target</bench.build.directory>
@@ -101,6 +108,29 @@
                     <groupId>org.hibernate.orm</groupId>
                     <artifactId>hibernate-core</artifactId>
                     <version>${hibernate.version}</version>
+                    <scope>test</scope>
+                </dependency>
+            </dependencies>
+        </profile>
+        <profile>
+            <id>hibernate5</id>
+            <dependencies>
+                <dependency>
+                    <groupId>org.hibernate</groupId>
+                    <artifactId>hibernate-core-jakarta</artifactId>
+                    <version>${hibernate5.version}</version>
+                    <scope>test</scope>
+                    <exclusions>
+                        <exclusion>
+                            <groupId>net.bytebuddy</groupId>
+                            <artifactId>byte-buddy</artifactId>
+                        </exclusion>
+                    </exclusions>
+                </dependency>
+                <dependency>
+                    <groupId>net.bytebuddy</groupId>
+                    <artifactId>byte-buddy</artifactId>
+                    <version>${hibernate5.byte-buddy.version}</version>
                     <scope>test</scope>
                 </dependency>
             </dependencies>

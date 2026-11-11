@@ -663,3 +663,58 @@ measurements, not a general provider ranking or a production-performance guarant
   All three raw report directories and the core patch are also copied to
   session `perf2-bench-evidence`; `perf2-compare.py` computes deltas from the
   raw JSON without rounding intermediate scores.
+
+## BENCH-20261111-01 — Hibernate ORM 5.6 joins the comparison (Vidocq/noether#45)
+
+- **Date**: 2026-11-11
+- **Commit**: `f7746b6` (`fix-proposals`, identical to `main`) plus the uncommitted `hibernate5` harness
+  profile of branch `bench/hibernate-5`. Noether jars installed by `./mvnw -ntp install` of that commit.
+- **JVM**: Temurin 25.0.3 (2026-04-21 LTS), 64-Bit Server VM, default flags.
+- **Hardware**: Apple M5 Max / 18 cores / 128 GB RAM. **Not the machine of the earlier entries**
+  (Apple M5 / 10 cores / 24 GB): cross-entry deltas are context only.
+- **OS**: macOS 27.2, arm64.
+- **Providers**: Noether 0.4.0-SNAPSHOT; Hibernate ORM **5.6.15.Final** (`hibernate-core-jakarta`, the
+  Persistence 3.0 build of 5.6, with Byte Buddy replaced by 1.17.8 because its own 1.12 cannot read
+  Java 25 class files); Hibernate ORM 7.4.12.Final. H2 2.3.232 in memory, same entity, schema, seeded rows,
+  settings and preflight checks for every provider. Hibernate 5.6 predates `PersistenceConfiguration`
+  (3.2): the harness hands it the same unit as a `PersistenceUnitInfo` through
+  `createContainerEntityManagerFactory` (`-Dbench.bootstrap=unit-info`), with Hibernate's own
+  `hibernate.connection.*` keys added; both Hibernate lines use their built-in 20-connection pool
+  (`HHH10001002`), Noether its `mansart-pool` pool.
+- **Exact command**, from the Noether root:
+  ```sh
+  ./mvnw -ntp install
+  cd noether-persistence/noether-jpa-bench
+  export BENCH_RUN_ID=20261111-baseline
+  ./run-bench.sh hibernate5 && ./run-bench.sh noether && ./run-bench.sh hibernate
+  ```
+  JMH settings unchanged: `-wi 3 -i 5 -w 2s -r 2s -f 1 -t 1 -foe true -prof gc -rf json`.
+- **Results**, JMH 99.9% error, normalized allocation:
+  ```text
+  noether
+  createUpdateDelete 164213.383 +/-  3884.010 ops/s; 34600.038 +/-   0.078 B/op
+  findById           466085.882 +/- 10499.548 ops/s; 11390.758 +/-   0.004 B/op
+  jpqlQuery           41843.872 +/-  1184.590 ops/s; 78757.358 +/- 114.208 B/op
+  update             218329.098 +/- 23406.159 ops/s; 21360.130 +/-   0.703 B/op
+  hibernate5 (5.6.15.Final)
+  createUpdateDelete 250798.545 +/-  5027.971 ops/s; 17864.036 +/-   0.143 B/op
+  findById           536978.356 +/-  8054.610 ops/s;  7525.827 +/-   0.069 B/op
+  jpqlQuery           67386.726 +/-   998.652 ops/s; 26674.322 +/-   0.177 B/op
+  update             284889.000 +/-  4986.130 ops/s; 13670.912 +/-   0.164 B/op
+  hibernate (7.4.12.Final)
+  createUpdateDelete 237486.403 +/-  1566.256 ops/s; 19976.036 +/-   0.136 B/op
+  findById           627351.368 +/- 28047.362 ops/s;  7021.824 +/-   0.054 B/op
+  jpqlQuery           89985.802 +/- 12024.165 ops/s; 18379.080 +/-   0.356 B/op
+  update             305915.200 +/-  8553.596 ops/s; 14318.907 +/-   0.101 B/op
+  ```
+- **Noether versus Hibernate 5.6**, same session (throughput; allocation ratio):
+  `createUpdateDelete` **-34.5%** (x1.94 B/op), `findById` **-13.2%** (x1.51), `jpqlQuery` **-37.9%**
+  (x2.95), `update` **-23.4%** (x1.56). Versus Hibernate 7.4: -30.9% / -25.7% / -53.5% / -28.6%.
+  The 99.9% intervals do not overlap on any workload.
+- **Comparison with previous run**: Noether versus BENCH-20261022-03 (same code paths, other machine and
+  JDK patch): +1.06% / -0.40% / -3.16% / -5.34%, within that entry's intervals except `update`; no
+  change is claimed. First Hibernate 5.6 measurement.
+- **Notes**: Noether allocates 1.5x to 3x Hibernate 5.6 per operation; the JPQL gap (32 managed rows per
+  operation) is the largest. Hibernate 5.6 is measured as shipped, without bytecode enhancement, like the
+  other providers. Raw evidence:
+  `noether-jpa-bench/target/bench-reports/20261111-baseline/{hibernate5,noether,hibernate}/`.

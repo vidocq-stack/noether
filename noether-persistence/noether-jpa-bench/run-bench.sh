@@ -2,7 +2,7 @@
 set -eu
 
 if [ "$#" -ne 1 ]; then
-    echo "Usage: $0 noether|hibernate|eclipselink" >&2
+    echo "Usage: $0 noether|hibernate|hibernate5|eclipselink" >&2
     exit 2
 fi
 
@@ -19,6 +19,13 @@ case "$provider" in
         profile=hibernate
         provider_class=org.hibernate.jpa.HibernatePersistenceProvider
         ;;
+    hibernate5)
+        # Jakarta Persistence 3.0 provider: no PersistenceConfiguration (3.2), so the harness hands it a
+        # PersistenceUnitInfo through createContainerEntityManagerFactory instead.
+        profile=hibernate5
+        provider_class=org.hibernate.jpa.HibernatePersistenceProvider
+        bootstrap=unit-info
+        ;;
     eclipselink)
         profile=eclipselink
         provider_class=org.eclipse.persistence.jpa.PersistenceProvider
@@ -28,6 +35,7 @@ case "$provider" in
         exit 2
         ;;
 esac
+bootstrap=${bootstrap:-configuration}
 
 if [ -n "${JAVA_HOME:-}" ]; then
     java_bin="$JAVA_HOME/bin/java"
@@ -68,7 +76,7 @@ classpath="$build_dir/test-classes:$build_dir/classes:$(cat "$build_dir/test-cla
 log="$report_dir/jmh.log"
 results="$report_dir/jmh.json"
 # -foe true: a failing setup/preflight or benchmark makes JMH exit non-zero instead of skipping it.
-if "$java_bin" -Dbench.provider="$provider_class" -cp "$classpath" org.openjdk.jmh.Main \
+if "$java_bin" -Dbench.provider="$provider_class" -Dbench.bootstrap="$bootstrap" -cp "$classpath" org.openjdk.jmh.Main \
     'io.vidocq.noether.jpa.bench.JpaProviderBenchmark.*' -wi 3 -i 5 -w 2s -r 2s -f 1 -t 1 \
     -foe true -prof gc -rf json -rff "$results" >"$log" 2>&1; then
     grep -E '^Benchmark[[:space:]]+Mode|^JpaProviderBenchmark' "$log"
