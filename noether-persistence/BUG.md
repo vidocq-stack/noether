@@ -1226,3 +1226,35 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     Evidence: session artifact `java25-review/c/TablePoolRepro.java` and `c/output.txt`.
     Persist as the first transaction operation was not evaluated. No production
     fix or tracked regression has been applied.
+
+## BUG-20261111-01 — A JTA unit bootstrapped by a Jakarta EE server is refused
+
+- **Date**: 2026-11-11
+- **Status**: FIXED (branch `feat/openliberty`, pull request into `fix-proposals`, Vidocq/noether#45)
+- **Affected module**: `noether-jpa-core`, `NoetherPersistenceProvider.build` (no transaction bridge outside
+  `noether-jpa-cdi`)
+- **Symptom**: on Open Liberty 26.0.0.10 (`persistenceContainer-3.2`), a WAR whose `persistence.xml` names
+  Noether with a `<jta-data-source>` fails to bootstrap: `CWWJP0015E … Persistence unit library is JTA: JTA
+  entity managers come with the container integration (noether-jpa-cdi); supply its TransactionIntegration
+  bridge`. Liberty then leaves the `@PersistenceContext` field `null` and every request fails with a
+  `NullPointerException`.
+- **Minimal reproduction**:
+  ```sh
+  ./mvnw -ntp -pl noether-it-other-containers,noether-it-other-containers/noether-it-openliberty verify
+  ```
+  (3/3 `OpenLibertyPortabilityIT` failures before the fix.)
+- **Confirmed cause**: a container bootstraps a JTA unit through `createContainerEntityManagerFactory` with its
+  own JTA data source (§9.6) and never passes Noether's `io.vidocq.noether.jpa.transaction-integration` object;
+  the core refused every JTA unit without it. The only bridge, `noether-jpa-cdi`'s `JtaIntegration`, needs a CDI
+  `TransactionManager` bean and enlists its own Mansart `ConnectionXAResource`, which a server's JTA data source
+  (already enlisted by the server) must not receive.
+- **Investigations**:
+  - 2026-11-11: red `OpenLibertyPortabilityIT` (writes, server rollback of a flushed insert, find outside a
+    transaction), Liberty `messages.log` shows the refusal above.
+  - 2026-11-11: fix — new SPI `TransactionIntegrationProvider` (core, `ServiceLoader` on the unit's loader when no
+    bridge is passed) and new module `noether-jpa-jta`: `SynchronizationRegistryIntegration` joins through an
+    interposed synchronization of the standard `TransactionSynchronizationRegistry`, flushes before completion,
+    detaches after it, never enlists, commits or rolls back a connection and never moves JDBC work to another
+    thread; `JndiTransactionIntegrationProvider` reads `java:comp/TransactionSynchronizationRegistry`.
+    `SynchronizationRegistryIntegrationTest` 7/7 (real transaction manager, enlisting test data source), Liberty
+    IT 3/3.
