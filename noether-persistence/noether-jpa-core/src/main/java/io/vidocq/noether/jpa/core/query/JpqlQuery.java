@@ -781,8 +781,8 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         if (resultClass != jakarta.persistence.Tuple.class) {
             return row;
         }
-        Object[] values = row instanceof Object[] array ? array : new Object[]{row};
-        return new CriteriaTuple(values, tupleElements);
+        Object[] cells = row instanceof Object[] array ? array : new Object[]{row};
+        return new CriteriaTuple(cells, tupleElements);
     }
 
     /** A resolved row of a criteria query, each selection as its Java type; a row of any other query as it is. */
