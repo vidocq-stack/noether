@@ -1,0 +1,215 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>io.vidocq.noether</groupId>
+        <artifactId>noether-it-other-containers</artifactId>
+        <version>0.4.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>noether-it-openliberty</artifactId>
+    <packaging>war</packaging>
+    <name>Noether :: Open Liberty integration test</name>
+    <description>
+        Noether as the Jakarta Persistence provider of a WAR on Open Liberty: Liberty's persistence
+        container, Liberty's transactions and Liberty's data source. Never released.
+    </description>
+
+    <properties>
+        <!-- The application under test has no public API to document. -->
+        <maven.javadoc.failOnError>false</maven.javadoc.failOnError>
+        <!-- Open Liberty runtime: the Jakarta EE 11 Web Profile distribution ships the
+             persistenceContainer-3.2, cdi-4.1, restfulWS-4.0 and jdbc-4.3 features, so nothing is
+             installed from the network at build time. Its persistence-3.2 feature (EclipseLink)
+             stays off: persistenceContainer-3.2 is the feature for a provider the application brings. -->
+        <openliberty.version>26.0.0.10</openliberty.version>
+        <liberty.maven.plugin.version>3.12.3</liberty.maven.plugin.version>
+        <failsafe.plugin.version>3.5.5</failsafe.plugin.version>
+        <build.helper.plugin.version>3.6.1</build.helper.plugin.version>
+        <war.plugin.version>3.4.0</war.plugin.version>
+        <!-- SonarQube: this application only exists to be tested inside Open Liberty, whose JVM
+             JaCoCo does not instrument; its code would only count as uncovered (Vidocq/vidocq#284). -->
+        <sonar.skip>true</sonar.skip>
+    </properties>
+
+    <dependencies>
+        <!--
+            What an application deploying on an application server declares: the provider and the
+            dialect of its database. The server brings the Jakarta APIs, so the Persistence API that
+            noether-jpa-core declares at compile scope is excluded from the WAR.
+        -->
+        <dependency>
+            <groupId>io.vidocq.noether</groupId>
+            <artifactId>noether-jpa-core</artifactId>
+            <version>${project.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>jakarta.persistence</groupId>
+                    <artifactId>jakarta.persistence-api</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.vidocq.noether</groupId>
+            <artifactId>noether-jpa-dialect-h2</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.persistence</groupId>
+            <artifactId>jakarta.persistence-api</artifactId>
+            <version>${jakarta.persistence.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.enterprise</groupId>
+            <artifactId>jakarta.enterprise.cdi-api</artifactId>
+            <version>4.1.0</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.annotation</groupId>
+            <artifactId>jakarta.annotation-api</artifactId>
+            <version>3.0.0</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.transaction</groupId>
+            <artifactId>jakarta.transaction-api</artifactId>
+            <version>${jakarta.transaction.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.ws.rs</groupId>
+            <artifactId>jakarta.ws.rs-api</artifactId>
+            <version>4.0.0</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <version>${h2.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>${project.artifactId}</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <!-- The entity accessors are generated at build time, as for any application. -->
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>io.vidocq.noether</groupId>
+                            <artifactId>noether-jpa-processor</artifactId>
+                            <version>${project.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-war-plugin</artifactId>
+                <version>${war.plugin.version}</version>
+                <configuration>
+                    <failOnMissingWebXml>false</failOnMissingWebXml>
+                </configuration>
+            </plugin>
+            <!-- A free HTTP port per build, so parallel builds on one runner do not collide. -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+                <version>${build.helper.plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>reserve-ports</id>
+                        <phase>process-resources</phase>
+                        <goals>
+                            <goal>reserve-network-port</goal>
+                        </goals>
+                        <configuration>
+                            <portNames>
+                                <portName>liberty.http.port</portName>
+                                <portName>liberty.https.port</portName>
+                            </portNames>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>io.openliberty.tools</groupId>
+                <artifactId>liberty-maven-plugin</artifactId>
+                <version>${liberty.maven.plugin.version}</version>
+                <configuration>
+                    <runtimeArtifact>
+                        <groupId>io.openliberty</groupId>
+                        <artifactId>openliberty-webProfile11</artifactId>
+                        <version>${openliberty.version}</version>
+                        <type>zip</type>
+                    </runtimeArtifact>
+                    <serverName>noetherIt</serverName>
+                    <!-- Deploy the packaged WAR, the artefact an application ships — not a loose
+                         application, which points Liberty at the jars in the local repository and
+                         would test those instead of what the WAR holds. -->
+                    <deployPackages>project</deployPackages>
+                    <looseApplication>false</looseApplication>
+                    <!-- The H2 driver is a server library, behind Liberty's data source. -->
+                    <copyDependencies>
+                        <location>${project.build.directory}/liberty/wlp/usr/shared/resources/h2</location>
+                        <dependency>
+                            <groupId>com.h2database</groupId>
+                            <artifactId>h2</artifactId>
+                        </dependency>
+                    </copyDependencies>
+                    <bootstrapProperties>
+                        <http.port>${liberty.http.port}</http.port>
+                        <https.port>${liberty.https.port}</https.port>
+                    </bootstrapProperties>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>start-liberty</id>
+                        <phase>pre-integration-test</phase>
+                        <goals>
+                            <goal>create</goal>
+                            <goal>deploy</goal>
+                            <goal>test-start</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>stop-liberty</id>
+                        <phase>post-integration-test</phase>
+                        <goals>
+                            <goal>test-stop</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <version>${failsafe.plugin.version}</version>
+                <configuration>
+                    <systemPropertyVariables>
+                        <noether.it.base>http://localhost:${liberty.http.port}/noether</noether.it.base>
+                    </systemPropertyVariables>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
