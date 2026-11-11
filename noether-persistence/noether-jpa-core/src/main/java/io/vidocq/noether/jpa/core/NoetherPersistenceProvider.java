@@ -34,6 +34,8 @@ import io.vidocq.noether.jpa.core.model.xml.MappingFile;
 import io.vidocq.noether.jpa.core.model.xml.OrmOverlay;
 import io.vidocq.noether.jpa.core.session.EntityManagerFactoryImpl;
 import io.vidocq.noether.jpa.core.spi.ManagedAccessProvider;
+import io.vidocq.noether.jpa.core.spi.TransactionIntegration;
+import io.vidocq.noether.jpa.core.spi.TransactionIntegrationProvider;
 import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.PersistenceConfiguration;
 import jakarta.persistence.PersistenceException;
@@ -134,17 +136,38 @@ public final class NoetherPersistenceProvider implements PersistenceProvider {
         };
     }
 
+    /**
+     * §9.6: a container that bootstraps a JTA unit hands over its data sources, not a Noether bridge. An explicit bridge
+     * wins; otherwise the first {@link TransactionIntegrationProvider} of the unit's class loader that applies here.
+     */
+    private static UnitSettings withTransactionIntegration(UnitSettings settings, ClassLoader loader) {
+        if (settings.transactionType() != PersistenceUnitTransactionType.JTA
+                || settings.property(TransactionIntegration.PROPERTY) instanceof TransactionIntegration) {
+            return settings;
+        }
+        for (TransactionIntegrationProvider provider : ServiceLoader.load(TransactionIntegrationProvider.class, loader)) {
+            Optional<TransactionIntegration> integration = provider.integration();
+            if (integration.isPresent()) {
+                return UnitSettings.of(settings.definition(), settings.properties(),
+                    Map.of(TransactionIntegration.PROPERTY, integration.get()));
+            }
+        }
+        return settings;
+    }
+
     private static boolean isOurs(UnitSettings settings) {
         String provider = settings.providerClassName();
         return provider == null || provider.isBlank() || NAME.equals(provider.strip());
     }
 
     private static EntityManagerFactory build(UnitSettings settings, ClassLoader loader) {
+        settings = withTransactionIntegration(settings, loader);
         if (settings.transactionType() == PersistenceUnitTransactionType.JTA
-                && !(settings.property(io.vidocq.noether.jpa.core.spi.TransactionIntegration.PROPERTY)
-                    instanceof io.vidocq.noether.jpa.core.spi.TransactionIntegration)) {
-            throw new PersistenceException("Persistence unit " + settings.unitName() + " is JTA: JTA entity managers come with "
-                + "the container integration (noether-jpa-cdi); supply its TransactionIntegration bridge");
+                && !(settings.property(TransactionIntegration.PROPERTY) instanceof TransactionIntegration)) {
+            throw new PersistenceException("Persistence unit " + settings.unitName() + " is JTA and no transaction bridge "
+                + "was found: on a Jakarta EE server add noether-jpa-jta (it uses the server's "
+                + "java:comp/TransactionSynchronizationRegistry), on a CDI container noether-jpa-cdi, or pass a "
+                + "TransactionIntegration as " + TransactionIntegration.PROPERTY);
         }
         MappedUnit mapping = mapping(settings, loader);
         BeanValidation.Validator validator = BeanValidation.open(settings, loader, mapping);

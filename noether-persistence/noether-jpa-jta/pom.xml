@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent><groupId>io.vidocq.noether</groupId><artifactId>noether-jpa</artifactId><version>0.4.0-SNAPSHOT</version></parent>
+    <artifactId>noether-jpa-jta</artifactId>
+    <name>Noether :: Persistence :: JTA through the container's synchronization registry</name>
+    <description>
+        The transaction bridge of a JTA unit on a Jakarta EE container: the container's data source enlists its
+        connections, Noether flushes and completes through the standard TransactionSynchronizationRegistry.
+    </description>
+    <dependencies>
+        <dependency><groupId>io.vidocq.noether</groupId><artifactId>noether-jpa-core</artifactId></dependency>
+        <!-- A Jakarta platform API: the container brings it. -->
+        <dependency><groupId>jakarta.transaction</groupId><artifactId>jakarta.transaction-api</artifactId><version>2.0.1</version><scope>provided</scope></dependency>
+        <!-- jakarta.transaction 2.0 requires jakarta.cdi (for @Transactional): needed on the module path to compile. -->
+        <dependency><groupId>jakarta.enterprise</groupId><artifactId>jakarta.enterprise.cdi-api</artifactId><version>4.1.0</version><scope>provided</scope></dependency>
+        <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope></dependency>
+        <dependency><groupId>org.assertj</groupId><artifactId>assertj-core</artifactId><scope>test</scope></dependency>
+        <dependency><groupId>com.h2database</groupId><artifactId>h2</artifactId><scope>test</scope></dependency>
+        <dependency><groupId>io.vidocq.noether</groupId><artifactId>noether-jpa-dialect-h2</artifactId><scope>test</scope></dependency>
+        <!-- Test stand-in for a container: a real transaction manager and its JDBC XA adapter. -->
+        <dependency><groupId>io.vidocq.mansart</groupId><artifactId>mansart-transactions-jdbc</artifactId><version>${mansart.version}</version><scope>test</scope></dependency>
+    </dependencies>
+    <build><plugins>
+        <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId>
+            <!-- Test entities use the Class-File API bootstrap fallback, which needs their package opened. -->
+            <!-- @{argLine} keeps the JaCoCo agent of the quality profile (vidocq-parent). -->
+            <configuration><argLine>@{argLine} --add-opens io.vidocq.noether.jpa.jta/io.vidocq.noether.jpa.jta=io.vidocq.noether.jpa.core</argLine></configuration>
+        </plugin>
+    </plugins></build>
+</project>

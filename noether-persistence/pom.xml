@@ -80,6 +80,7 @@
         <module>noether-jpa-processor</module>
         <module>noether-jpa-module-it</module>
         <module>noether-jpa-processor-module-it</module>
+        <module>noether-jpa-jta</module>
         <module>noether-jpa-cdi</module>
         <module>noether-jpa-cdi-module-it</module>
     </modules>

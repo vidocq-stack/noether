@@ -34,7 +34,9 @@
   context, flush engine),
   `noether-jpa-processor` (APT, entity accesses at build time) and two module-path test vehicles,
   `noether-jpa-module-it` (runtime path, `opens`) and `noether-jpa-processor-module-it` (build-time path,
-  `provides`), plus `noether-jpa-cdi` and the actual-Vauban/H2 `noether-jpa-cdi-module-it`.
+  `provides`), plus `noether-jpa-jta` (Jakarta EE server JTA bridge), `noether-jpa-cdi` and the actual-Vauban/H2
+  `noether-jpa-cdi-module-it`. `noether-it-other-containers/noether-it-openliberty` (root reactor) runs a WAR on
+  Open Liberty.
   `noether-jpa-tck` stays out of the reactor.
 - Milestones P0 to P12 are delivered under a scope-based gate; P10 uses the local fixture patch TCK-BUG-001. P9's Vidocq baseline passes 6/6 tests,
   including adapter undeploy cleanup. P10 maps `orm.xml` through `model.xml.OrmOverlay` (a `ClassInfos` overlay
@@ -73,6 +75,7 @@
 | `noether-jpa-core` | `io.vidocq.noether.jpa.core` | `PersistenceProvider`, EMF/EM, persistence context, entity model, flush, JDBC execution; the query engine (JPQL parser with a sealed AST, translation, Criteria API, SQL through the dialect SPI — decision D8). No CDI, no JTA import. |
 | `noether-jpa-processor` | `io.vidocq.noether.jpa.processor` | APT: canonical JPA metamodel `Entity_`, application-module initialization helpers and generated entity accessors/instantiators. Retain other producers' canonical output; do not change delivered Data to reconcile incompatible fields without a maintainer decision. |
 | `noether-jpa-maven-plugin` | — | Build-time generation for entities living in pre-compiled jars (mirror of `mansart-data-maven-plugin`). |
+| `noether-jpa-jta` | `io.vidocq.noether.jpa.jta` | JTA bridge of a Jakarta EE server: `java:comp/TransactionSynchronizationRegistry`, container-enlisted JTA data source; found by `ServiceLoader` (`TransactionIntegrationProvider`) when the container passes no bridge. |
 | `noether-jpa-cdi` | `io.vidocq.noether.jpa.cdi` | CDI 4.1 Lite BCE on Vauban: `@PersistenceContext` / `@PersistenceUnit`, JTA-bound contexts via `mansart-transactions`. |
 | `noether-jpa-cdi-module-it` | `io.vidocq.noether.jpa.cdi.moduleit` | Non-release actual Vauban/H2 module-path vehicle, including retained upstream resource/parameter injection regressions. |
 | `noether-jpa-tests` | — | Cross-module and PostgreSQL (Testcontainers) integration tests. |

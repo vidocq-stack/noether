@@ -15,8 +15,12 @@ your.package._NoetherJpaAccess;`. Generated-access entities do not require
 reflective opens. Opaque entities using the Class-File API bootstrap path must
 open their entity packages to `io.vidocq.noether.jpa.core`.
 
-CDI/JTA integration uses `noether-jpa-cdi` and the external Mansart transaction
-manager. The core does not import CDI, JTA or Vauban. See
+A JTA unit needs a transaction bridge. On a Jakarta EE server, add `noether-jpa-jta`:
+the provider finds the server's `java:comp/TransactionSynchronizationRegistry` and the
+server's JTA data source enlists the connections (see
+xref:reference.adoc[Reference, "Deploying on an application server"]). With Vauban CDI,
+`noether-jpa-cdi` binds the external Mansart transaction manager. The core does not
+import CDI, JTA or Vauban. See
 xref:modules/noether-persistence.adoc[the detailed Persistence guide].
 
 == Composite business tuples in a target secondary table

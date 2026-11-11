@@ -12,6 +12,7 @@ All Noether artifacts are under `io.vidocq.noether`:
 | `noether-jpa-dialect-spi` | SQL AST and dialect contract
 | `noether-jpa-dialect-h2`, `noether-jpa-dialect-postgresql` | Dialect adapters
 | `noether-jpa-processor` | APT and generated entity access
+| `noether-jpa-jta` | JTA bridge of a Jakarta EE server (`java:comp/TransactionSynchronizationRegistry`)
 | `noether-jpa-cdi` | Vauban CDI and Mansart JTA bridge
 | `noether-validation`, `noether-validation-core` | Provisional local-only Validation
 |===
@@ -21,6 +22,47 @@ Java module names retain their suffixes under `io.vidocq.noether.jpa.*` and
 `io.vidocq.mansart` and `io.vidocq.vauban`. `mansart.version` pins the independent
 Mansart version. Integration vehicles and all provisional Validation artifacts
 are excluded from release publishing.
+
+[WARNING]
+.Deploying on an application server
+====
+Noether is the Jakarta Persistence provider of a WAR on a Jakarta EE server: the server bootstraps the unit
+(`createContainerEntityManagerFactory`), injects `@PersistenceContext`, owns the transactions and the data source.
+Tested on Open Liberty 26.0.0.10 by `noether-it-openliberty`.
+
+* **Enable the server's persistence container without its provider**: on Open Liberty `persistenceContainer-3.2`,
+  not `persistence-3.2` (which brings EclipseLink). Name Noether in `persistence.xml`:
+  `<provider>io.vidocq.noether.jpa.core.NoetherPersistenceProvider</provider>`.
+* **Add `noether-jpa-jta` for a JTA unit.** It reads the server's `java:comp/TransactionSynchronizationRegistry`;
+  the server's JTA data source enlists the connections and the server commits them. Without it, a JTA unit is
+  refused at deployment.
+* **Leave `noether-jpa-cdi` out of the WAR**: the server injects `@PersistenceContext` itself, and
+  `noether-jpa-cdi` binds Vauban CDI to the Mansart transaction manager.
+* **The WAR carries** `noether-jpa-core`, `noether-jpa-jta` and a dialect (`noether-jpa-dialect-h2` or
+  `-postgresql`), with what they bring transitively (`noether-jpa-dialect-spi`, `mansart-pool-api`,
+  `mansart-pool-core`), and the entity accesses that `noether-jpa-processor` generated at compile time (in
+  `annotationProcessorPaths`). The server brings the Jakarta APIs: exclude the Persistence API that
+  `noether-jpa-core` declares at compile scope, keep the others `provided`. The JDBC driver belongs to the
+  server's data source.
++
+[source,xml]
+----
+<dependency>
+    <groupId>io.vidocq.noether</groupId>
+    <artifactId>noether-jpa-core</artifactId>
+    <exclusions>
+        <exclusion>
+            <groupId>jakarta.persistence</groupId>
+            <artifactId>jakarta.persistence-api</artifactId>
+        </exclusion>
+    </exclusions>
+</dependency>
+<dependency>
+    <groupId>io.vidocq.noether</groupId>
+    <artifactId>noether-jpa-jta</artifactId>
+</dependency>
+----
+====
 
 == Query entity graph hints
 

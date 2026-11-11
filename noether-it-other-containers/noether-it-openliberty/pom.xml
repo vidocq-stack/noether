@@ -49,6 +49,12 @@
                 </exclusion>
             </exclusions>
         </dependency>
+        <!-- The JTA bridge of a Jakarta EE server: java:comp/TransactionSynchronizationRegistry. -->
+        <dependency>
+            <groupId>io.vidocq.noether</groupId>
+            <artifactId>noether-jpa-jta</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <dependency>
             <groupId>io.vidocq.noether</groupId>
             <artifactId>noether-jpa-dialect-h2</artifactId>
