@@ -26,6 +26,7 @@ import io.vidocq.noether.jpa.core.bootstrap.MappingFiles;
 import io.vidocq.noether.jpa.core.bootstrap.PersistenceUnitDefinition;
 import io.vidocq.noether.jpa.core.bootstrap.PersistenceUnits;
 import io.vidocq.noether.jpa.core.bootstrap.UnitSettings;
+import io.vidocq.noether.jpa.core.generation.IdGenerators;
 import io.vidocq.noether.jpa.core.jdbc.ConnectionSources;
 import io.vidocq.noether.jpa.core.mapping.MappedUnit;
 import io.vidocq.noether.jpa.core.model.source.ClassFileSource;
@@ -174,6 +175,7 @@ public final class NoetherPersistenceProvider implements PersistenceProvider {
         var connections = ConnectionSources.of(settings, loader);
         var factory = new EntityManagerFactoryImpl(settings, connections, mapping, validator);
         try {
+            IdGenerators.checkConnections(settings.unitName(), mapping.model().entities(), connections);
             ((io.vidocq.noether.jpa.core.bootstrap.SchemaGeneration) factory.getSchemaManager()).generate();
             return factory;
         } catch (RuntimeException | Error failure) {

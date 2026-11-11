@@ -20,7 +20,9 @@
 package io.vidocq.noether.jpa.core.generation;
 
 import io.vidocq.noether.jpa.core.jdbc.ConnectionSource;
+import io.vidocq.noether.jpa.core.jdbc.ConnectionSources;
 import io.vidocq.noether.jpa.core.mapping.MappedEntity;
+import io.vidocq.noether.jpa.core.model.EntityModel;
 import io.vidocq.noether.jpa.core.model.GenerationModel;
 import io.vidocq.noether.jpa.core.model.IdModel;
 import io.vidocq.noether.jpa.core.model.SequenceGeneratorModel;
@@ -42,6 +44,8 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
@@ -55,10 +59,17 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>{@code AUTO} is a table generator on the defaults of the reference implementation — table {@code SEQUENCE},
  * columns {@code SEQ_NAME} and {@code SEQ_COUNT}, row {@code SEQ_GEN}, blocks of 50 — or {@code UUID} for a
  * {@code UUID} identifier; a sequence without a name is the sequence named after its generator.
+ *
+ * <p>A table generator allocates on a connection of its own, as Hibernate and EclipseLink do: the generator row stays
+ * locked only for the allocation, and a block shared by the whole factory is safe because its allocation is committed
+ * on its own, whatever becomes of the transaction that asked for it. A unit with a table generator therefore needs at
+ * least two connections at once (BUG-20261018-04, {@link #checkConnections}).
  */
 public final class IdGenerators {
 
     private static final int DEFAULT_ALLOCATION = 50;
+    /** The fewest connections a unit with a table generator needs: one for the transaction, one for the allocation. */
+    private static final int TABLE_CONNECTIONS = 2;
 
     /** A source of identifier values. */
     private interface Generator {
@@ -134,6 +145,52 @@ public final class IdGenerators {
             && single.generation().map(g -> g.strategy() != GenerationType.IDENTITY).orElse(false);
     }
 
+    /**
+     * Refuses, when the factory is created, a unit whose table generators could not allocate (BUG-20261018-04): a
+     * Noether pool of fewer than two connections, which the transaction would hold while the allocation waits for a
+     * second one until its acquisition times out. A source whose size Noether does not know
+     * ({@link ConnectionSource#maxSize()}) is not checked; it needs two connections as well.
+     *
+     * @throws PersistenceException naming the unit, its table generators and the pool property
+     */
+    public static void checkConnections(String unitName, List<EntityModel> entities, ConnectionSource connections) {
+        OptionalInt maxSize = connections.maxSize();
+        if (maxSize.isEmpty() || maxSize.getAsInt() >= TABLE_CONNECTIONS) {
+            return;
+        }
+        List<String> tableGenerators = entities.stream().map(IdGenerators::tableGenerator).flatMap(Optional::stream).toList();
+        if (!tableGenerators.isEmpty()) {
+            throw new PersistenceException("Persistence unit " + unitName + " sets " + ConnectionSources.POOL_MAX_SIZE + "="
+                + maxSize.getAsInt() + ", but a TABLE identifier generator needs at least " + TABLE_CONNECTIONS
+                + " connections: one for the transaction, one for the allocation of identifiers, which it commits on its own "
+                + "connection. TABLE generators of the unit: " + String.join(", ", tableGenerators) + ". Set "
+                + ConnectionSources.POOL_MAX_SIZE + " to " + TABLE_CONNECTIONS + " or more.");
+        }
+    }
+
+    /** The entity and its generator, when a generator table allocates its identifiers. */
+    private static Optional<String> tableGenerator(EntityModel entity) {
+        if (!(entity.id() instanceof IdModel.Single id)) {
+            return Optional.empty();
+        }
+        return id.generation().filter(generation -> allocatesFromTable(generation, id.attribute().javaType()))
+            .map(generation -> entity.entityName() + " (" + generation.strategy() + ", "
+                + (generation.generatorName() != null ? "generator " + generation.generatorName() : "default table generator")
+                + ")");
+    }
+
+    /**
+     * Whether a generator table allocates the identifiers: {@code TABLE}, and {@code AUTO} unless the identifier is a
+     * UUID or the generator is a sequence, as {@link #generator} resolves it.
+     */
+    private static boolean allocatesFromTable(GenerationModel generation, Class<?> idType) {
+        return switch (generation.strategy()) {
+            case TABLE -> true;
+            case AUTO -> idType != UUID.class && generation.sequence().isEmpty();
+            default -> false;
+        };
+    }
+
     /** A new identifier for an instance of {@code type}; {@code caller} is the connection a sequence is read through. */
     public Object next(MappedEntity type, Connection caller) {
         IdModel.Single id = (IdModel.Single) type.model().id();
@@ -182,8 +239,9 @@ public final class IdGenerators {
     }
 
     /**
-     * A row of a generator table moved forward by {@code allocationSize} in a transaction of its own (a rollback of the
-     * caller must not hand the same values out again); a missing row is created at {@code initialValue}.
+     * A row of a generator table moved forward by {@code allocationSize} in a transaction of its own, on a second
+     * connection of the unit (a rollback of the caller must not hand the same values out again); a missing row is
+     * created at {@code initialValue}.
      */
     private Generator table(TableGeneratorModel model) {
         Table table = new Table(identifier(model.table() != null ? model.table() : "SEQUENCE"), identifier(model.schema()),
