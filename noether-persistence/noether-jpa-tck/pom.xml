@@ -101,6 +101,13 @@
             <version>${noether.version}</version>
             <scope>test</scope>
         </dependency>
+        <!-- Decision D7: the TCK units, configured by jakarta.persistence.jdbc.*, get a mansart-pool pool. -->
+        <dependency>
+            <groupId>io.vidocq.noether</groupId>
+            <artifactId>noether-jpa-pool-mansart</artifactId>
+            <version>${noether.version}</version>
+            <scope>test</scope>
+        </dependency>
         <!-- The SQL of the certification database (decision D4). -->
         <dependency>
             <groupId>io.vidocq.noether</groupId>

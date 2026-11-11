@@ -71,6 +71,8 @@ cp "$build_dir/test-dependencies.txt" "$build_dir/test-classpath.txt" "$report_d
 if [ "$provider" = noether ]; then
     grep -q 'io.vidocq.noether.jpa.bench._NoetherJpaAccess' \
         "$build_dir/test-classes/META-INF/services/io.vidocq.noether.jpa.core.spi.ManagedAccessProvider"
+    # Without its pool module, Noether opens one connection per transaction: not the measured configuration.
+    grep -q 'noether-jpa-pool-mansart' "$build_dir/test-classpath.txt"
 fi
 classpath="$build_dir/test-classes:$build_dir/classes:$(cat "$build_dir/test-classpath.txt")"
 log="$report_dir/jmh.log"

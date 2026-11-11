@@ -120,6 +120,8 @@ because this standalone runner has `pom` packaging; this command never invokes t
 4. **No persistence.xml here.** In standalone mode the TCK builds its own deployment jar and `persistence.xml`
    from the template in `persistence-tck-common` (units `JPATCK` and `JPATCK2`). The provider is only named, through
    `-Djakarta.persistence.provider` (`tck.provider`, `io.vidocq.noether.jpa.core.NoetherPersistenceProvider`).
+   Those units are configured by `jakarta.persistence.jdbc.*`: the runner puts `noether-jpa-pool-mansart` on the
+   class path next to `noether-jpa-core`, so their connections are pooled (decision D7).
 5. **System properties**: every one the TCK reads is set. A missing one is a `NullPointerException` in the TCK setup
    (it stores them in a `java.util.Properties`), i.e. a failure for the wrong reason.
 
