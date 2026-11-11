@@ -61,9 +61,13 @@ public final class NoetherPersistenceExtension implements BuildCompatibleExtensi
             }
         }
         Context definition = new Context(unit, type, synchronization, Map.copyOf(properties));
-        String binding = "context:" + unit + ":" + type + ":" + synchronization + ":" + properties;
+        String binding = contextBinding(unit, type, synchronization, properties);
         contexts.putIfAbsent(binding, definition);
         return binding;
+    }
+
+    static String contextBinding(String unit, String type, String synchronization, Map<String, String> properties) {
+        return "context:" + unit + ":" + type + ":" + synchronization + ":" + new TreeMap<>(properties);
     }
 
     /**
