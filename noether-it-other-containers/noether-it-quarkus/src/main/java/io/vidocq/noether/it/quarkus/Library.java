@@ -20,13 +20,24 @@
 package io.vidocq.noether.it.quarkus;
 
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
+import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.PersistenceContext;
+import jakarta.persistence.PersistenceUnit;
+import jakarta.transaction.TransactionSynchronizationRegistry;
 import jakarta.transaction.Transactional;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import javax.sql.DataSource;
 
 /**
  * Plain Jakarta code on Quarkus: a transaction-scoped persistence context injected through Noether's build
- * compatible extension, transactions demarcated by Narayana's {@code @Transactional} interceptor.
+ * compatible extension, transactions demarcated by Narayana's {@code @Transactional} interceptor, the JTA unit on
+ * Quarkus' default Agroal data source.
  */
 @ApplicationScoped
 public class Library {
@@ -34,12 +45,74 @@ public class Library {
     @PersistenceContext(unitName = "library")
     EntityManager em;
 
+    @PersistenceUnit(unitName = "library")
+    EntityManagerFactory factory;
+
+    @Inject
+    TransactionSynchronizationRegistry registry;
+
+    /** Quarkus' default data source (Agroal): the one Noether takes for the JTA unit. */
+    @Inject
+    DataSource dataSource;
+
+    public EntityManagerFactory factory() {
+        return factory;
+    }
+
     @Transactional
     public long add(String title) {
         Book book = new Book(title);
         em.persist(book);
         em.flush();
         return book.getId();
+    }
+
+    /** The INSERT reaches the database, then the transaction is marked for rollback: Narayana rolls it back. */
+    @Transactional
+    public void addThenMarkRollbackOnly(String title) {
+        em.persist(new Book(title));
+        em.flush();
+        registry.setRollbackOnly();
+    }
+
+    /** No flush here: the persistence context writes the change before Narayana commits (§7.9.1). */
+    @Transactional
+    public void rename(long id, String title) {
+        em.find(Book.class, id).setTitle(title);
+    }
+
+    /** §3.11.2: in the AUTO flush mode the change reaches the database before the query of the same transaction. */
+    @Transactional
+    public long renameThenCount(long id, String title) {
+        em.find(Book.class, id).setTitle(title);
+        return countTitles(title);
+    }
+
+    /**
+     * The H2 session of Noether's connection and the one of a connection the application takes from the data source,
+     * in the same transaction: Agroal hands out the connection it enlisted in the transaction again.
+     */
+    @Transactional
+    public long[] sessions() throws SQLException {
+        long noether = ((Number) em.createNativeQuery("SELECT SESSION_ID()").getSingleResult()).longValue();
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement();
+             ResultSet result = statement.executeQuery("SELECT SESSION_ID()")) {
+            result.next();
+            return new long[] {noether, result.getLong(1)};
+        }
+    }
+
+    /** What the database holds, read straight from the data source outside any transaction. */
+    public long committedRows(String title) throws SQLException {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement("SELECT COUNT(*) FROM noether_book WHERE title = ?")) {
+            statement.setString(1, title);
+            try (ResultSet result = statement.executeQuery()) {
+                result.next();
+                return result.getLong(1);
+            }
+        }
     }
 
     /** The INSERT reaches the database (flush) before the exception: only the rollback can undo it. */
@@ -52,6 +125,10 @@ public class Library {
 
     @Transactional
     public long count(String title) {
+        return countTitles(title);
+    }
+
+    private long countTitles(String title) {
         return em.createQuery("select count(b) from Book b where b.title = :title", Long.class)
             .setParameter("title", title)
             .getSingleResult();
