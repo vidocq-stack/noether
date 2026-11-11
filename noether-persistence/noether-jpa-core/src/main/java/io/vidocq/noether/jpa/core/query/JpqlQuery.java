@@ -260,19 +260,25 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     /** @param parsed the shared parse of a query string, whose translations are reused; {@code null} for {@code criteria} */
     private JpqlQuery(String jpql, QueryPlans.Parsed parsed, Ast.Statement criteria, Class<X> resultClass, FlushModeType flushMode,
             QueryRuntime runtime) {
+        Ast.Statement tree = parsed != null ? parsed.statement() : criteria;
+        Compiled compiled = parsed != null ? parsed.plan(runtime.mapping(), null, false, false).compiled()
+            : Translator.translate(tree, runtime.mapping(), null, null, null);
+        checkResultClass(jpql, tree, compiled, resultClass);
         super(flushMode, runtime::isOpen);
         this.jpql = jpql;
         this.runtime = runtime;
         this.resultClass = resultClass;
         this.parsed = parsed;
-        this.statement = parsed != null ? parsed.statement() : criteria;
-        Compiled compiled = parsed != null ? parsed.plan(runtime.mapping(), null, false, false).compiled()
-            : Translator.translate(statement, runtime.mapping(), null, null, null);
+        this.statement = tree;
         collectionFetch = compiled.collectionFetch();
+        declareParameters(compiled);
+    }
+
+    /** Refuses a result class for an UPDATE or a DELETE, and one the query's results are not instances of (§3.11.1). */
+    private static void checkResultClass(String jpql, Ast.Statement statement, Compiled compiled, Class<?> resultClass) {
         if (!(statement instanceof Ast.Query) && resultClass != null && resultClass != Object.class) {
             throw new IllegalArgumentException("An UPDATE or a DELETE has no results of type " + resultClass.getName() + ": " + jpql);
         }
-        declareParameters(compiled);
         if (resultClass != null && resultClass != Object.class && resultClass != jakarta.persistence.Tuple.class
                 && compiled.resultType() != null
                 && !resultClass.isAssignableFrom(compiled.resultType())
@@ -772,8 +778,11 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     /** The result a resolved row gives: a tuple of it if the query was asked for tuples, else the row. */
     private Object selected(Object resolved) {
         Object row = typed(resolved);
-        return resultClass == jakarta.persistence.Tuple.class
-            ? new CriteriaTuple(row instanceof Object[] array ? array : new Object[]{row}, tupleElements) : row;
+        if (resultClass != jakarta.persistence.Tuple.class) {
+            return row;
+        }
+        Object[] values = row instanceof Object[] array ? array : new Object[]{row};
+        return new CriteriaTuple(values, tupleElements);
     }
 
     /** A resolved row of a criteria query, each selection as its Java type; a row of any other query as it is. */
@@ -933,8 +942,8 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
 
     private static Object read(Compiled.Item item, ResultSet results, int[] column) throws SQLException {
         return switch (item) {
-            case Compiled.EntityItem entity -> readKey(entity.type(), entity.keyBinders(), results, column);
-            case Compiled.ValueItem value -> readValue(value.binder(), value.type(), results, column);
+            case Compiled.EntityItem(var type, var keyBinders) -> readKey(type, keyBinders, results, column);
+            case Compiled.ValueItem(var binder, var type) -> readValue(binder, type, results, column);
             case Compiled.ConstructorItem constructor -> {
                 Object[] arguments = new Object[constructor.arguments().size()];
                 for (int i = 0; i < arguments.length; i++) {
@@ -970,7 +979,10 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         return empty ? null : new EntityKey(type, type.statements().key(key));
     }
 
-    /** One column, read through {@code binder}, or as the driver gives it then converted to {@code type} (§4.8.5). */
+    /**
+     * One column, read through {@code binder}, or as the driver gives it then converted to {@code type} (§4.8.5); a
+     * {@code null} type keeps the driver's value.
+     */
     private static Object readValue(io.vidocq.noether.jpa.core.jdbc.type.ValueBinder binder, Class<?> type, ResultSet results,
             int[] column) throws SQLException {
         Object read = binder != null ? binder.read(results, column[0]) : results.getObject(column[0]);
@@ -978,15 +990,15 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         if (results.wasNull()) {
             return null;
         }
-        return binder != null ? read : convert(read, type);
+        return binder != null || type == null ? read : convert(read, type);
     }
 
     /** A component of an embeddable result: a value, a nested embeddable or the identity of an entity. */
     private static Object readPart(Compiled.EmbeddedPart part, ResultSet results, int[] column) throws SQLException {
         return switch (part) {
-            case Compiled.ScalarEmbedded scalar -> readValue(scalar.binder(), scalar.type(), results, column);
-            case Compiled.NestedEmbedded nested -> read(nested.item(), results, column);
-            case Compiled.EntityEmbedded entity -> readKey(entity.type(), entity.keyBinders(), results, column);
+            case Compiled.ScalarEmbedded(var binder, var type) -> readValue(binder, type, results, column);
+            case Compiled.NestedEmbedded(var item) -> read(item, results, column);
+            case Compiled.EntityEmbedded(var type, var keyBinders) -> readKey(type, keyBinders, results, column);
         };
     }
 
@@ -1062,9 +1074,9 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         };
     }
 
-    /** A value the driver read, as the type the specification gives it (§4.8.5). */
+    /** A value the driver read, as {@code type}, never null, the type the specification gives it (§4.8.5). */
     private static Object convert(Object value, Class<?> type) {
-        if (type == null || value == null || type.isInstance(value)) {
+        if (value == null || type.isInstance(value)) {
             return value;
         }
         Object temporal = temporal(value, type);
