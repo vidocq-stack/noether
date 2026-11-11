@@ -48,12 +48,6 @@ public final class SynchronizationRegistryIntegration implements TransactionInte
         this.registry = Objects.requireNonNull(registry);
     }
 
-    /** The key of the current transaction while it can still do work, otherwise {@code null}. */
-    private Object currentTransaction() {
-        int status = registry.getTransactionStatus();
-        return status == Status.STATUS_ACTIVE || status == Status.STATUS_MARKED_ROLLBACK ? registry.getTransactionKey() : null;
-    }
-
     @Override
     public Session open(SynchronizationType synchronization, Connections connections, Completion completion) {
         return new RegistrySession(synchronization, connections, completion);
@@ -70,6 +64,12 @@ public final class SynchronizationRegistryIntegration implements TransactionInte
             this.synchronization = synchronization;
             this.connections = connections;
             this.completion = completion;
+        }
+
+        /** The key of the current transaction while it can still do work, otherwise {@code null}. */
+        private Object currentTransaction() {
+            int status = registry.getTransactionStatus();
+            return status == Status.STATUS_ACTIVE || status == Status.STATUS_MARKED_ROLLBACK ? registry.getTransactionKey() : null;
         }
 
         /** §7.6.1: a synchronized context joins the current transaction on its first use in it. */
