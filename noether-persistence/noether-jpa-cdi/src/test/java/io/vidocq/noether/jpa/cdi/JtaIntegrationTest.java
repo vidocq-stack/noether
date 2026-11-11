@@ -103,7 +103,7 @@ class JtaIntegrationTest {
     }
 
     @Test
-    void autoQueryFlushUsesTheCallerTransactionBeforeVirtualOffload() throws Exception { // §3.11.2
+    void autoQueryFlushUsesTheCallerTransaction() throws Exception { // §3.11.2
         var tm = new MansartTransactionManager();
         try (var factory = factory(tm, "p9-jta-auto-query"); var em = factory.createEntityManager()) {
             tm.begin();
@@ -297,6 +297,28 @@ class JtaIntegrationTest {
             factory.destroy();
         }
         assertThat(factory.isOpen()).isFalse();
+    }
+
+    @Test
+    void jdbcWorkOfAJoinedContextRunsOnTheCallerThread() throws Exception {
+        assertThat(Thread.currentThread().isVirtual()).isFalse();
+        var tm = new MansartTransactionManager();
+        var threads = new java.util.concurrent.ConcurrentHashMap<String, Thread>();
+        var session = new JtaIntegration(tm).open(SynchronizationType.SYNCHRONIZED,
+            () -> {
+                threads.put("acquire", Thread.currentThread());
+                return java.sql.DriverManager.getConnection("jdbc:h2:mem:p9-caller-thread");
+            },
+            new io.vidocq.noether.jpa.core.spi.TransactionIntegration.Completion() {
+                @Override public void beforeCommit(java.sql.Connection connection) { threads.put("flush", Thread.currentThread()); }
+                @Override public void afterCompletion(boolean committed) { threads.put("detach", Thread.currentThread()); }
+            });
+        tm.begin();
+        session.join();
+        threads.put("work", session.onConnection(connection -> Thread.currentThread()));
+        tm.commit();
+        assertThat(threads).containsOnlyKeys("acquire", "work", "flush", "detach").allSatisfy(
+            (step, thread) -> assertThat(thread).as(step).isSameAs(Thread.currentThread()));
     }
 
     @Test

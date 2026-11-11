@@ -1,6 +1,5 @@
 package io.vidocq.noether.jpa.cdi;
 
-import io.vidocq.noether.jpa.core.spi.JdbcExecution;
 import io.vidocq.noether.jpa.core.spi.TransactionIntegration;
 import io.vidocq.mansart.transactions.jdbc.ConnectionXAResource;
 import jakarta.persistence.PersistenceException;
@@ -8,11 +7,15 @@ import jakarta.persistence.SynchronizationType;
 import jakarta.persistence.TransactionRequiredException;
 import jakarta.transaction.*;
 import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.Objects;
 import java.util.function.Function;
-import javax.transaction.xa.*;
 
-/** JTA lifecycle isolated from the provider core, reusing Noether's delivered JDBC XA adapter. */
+/**
+ * JTA lifecycle isolated from the provider core, reusing Mansart's delivered JDBC XA adapter. Every JDBC call, the
+ * transaction manager's completion included, runs on the thread that makes it: a container's context bound to that
+ * thread stays visible to the driver.
+ */
 public final class JtaIntegration implements TransactionIntegration {
     private final TransactionManager manager;
 
@@ -60,16 +63,16 @@ public final class JtaIntegration implements TransactionIntegration {
             if (transaction == null) throw new TransactionRequiredException("No active JTA transaction to join");
             if (joined == transaction) return;
             if (joined != null) throw new PersistenceException("The persistence context is already associated with a different transaction");
-            Connection acquired = JdbcExecution.call(connections::acquire);
+            Connection acquired = acquire();
             var released = new java.util.concurrent.atomic.AtomicBoolean();
             Runnable release = () -> {
-                if (released.compareAndSet(false, true)) JdbcExecution.call(() -> { acquired.close(); return null; });
+                if (released.compareAndSet(false, true)) close(acquired);
             };
             var enlisted = new java.util.concurrent.atomic.AtomicBoolean();
             try {
                 transaction.registerSynchronization(new Synchronization() {
                     @Override public void beforeCompletion() {
-                        if (enlisted.get()) JdbcExecution.call(() -> { completion.beforeCommit(acquired); return null; });
+                        if (enlisted.get()) completion.beforeCommit(acquired);
                     }
                     @Override public void afterCompletion(int status) {
                         try { if (enlisted.get()) completion.afterCompletion(status == Status.STATUS_COMMITTED); }
@@ -80,7 +83,7 @@ public final class JtaIntegration implements TransactionIntegration {
                         }
                     }
                 });
-                if (!transaction.enlistResource(new VirtualResource(new ConnectionXAResource(acquired)))) {
+                if (!transaction.enlistResource(new ConnectionXAResource(acquired))) {
                     throw new PersistenceException("The JTA transaction refused the persistence resource");
                 }
                 enlisted.set(true);
@@ -112,34 +115,17 @@ public final class JtaIntegration implements TransactionIntegration {
             return connection;
         }
         @Override public <T> T onConnection(Function<Connection, T> work) {
-            Connection active = connection();
-            return JdbcExecution.call(() -> work.apply(active));
+            return work.apply(connection());
+        }
+
+        private Connection acquire() {
+            try { return connections.acquire(); }
+            catch (SQLException failure) { throw new PersistenceException("Unable to obtain a connection: " + failure.getMessage(), failure); }
         }
     }
 
-    /** All JDBC adapter calls, including TM-driven completion, execute on virtual threads. */
-    private record VirtualResource(ConnectionXAResource delegate) implements io.vidocq.mansart.transactions.core.SinglePhaseResource {
-        private interface XaWork<T> { T run() throws XAException; }
-        private <T> T call(XaWork<T> work) throws XAException {
-            try { return JdbcExecution.call(work::run); }
-            catch (PersistenceException failure) {
-                if (failure.getCause() instanceof XAException xa) throw xa;
-                XAException xa = new XAException(XAException.XAER_RMERR);
-                xa.initCause(failure);
-                throw xa;
-            }
-        }
-        @Override public void start(Xid xid, int flags) throws XAException { call(() -> { delegate.start(xid, flags); return null; }); }
-        @Override public void end(Xid xid, int flags) throws XAException { call(() -> { delegate.end(xid, flags); return null; }); }
-        @Override public int prepare(Xid xid) throws XAException { return call(() -> delegate.prepare(xid)); }
-        @Override public void commit(Xid xid, boolean onePhase) throws XAException { call(() -> { delegate.commit(xid, onePhase); return null; }); }
-        @Override public void rollback(Xid xid) throws XAException { call(() -> { delegate.rollback(xid); return null; }); }
-        @Override public void forget(Xid xid) throws XAException { call(() -> { delegate.forget(xid); return null; }); }
-        @Override public Xid[] recover(int flags) throws XAException { return call(() -> delegate.recover(flags)); }
-        @Override public boolean isSameRM(XAResource other) throws XAException {
-            return other instanceof VirtualResource resource && delegate.isSameRM(resource.delegate);
-        }
-        @Override public int getTransactionTimeout() throws XAException { return delegate.getTransactionTimeout(); }
-        @Override public boolean setTransactionTimeout(int timeout) throws XAException { return delegate.setTransactionTimeout(timeout); }
+    private static void close(Connection connection) {
+        try { connection.close(); }
+        catch (SQLException failure) { throw new PersistenceException("Unable to release a connection: " + failure.getMessage(), failure); }
     }
 }

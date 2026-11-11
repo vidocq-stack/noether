@@ -178,6 +178,9 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
 - **Investigation**: 2026-10-09: both real regressions failed before correction. Capture the transaction decision
   on the caller and retain/restore the current execution connection around callbacks and JDBC work.
   AUTO-query and before-completion flush now see their own uncommitted writes, without adding ThreadLocal.
+  2026-11-11 (audit F6, #45, branch `fix/f6-f12-f14`): JDBC work no longer leaves the calling thread (decision
+  D44), so the virtual worker of this bug is gone; the retained execution connection stays. The first
+  reproduction is renamed `JtaIntegrationTest#autoQueryFlushUsesTheCallerTransaction`.
 
 ## BUG-20261009-13 — Failed JTA join leaks the acquired connection
 
@@ -190,6 +193,9 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
 - **Cause hypothesis**: failure after acquiring/enlisting bypasses release; registration happened too late.
 - **Investigation**: 2026-10-09: real rollback-only reproduction was red. Guard completion, register synchronization
   before enlistment, and release idempotently on every failed join. XA JDBC callbacks execute on virtual threads.
+  2026-11-11 (audit F6, #45, branch `fix/f6-f12-f14`): the XA callbacks run on the thread of the transaction
+  manager that calls them (decision D44); Mansart's `ConnectionXAResource` is enlisted without the
+  `VirtualResource` wrapper.
 
 ## BUG-20261009-14 — Container query creation binds to the wrong transaction lifetime
 

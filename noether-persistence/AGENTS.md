@@ -18,8 +18,9 @@
   `noether-jpa-dialect-spi`, rendered by the `noether-jpa-dialect-*` modules.
 - **No Hibernate, EclipseLink, OpenJPA, ANTLR, ASM, Byte Buddy, Caffeine, Jackson** — not in
   production, and never as the provider of a TCK run (that would measure *their* conformance).
-- **Virtual threads** for all I/O: every JDBC call runs on a virtual thread; no platform-thread
-  pool without a documented reason.
+- **Virtual threads** for all I/O: JDBC runs on the calling thread and is never moved to another one
+  (decision D44), so a virtual-thread caller keeps its thread; no platform-thread pool without a
+  documented reason.
 - **Strict Java Modules**: one `module-info.java` per module, minimal `exports`, internal packages
   never exported, the provider published through `provides … with`, no unjustified `opens`.
 - Conformance evidence is the **official Jakarta Persistence 3.2 TCK**, with results and fixture
@@ -112,8 +113,9 @@ Module names are a plan, not a contract: a module is only created when a milesto
   `jakarta.transaction.*`, nor any Vauban class. Container integration lives in `noether-jpa-cdi`.
 - **No `synchronized` around blocking I/O** — use `ReentrantLock`, `Semaphore`, atomics.
 - **No new `ThreadLocal`** — the delivered `mansart-transactions` manager currently uses one.
-  Capture its transaction on the caller before virtual offload; use transaction objects as container context keys
-  and an execution-owned connection for nested JDBC. Do not change delivered Transactions to match old prose.
+  Never move JDBC work to another thread: that association, and a server's transaction context, would be lost.
+  Use transaction objects as container context keys and an execution-owned connection for nested JDBC.
+  Do not change delivered Transactions to match old prose.
 - **No inline SQL in the core**: every statement is built as a `noether-jpa-dialect-spi` AST and
   rendered by the dialect (H2, PostgreSQL). Schema generation also executes caller-provided standard SQL scripts;
   generated DDL still goes through the SQL AST, never inline core SQL.

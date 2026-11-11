@@ -450,6 +450,7 @@ Persistence/Validation providers are registered through the appropriate
 `provides`/`uses` contracts; service resource files retain classpath discovery
 for the standalone official TCK harness.
 
-JDBC execution uses virtual threads. The external Mansart transaction identity
-is captured before virtual-thread offload. The extraction does not change
-transaction or pool behavior.
+JDBC work runs on the thread that calls Noether: Noether starts no thread for
+it. A caller on a virtual thread stays on it, and a context that a container
+binds to the calling thread, such as a server's transaction, stays visible to
+the driver. The extraction does not change transaction or pool behavior.

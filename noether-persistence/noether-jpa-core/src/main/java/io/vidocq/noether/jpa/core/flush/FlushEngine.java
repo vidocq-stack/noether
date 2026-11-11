@@ -68,7 +68,7 @@ import java.util.function.Consumer;
  *
  * <p>One engine per factory, shared by its entity managers: its state is the dialect and the SQL it rendered, cached
  * without lock contention ({@link ConcurrentHashMap}, pure computation). A flush runs on the calling thread, on the
- * connection of the transaction: blocking JDBC on a virtual thread, no lock held.
+ * connection of the transaction: blocking JDBC, no lock held, so a virtual caller parks without pinning its carrier.
  */
 public final class FlushEngine {
 

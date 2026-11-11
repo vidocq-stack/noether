@@ -46,7 +46,7 @@ import org.junit.jupiter.api.Test;
 class LazyCollectionTest {
     private static final AtomicInteger DATABASES = new AtomicInteger();
     private final List<String> statements = new CopyOnWriteArrayList<>();
-    private final List<Boolean> virtual = new CopyOnWriteArrayList<>();
+    private final List<Thread> threads = new CopyOnWriteArrayList<>();
     private EntityManagerFactory factory;
     private EntityManager em;
 
@@ -90,7 +90,7 @@ class LazyCollectionTest {
 
     private void record(String sql) {
         statements.add(sql.toLowerCase(Locale.ROOT));
-        virtual.add(Thread.currentThread().isVirtual());
+        threads.add(Thread.currentThread());
     }
 
     private Statement recording(Statement statement) {
@@ -110,7 +110,7 @@ class LazyCollectionTest {
     /** Forgets the statements run so far: the assertions count from the next operation. */
     private void reset() {
         statements.clear();
-        virtual.clear();
+        threads.clear();
     }
 
     @AfterEach
@@ -149,7 +149,7 @@ class LazyCollectionTest {
     }
 
     @Test
-    void findSelectsOnlyTheOwnerAndFirstAccessLoadsEachCollectionOnceOnAVirtualThread() {
+    void findSelectsOnlyTheOwnerAndFirstAccessLoadsEachCollectionOnceOnTheCallerThread() {
         open(Owner.class, Child.class, Tag.class);
         seed();
         Owner owner = em.find(Owner.class, 1L);
@@ -169,7 +169,7 @@ class LazyCollectionTest {
         assertThat(statements).filteredOn(s -> s.contains("where b.owner_id")).hasSize(1);
         assertThat(statements).allMatch(s -> s.contains("lazychild"));
         int firstAccess = statements.size();
-        assertThat(virtual).containsOnly(true);
+        assertThat(threads).containsOnly(Thread.currentThread());
         assertThat(owner.children.get(0).owner).isSameAs(owner);
         assertThat(owner.children.get(0)).isSameAs(em.find(Child.class, 10L));
         assertThat(owner.children.size()).isEqualTo(2);

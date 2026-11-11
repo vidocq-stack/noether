@@ -3,7 +3,7 @@
 
 [.lead]
 Noether implements Jakarta Persistence 3.2 with strict Java Modules, generated
-entity access and virtual-thread JDBC execution. Its provisional Validation
+entity access and JDBC executed on the calling thread. Its provisional Validation
 provider is a local test/TCK stopgap, not a complete implementation.
 
 == Origin of the name

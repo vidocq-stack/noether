@@ -120,7 +120,7 @@ packages may use their existing private lookup permission. Entity state is never
 Constructor results (`SELECT NEW`, `@ConstructorResult`) name application classes that are not entities: their public
 constructors are read once per class and called through method handles, never looked up per row.
 
-Criteria is a second frontend for the *same immutable JPQL AST, SQL dialect and virtual-thread execution path*.
+Criteria is a second frontend for the *same immutable JPQL AST, SQL dialect and JDBC execution path*.
 This includes correlated subqueries, association/entity joins, `TREAT`, map keys/list indexes, predicates, aggregates,
 cases, constructors/arrays/tuples and aliases, named/anonymous parameter expressions, bulk mutations and 3.2 set
 operations. Named queries registered from Criteria retain their AST and settings.
@@ -239,7 +239,7 @@ An access generated at build time is used only if it still matches the entity cl
 
 * **Zero reflection on entities** — entity state is reached through generated accesses (method handles, direct access where the language allows it). No runtime `EntityManagerProxy`.
 * **No bytecode library** — no Hibernate-style enhancement, no ASM, no Byte Buddy; dirty checking by state snapshots, lazy loading designed with the persistence context (P3/P5).
-* **Native virtual threads** — every JDBC execution under Loom. No `synchronized` block wrapping a blocking I/O.
+* **Virtual threads** — JDBC runs on the calling thread and is never moved to another one, so a caller on a virtual thread stays on it. No `synchronized` block wrapping a blocking I/O.
 * **Strict Java Modules** — `module io.vidocq.noether.jpa.core`: the provider is found through `ServiceLoader`; the only exported package is the SPI the generated accesses implement.
 
 [#target-modules]
