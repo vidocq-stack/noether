@@ -36,7 +36,7 @@
   `noether-jpa-module-it` (runtime path, `opens`) and `noether-jpa-processor-module-it` (build-time path,
   `provides`), plus `noether-jpa-jta` (Jakarta EE server JTA bridge), `noether-jpa-cdi` and the actual-Vauban/H2
   `noether-jpa-cdi-module-it`. `noether-it-other-containers/noether-it-openliberty` (root reactor) runs a WAR on
-  Open Liberty.
+  Open Liberty, `noether-it-quarkus` a Quarkus application (ArC runs the BCE).
   `noether-jpa-tck` stays out of the reactor.
 - Milestones P0 to P12 are delivered under a scope-based gate; P10 uses the local fixture patch TCK-BUG-001. P9's Vidocq baseline passes 6/6 tests,
   including adapter undeploy cleanup. P10 maps `orm.xml` through `model.xml.OrmOverlay` (a `ClassInfos` overlay

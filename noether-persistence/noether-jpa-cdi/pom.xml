@@ -8,9 +8,10 @@
         <dependency><groupId>io.vidocq.noether</groupId><artifactId>noether-jpa-core</artifactId></dependency>
         <!-- Existing JDBC XA adapter; production integration does not reimplement the transaction manager. -->
         <dependency><groupId>io.vidocq.mansart</groupId><artifactId>mansart-transactions-jdbc</artifactId><version>${mansart.version}</version></dependency>
-        <dependency><groupId>jakarta.transaction</groupId><artifactId>jakarta.transaction-api</artifactId><version>2.0.1</version></dependency>
-        <dependency><groupId>jakarta.enterprise</groupId><artifactId>jakarta.enterprise.cdi-api</artifactId><version>4.1.0</version></dependency>
-        <dependency><groupId>jakarta.inject</groupId><artifactId>jakarta.inject-api</artifactId><version>2.0.1</version></dependency>
+        <!-- Jakarta platform APIs: the container (Vauban through the Vidocq runtime, Quarkus, a server) brings them. -->
+        <dependency><groupId>jakarta.transaction</groupId><artifactId>jakarta.transaction-api</artifactId><version>2.0.1</version><scope>provided</scope></dependency>
+        <dependency><groupId>jakarta.enterprise</groupId><artifactId>jakarta.enterprise.cdi-api</artifactId><version>4.1.0</version><scope>provided</scope></dependency>
+        <dependency><groupId>jakarta.inject</groupId><artifactId>jakarta.inject-api</artifactId><version>2.0.1</version><scope>provided</scope></dependency>
         <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope></dependency>
         <dependency><groupId>org.assertj</groupId><artifactId>assertj-core</artifactId><scope>test</scope></dependency>
         <dependency><groupId>com.h2database</groupId><artifactId>h2</artifactId><scope>test</scope></dependency>

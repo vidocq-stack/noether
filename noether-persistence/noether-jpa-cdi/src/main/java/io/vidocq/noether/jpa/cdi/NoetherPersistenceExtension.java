@@ -14,7 +14,18 @@ public final class NoetherPersistenceExtension implements BuildCompatibleExtensi
     private final Set<String> units = new LinkedHashSet<>();
     private final Map<String, Context> contexts = new LinkedHashMap<>();
 
-    @Enhancement(types = Object.class, withSubtypes = true)
+    /**
+     * The binding qualifier lives in this jar, which a container need not index (Quarkus indexes the application, not
+     * every dependency): without this declaration it would not know the annotation that {@link #persistenceFields}
+     * adds to each injection point is a qualifier, and would resolve every persistence injection as {@code @Default}.
+     */
+    @Discovery
+    public void bindingQualifier(MetaAnnotations meta) {
+        meta.addQualifier(PersistenceBinding.class);
+    }
+
+    /** Only the classes that declare persistence injection, not every class of the deployment. */
+    @Enhancement(types = Object.class, withSubtypes = true, withAnnotations = {PersistenceContext.class, PersistenceUnit.class})
     public void persistenceFields(ClassConfig clazz) {
         for (FieldConfig field : clazz.fields()) {
             AnnotationInfo context = field.info().annotation(PersistenceContext.class);
@@ -55,11 +66,18 @@ public final class NoetherPersistenceExtension implements BuildCompatibleExtensi
         return binding;
     }
 
+    /**
+     * One factory per unit, shared by the unit's contexts: their creator looks it up programmatically. A container that
+     * removes the beans no injection point uses (Quarkus ArC) would remove the factory of a unit only reached through
+     * {@code @PersistenceContext}; a bean with a name is never removed, so each factory gets one. The name is internal.
+     */
     @Synthesis
     public void persistenceBeans(SyntheticComponents components) {
+        int index = 0;
         for (String unit : units) {
             components.addBean(EntityManagerFactory.class).type(EntityManagerFactory.class).scope(Singleton.class)
                 .qualifier(AnnotationBuilder.of(PersistenceBinding.class).value("unit:" + unit).build())
+                .name(factoryName(index++, unit))
                 .withParam("unit", unit).createWith(PersistenceFactoryCreator.class).disposeWith(PersistenceFactoryDisposer.class);
         }
         contexts.forEach((binding, definition) -> components.addBean(EntityManager.class).type(EntityManager.class)
@@ -69,6 +87,11 @@ public final class NoetherPersistenceExtension implements BuildCompatibleExtensi
             .withParam("propertyNames", definition.properties.keySet().toArray(String[]::new))
             .withParam("propertyValues", definition.properties.values().toArray(String[]::new))
             .createWith(PersistenceContextCreator.class).disposeWith(PersistenceContextDisposer.class));
+    }
+
+    /** Unique, without dots (a dotted name would clash with any bean named after its first segment). */
+    static String factoryName(int index, String unit) {
+        return "noetherPersistenceUnit" + index + "_" + unit.replaceAll("[^A-Za-z0-9_]", "_");
     }
 
     private static String string(AnnotationInfo annotation, String member, String fallback) {

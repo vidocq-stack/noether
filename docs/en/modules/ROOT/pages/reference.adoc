@@ -64,6 +64,22 @@ Tested on Open Liberty 26.0.0.10 by `noether-it-openliberty`.
 ----
 ====
 
+[NOTE]
+.Running on Quarkus
+====
+Noether is the Jakarta Persistence provider of a Quarkus application through `noether-jpa-cdi`: ArC runs its
+build compatible extension at build time, Narayana drives the transactions. Tested on Quarkus 3.40.1 by
+`noether-it-quarkus`.
+
+* **Leave Quarkus' Hibernate ORM extension out** (`quarkus-hibernate-orm`), or it owns `persistence.xml` and
+  `@PersistenceContext`.
+* **Declare** `noether-jpa-cdi`, a dialect, `quarkus-arc` and `quarkus-narayana-jta`; the entity accesses come from
+  `noether-jpa-processor` in `annotationProcessorPaths`.
+* **The unit's connections come from Noether's own pool** (`jakarta.persistence.jdbc.url`), not from an Agroal
+  data source: `noether-jpa-cdi` enlists each transaction's connection in Narayana as a one-phase resource. Keep
+  it the only resource of its transactions.
+====
+
 == Query entity graph hints
 
 [cols="2,4"]
