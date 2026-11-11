@@ -158,7 +158,7 @@ class SecondLevelCacheTest {
     void aUnitWhoseCacheHoldsNothingReadsAndWritesAsUsual() throws Exception {
         emf.close();
         String url = "jdbc:h2:mem:l2-cache-" + DATABASES.incrementAndGet() + ";DB_CLOSE_DELAY=-1";
-        try (Connection _ = DriverManager.getConnection(url, "sa", "")) { // open for as long as the unit is used
+        try (var _ = DriverManager.getConnection(url, "sa", "")) { // open for as long as the unit is used
             emf = factory(url, SharedCacheMode.NONE, Map.of());
             assertThat(((SecondLevelCache) ((EntityManagerFactoryImpl) emf).cache()).holdsEntities()).isFalse();
             try (EntityManager em = emf.createEntityManager()) {
