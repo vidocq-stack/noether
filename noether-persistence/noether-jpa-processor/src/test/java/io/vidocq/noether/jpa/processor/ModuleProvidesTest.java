@@ -47,6 +47,22 @@ class ModuleProvidesTest {
             .contains("requires io.vidocq.noether.jpa.core;"));
     }
 
+    /**
+     * BUG-20261112-01: a module reads the provider through a library's {@code requires transitive} as well as through
+     * its own {@code requires} (JLS §7.7.1), and the generated accesses compile; the processor refused it.
+     */
+    @Test
+    void aModuleThatReadsTheProviderThroughALibraryCompiles(@TempDir Path out) {
+        Compilation lib = Compilation.onModulePath(out.resolve("lib"), Compilation.FIXTURES.resolve("modular-transitive-lib"));
+        assertThat(lib.success()).as("%s", lib.diagnostics()).isTrue();
+
+        Compilation app = Compilation.onModulePathWith(out.resolve("app"), lib,
+            Compilation.FIXTURES.resolve("modular-transitive"));
+
+        assertThat(app.success()).as("%s", app.diagnostics()).isTrue();
+        assertThat(app.classes().resolve("app/_NoetherJpaAccess.class")).exists();
+    }
+
     @Test
     void aDeclaredProvidesClauseCompilesWithoutWarnings(@TempDir Path out) {
         Compilation declared = Compilation.onModulePath(out, Compilation.FIXTURES.resolve("modular-declared"));

@@ -65,6 +65,11 @@ record Compilation(boolean success, List<Diagnostic<? extends JavaFileObject>> d
         return compile(out, List.of("--module-path", dependencies()), roots);
     }
 
+    /** Compiles {@code roots} on the module path, with the modules an earlier compilation produced on it too. */
+    static Compilation onModulePathWith(Path out, Compilation module, Path... roots) {
+        return compile(out, List.of("--module-path", module.classes() + File.pathSeparator + dependencies()), roots);
+    }
+
     /** What the application compiles against: jakarta.persistence and the provider SPI, as the tests run with them. */
     private static String dependencies() {
         String modulePath = System.getProperty("jdk.module.path");

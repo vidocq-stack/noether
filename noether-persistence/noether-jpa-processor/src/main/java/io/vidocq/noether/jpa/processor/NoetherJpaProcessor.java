@@ -26,8 +26,11 @@ import io.vidocq.noether.jpa.core.model.source.ClassInfo;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.Writer;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Deque;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -221,13 +224,36 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
         if (owner.isUnnamed()) {
             return true;
         }
-        boolean reads = ElementFilter.requiresIn(owner.getDirectives()).stream()
-            .anyMatch(r -> r.getDependency().getQualifiedName().contentEquals(CORE));
+        boolean reads = reads(owner, CORE);
         if (!reads && reported.add(owner.getQualifiedName().toString())) {
             messager.printMessage(Diagnostic.Kind.ERROR, "The accesses Noether generates for the entities of "
                 + owner.getQualifiedName() + " implement its SPI: add to its module-info.java\n    requires " + CORE + ";");
         }
         return reads;
+    }
+
+    /**
+     * Whether {@code module} reads {@code target}: it requires it, or requires a module that requires it transitively,
+     * through any chain of {@code requires transitive} (JLS §7.7.1) — a library that hands the provider on is enough
+     * (BUG-20261112-01).
+     */
+    private static boolean reads(ModuleElement module, String target) {
+        Deque<ModuleElement> pending = new ArrayDeque<>();
+        Set<ModuleElement> seen = new HashSet<>();
+        ElementFilter.requiresIn(module.getDirectives()).forEach(r -> pending.add(r.getDependency()));
+        while (!pending.isEmpty()) {
+            ModuleElement next = pending.poll();
+            if (!seen.add(next)) {
+                continue;
+            }
+            if (next.getQualifiedName().contentEquals(target)) {
+                return true;
+            }
+            ElementFilter.requiresIn(next.getDirectives()).stream()
+                .filter(ModuleElement.RequiresDirective::isTransitive)
+                .forEach(r -> pending.add(r.getDependency()));
+        }
+        return false;
     }
 
     /** The access of the embeddable a member embeds, then of the embeddables that one embeds. */

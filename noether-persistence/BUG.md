@@ -1508,3 +1508,28 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     Options for Mansart: skip collection-valued attributes in `_Book` (the Jakarta Data 1.0 static metamodel has no
     attribute type for a collection), or give them a kind of their own with the erased type in the class literal. No
     Mansart code is changed here.
+
+## BUG-20261112-01 — The processor refuses a module that reads Noether's core through a `requires transitive`
+
+- **Date**: 2026-11-12
+- **Status**: FIXED on `fix/processor-transitive-readability` (stacked on `fix-proposals`): `NoetherJpaProcessor`
+  follows the `requires transitive` of the modules the application requires, as the module system does, before it
+  asks for the directive.
+- **Affected module**: `noether-jpa-processor`, `NoetherJpaProcessor.readsProvider`
+- **Symptom**: an application module that reads `io.vidocq.noether.jpa.core` through a library, `requires lib;`
+  where `lib` declares `requires transitive io.vidocq.noether.jpa.core;`, does not compile: `error: The accesses
+  Noether generates for the entities of app implement its SPI: add to its module-info.java requires
+  io.vidocq.noether.jpa.core;`. javac would compile the generated accesses, since the module reads the provider (JLS
+  §7.7.1). Met while porting the Vidocq runtime extension (Vidocq/noether#45, A8): an extension module with
+  `requires transitive io.vidocq.noether.jpa.core` did not satisfy the processor of the application that requires it.
+- **Minimal reproduction**: `ModuleProvidesTest.aModuleThatReadsTheProviderThroughALibraryCompiles` (fixtures
+  `modular-transitive-lib` and `modular-transitive`), red on `8f4d46e`:
+  ```sh
+  ./mvnw -ntp -pl noether-persistence/noether-jpa-processor -am -Dtest=ModuleProvidesTest \
+    -Dsurefire.failIfNoSpecifiedTests=false test
+  ```
+- **Confirmed cause**: `readsProvider` looked for the provider among the module's own `requires` directives only.
+- **Investigations**:
+  - 2026-11-12: the Vidocq extension now follows the ecosystem's convention instead, its descriptor naming
+    `module-info.requires = io.vidocq.noether.jpa.core` for `vidocq extension add` to write; the fix keeps the
+    processor right for a library that hands the provider on.
