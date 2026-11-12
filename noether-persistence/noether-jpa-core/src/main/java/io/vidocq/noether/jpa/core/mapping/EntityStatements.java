@@ -628,12 +628,7 @@ public final class EntityStatements {
                     .filter(t -> t.table().name().equals(tableName)).findFirst()
                     .orElseThrow(() -> new PersistenceException("Unknown target table " + tableName + " of " + describe(association)));
                 targetTable = selected.table();
-                List<KeyColumn> targetKeyColumns = keyColumns(target, binders);
-                if (targetKeyColumns == null) {
-                    return new CollectionMapping.Unsupported(attribute, association,
-                        "a join column to a secondary table of an entity with a derived identity");
-                }
-                List<Identifier> keyNames = targetKeyColumns.stream().map(k -> k.identifier(delimited)).toList();
+                List<Identifier> keyNames = secondaryJoinKeys(association, target, binders, delimited);
                 if (selected.joinColumns().size() == keyNames.size()) {
                     targetNames = selected.joinColumns().stream().map(n -> Identifier.of(n, delimited)).toList();
                 } else if (targetInheritance != null && targetInheritance.joined()) {
@@ -1085,6 +1080,20 @@ public final class EntityStatements {
             keys.add(new KeyColumn(name, parentKeys.get(part).binder()));
         }
         return keys;
+    }
+
+    /**
+     * The key column names through which a join column of {@code association} reaches a secondary table of
+     * {@code target}. An identity derived from a relationship has no such columns: the mapping is refused.
+     */
+    private static List<Identifier> secondaryJoinKeys(AssociationAttribute association, EntityModel target,
+            Function<BasicAttribute, ValueBinder> binders, boolean delimited) {
+        List<KeyColumn> keys = keyColumns(target, binders);
+        if (keys == null) {
+            throw new PersistenceException("The join columns of " + describe(association) + " reach a secondary table of "
+                + target.entityName() + ", whose identity is derived from a relationship: not supported");
+        }
+        return keys.stream().map(k -> k.identifier(delimited)).toList();
     }
 
     private static List<KeyColumn> keyColumns(EntityModel entity, Function<BasicAttribute, ValueBinder> binders) {
