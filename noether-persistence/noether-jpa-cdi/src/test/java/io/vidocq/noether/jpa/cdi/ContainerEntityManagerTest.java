@@ -43,8 +43,7 @@ class ContainerEntityManagerTest {
     @Entity @Table(name = "jta_owner")
     public static class Owner {
         @Id public int id;
-        @ManyToOne public Record record;
-        public Owner() {}
+        @ManyToOne public Record target;
     }
 
     @Test
@@ -53,18 +52,18 @@ class ContainerEntityManagerTest {
         for (boolean autoQuery : new boolean[] {true, false}) {
             try (var factory = factory("p9-nested-flush-" + autoQuery); var em = factory.createEntityManager()) {
                 tm.begin();
-                Record record = new Record(1);
-                em.persist(record);
+                Record entity = new Record(1);
+                em.persist(entity);
                 em.flush();
                 em.clear();
                 Owner owner = new Owner();
                 owner.id = 1;
-                owner.record = record;
+                owner.target = entity;
                 em.persist(owner);
                 if (autoQuery) assertThat(em.createQuery("SELECT COUNT(o) FROM Owner o", Long.class).getSingleResult()).isEqualTo(1);
                 tm.commit();
                 try (var reader = factory.createEntityManager()) {
-                    assertThat(reader.find(Owner.class, 1).record.id).isEqualTo(1);
+                    assertThat(reader.find(Owner.class, 1).target.id).isEqualTo(1);
                 }
             }
         }
@@ -77,8 +76,8 @@ class ContainerEntityManagerTest {
             assertThatThrownBy(em::getTransaction).isInstanceOf(IllegalStateException.class);
             assertThat(em.isJoinedToTransaction()).isFalse();
             tm.begin();
-            Record record = new Record(1);
-            em.persist(record);
+            Record entity = new Record(1);
+            em.persist(entity);
             assertThat(em.isJoinedToTransaction()).isTrue();
             em.close();
             tm.commit();
@@ -130,9 +129,9 @@ class ContainerEntityManagerTest {
             var em = facade(factory);
             var query = em.createQuery("SELECT r FROM Record r WHERE r.id = :id", Record.class).setParameter("id", 1);
             tm.begin();
-            var record = new Record(1);
-            em.persist(record);
-            assertThat(query.getSingleResult()).isSameAs(record);
+            var entity = new Record(1);
+            em.persist(entity);
+            assertThat(query.getSingleResult()).isSameAs(entity);
             tm.commit();
             Record detached = query.getSingleResult();
             assertThat(detached.id).isEqualTo(1);
@@ -317,7 +316,8 @@ class ContainerEntityManagerTest {
             tm.commit();
             em.destroy();
             assertThatThrownBy(em::getFlushMode).isInstanceOf(IllegalStateException.class);
-            assertThatThrownBy(() -> em.contains(new Record(1))).isInstanceOf(IllegalStateException.class);
+            Record detached = new Record(1);
+            assertThatThrownBy(() -> em.contains(detached)).isInstanceOf(IllegalStateException.class);
         } finally {
             em.destroy();
             factory.destroy();

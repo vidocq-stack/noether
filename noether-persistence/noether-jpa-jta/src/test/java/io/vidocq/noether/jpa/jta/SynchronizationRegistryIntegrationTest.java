@@ -71,9 +71,14 @@ class SynchronizationRegistryIntegrationTest {
 
     /** As a container does: the provider named by the unit, among those the resolver lists. */
     private static PersistenceProvider noether() {
+        Class<?> noether;
+        try { // its package is not exported: the class is found by name, as a container finds the unit's provider
+            noether = Class.forName("io.vidocq.noether.jpa.core.NoetherPersistenceProvider");
+        } catch (ClassNotFoundException e) {
+            throw new IllegalStateException(e);
+        }
         return PersistenceProviderResolverHolder.getPersistenceProviderResolver().getPersistenceProviders().stream()
-            .filter(provider -> provider.getClass().getName().equals("io.vidocq.noether.jpa.core.NoetherPersistenceProvider"))
-            .findFirst().orElseThrow();
+            .filter(noether::isInstance).findFirst().orElseThrow();
     }
 
     private static long rows(String name) throws Exception {

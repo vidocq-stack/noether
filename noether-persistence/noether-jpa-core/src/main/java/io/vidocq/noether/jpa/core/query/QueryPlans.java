@@ -25,6 +25,7 @@ import io.vidocq.noether.jpa.core.query.jpql.Parser;
 import io.vidocq.noether.jpa.dialect.Dialect;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReferenceArray;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 /**
@@ -100,7 +101,7 @@ public final class QueryPlans {
     /** A translation and, once a dialect rendered it, its SQL. */
     static final class Plan {
         private final Compiled compiled;
-        private volatile Rendering rendering;
+        private final AtomicReference<Rendering> rendering = new AtomicReference<>();
 
         private Plan(Compiled compiled) {
             this.compiled = compiled;
@@ -112,10 +113,10 @@ public final class QueryPlans {
 
         /** {@link Dialect#renderQuery} of the translated statement, rendered once per dialect. */
         Dialect.Rendered rendered(Dialect dialect) {
-            Rendering known = rendering;
+            Rendering known = rendering.get();
             if (known == null || known.dialect() != dialect) {
                 known = new Rendering(dialect, dialect.renderQuery(compiled.sql()));
-                rendering = known;
+                rendering.set(known);
             }
             return known.rendered();
         }

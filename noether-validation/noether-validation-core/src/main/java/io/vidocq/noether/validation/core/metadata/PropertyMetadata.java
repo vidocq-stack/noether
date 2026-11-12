@@ -24,6 +24,7 @@ import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * A constrained or cascaded property as declared by one class: a field, or a getter. The value of an
@@ -41,7 +42,7 @@ public final class PropertyMetadata {
     private final Class<?> valueType;
     private final boolean cascaded;
     private final List<ConstraintDef> constraints;
-    private volatile MethodHandle accessor;
+    private final AtomicReference<MethodHandle> accessor = new AtomicReference<>();
 
     PropertyMetadata(Class<?> declaringClass, String name, Kind kind, String memberName, Class<?> valueType, boolean cascaded,
             List<ConstraintDef> constraints) {
@@ -100,10 +101,10 @@ public final class PropertyMetadata {
     }
 
     private MethodHandle handle() {
-        MethodHandle handle = accessor;
+        MethodHandle handle = accessor.get();
         if (handle == null) {
             handle = resolve();
-            accessor = handle;
+            accessor.set(handle);
         }
         return handle;
     }

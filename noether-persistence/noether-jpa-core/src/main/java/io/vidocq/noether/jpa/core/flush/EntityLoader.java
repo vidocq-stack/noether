@@ -1070,7 +1070,8 @@ public final class EntityLoader {
             Map<Object, Object> map = IndexMapping.newMap(type);
             for (Indexed element : elements) {
                 Object key = element.index();
-                if (index != null && !index.stored()) { // @MapKey: an attribute of the element, its identifier by default
+                // @MapKey, on a map of entities only (§11.1.31): an attribute of the element, its identifier by default
+                if (index != null && !index.stored() && target != null) {
                     key = index.keyAttribute() >= 0 ? target.access().get(element.element(), index.keyAttribute())
                         : target.idObject(element.element());
                 }

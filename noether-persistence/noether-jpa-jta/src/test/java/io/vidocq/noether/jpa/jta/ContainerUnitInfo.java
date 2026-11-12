@@ -43,6 +43,8 @@ record ContainerUnitInfo(String name, DataSource jtaDataSource, DataSource nonJt
     @Override public String getPersistenceProviderClassName() { return "io.vidocq.noether.jpa.core.NoetherPersistenceProvider"; }
     @Override public String getScopeAnnotationName() { return null; }
     @Override public List<String> getQualifierAnnotationNames() { return List.of(); }
+    // Jakarta Persistence 3.2 declares this method with the SPI type it deprecates for removal: no other type fits
+    @SuppressWarnings("removal")
     @Override public PersistenceUnitTransactionType getTransactionType() { return PersistenceUnitTransactionType.JTA; }
     @Override public DataSource getJtaDataSource() { return jtaDataSource; }
     @Override public DataSource getNonJtaDataSource() { return nonJtaDataSource; }

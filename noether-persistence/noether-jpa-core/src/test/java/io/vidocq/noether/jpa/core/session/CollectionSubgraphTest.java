@@ -210,8 +210,8 @@ class CollectionSubgraphTest {
             List<Order> page = em.createQuery("select o from CsOrder o order by o.id", Order.class)
                 .setHint(hint, rootToOneThreeCollectionGraph()).setFirstResult(0).setMaxResults(2).getResultList();
             assertThat(page).extracting(Order::getId).containsExactly(1L, 2L);
-            assertThat(page.getFirst().getCustomer().getRecommendations()).allSatisfy(product ->
-                assertThat(product.getBundles()).allSatisfy(bundle ->
+            assertThat(page.getFirst().getCustomer().getRecommendations()).isNotEmpty().allSatisfy(product ->
+                assertThat(product.getBundles()).isNotEmpty().allSatisfy(bundle ->
                     assertThat(bundle.getLabels()).isNotEmpty()));
             assertThat(sql.getFirst()).containsIgnoringCase("fetch first").doesNotContainIgnoringCase("join");
             assertThat(selects()).isEqualTo(5);
@@ -483,7 +483,7 @@ class CollectionSubgraphTest {
         var first = em.find(Order.class, 1L, Map.of(LOAD, graph));
         assertThat(first.getCustomer().getFavorite().getTags()).containsExactlyInAnyOrder("steel", "wood");
         assertThat(first.getLines().get(1).getDiscounts()).filteredOn(p -> p.getId() == 200)
-            .allSatisfy(p -> assertThat(p.getTags()).containsExactlyInAnyOrder("steel", "wood"));
+            .isNotEmpty().allSatisfy(p -> assertThat(p.getTags()).containsExactlyInAnyOrder("steel", "wood"));
         assertThat(sql.getFirst()).doesNotContainIgnoringCase("CS_LINE");
         cold();
         var cyclic = rootBranchGraph();
@@ -761,7 +761,7 @@ class CollectionSubgraphTest {
         deep.addSubgraph("lines").addSubgraph("discounts").addAttributeNodes("tags");
         var first = em.find(Order.class, 1L, Map.of(LOAD, deep));
         assertThat(first.getLines().get(1).getDiscounts()).filteredOn(p -> p.getId() == 200)
-            .allSatisfy(p -> assertThat(p.getTags()).containsExactlyInAnyOrder("steel", "wood"));
+            .isNotEmpty().allSatisfy(p -> assertThat(p.getTags()).containsExactlyInAnyOrder("steel", "wood"));
         assertThat(sql.getFirst()).containsIgnoringCase("CS_LINE");
         assertThat(selects()).isEqualTo(5);
         cold();

@@ -628,7 +628,12 @@ public final class EntityStatements {
                     .filter(t -> t.table().name().equals(tableName)).findFirst()
                     .orElseThrow(() -> new PersistenceException("Unknown target table " + tableName + " of " + describe(association)));
                 targetTable = selected.table();
-                List<Identifier> keyNames = keyColumns(target, binders).stream().map(k -> k.identifier(delimited)).toList();
+                List<KeyColumn> targetKeyColumns = keyColumns(target, binders);
+                if (targetKeyColumns == null) {
+                    return new CollectionMapping.Unsupported(attribute, association,
+                        "a join column to a secondary table of an entity with a derived identity");
+                }
+                List<Identifier> keyNames = targetKeyColumns.stream().map(k -> k.identifier(delimited)).toList();
                 if (selected.joinColumns().size() == keyNames.size()) {
                     targetNames = selected.joinColumns().stream().map(n -> Identifier.of(n, delimited)).toList();
                 } else if (targetInheritance != null && targetInheritance.joined()) {

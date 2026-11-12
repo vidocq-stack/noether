@@ -27,6 +27,7 @@ import java.lang.classfile.AnnotationValue;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * What the class file of a constraint annotation type says about it: its validators, its composing
@@ -53,7 +54,7 @@ public final class ConstraintTypeInfo {
     private final Class<? extends Annotation> type;
     private final List<Class<? extends ConstraintValidator<?, ?>>> validatedBy;
     private final List<java.lang.classfile.Annotation> rawComposing;
-    private volatile List<ConstraintDef> composing;
+    private final AtomicReference<List<ConstraintDef>> composing = new AtomicReference<>();
     private final boolean reportAsSingleViolation;
 
     private ConstraintTypeInfo(Class<? extends Annotation> type, List<Class<? extends ConstraintValidator<?, ?>>> validatedBy,
@@ -80,10 +81,10 @@ public final class ConstraintTypeInfo {
 
     /** The composing constraints, as written on the annotation type; read once, when first needed. */
     public List<ConstraintDef> composingConstraints() {
-        List<ConstraintDef> result = composing;
+        List<ConstraintDef> result = composing.get();
         if (result == null) {
             result = List.copyOf(ConstraintDef.fromRaw(rawComposing, type.getClassLoader()));
-            composing = result;
+            composing.set(result);
         }
         return result;
     }
