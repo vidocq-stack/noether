@@ -17,7 +17,9 @@ import org.junit.jupiter.api.io.TempDir;
  * BUG-20261009-09: the ecosystem's Jakarta Data processor ({@code mansart-data-processor}) and Noether's processor in
  * one compilation, as a Vidocq application declares them. Since Vidocq/mansart#95, Mansart Data writes its Jakarta Data
  * metamodel {@code _Book} only; the JPA canonical metamodel {@code Book_} comes from Noether, with the plural attribute
- * a {@code ListAttribute} (§6.2.1.1). {@link MetamodelCoexistenceTest} covers a producer that does write {@code Book_}.
+ * a {@code ListAttribute} (§6.2.1.1). The plural attribute is a plain {@code @ElementCollection} field: since
+ * Vidocq/mansart#96 (BUG-20261111-06), Mansart Data leaves it out of {@code _Book} instead of failing the compilation.
+ * {@link MetamodelCoexistenceTest} covers a producer that does write {@code Book_}.
  */
 class MansartDataCoexistenceTest {
 

@@ -145,6 +145,10 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     datacoexist.Book_.tags was emitted with jakarta.persistence.metamodel.SingularAttribute instead of ListAttribute
     … Noether JPA does not overwrite it". The fixture maps its plural attribute by property access over a
     `@Transient` field, because Mansart Data cannot yet write `_Book` for a collection-valued field (BUG-20261111-06).
+  - 2026-11-12: BUG-20261111-06 is fixed upstream, so the `datacoexist` fixture's plural attribute is a plain
+    `@ElementCollection List<String> tags` field again. `MansartDataCoexistenceTest` is green on
+    mansart-data-processor 0.4.0-20261112.131711-31 (Mansart e46cd5a5, read from maven.vidocq.dev) and red, as
+    expected, on 0.4.0-20261111.191239-69 (`_Book.java:29: error: <identifier> expected`).
 
 ## BUG-20261009-10 — Converted string/number literals bypass query conversion
 
@@ -1480,7 +1484,7 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
 ## BUG-20261111-06 — Mansart Data cannot compile an entity with a collection-valued field
 
 - **Date**: 2026-11-11
-- **Status**: OPEN (cause upstream in `mansart-data-processor`; Mansart decision required)
+- **Status**: FIXED upstream (Vidocq/mansart#96, MANSART-049: 69be31a4, a760c235; reported from Vidocq/noether#64)
 - **Affected module**: `mansart-data-processor`, `EntityScanner` and `MansartMetamodelWriter` (consumer impact: a
   Vidocq application that runs Noether's and Mansart Data's processors on its entities)
 - **Symptom**: with `mansart-data-processor` on the processor path, an entity with a collection field does not
@@ -1508,6 +1512,12 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     Options for Mansart: skip collection-valued attributes in `_Book` (the Jakarta Data 1.0 static metamodel has no
     attribute type for a collection), or give them a kind of their own with the erased type in the class literal. No
     Mansart code is changed here.
+  - 2026-11-12: Mansart took the first option. Since MANSART-049 (Vidocq/mansart#96), an `@ElementCollection`,
+    `@OneToMany` or `@ManyToMany` field, or one typed as a collection or a map, is left out of `_Book` and of the
+    run-time model with a compiler note, and a derived query on one is a build error. `MansartDataCoexistenceTest` maps
+    a plain `@ElementCollection List<String>` field again: green on 0.4.0-20261112.131711-31 (Mansart e46cd5a5), red
+    on -69. Those snapshots are on maven.vidocq.dev, which Noether's CI reads through Vidocq/ci `setup-maven`; a local
+    build reads it only with the same repository in its `settings.xml` (the parent declares it for plugins only).
 
 ## BUG-20261112-01 — The processor refuses a module that reads Noether's core through a `requires transitive`
 
