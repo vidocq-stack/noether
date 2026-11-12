@@ -597,9 +597,9 @@ public final class MappedUnit {
     private static Class<?> root(PersistenceUnitModel model, EntityModel entity) {
         EntityModel current = entity;
         while (current.superEntity().isPresent()) {
-            Optional<EntityModel> parent = model.entity(current.superEntity().get());
+            Optional<EntityModel> parent = model.entity(current.superEntity().orElseThrow());
             if (parent.isEmpty()) {
-                return current.superEntity().get();
+                return current.superEntity().orElseThrow();
             }
             current = parent.get();
         }

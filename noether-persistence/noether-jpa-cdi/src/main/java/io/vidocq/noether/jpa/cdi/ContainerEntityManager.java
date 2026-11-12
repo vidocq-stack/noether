@@ -28,7 +28,8 @@ public final class ContainerEntityManager implements EntityManager {
     private EntityManager queryTemplate;
     private final java.util.concurrent.locks.ReentrantLock metadataLock = new java.util.concurrent.locks.ReentrantLock();
     private final Map<String,java.util.function.Consumer<EntityManager>> settingDefinitions = new LinkedHashMap<>();
-    private volatile List<java.util.function.Consumer<EntityManager>> settings = List.of();
+    private final java.util.concurrent.atomic.AtomicReference<List<java.util.function.Consumer<EntityManager>>> settings =
+        new java.util.concurrent.atomic.AtomicReference<>(List.of());
 
     public ContainerEntityManager(EntityManagerFactory factory, TransactionSynchronizationRegistry registry,
             PersistenceContextType type, SynchronizationType synchronization, Map<String, Object> properties) {
@@ -78,7 +79,7 @@ public final class ContainerEntityManager implements EntityManager {
     }
 
     private EntityManager configured(EntityManager em) {
-        settings.forEach(setting -> setting.accept(em));
+        settings.get().forEach(setting -> setting.accept(em));
         return em;
     }
 
@@ -103,7 +104,7 @@ public final class ContainerEntityManager implements EntityManager {
             setting.accept(em);
             settingDefinitions.remove(key);
             settingDefinitions.put(key, setting);
-            settings = List.copyOf(settingDefinitions.values());
+            settings.set(List.copyOf(settingDefinitions.values()));
             return null;
         });
         if (extended != null || currentTransaction() != null) setting.accept(delegate());

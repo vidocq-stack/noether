@@ -428,6 +428,7 @@ public final class EntityModelBuilder {
 
     private AttributeModel association(Member member, Class<?> type, Class<?> declaring, AssociationAttribute.Kind kind,
             AnnotationInfo relationship) {
+        Objects.requireNonNull(type, "type");
         Annotated element = member.element();
         Class<?> target = target(member, type, kind, relationship);
         if (target == null) {
@@ -769,7 +770,7 @@ public final class EntityModelBuilder {
             attributes.add(switch (attribute) {
                 case BasicAttribute basic when conversion.isPresent() -> new BasicAttribute(basic.name(), basic.javaType(),
                     basic.access(), basic.declaringClass(), basic.column(), basic.optional(), basic.fetch(), basic.lob(),
-                    conversion.get(), basic.version());
+                    conversion.orElseThrow(), basic.version());
                 case EmbeddedAttribute nested -> new EmbeddedAttribute(nested.name(), nested.javaType(), nested.access(),
                     nested.declaringClass(), converted(nested.embeddable(), prefixed(converts, nested.name() + ".")), nested.columns());
                 default -> attribute;

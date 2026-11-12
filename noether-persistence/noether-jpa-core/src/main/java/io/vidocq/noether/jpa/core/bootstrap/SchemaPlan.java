@@ -294,8 +294,8 @@ final class SchemaPlan {
     }
 
     private void generators(EntityModel model) {
-        if (!(model.id() instanceof IdModel.Single single) || single.generation().isEmpty()) return;
-        GenerationModel generation = single.generation().get();
+        if (!(model.id() instanceof IdModel.Single(var attribute, var idGeneration)) || idGeneration.isEmpty()) return;
+        GenerationModel generation = idGeneration.orElseThrow();
         if (generation.strategy() == GenerationType.SEQUENCE || generation.strategy() == GenerationType.AUTO
                 && generation.sequence().isPresent()) {
             var sequence = generation.sequence().orElseGet(() -> new SequenceGeneratorModel(
@@ -305,7 +305,7 @@ final class SchemaPlan {
             var statement = SchemaStatement.sequence(CREATE_SEQUENCE, table, sequence.initialValue(), sequence.allocationSize());
             if (sequences.stream().noneMatch(s -> s.table().equals(table))) sequences.add(statement);
         } else if (generation.strategy() == GenerationType.TABLE || generation.strategy() == GenerationType.AUTO
-                && single.attribute().javaType() != java.util.UUID.class) {
+                && attribute.javaType() != java.util.UUID.class) {
             var generator = generation.table().orElseGet(() -> new TableGeneratorModel(null, null, null, null, null, null, null, 1, 50));
             Table table = new Table(identifier(generator.table() != null ? generator.table() : "SEQUENCE"),
                 identifier(generator.schema()), identifier(generator.catalog()));

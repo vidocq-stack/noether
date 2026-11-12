@@ -115,8 +115,7 @@ class SecondLevelCacheTest {
         long generation = cache.generation();
         cache.evict(CacheTarget.class);
         assertThat(cache.contains(CacheOwner.class, 81L)).isFalse();
-        cache.store(((EntityManagerFactoryImpl) emf).mapping().entity(CacheTarget.class).orElseThrow(),
-            target, generation);
+        cache.store(target, generation);
         assertThat(cache.contains(CacheTarget.class, 80L)).isFalse();
         em.close();
     }
@@ -125,9 +124,8 @@ class SecondLevelCacheTest {
     void subtypeMissDoesNotPopulateTheContextOrClaimToContainSiblingTypes() {
         EntityManagerFactoryImpl implementation = (EntityManagerFactoryImpl) emf;
         SecondLevelCache cache = (SecondLevelCache) implementation.cache();
-        MappedEntity root = implementation.mapping().entity(CacheEntry.class).orElseThrow();
         MappedEntity sibling = implementation.mapping().entity(CacheSibling.class).orElseThrow();
-        cache.store(root, new CacheEntry(82L, "root"), cache.generation());
+        cache.store(new CacheEntry(82L, "root"), cache.generation());
         var context = new io.vidocq.noether.jpa.core.context.PersistenceContext();
         assertThat(cache.restore(sibling, 82L, context)).isEmpty();
         assertThat(context.entries()).isEmpty();
@@ -200,7 +198,7 @@ class SecondLevelCacheTest {
             CacheChild instance = new CacheChild();
             instance.id = 83L;
             instance.name = "child";
-            cache.store(root, instance, cache.generation());
+            cache.store(instance, cache.generation());
             boolean enabled = mode == SharedCacheMode.ALL;
             assertThat(cache.contains(CacheEntry.class, 83L)).isEqualTo(enabled);
             assertThat(cache.contains(CacheChild.class, 83L)).isEqualTo(enabled);
@@ -420,9 +418,8 @@ class SecondLevelCacheTest {
         EntityManagerFactoryImpl implementation = (EntityManagerFactoryImpl) emf;
         SecondLevelCache cache = (SecondLevelCache) implementation.cache();
         long generation = cache.generation();
-        MappedEntity mapped = implementation.mapping().entity(CacheEntry.class).orElseThrow();
         cache.invalidateAll();
-        cache.store(mapped, new CacheEntry(25L, "stale database read"), generation);
+        cache.store(new CacheEntry(25L, "stale database read"), generation);
         assertThat(emf.getCache().contains(CacheEntry.class, 25L)).isFalse();
     }
 

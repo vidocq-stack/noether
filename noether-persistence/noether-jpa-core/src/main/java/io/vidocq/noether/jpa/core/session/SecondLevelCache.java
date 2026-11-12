@@ -208,9 +208,10 @@ final class SecondLevelCache implements Cache {
         return generation.get();
     }
 
-    void store(MappedEntity type, Object instance, long expectedGeneration) {
+    /** Stores {@code instance} under the entity its class maps, which can be a subclass of the one it was read as. */
+    void store(Object instance, long expectedGeneration) {
         try {
-            type = mapped(instance);
+            MappedEntity type = mapped(instance);
             if (!enabled(type)) {
                 return;
             }

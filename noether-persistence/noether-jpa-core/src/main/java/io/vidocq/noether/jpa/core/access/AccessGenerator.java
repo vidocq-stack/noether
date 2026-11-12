@@ -218,6 +218,7 @@ final class AccessGenerator {
                 missing = missing == null ? e : missing;
             }
         }
+        if (missing == null) throw new NoSuchMethodException("No accessor " + names + " on " + owner.getName());
         throw missing;
     }
 

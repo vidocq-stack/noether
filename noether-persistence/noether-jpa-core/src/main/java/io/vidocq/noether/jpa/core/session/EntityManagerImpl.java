@@ -959,7 +959,7 @@ final class EntityManagerImpl implements EntityManager {
                 transactionCacheCandidates.add(new EntityKey(type.root(), id));
             }
         } else if (store != CacheStoreMode.BYPASS) {
-            factory.cache().store(type, result, cacheGeneration);
+            factory.cache().store(result, cacheGeneration);
         }
     }
 
@@ -1347,17 +1347,20 @@ final class EntityManagerImpl implements EntityManager {
             if (!fresh.isEmpty() && transaction.isActive() && cacheStoreMode != CacheStoreMode.BYPASS) captureCacheGeneration(generation);
             factory.loader(connection).loadCollections(rows, collections, connection, context);
             for (var item : fresh.entrySet()) {
-                stored(item.getValue(), item.getKey(), context.find(item.getKey()).orElseThrow().instance(), generation);
+                stored(item.getKey(), context.find(item.getKey()).orElseThrow().instance(), generation);
             }
         }
 
         /** Records a newly loaded instance for the shared cache, as a find by identifier does (§3.10). */
         private Object stored(MappedEntity type, Object id, Object loaded, long cacheGeneration) {
-            return loaded == null || !cached ? loaded : stored(type, new EntityKey(type.root(), id), loaded, cacheGeneration);
+            return loaded == null || !cached ? loaded : stored(new EntityKey(type.root(), id), loaded, cacheGeneration);
         }
 
-        /** {@link #stored(MappedEntity, Object, Object, long)} with the identity already at hand, the key of its root. */
-        private Object stored(MappedEntity type, EntityKey key, Object loaded, long cacheGeneration) {
+        /**
+         * {@link #stored(MappedEntity, Object, Object, long)} with the identity already at hand, the key of its root; the
+         * cache reads the entity from the instance.
+         */
+        private Object stored(EntityKey key, Object loaded, long cacheGeneration) {
             if (loaded != null) {
                 if (transaction.isActive()) {
                     if (cacheStoreMode == CacheStoreMode.BYPASS) {
@@ -1366,7 +1369,7 @@ final class EntityManagerImpl implements EntityManager {
                         transactionCacheCandidates.add(key);
                     }
                 } else if (cacheStoreMode != CacheStoreMode.BYPASS) {
-                    factory.cache().store(type, loaded, cacheGeneration);
+                    factory.cache().store(loaded, cacheGeneration);
                 }
             }
             return loaded;

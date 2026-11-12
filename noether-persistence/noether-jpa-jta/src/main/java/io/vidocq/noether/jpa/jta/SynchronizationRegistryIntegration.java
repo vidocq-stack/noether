@@ -64,7 +64,7 @@ public final class SynchronizationRegistryIntegration implements TransactionInte
         private final SynchronizationType synchronization;
         private final Connections connections;
         private final Completion completion;
-        private volatile Object joined;
+        private final AtomicReference<Object> joined = new AtomicReference<>();
         /** The connection handed out by {@link #connection()}, held until the transaction completes. */
         private final AtomicReference<Connection> handedOut = new AtomicReference<>();
 
@@ -84,31 +84,34 @@ public final class SynchronizationRegistryIntegration implements TransactionInte
         @Override
         public boolean active() {
             Object current = currentTransaction();
-            if (joined == null && current != null && synchronization == SynchronizationType.SYNCHRONIZED) join();
-            if (joined != null && current != null && !joined.equals(current)) {
+            if (joined.get() == null && current != null && synchronization == SynchronizationType.SYNCHRONIZED) join();
+            Object key = joined.get();
+            if (key != null && current != null && !key.equals(current)) {
                 throw new PersistenceException("The persistence context is associated with a different JTA transaction");
             }
-            return joined != null && joined.equals(current);
+            return key != null && key.equals(current);
         }
 
         @Override
         public boolean joined() {
-            return joined != null && joined.equals(currentTransaction());
+            Object key = joined.get();
+            return key != null && key.equals(currentTransaction());
         }
 
         @Override
         public void join() {
             Object current = currentTransaction();
             if (current == null) throw new TransactionRequiredException("No active JTA transaction to join");
-            if (current.equals(joined)) return;
-            if (joined != null) throw new PersistenceException("The persistence context is already associated with a different transaction");
+            Object key = joined.get();
+            if (current.equals(key)) return;
+            if (key != null) throw new PersistenceException("The persistence context is already associated with a different transaction");
             try {
                 registry.registerInterposedSynchronization(completionOf());
             } catch (IllegalStateException e) {
                 // a transaction marked for rollback, for instance, takes no new synchronization (JTA 2.0 §3.4.4)
                 throw new PersistenceException("Unable to join the JTA transaction: " + e.getMessage(), e);
             }
-            joined = current;
+            joined.set(current);
         }
 
         /** Flushes before the container completes the transaction and detaches after it. */
@@ -134,7 +137,7 @@ public final class SynchronizationRegistryIntegration implements TransactionInte
                     try {
                         completion.afterCompletion(status == Status.STATUS_COMMITTED);
                     } finally {
-                        joined = null;
+                        joined.set(null);
                         releaseHandedOut(); // a rollback runs no beforeCompletion
                     }
                 }

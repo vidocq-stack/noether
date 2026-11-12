@@ -22,7 +22,8 @@ public final class SchemaGeneration implements SchemaManager {
     private final ConnectionSource connections;
     private final MappedUnit mapping;
     private final Runnable checkOpen;
-    private volatile List<String> loadCommands;
+    private final java.util.concurrent.atomic.AtomicReference<List<String>> loadCommands =
+        new java.util.concurrent.atomic.AtomicReference<>();
     private final java.util.concurrent.locks.ReentrantLock loadLock = new java.util.concurrent.locks.ReentrantLock();
 
     public SchemaGeneration(UnitSettings settings, ConnectionSource connections, MappedUnit mapping, Runnable checkOpen) {
@@ -250,12 +251,16 @@ public final class SchemaGeneration implements SchemaManager {
     }
 
     private List<String> loadCommands() {
-        List<String> commands = loadCommands;
+        List<String> commands = loadCommands.get();
         if (commands != null) return commands;
         loadLock.lock();
         try {
-            if (loadCommands == null) loadCommands = script(settings.property("jakarta.persistence.sql-load-script-source"));
-            return loadCommands;
+            commands = loadCommands.get();
+            if (commands == null) {
+                commands = script(settings.property("jakarta.persistence.sql-load-script-source"));
+                loadCommands.set(commands);
+            }
+            return commands;
         } finally { loadLock.unlock(); }
     }
 

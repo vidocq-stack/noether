@@ -90,7 +90,7 @@ public final class Locks {
         } else {
             Object version = lockRow(type, entry.key().id(), mode, timeout, connection, entry.instance());
             if (checkVersion && versioned) {
-                Object expected = entry.snapshot()[type.model().attributes().indexOf(type.model().version().get())];
+                Object expected = entry.snapshot()[type.model().attributes().indexOf(type.model().version().orElseThrow())];
                 if (!Objects.equals(expected, version)) {
                     throw new OptimisticLockException("The row of " + type.model().entityName() + " " + entry.key().id()
                         + " is at version " + version + ", the instance at version " + expected, null, entry.instance());
