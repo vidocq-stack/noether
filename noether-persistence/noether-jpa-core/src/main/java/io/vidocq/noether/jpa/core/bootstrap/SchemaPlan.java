@@ -296,26 +296,36 @@ final class SchemaPlan {
     private void generators(EntityModel model) {
         if (!(model.id() instanceof IdModel.Single(var attribute, var idGeneration)) || idGeneration.isEmpty()) return;
         GenerationModel generation = idGeneration.orElseThrow();
-        if (generation.strategy() == GenerationType.SEQUENCE || generation.strategy() == GenerationType.AUTO
-                && generation.sequence().isPresent()) {
-            var sequence = generation.sequence().orElseGet(() -> new SequenceGeneratorModel(
-                generation.generatorName() != null ? generation.generatorName() : "SEQ_GEN_SEQUENCE", null, null, null, 1, 50));
-            Table table = new Table(identifier(sequence.sequenceName() != null ? sequence.sequenceName() : sequence.name()),
-                identifier(sequence.schema()), identifier(sequence.catalog()));
-            var statement = SchemaStatement.sequence(CREATE_SEQUENCE, table, sequence.initialValue(), sequence.allocationSize());
-            if (sequences.stream().noneMatch(s -> s.table().equals(table))) sequences.add(statement);
-        } else if (generation.strategy() == GenerationType.TABLE || generation.strategy() == GenerationType.AUTO
+        GenerationType strategy = generation.strategy();
+        if (strategy == GenerationType.SEQUENCE || strategy == GenerationType.AUTO && generation.sequence().isPresent()) {
+            sequenceGenerator(generation);
+        } else if (strategy == GenerationType.TABLE || strategy == GenerationType.AUTO
                 && attribute.javaType() != java.util.UUID.class) {
-            var generator = generation.table().orElseGet(() -> new TableGeneratorModel(null, null, null, null, null, null, null, 1, 50));
-            Table table = new Table(identifier(generator.table() != null ? generator.table() : "SEQUENCE"),
-                identifier(generator.schema()), identifier(generator.catalog()));
-            var columns = tables.computeIfAbsent(table, _ -> new LinkedHashMap<>());
-            Identifier key = identifier(generator.pkColumnName() != null ? generator.pkColumnName() : "SEQ_NAME");
-            Identifier value = identifier(generator.valueColumnName() != null ? generator.valueColumnName() : "SEQ_COUNT");
-            columns.put(key, new SchemaStatement.Column(key, JDBCType.VARCHAR, 255, 0, 0, false, false, false, null));
-            columns.put(value, new SchemaStatement.Column(value, JDBCType.BIGINT, 0, 0, 0, false, false, false, null));
-            keys.put(table, List.of(key));
+            tableGenerator(generation);
         }
+    }
+
+    /** The sequence of a {@code SEQUENCE} generator, or of an {@code AUTO} one that names a sequence. */
+    private void sequenceGenerator(GenerationModel generation) {
+        var sequence = generation.sequence().orElseGet(() -> new SequenceGeneratorModel(
+            generation.generatorName() != null ? generation.generatorName() : "SEQ_GEN_SEQUENCE", null, null, null, 1, 50));
+        Table table = new Table(identifier(sequence.sequenceName() != null ? sequence.sequenceName() : sequence.name()),
+            identifier(sequence.schema()), identifier(sequence.catalog()));
+        var statement = SchemaStatement.sequence(CREATE_SEQUENCE, table, sequence.initialValue(), sequence.allocationSize());
+        if (sequences.stream().noneMatch(s -> s.table().equals(table))) sequences.add(statement);
+    }
+
+    /** The generator table of a {@code TABLE} generator, or of an {@code AUTO} one that is not a sequence or a UUID. */
+    private void tableGenerator(GenerationModel generation) {
+        var generator = generation.table().orElseGet(() -> new TableGeneratorModel(null, null, null, null, null, null, null, 1, 50));
+        Table table = new Table(identifier(generator.table() != null ? generator.table() : "SEQUENCE"),
+            identifier(generator.schema()), identifier(generator.catalog()));
+        var columns = tables.computeIfAbsent(table, _ -> new LinkedHashMap<>());
+        Identifier key = identifier(generator.pkColumnName() != null ? generator.pkColumnName() : "SEQ_NAME");
+        Identifier value = identifier(generator.valueColumnName() != null ? generator.valueColumnName() : "SEQ_COUNT");
+        columns.put(key, new SchemaStatement.Column(key, JDBCType.VARCHAR, 255, 0, 0, false, false, false, null));
+        columns.put(value, new SchemaStatement.Column(value, JDBCType.BIGINT, 0, 0, 0, false, false, false, null));
+        keys.put(table, List.of(key));
     }
 
     private void constraints(Table table, AnnotationInfo annotation) {
