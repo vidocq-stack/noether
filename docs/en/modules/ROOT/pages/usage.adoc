@@ -385,11 +385,15 @@ scope (`<scope>`, §8.2.1.6). Jakarta EE 11 Platform §13.12 then makes the unit
   duplicate bean name. Give the data source another name, then name it in `<jta-data-source>`.
 * **Errors.** A `<qualifier>` or `<scope>` that the deployment cannot load, or that is not a qualifier or a scope,
   fails the deployment with a `DefinitionException` that names the unit.
-* **When the extension runs.** The beans come from the `persistence.xml` the extension reads when it runs.
-  - Vidocq, and a Vauban container built with `VaubanContainer.builder().addBeanClass(NoetherPersistenceExtension.class)`,
-    run it at boot.
-  - With `scanClasspath()`, Vauban replays what its annotation processor recorded, and the processor cannot read
-    `persistence.xml`. These beans are then missing, while `@PersistenceContext` and `@PersistenceUnit` still work.
+* **When the extension runs.** The beans come from the `persistence.xml` files the extension reads when it runs.
+  - Vidocq runs it at build: `vidocq:generate` reads every `persistence.xml` of the application, and the start loads
+    what the extension did (Vidocq/vauban#288). The start runs it instead under `vidocq:dev`, or when the build could
+    not complete it: two units of one name, for instance, make the build warn and the start fail.
+  - A Vauban container built with `VaubanContainer.builder().addBeanClass(NoetherPersistenceExtension.class)` runs it
+    at boot.
+  - With `scanClasspath()`, Vauban replays what the build recorded. `vauban:generate` with `freezeExtensions`, the
+    build step `vidocq:generate` runs too, reads `persistence.xml`; the annotation processor alone cannot, and these
+    beans are then missing, while `@PersistenceContext` and `@PersistenceUnit` still work.
 
 On Vauban, these beans need a `0.4.0-SNAPSHOT` built on 2026-11-13 or later, which holds Vidocq/vauban#286: it keeps
 the scope an extension gives a bean, and unwraps the exceptions of an interface-typed normal-scoped bean (Vauban's

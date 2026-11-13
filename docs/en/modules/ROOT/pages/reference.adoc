@@ -341,9 +341,10 @@ qualifiers of the unit's `<qualifier>` elements, or `@Default` when there are no
   annotated `@jakarta.inject.Scope` or `@jakarta.enterprise.context.NormalScope`. Any other name, or a class the
   deployment cannot load, fails the deployment with a `DefinitionException` that names the unit.
 * **Containers.** The default scope, `jakarta.transaction.TransactionScoped`, needs its context in the container
-  (`mansart-transactions-cdi`). The beans exist where the extension reads `persistence.xml` when it runs: Vidocq, and
-  a Vauban container that registers `NoetherPersistenceExtension`. Vauban's `scanClasspath()` boots from the build
-  record, which does not hold them. Not tested on Quarkus or on a Jakarta EE server.
+  (`mansart-transactions-cdi`). The beans exist wherever the extension reads `persistence.xml`: on Vidocq, at build
+  (`vidocq:generate`) or at start; on Vauban, in a container that registers `NoetherPersistenceExtension`, or one that
+  `scanClasspath()` boots from what `vauban:generate` froze with `freezeExtensions`. The record of the annotation
+  processor alone does not hold them. Not tested on Quarkus or on a Jakarta EE server.
 
 Tested by `noether-jpa-cdi-module-it` (`InjectedUnitModuleTest`) on Vauban and Mansart Transactions. The Persistence
 TCK 3.2.1 does not exercise `<qualifier>` or `<scope>` (TCK-GAP-001 in `PERSISTENCE_TCK_PROPOSALS.md`).
