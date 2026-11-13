@@ -1,37 +1,97 @@
 = Noether
-:description: Jakarta Persistence 3.2 and a provisional Jakarta Validation provider for Vidocq.
+:description: Jakarta Persistence 3.2 provider for Java 25: entity access generated at build time, strict Java Modules, JDBC on the calling thread.
 
 [.lead]
-Noether implements Jakarta Persistence 3.2 with strict Java Modules, generated
-entity access and JDBC executed on the calling thread. Its provisional Validation
-provider is a local test/TCK stopgap, not a complete implementation.
+Noether is a Jakarta Persistence 3.2 provider. It maps entities, keeps the persistence context, translates JPQL and
+Criteria to SQL and runs it over JDBC, like Hibernate ORM or EclipseLink. What it does differently is how it reaches
+your entities: the annotation processor writes their access at compile time, so nothing reflects into your classes
+and no bytecode is woven into them, at build time or at run time.
 
 == Origin of the name
 
-The project honours *Emmy Noether (1882–1935)*, the German mathematician whose
-work reshaped abstract algebra and established the connection between
-symmetries and conservation laws.
+Emmy Noether (1882–1935), the German mathematician whose work reshaped abstract algebra and whose theorem ties every
+symmetry of a physical system to a quantity it conserves. See
+https://en.wikipedia.org/wiki/Emmy_Noether[the Wikipedia article].
+
+A persistence provider lives on that kind of invariant: what an application changes in memory and what the
+database holds must stay the same thing across every flush, every transaction and every restart.
 
 == At a glance
 
 [cols="1,3"]
 |===
-| Item | Value
-| Runtime | Java 25, Maven 3.9.16
-| Coordinates | `io.vidocq.noether:noether-root`, version `{project-version}`
-| Persistence | `noether-jpa-core`, dialects, APT, CDI/JTA integration and an optional connection pool
-| Validation | `noether-validation-core`, provisional and not published
-| External integrations | Mansart Pool (through the optional `noether-jpa-pool-mansart`) and Transactions, Vauban CDI
-| Source | {repo-noether}
+| Implemented spec | {spec-jpa-3-2}[Jakarta Persistence 3.2]
+| Status | Version `{project-version}`, not released yet: snapshots on `https://maven.vidocq.dev/snapshots/`
+| Java | 25 (LTS), module path or class path
+| Databases | H2 and PostgreSQL (`noether-jpa-dialect-h2`, `noether-jpa-dialect-postgresql`)
+| Runs on | Java SE; CDI through `noether-jpa-cdi` (tested on Vauban and Quarkus ArC); the Vidocq runtime; Jakarta EE servers (tested on Open Liberty)
+| Runtime dependencies | The Jakarta Persistence API. Optional: Mansart Pool for Java SE connection pooling, the Jakarta CDI and Transactions APIs for container integration
+| Persistence TCK 3.2.1 | 2131 of 2135 tests pass, 0 failures, 4 official skips, on PostgreSQL 17, with one fixture backported from upstream. A local run, not a certification: see xref:tck.adoc[TCK]
+| Repository | {repo-noether}
 |===
 
-== Ecosystem
+== Three identifying traits
 
-Noether was extracted from Mansart on 2026-10-11. Mansart continues to own
-Jakarta Data, the JDBC pool and Transactions. The runtime consumes
-`vidocq-runtime-noether-persistence-extension` and its code-generation companion.
+. **No reflection on entities.** `noether-jpa-processor` reads your entities at compile time and writes, next to
+  each of them, the class that instantiates it and reads and writes its state. Noether calls that class. An entity
+  compiled without the processor gets the same class generated with the JDK's Class-File API when the factory
+  starts. No ASM, no Byte Buddy, no bytecode enhancement of your classes, no dynamic proxy.
+. **Strict Java Modules.** Every Noether artifact is a named module. On the module path, the generated access is
+  handed over through `ServiceLoader`, so your entity packages stay closed: no `opens`, no `exports`, no
+  `--add-opens` at launch.
+. **JDBC on the calling thread.** A query, a flush or a lazy load runs on the thread that asked for it, and nothing
+  holds a monitor across a blocking call. Code on a virtual thread stays on its virtual thread.
+
+== Position in the ecosystem
+
+[mermaid]
+....
+graph TB
+  subgraph Build["Compile time"]
+    PROC["noether-jpa-processor<br/>APT + Class-File API"]
+  end
+  subgraph Runtime["Run time"]
+    CORE["noether-jpa-core<br/>PersistenceProvider<br/>persistence context, JPQL, Criteria"]
+    DIALECT["noether-jpa-dialect-h2<br/>noether-jpa-dialect-postgresql"]
+    POOL["noether-jpa-pool-mansart<br/>optional, Java SE"]
+    JTA["noether-jpa-jta<br/>JTA through the container"]
+    CDI["noether-jpa-cdi<br/>@PersistenceContext, @Inject"]
+    DIALECT --> CORE
+    POOL --> CORE
+    JTA --> CORE
+    CDI --> JTA
+  end
+  PROC -.generates.-> ACCESS["Book$$NoetherAccess<br/>Book_<br/>_NoetherJpaAccess"]
+  ACCESS --> CORE
+  CDI -- "runs on" --> VAUBAN["Vauban or Quarkus ArC"]
+  CORE -- "assembled by" --> VIDOCQ["Vidocq runtime<br/>noether-persistence extension"]
+  classDef rt fill:#e1f5fe,stroke:#0288d1
+  class CORE rt
+....
+
+Noether was extracted from Mansart on 2026-10-11. Mansart keeps Jakarta Data, the connection pool and Jakarta
+Transactions. The two serve different needs:
+
+* **Jakarta Data** (`mansart-jakarta-data`): typed repositories declared as interfaces, stateless, with no
+  persistence context. Enough for most CRUD services. See xref:mansart::modules/mansart-jakarta-data.adoc[Mansart
+  Jakarta Data].
+* **Jakarta Persistence** (Noether): the `EntityManager`, a persistence context that tracks managed entities and
+  writes their changes at flush, relationships loaded on demand, lifecycle callbacks, JPQL, Criteria and entity
+  graphs. For domain models with rich relationships, and for applications ported from Hibernate ORM or EclipseLink.
 
 == Quick links
 
-See xref:getting-started.adoc[Getting started], xref:tck.adoc[TCK],
-xref:performance.adoc[performance evidence] and xref:migration.adoc[migration].
+* xref:getting-started.adoc[Getting started] — a first entity, stored and queried, in ten minutes.
+* xref:usage.adoc[Usage] — configuring a unit, connections, queries, relationships, CDI, servers.
+* xref:concepts.adoc[Concepts] — entity access, persistence context, what `LAZY` means in Noether.
+* xref:internals.adoc[Internals] — how the provider is built.
+* xref:tck.adoc[TCK] — the Jakarta Persistence TCK results and how to reproduce them.
+* xref:performance.adoc[Performance] — measurements against Hibernate ORM and EclipseLink.
+* xref:reference.adoc[Reference] — artifacts, properties, server deployment, mapping boundaries.
+* xref:migration.adoc[Migration] — from Hibernate ORM, EclipseLink, or Mansart's former Persistence modules.
+
+[NOTE]
+====
+No performance figure appears on this page. Every figure of the documentation points to an entry of
+link:{repo-noether}/src/branch/main/noether-persistence/BENCH.md[`BENCH.md`].
+====

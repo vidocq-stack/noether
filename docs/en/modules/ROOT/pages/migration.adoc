@@ -1,23 +1,133 @@
-= Migration from Mansart
-:description: Repository, Maven, package and provider renaming.
+= Migration
+:description: Moving an application to Noether from Hibernate ORM, EclipseLink, or Mansart's former Persistence modules.
 
-The source now lives at {repo-noether}. The extraction preserves filtered
-Persistence/Validation history from Mansart's `persistence-work` branch,
-revision `c91d72c`.
+[.lead]
+An application written against the Jakarta Persistence API moves to Noether by changing its provider, its
+dependencies and a few properties. What needs attention is what Noether does differently: no bytecode enhancement,
+its own defaults for `AUTO` identifiers, and the shapes it loads lazily. This page lists them, provider by
+provider.
 
-Replace `io.vidocq.mansart:mansart-jpa-*` with
-`io.vidocq.noether:noether-jpa-*`, and Validation coordinates in the same way.
-The root is `noether-root`; the Persistence aggregator is `noether-jpa` in
-`noether-persistence`; the Validation aggregator is `noether-validation`.
+== Before you start
 
-Change Persistence/Validation imports and Java module references to
-`io.vidocq.noether`. Update explicit providers, service resource names,
-generated-access declarations (`_NoetherJpaAccess`) and `persistence.xml`.
-Do not change the external Mansart Data/Pool/Transactions packages.
+* *Databases.* Noether supports H2 and PostgreSQL. An application on another database cannot move yet.
+* *Standard API only.* Noether implements `jakarta.persistence` and nothing else: the provider's own API
+  (Hibernate's `Session`, `@Formula`, `@Where`, `@Type`, `@NaturalId`; EclipseLink's `@Customizer`, `@ReadOnly`, ...)
+  and its query language extensions have no equivalent. `EntityManager.unwrap(Connection.class)` gives the JDBC
+  connection of the current unit of work.
+* *Java 25.* Noether needs Java 25, on the module path or the class path.
 
-The Vidocq adapters are `vidocq-runtime-noether-persistence-extension` and
-`vidocq-runtime-noether-persistence-extension-codegen`; the extension name is
-`noether-persistence`. No persistence semantic or Data bridge change is included.
+== The common steps
 
-Use current scripts for reproduction. Historical traceability files retain old
-names and source revisions and must not be presented as new Noether results.
+. Replace the provider's dependencies with `noether-jpa-core`, a dialect, and the annotation processor (see
+  xref:getting-started.adoc#pom[Getting started]). Add `noether-jpa-pool-mansart` for a Java SE application that
+  configures its connections with `jakarta.persistence.jdbc.*`, and `noether-jpa-cdi` on a CDI container.
+. Name the provider in `persistence.xml`:
+  `<provider>io.vidocq.noether.jpa.core.NoetherPersistenceProvider</provider>`.
+. On the module path, add the `provides … with …._NoetherJpaAccess;` line the processor prints for each entity
+  package, and remove the `opens` you had for the previous provider.
+. Replace provider-specific properties by the standard ones (tables below). Noether ignores the `hibernate.*` and
+  `eclipselink.*` properties.
+. Check the `AUTO` identifiers and the lazy to-one references, as described for your provider.
+
+== From Hibernate ORM
+
+[cols="2,3"]
+|===
+| Hibernate | Noether
+
+| `hibernate.connection.url`, `.username`, `.password`
+| `jakarta.persistence.jdbc.url`, `.user`, `.password`
+
+| `hibernate.hbm2ddl.auto`
+| `jakarta.persistence.schema-generation.database.action`: `create`, `drop-and-create`, `none` (`update` has no
+  equivalent)
+
+| `hibernate.dialect`
+| Detected from the database; `io.vidocq.noether.jpa.dialect` to force it
+
+| `hibernate.jdbc.batch_size`
+| `io.vidocq.noether.jpa.jdbc.batch-size` (`50` by default)
+
+| `hibernate.default_batch_fetch_size`
+| `io.vidocq.noether.jpa.fetch.batch-size` (`16` by default)
+
+| `hibernate.show_sql`, `hibernate.format_sql`
+| No equivalent: Noether does not log its SQL. Use the database's or the driver's statement log.
+
+| `hibernate.cache.*`, `@org.hibernate.annotations.Cache`
+| `<shared-cache-mode>` and `@Cacheable`: Noether has its own second-level cache, per factory, with no external
+  cache provider
+|===
+
+*`AUTO` identifiers.* Hibernate 6 maps `@GeneratedValue` (`AUTO`) on a numeric identifier to a sequence per entity,
+`<entity>_SEQ`. Noether maps it to a table generator, the table `SEQUENCE` with the columns `SEQ_NAME` and
+`SEQ_COUNT`. To keep the sequences of an existing database, declare them:
+
+[source,java]
+----
+@Id
+@GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "book_seq")
+@SequenceGenerator(name = "book_seq", sequenceName = "book_SEQ", allocationSize = 50)
+private Long id;
+----
+
+*Lazy loading.* Hibernate makes a `LAZY` to-one a proxy for any target class, and can make basic attributes lazy
+through bytecode enhancement. Noether loads a `LAZY` to-one lazily only when the target class allows it (see
+xref:concepts.adoc#lazy[What `LAZY` means]); otherwise the reference is loaded with its owner. Collections are lazy as
+in Hibernate. Remove the Hibernate enhancement plugin: Noether needs none.
+
+*Detached access.* Touching an unloaded collection of a detached entity throws `PersistenceException`, where
+Hibernate throws `LazyInitializationException`.
+
+*Reserved words.* Hibernate 6 can quote column names that are keywords of the database; Noether writes names as
+the mapping gives them. A column such as `year` on H2 2.x needs to be quoted or renamed (see
+xref:getting-started.adoc#reserved-words[reserved words]).
+
+== From EclipseLink
+
+[cols="2,3"]
+|===
+| EclipseLink | Noether
+
+| `eclipselink.ddl-generation`
+| `jakarta.persistence.schema-generation.database.action`
+
+| `eclipselink.target-database`
+| Detected from the database; `io.vidocq.noether.jpa.dialect` to force it
+
+| `eclipselink.jdbc.batch-writing.size`
+| `io.vidocq.noether.jpa.jdbc.batch-size`
+
+| `eclipselink.logging.level.sql`
+| No equivalent: Noether does not log its SQL.
+
+| `eclipselink.weaving`, the static weaving plugin
+| Remove them: Noether generates its entity access with the annotation processor instead.
+|===
+
+*`AUTO` identifiers.* Noether uses the same defaults as EclipseLink: the table `SEQUENCE`, columns `SEQ_NAME` and
+`SEQ_COUNT`, row `SEQ_GEN`, blocks of 50. An existing generator table keeps working.
+
+*Lazy loading.* EclipseLink makes `LAZY` to-one references lazy through weaving. Noether does so only when the target
+class allows it, and loads the others with their owner (see xref:concepts.adoc#lazy[What `LAZY` means]).
+
+== From Mansart's Persistence modules
+
+Noether was extracted from Mansart on 2026-10-11, with the filtered history of Mansart's `persistence-work` branch
+(revision `c91d72c`). The source now lives at {repo-noether}.
+
+* *Coordinates.* Replace `io.vidocq.mansart:mansart-jpa-*` with `io.vidocq.noether:noether-jpa-*`, and the
+  Validation coordinates the same way. The root is `noether-root`, the Persistence aggregator `noether-jpa`, the
+  Validation aggregator `noether-validation`.
+* *Packages and modules.* Change the Persistence and Validation imports, the Java module names, the provider class,
+  the service resource names and the generated-access declarations (`_NoetherJpaAccess`) to `io.vidocq.noether`.
+  Leave Mansart Data, Pool and Transactions as they are: they stay in Mansart.
+* *Vidocq.* The runtime adapters are `vidocq-runtime-noether-persistence-extension` and
+  `vidocq-runtime-noether-persistence-extension-codegen`; the extension name is `noether-persistence`.
+
+The extraction changed no persistence behaviour. Historical traceability files keep their old names and revisions,
+and are not presented as new Noether results.
+
+== Upgrading Noether
+
+Each change that asks something of an application is in xref:whats-new.adoc[What's new], with what to check.

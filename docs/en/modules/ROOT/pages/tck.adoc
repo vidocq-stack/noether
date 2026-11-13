@@ -1,21 +1,79 @@
 = TCK
-:description: Standalone official TCK runners and historical evidence.
+:description: Jakarta Persistence 3.2.1 TCK results, the one fixture backported from upstream, how to reproduce them, and the verification journal.
 
-The official Persistence 3.2 and Validation 3.1 runners stay outside the reactor.
-Run from the repository root:
+[.lead]
+Noether runs the official Jakarta Persistence TCK 3.2.1 on PostgreSQL 17. The latest full run passes 2131 of its
+2135 tests, with no failure and no error; the four others are skipped by the TCK itself. This is a local run with
+one fixture backported from upstream, not a certification: Noether does not seek one.
+
+== Status
+
+[cols="2,1,1,1,1"]
+|===
+| Suite | Tests | Passed | Failures and errors | Skipped
+
+| Jakarta Persistence TCK 3.2.1, full suite, TCK-BUG-001 fixture, PostgreSQL 17 (2026-10-22)
+| 2135 | **2131** | 0 | 4
+|===
+
+The four skips are the TCK's own: `Client6.resultContainsFetchReference` (query language),
+`Client.getDeclaredSingularAttributes` (metamodel), `Client2.createEntityManagerFactoryStringMapTest` (Java SE
+factory) and `Client.tableGeneratorTest` (Java SE table generator schema). The counts are aggregated from the
+failsafe XML reports, independently of the runner; the history of every run is in
+link:{repo-noether}/src/branch/main/noether-persistence/TCK.md[`TCK.md`].
+
+[#tck-bug-001]
+== The backported fixture, TCK-BUG-001
+
+Two `orm.xml` fixtures of the 3.2.1 TCK declare `<delimited-identifiers/>` for their whole unit. That makes their
+upper-case names case-sensitive, while the TCK's own PostgreSQL DDL creates the tables unquoted (folded to lower
+case) and the tests' native SQL is unquoted too: a provider that honours the element fails 25 tests. Upstream removed
+the block on the 4.0 line (https://github.com/jakartaee/persistence/issues/1175[jakartaee/persistence#1175], commit
+`1fea05e`), with no 3.2 backport.
+
+By default the runner executes a derived copy of the spec-tests jar with that block removed from the two fixtures,
+byte for byte as upstream, and checks the SHA-256 of both the official and the derived jars. The official jar is
+never modified, and Noether keeps honouring `<delimited-identifiers/>`. `TCK_FIXTURES=official` runs the untouched
+jar.
+
+== Reproducing
+
+The runners are standalone Maven projects, outside the reactor. From the repository root, after a full build
+(`./mvnw -ntp install -DskipTests`):
 
 [source,sh]
 ----
-noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
-noether-validation/noether-validation-tck/run-official-tck-validation-3.1.sh
-noether-persistence/check-validation-neutrality.sh
+noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh               # whole suite
+noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh --area core.lock   # one area
+TCK_FIXTURES=official noether-persistence/noether-jpa-tck/run-official-tck-persistence-3.2.sh
+noether-persistence/check-validation-neutrality.sh   # with and without Bean Validation, compared
 ----
 
-The official artifact checksums and TCK-BUG-001 byte-exact derived-jar fixture
-patch are unchanged; original artifacts are never edited. `TCK_FIXTURES=official`
-selects the untouched Persistence fixture. See the runner README for setup.
+The runner needs Docker (a throw-away `postgres:17-alpine` container), or an existing PostgreSQL with `--external`.
+The TCK is not on Maven Central: `noether-persistence/noether-jpa-tck/install-tck.sh` downloads it and installs it first; see the
+link:{repo-noether}/src/branch/main/noether-persistence/noether-jpa-tck/README.md[runner README].
 
-== Composite secondary-table business tuple verification (D43, 2026-10-18)
+The Validation 3.1 runner, `noether-validation/noether-validation-tck/run-official-tck-validation-3.1.sh`, checks the
+provisional Validation provider used by Noether's tests; it is not a Noether deliverable.
+
+[#gaps]
+== What the TCK does not cover
+
+Some behaviour that Jakarta Persistence or Jakarta EE requires is not exercised by the TCK. Noether tests it itself,
+and records each gap as a proposal for the TCK in
+link:{repo-noether}/src/branch/main/PERSISTENCE_TCK_PROPOSALS.md[`PERSISTENCE_TCK_PROPOSALS.md`]:
+
+* *TCK-GAP-001* — the `<qualifier>` and `<scope>` elements of `persistence.xml` and the CDI beans of each unit
+  (Jakarta Persistence 3.2 §8.2.1.5, §8.2.1.6; Jakarta EE 11 Platform §13.12). Noether tests them in
+  `noether-jpa-cdi-module-it`.
+
+[#journal]
+== Verification journal
+
+The entries below record how each delivery was verified against the TCK. They are kept as written.
+
+[#d43-verification]
+=== Composite secondary-table business tuple verification (D43, 2026-10-18)
 
 D43 extends D26 to immutable, non-null composite BASIC tuples in one declared
 target secondary table, with an exact unique constraint and a single target
@@ -41,7 +99,7 @@ all execution/class/method/outcome identities to D26 and D42 and checks the
 derived fixture on every report. This is not an untouched official result or
 certification claim. Commands and provenance are in `noether-persistence/TCK.md`.
 
-== Secondary-table business-key verification (D26, 2026-10-17)
+=== Secondary-table business-key verification (D26, 2026-10-17)
 
 This lot extends D22's *optional, nonportable* non-PK association references to
 one declared unique, immutable, non-null BASIC column in a target secondary
@@ -83,7 +141,7 @@ Session evidence uses `secondary-business-key-`, including specification
 excerpts, red/green/clean/TCK/PostgreSQL logs, probe source, independent verifier,
 copied reports and `verification.json`. D5/D9–D25 remain historical deliveries.
 
-== Inverse collection-element boundary verification (D25, 2026-10-17)
+=== Inverse collection-element boundary verification (D25, 2026-10-17)
 
 This lot validates bootstrap boundaries, not inverse execution. Persistence 3.2
 §2.7–2.8/§2.11/§11.1.31/§11.1.42 prohibit invented embeddable entity targets and
@@ -117,7 +175,7 @@ including copied reports, probe source, verifier and `verification.json`.
 This is not an untouched official result or certification. Earlier evidence below
 is historical and preserved.
 
-== Element-collection to-one verification (D24, 2026-10-16)
+=== Element-collection to-one verification (D24, 2026-10-16)
 
 Owning many-to-one/one-to-one references in embeddable collection values target
 eligible simple-ID entities through collection-row FKs. Annotation and
@@ -144,7 +202,7 @@ are session artifacts; details and commands are in `noether-persistence/TCK.md`.
 This is not an untouched official result or a certification claim.
 D5/D9–D23 evidence below remains historical.
 
-== Simple-parent MapsId verification (D23, 2026-10-16)
+=== Simple-parent MapsId verification (D23, 2026-10-16)
 
 D23 strengthens existing P5 derived identity: unnamed whole shared simple ID
 on owning OneToOne, or one named direct BASIC embedded-ID component on owning
@@ -177,7 +235,7 @@ All other *1124 jar entries* are identical. Artifacts use the
 `noether-persistence/TCK.md`. This is locally patched evidence, not an untouched
 official result or certification. D22 and older entries remain historical.
 
-== Unique business-key to-one verification (D22, 2026-10-16)
+=== Unique business-key to-one verification (D22, 2026-10-16)
 
 D22 adds bounded immutable unique non-ID BASIC target tuples to owning to-one
 joins, without expanding graph optimization. Mandatory pre-production red:
@@ -219,7 +277,7 @@ unmodified official TCK result*. The provider-owned tests/probe, rather than the
 official suite alone, prove the newly supported mapping. Historical
 D5/D9–D21 and BUG evidence below remains unchanged.
 
-== Root to-one collection graph verification (D21, 2026-10-16)
+=== Root to-one collection graph verification (D21, 2026-10-16)
 
 D21 groups collections reached through finite root to-one chains, retaining the
 two-collection-edge bound. Mandatory pre-production red: *7 tests / 6 failures /
@@ -249,7 +307,7 @@ Exact commands, hashes and skip identities are in `noether-persistence/TCK.md`.
 Historical D5/D9–D20 and BUG records are preserved. This is *local patched
 evidence, not certification*.
 
-== Two collection graph edges verification (D20, 2026-10-16)
+=== Two collection graph edges verification (D20, 2026-10-16)
 
 D20 supports two collection edges beginning at a root collection, including nested
 owners reached through element to-ones. Mandatory pre-production red: *two actual
@@ -278,7 +336,7 @@ No shared service restart. Exact commands/provenance are in
 `noether-persistence/TCK.md`. Historical D5/D9–D19 and BUG01 records below are
 preserved. This is *local patched evidence, not certification*.
 
-== Multiple root collection split SQL verification (D19, 2026-10-16)
+=== Multiple root collection split SQL verification (D19, 2026-10-16)
 
 D19 groups independent root-collection reads by owner identity rather than joining
 collections together. Mandatory pre-production red: *2 SQL-count failures* (14 → 4
@@ -306,7 +364,7 @@ and both runner tools. Official/derived jar hashes remain `a6ad07d4…b364024` /
 `1f7e82ba…e4d9a4`; all 1126 entries differ only at the two authorized ORM resources.
 No shared service restart. This is *locally patched evidence, not certification*.
 
-== Mixed root collection and root to-one SQL verification (D18, 2026-10-16)
+=== Mixed root collection and root to-one SQL verification (D18, 2026-10-16)
 
 D18 combines exactly one root collection with root to-one branches and D17 element
 to-one subgraphs. Mandatory red before production edits ran *18 tests / 6 failures /
@@ -337,7 +395,7 @@ Commands, exact hashes, four skip identities and evidence are recorded in
 `noether-persistence/TCK.md`. This is *locally patched evidence, not certification*.
 Historical D5/D9–D17 and BUG-20261016-01 evidence below is preserved.
 
-== Collection to-one subgraph SQL verification (D17, 2026-10-16)
+=== Collection to-one subgraph SQL verification (D17, 2026-10-16)
 
 Decision D17 loads one graph-requested root collection with direct/nested to-one
 subgraphs in the same SELECT. TDD red before production edits: *177 focused tests /
@@ -350,7 +408,7 @@ official/derived SHA-256 independently verified unchanged. Locally patched, not
 certification. See xref:reference.adoc#_one_collection_with_to_one_subgraphs_d17_2026_10_16[].
 The sections below are kept as recorded.
 
-== PostLoad collection cycle fix (2026-10-16)
+=== PostLoad collection cycle fix (2026-10-16)
 
 BUG-20261016-01 is fixed: `PostLoad` callbacks are deferred to the outermost
 `EntityLoader` load scope, so a callback reading a lazy collection sees it complete.
@@ -363,7 +421,7 @@ derived-jar checks, the *85* original input files and official/derived SHA-256
 independently verified unchanged from D16. Locally patched, not certification.
 The D16 section below is kept as recorded.
 
-== One-collection entity graph SQL verification (2026-10-16)
+=== One-collection entity graph SQL verification (2026-10-16)
 
 Decision D16 adds one leaf root collection through the existing D12 assembler and
 D15 find routing, not a new loader. Before production edits, the collection suite
@@ -393,7 +451,7 @@ ordinary-find callback cycle is tracked as BUG-20261016-01, still OPEN; staged
 D16 graph hydration completes owner and element callbacks correctly.
 Earlier D5/D9–D15 evidence below remains historical.
 
-== Find entity graph SQL verification (2026-10-16)
+=== Find entity graph SQL verification (2026-10-16)
 
 Decision D15 reuses D14 graph planning and existing statement-column/staged hydration
 for eligible non-locking finds. Before production changes, the 37-test graph suite
@@ -422,7 +480,7 @@ Exact commands, the four skip identities and fixture provenance are recorded in
 `noether-persistence/TCK.md`. This remains a locally patched result, not an untouched
 official result or certification. Earlier D5/D9–D14 evidence remains historical.
 
-== Query entity graph SQL verification (2026-10-15)
+=== Query entity graph SQL verification (2026-10-15)
 
 Decision D14 reuses D11 for direct/nested query graph to-ones. Six SQL-count
 assertions failed before production edits (22 tests, 6 failures, no errors), then the
@@ -453,7 +511,7 @@ are recorded in `noether-persistence/TCK.md`. This is a locally patched result,
 not an untouched official TCK result or certification.
 Earlier D5/D9–D13 evidence below remains historical.
 
-== Null-row and lazy batch verification (2026-10-15)
+=== Null-row and lazy batch verification (2026-10-15)
 
 Decision D13 first fixes BUG-20261015-09 (three red ordinary/graph/LEFT-fetch null-row
 regressions), then adds bounded lazy collection and D10 reference batching (five red
@@ -480,7 +538,7 @@ transaction/cache scope and complete ordinary-loader fallbacks. No official inpu
 were changed. SQL counts are correctness checks, not timing benchmarks; the result
 is locally patched, not certification. Earlier delivery evidence remains below.
 
-== SQL collection fetch join verification (2026-10-15)
+=== SQL collection fetch join verification (2026-10-15)
 
 After D12, `CollectionFetchJoinTest` passes 17 SQL-observing scenarios. Its initial nine
 scenarios were red before production changes (8 assertion failures, 1 error); further red
@@ -503,7 +561,7 @@ refusals. This is locally patched evidence, not certification. Null collection e
 retain the preexisting shared-assembler limitation (BUG-20261015-09), outside this delivery.
 The D11 date/evidence below is preserved as originally recorded.
 
-== SQL to-one fetch join verification (2026-10-16)
+=== SQL to-one fetch join verification (2026-10-16)
 
 After decision D11 (eligible to-one fetch joins read from the owner's SQL row), the new
 SQL-counting `FetchJoinTest` was red first (10 select-count failures) and now passes 14 tests;
@@ -511,7 +569,7 @@ SQL-counting `FetchJoinTest` was red first (10 select-count failures) and now pa
 patched PostgreSQL 17 run below retains 2135 tests, 2131 passes, zero failures/errors and the
 four unchanged official skips, aggregated from all 259 XML reports. Fixture hashes are unchanged.
 
-== Lazy to-one verification (2026-10-15)
+=== Lazy to-one verification (2026-10-15)
 
 After the bounded lazy to-one follow-up, `./mvnw -ntp clean install` passes 834 reactor tests
 (zero failures, errors or skips). The focused SQL/generation/module regressions pass 53 tests,

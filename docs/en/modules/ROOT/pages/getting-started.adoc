@@ -1,20 +1,390 @@
 = Getting started
-:description: Build the independent Noether reactor.
+:description: A first entity stored and queried with Noether, in a Java SE application on the module path.
 
-Use Java 25 (Temurin) and Maven 3.9.16 from `.sdkmanrc`. Install the external
-Mansart and Vauban snapshots required by the integration modules first.
+[.lead]
+This page builds a small Java SE application from an empty directory: one entity, one `persistence.xml`, the
+annotation processor that writes the entity access at build time, and an in-memory H2 database. The application
+stores two books and queries them back. Every file below is complete; together they build and run as shown.
 
-[source,sh]
+== Prerequisites
+
+* **Java 25** — Temurin recommended.
+* **Maven 3.9** — the Noether project itself pins 3.9.16.
+* Noether has no release yet. Version `{project-version}` comes from the Vidocq snapshot repository,
+  `https://maven.vidocq.dev/snapshots/`, which the POM below declares.
+
+The project has five files:
+
 ----
-sdk env
-./mvnw -ntp test
-./mvnw -ntp install
+library/
+├── pom.xml
+└── src/main/
+    ├── java/
+    │   ├── module-info.java
+    │   └── com/acme/library/
+    │       ├── Book.java
+    │       └── Main.java
+    └── resources/
+        └── META-INF/persistence.xml
 ----
 
-Applications use `io.vidocq.noether:noether-jpa-core`, a dialect adapter such
-as `noether-jpa-dialect-h2` and optionally `noether-jpa-cdi`. In Java SE, a unit
-configured by `jakarta.persistence.jdbc.*` gets a connection pool from
-`noether-jpa-pool-mansart`; without it, each transaction opens its own connection.
-For generated entity access, configure `noether-jpa-processor` as the annotation
-processor. See xref:modules/noether-persistence.adoc[Persistence] for the
-Java module contracts and xref:usage.adoc[bootstrap].
+[#pom]
+== The POM
+
+[source,xml,subs=attributes+]
+----
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.acme</groupId>
+    <artifactId>library</artifactId>
+    <version>1.0-SNAPSHOT</version>
+
+    <properties>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <noether.version>{project-version}</noether.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>jakarta.persistence</groupId>
+            <artifactId>jakarta.persistence-api</artifactId>
+            <version>3.2.0</version>
+        </dependency>
+        <dependency>
+            <groupId>io.vidocq.noether</groupId>
+            <artifactId>noether-jpa-core</artifactId>
+            <version>${noether.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.vidocq.noether</groupId>
+            <artifactId>noether-jpa-dialect-h2</artifactId>
+            <version>${noether.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.vidocq.noether</groupId>
+            <artifactId>noether-jpa-pool-mansart</artifactId>
+            <version>${noether.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <version>2.3.232</version>
+            <scope>runtime</scope>
+        </dependency>
+    </dependencies>
+
+    <repositories>
+        <repository>
+            <id>vidocq-snapshots</id>
+            <url>https://maven.vidocq.dev/snapshots/</url>
+            <releases>
+                <enabled>false</enabled>
+            </releases>
+            <snapshots>
+                <enabled>true</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.14.0</version>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>io.vidocq.noether</groupId>
+                            <artifactId>noether-jpa-processor</artifactId>
+                            <version>${noether.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.8.1</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>copy-dependencies</goal>
+                        </goals>
+                        <configuration>
+                            <includeScope>runtime</includeScope>
+                            <outputDirectory>${project.build.directory}/modules</outputDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+----
+
+[cols="2,1,4"]
+|===
+| Artifact | Scope | Why it is there
+
+| `jakarta.persistence-api`
+| compile
+| The Jakarta Persistence 3.2 API the application codes against.
+
+| `noether-jpa-core`
+| compile
+| The provider. The application compiles against it because the entity access the processor generates implements
+  its SPI, `io.vidocq.noether.jpa.core.spi`.
+
+| `noether-jpa-dialect-h2`
+| runtime
+| The SQL of H2. Noether finds the dialects through `ServiceLoader` and picks the one that matches the database.
+
+| `noether-jpa-pool-mansart`
+| runtime
+| Optional. A connection pool for the units configured by `jakarta.persistence.jdbc.*`, closed with the factory.
+  Without it, each transaction opens its own connection.
+
+| `h2`
+| runtime
+| The JDBC driver.
+
+| `noether-jpa-processor`
+| annotation processor
+| Writes the entity access and the canonical metamodel at compile time. It is on the processor path, not a
+  dependency of the application.
+|===
+
+The `maven-dependency-plugin` execution only gathers the runtime jars in `target/modules`, to run the application
+from the command line below.
+
+== The entity
+
+[source,java]
+----
+package com.acme.library;
+
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.Id;
+
+@Entity
+public class Book {
+
+    @Id
+    @GeneratedValue
+    private Long id;
+
+    private String title;
+
+    private int published;
+
+    protected Book() {
+    }
+
+    public Book(String title, int published) {
+        this.title = title;
+        this.published = published;
+    }
+
+    public Long getId() {
+        return id;
+    }
+
+    public String getTitle() {
+        return title;
+    }
+
+    public int getPublished() {
+        return published;
+    }
+}
+----
+
+A plain Jakarta Persistence entity: field access, because `@Id` is on a field; a no-argument constructor that is not
+private; no setter. Noether reads and writes the private fields through the access the processor generates, not
+through reflection.
+
+[#reserved-words]
+[TIP]
+====
+The field is `published`, not `year`. Noether writes table and column names as the mapping gives them, and H2 2.x
+reserves `YEAR`: a column named `year` makes schema generation fail with a syntax error. Rename such a column
+(`@Column(name = "publication_year")`), quote it (`@Column(name = "\"year\"")`), or quote every name of the unit
+with `<delimited-identifiers/>` in an `orm.xml`.
+====
+
+== The persistence unit
+
+`src/main/resources/META-INF/persistence.xml`:
+
+[source,xml]
+----
+<?xml version="1.0" encoding="UTF-8"?>
+<persistence xmlns="https://jakarta.ee/xml/ns/persistence"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xsi:schemaLocation="https://jakarta.ee/xml/ns/persistence https://jakarta.ee/xml/ns/persistence/persistence_3_2.xsd"
+             version="3.2">
+    <persistence-unit name="library" transaction-type="RESOURCE_LOCAL">
+        <provider>io.vidocq.noether.jpa.core.NoetherPersistenceProvider</provider>
+        <class>com.acme.library.Book</class>
+        <properties>
+            <property name="jakarta.persistence.jdbc.url" value="jdbc:h2:mem:library;DB_CLOSE_DELAY=-1"/>
+            <property name="jakarta.persistence.jdbc.user" value="sa"/>
+            <property name="jakarta.persistence.schema-generation.database.action" value="drop-and-create"/>
+        </properties>
+    </persistence-unit>
+</persistence>
+----
+
+* `<provider>` names Noether, so no other provider on the path takes the unit.
+* `RESOURCE_LOCAL`: the application demarcates its transactions itself. JTA units, where a container does, are
+  covered in xref:usage.adoc#cdi[Usage].
+* `jakarta.persistence.jdbc.*` give the database. Noether detects the dialect from the JDBC metadata.
+* `drop-and-create` creates the `Book` table at startup, from the mapping.
+
+== The module descriptor
+
+`src/main/java/module-info.java`:
+
+[source,java]
+----
+module com.acme.library {
+    requires jakarta.persistence;
+    requires io.vidocq.noether.jpa.core;
+
+    provides io.vidocq.noether.jpa.core.spi.ManagedAccessProvider
+        with com.acme.library._NoetherJpaAccess;
+}
+----
+
+The processor writes one `_NoetherJpaAccess` class per entity package. The `provides` clause hands it over to
+Noether through `ServiceLoader`, so the package of `Book` stays closed: no `opens`, no `exports`.
+
+Leave the clause out and the build tells you, with the exact line to add:
+
+----
+[WARNING] Noether hands the accesses it generated over through ServiceLoader: declare them in the module-info.java of com.acme.library, or Noether will need the entity packages opened to io.vidocq.noether.jpa.core:
+      provides io.vidocq.noether.jpa.core.spi.ManagedAccessProvider with com.acme.library._NoetherJpaAccess;
+----
+
+Run it anyway, and the factory refuses to start with a `PersistenceException` that names both ways out:
+`Noether cannot access the class com.acme.library.Book: compile it with noether-jpa-processor and declare the access
+it generates (…), or open its package to io.vidocq.noether.jpa.core (…)`.
+
+On the class path there is no module descriptor to write: the processor also registers the accesses in
+`META-INF/services`.
+
+== The application
+
+[source,java]
+----
+package com.acme.library;
+
+import jakarta.persistence.Persistence;
+
+public class Main {
+
+    public static void main(String[] args) {
+        try (var factory = Persistence.createEntityManagerFactory("library")) {
+            factory.runInTransaction(em -> {
+                em.persist(new Book("Moderne Algebra", 1930));
+                em.persist(new Book("Idealtheorie in Ringbereichen", 1921));
+            });
+
+            var books = factory.callInTransaction(em -> em
+                .createQuery("select b from Book b where b.published < :year order by b.published", Book.class)
+                .setParameter("year", 1925)
+                .getResultList());
+            books.forEach(book -> System.out.println(book.getId() + " " + book.getTitle() + " (" + book.getPublished() + ")"));
+        }
+    }
+}
+----
+
+`runInTransaction` and `callInTransaction` (Jakarta Persistence 3.2) open an entity manager, begin a transaction,
+run the lambda, commit, and close the entity manager; an exception rolls the transaction back. Closing the factory
+closes its connection pool.
+
+== Build and run
+
+[source,bash]
+----
+mvn package
+java --module-path target/classes:target/modules --module com.acme.library/com.acme.library.Main
+----
+
+The query returns the one book published before 1925:
+
+----
+2 Idealtheorie in Ringbereichen (1921)
+----
+
+The same application runs on the class path, where `module-info.java` is ignored:
+
+[source,bash]
+----
+java -cp "target/classes:target/modules/*" com.acme.library.Main
+----
+
+== What the build generated
+
+Next to `Book.class`, `target/classes/com/acme/library` holds what `noether-jpa-processor` wrote:
+
+[cols="1,3"]
+|===
+| Class | Role
+
+| `Book$$NoetherAccess`
+| Reads and writes the state of `Book`: instantiation, field reads and writes, identifier and version. Noether
+  calls it instead of reflecting on the class.
+
+| `_NoetherJpaAccess`
+| The `ManagedAccessProvider` of the package: it hands the accesses of its entities over to Noether.
+
+| `Book_`
+| The canonical metamodel of Jakarta Persistence (§6.2.1.1), for type-safe Criteria queries: `Book_.title`,
+  `Book_.published`.
+|===
+
+Nothing is generated or defined when the application starts, and no package has to be opened, which is what an
+ahead-of-time setting needs: the project's Leyden AOT cache smoke test runs an application built this way (see
+xref:performance.adoc[Performance]). Entities compiled without the processor, such
+as entities in a third-party jar, still work: Noether then generates their access when the factory starts, which
+needs their package opened to `io.vidocq.noether.jpa.core`. See xref:concepts.adoc#entity-access[Entity access].
+
+== Without `persistence.xml`
+
+Jakarta Persistence 3.2 can also describe a unit in code, with `PersistenceConfiguration`:
+
+[source,java]
+----
+var unit = new PersistenceConfiguration("catalog")
+    .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
+    .managedClass(Book.class)
+    .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:catalog;DB_CLOSE_DELAY=-1")
+    .property(PersistenceConfiguration.JDBC_USER, "sa")
+    .property(PersistenceConfiguration.SCHEMAGEN_DATABASE_ACTION, "drop-and-create");
+
+try (var factory = unit.createEntityManagerFactory()) {
+    factory.runInTransaction(em -> em.persist(new Book("Moderne Algebra", 1930)));
+}
+----
+
+== Next steps
+
+* *Another database.* Replace `noether-jpa-dialect-h2` and `h2` with `noether-jpa-dialect-postgresql` and the
+  PostgreSQL driver, and change the JDBC URL. H2 and PostgreSQL are the two databases Noether supports.
+* *Inject the entity manager.* With a CDI container, add `noether-jpa-cdi`: `@PersistenceContext`,
+  `@PersistenceUnit` and `@Inject` reach the units of `persistence.xml`. See xref:usage.adoc#cdi[Usage].
+* *Run on Vidocq.* The Vidocq runtime assembles Noether, the connection pool and the transactions for you. See
+  xref:dev@vidocq::modules/vidocq-runtime-extensions.adoc#noether-persistence[the `noether-persistence` extension].
+* *Deploy on an application server.* Noether runs unchanged on Open Liberty and Quarkus. See
+  xref:usage.adoc#servers[Application servers].
+* *Understand the design.* xref:concepts.adoc[Concepts] explains the entity access, the persistence context and
+  what `LAZY` means in Noether.

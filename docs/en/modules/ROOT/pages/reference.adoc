@@ -1,29 +1,215 @@
 = Reference
-:description: Noether artifacts and external integrations.
+:description: Noether artifacts, configuration properties, databases, deployment on containers and servers, and the exact boundaries of each mapping.
 
-All Noether artifacts are under `io.vidocq.noether`:
+[.lead]
+What to look up: the artifacts and their Java modules, every property Noether reads, the databases it supports, how
+to deploy it on a CDI container, Quarkus or a Jakarta EE server, and the exact limits of the mappings it supports.
 
-[cols="2,3"]
+[#artifacts]
+== Artifacts
+
+All Noether artifacts are under `io.vidocq.noether`, version `{project-version}`:
+
+[cols="2,2,3"]
 |===
-| Artifact | Role
-| `noether-root` | Repository reactor
-| `noether-jpa` | Persistence aggregator (directory `noether-persistence`)
-| `noether-jpa-core` | Persistence provider
-| `noether-jpa-pool-mansart` | Optional connection pool of the `jakarta.persistence.jdbc.*` units in Java SE (`mansart-pool`), found through `ServiceLoader`
-| `noether-jpa-dialect-spi` | SQL AST and dialect contract
-| `noether-jpa-dialect-h2`, `noether-jpa-dialect-postgresql` | Dialect adapters
-| `noether-jpa-processor` | APT and generated entity access
-| `noether-jpa-jta` | JTA bridge of a Jakarta EE server (`java:comp/TransactionSynchronizationRegistry`)
-| `noether-jpa-cdi` | Persistence injection on a CDI container (`@PersistenceContext`, `@PersistenceUnit`, and `@Inject` of each unit of `persistence.xml`); JTA through the container's registry (`noether-jpa-jta`)
-| `noether-validation`, `noether-validation-core` | Provisional local-only Validation
+| Artifact | Java module | Role
+
+| `noether-jpa-core` | `io.vidocq.noether.jpa.core` | The persistence provider, `io.vidocq.noether.jpa.core.NoetherPersistenceProvider`
+| `noether-jpa-processor` | `io.vidocq.noether.jpa.processor` | Annotation processor: entity access and canonical metamodel, at compile time
+| `noether-jpa-dialect-h2` | `io.vidocq.noether.jpa.dialect.h2` | SQL of H2
+| `noether-jpa-dialect-postgresql` | `io.vidocq.noether.jpa.dialect.postgresql` | SQL of PostgreSQL
+| `noether-jpa-dialect-spi` | `io.vidocq.noether.jpa.dialect.spi` | The SQL tree and the dialect contract (brought by the dialects)
+| `noether-jpa-pool-mansart` | `io.vidocq.noether.jpa.pool.mansart` | Optional: pools the connections of the `jakarta.persistence.jdbc.*` units in Java SE (`mansart-pool`), found through `ServiceLoader`
+| `noether-jpa-jta` | `io.vidocq.noether.jpa.jta` | JTA bridge: the container's `TransactionSynchronizationRegistry` (`java:comp/TransactionSynchronizationRegistry` on a server)
+| `noether-jpa-cdi` | `io.vidocq.noether.jpa.cdi` | CDI integration: `@PersistenceContext`, `@PersistenceUnit`, and `@Inject` of each unit of `persistence.xml`; JTA through `noether-jpa-jta`
+| `noether-jpa` | | Aggregator POM of the Persistence modules (directory `noether-persistence`), not a dependency
+| `noether-root` | | Reactor of the repository
+| `noether-validation`, `noether-validation-core` | `io.vidocq.noether.validation.*` | Provisional Validation provider for Noether's own tests, not published
 |===
 
-Java module names retain their suffixes under `io.vidocq.noether.jpa.*` and
-`io.vidocq.noether.validation.*`. External dependencies stay under
-`io.vidocq.mansart` and `io.vidocq.vauban`. `mansart.version` pins the independent
-Mansart version, and `vauban.version` the Vauban of the CDI module-it. Integration vehicles and all provisional Validation artifacts
-are excluded from release publishing.
+External dependencies stay under `io.vidocq.mansart` (Pool, Transactions) and `io.vidocq.vauban`. In the Noether
+build, `mansart.version` pins the independent Mansart version, and `vauban.version` the Vauban of the CDI module-it.
+Integration vehicles and all provisional Validation artifacts are excluded from release publishing.
 
+[#properties]
+== Configuration properties
+
+A unit's properties come from `persistence.xml` or `PersistenceConfiguration`, then the container's data sources,
+then the map passed to `createEntityManagerFactory`, each overriding the previous one.
+
+=== Noether properties
+
+[cols="3,2,4"]
+|===
+| Property | Default | Meaning
+
+| `io.vidocq.noether.jpa.dialect`
+| detected
+| The dialect by name, `h2` or `postgresql` (case-insensitive), instead of detecting it from the database.
+
+| `io.vidocq.noether.jpa.jdbc.batch-size`
+| `50`
+| Statements of the same shape sent in one JDBC batch at flush.
+
+| `io.vidocq.noether.jpa.fetch.batch-size`
+| `16`
+| Pending lazy collections or references loaded in one statement, `1` to `256`; `1` turns batching off.
+
+| `io.vidocq.noether.jpa.pool`
+| on
+| `false` turns the `noether-jpa-pool-mansart` pool off for this unit.
+
+| `io.vidocq.noether.jpa.pool.max-size`
+| `10`
+| Most connections the pool opens. At least `2` for a unit with a `TABLE` generator.
+
+| `io.vidocq.noether.jpa.pool.min-idle`
+| `0`
+| Connections kept open while idle.
+
+| `io.vidocq.noether.jpa.pool.acquire-timeout`
+| `PT5S`
+| How long a caller waits for a pooled connection, as an ISO-8601 duration.
+
+| `io.vidocq.noether.jpa.transaction-integration`
+| found through `ServiceLoader`
+| A `TransactionIntegration` object (in the map only), the JTA bridge to use. `noether-jpa-cdi` and `noether-jpa-jta`
+  supply it; applications do not set it.
+|===
+
+One system property, not a unit property: `io.vidocq.noether.serialization.allow`, a comma-separated list of package
+prefixes whose classes may be deserialized from a column mapped to a `Serializable` value (none by default).
+
+=== Standard properties
+
+[cols="3,2,4"]
+|===
+| Property | Default | Notes
+
+| `jakarta.persistence.jdbc.url`, `.user`, `.password`, `.driver`
+|
+| The connections of a Java SE unit.
+
+| `jakarta.persistence.nonJtaDataSource`, `jakarta.persistence.jtaDataSource`, `jakarta.persistence.dataSource`
+|
+| A `DataSource` *object*. A name needs JNDI, which Java SE does not have: it is refused.
+
+| `jakarta.persistence.transactionType`
+| `RESOURCE_LOCAL`
+| Overrides the unit's `transaction-type`.
+
+| `jakarta.persistence.provider`
+|
+| Must be empty or name `NoetherPersistenceProvider` for Noether to take the unit.
+
+| `jakarta.persistence.schema-generation.database.action`, `.scripts.action`
+| `none`
+| `none`, `create`, `drop`, `drop-and-create`.
+
+| `jakarta.persistence.schema-generation.create-source`, `.drop-source`
+| `metadata`
+| `metadata`, `script`, `metadata-then-script`, `script-then-metadata`; `script` when only a script is given.
+
+| `jakarta.persistence.schema-generation.create-script-source`, `.drop-script-source`, `jakarta.persistence.sql-load-script-source`
+|
+| A `Reader`, a URL, a class path resource or a path.
+
+| `jakarta.persistence.schema-generation.scripts.create-target`, `.drop-target`
+|
+| A `Writer`, or a file URL or path.
+
+| `jakarta.persistence.schema-generation.create-database-schemas`
+| `false`
+| Creates the schemas the mapping names.
+
+| `jakarta.persistence.database-product-name`, `-major-version`, `-minor-version`
+|
+| Generate scripts without connecting to the database.
+
+| `jakarta.persistence.sharedCache.mode`
+| `UNSPECIFIED`
+| Overrides `<shared-cache-mode>`. `UNSPECIFIED` behaves as `ENABLE_SELECTIVE`.
+
+| `jakarta.persistence.validation.mode`
+| `AUTO`
+| Overrides `<validation-mode>`: `AUTO`, `CALLBACK`, `NONE`.
+
+| `jakarta.persistence.validation.factory`
+|
+| A `ValidatorFactory` to use instead of the default one.
+
+| `jakarta.persistence.validation.group.pre-persist`, `.pre-update`, `.pre-remove`
+| `Default`, `Default`, none
+| Validation groups, as class names separated by commas, or `Class` objects.
+
+| `jakarta.persistence.lock.timeout`
+|
+| Milliseconds. Applied as a hint of `find`, `lock`, `refresh` or a query; set on the entity manager, to `find`,
+  `lock` and `refresh` only. Not yet applied from `persistence.xml` or the factory (BUG-20261113-04).
+
+| `jakarta.persistence.query.timeout`
+|
+| Milliseconds, rounded up to seconds for JDBC. Applied as a query hint (or `setTimeout`). Not yet applied from the
+  entity manager, `persistence.xml` or the factory (BUG-20261113-04).
+
+| `jakarta.persistence.cache.retrieveMode`, `.storeMode`
+| `USE`
+| On the entity manager and on `find` / `refresh`. On a query, recorded but not applied yet (BUG-20261113-05).
+|===
+
+Query hints: `jakarta.persistence.query.timeout`, `jakarta.persistence.lock.timeout`, and
+`jakarta.persistence.fetchgraph` / `loadgraph` whose value is an `EntityGraph` of the unit (a graph name is
+refused). Noether defines no hint of its own.
+
+=== `persistence.xml`
+
+Versions 1.0 to 3.2 are read, each against its schema; a DTD is refused.
+
+[cols="2,4"]
+|===
+| Element | Support
+
+| `provider`, `class`, `jar-file`, `mapping-file`, `exclude-unlisted-classes`, `properties`
+| Honoured. `META-INF/orm.xml` is read when it exists; a `mapping-file` that does not exist fails the start. An empty
+  `<exclude-unlisted-classes/>` means `true`.
+
+| `transaction-type`
+| `RESOURCE_LOCAL` when absent.
+
+| `jta-data-source`, `non-jta-data-source`
+| Resolved by the container: a JNDI name on a server, a `@Named` `DataSource` bean with `noether-jpa-cdi`. Refused in
+  Java SE, which has no JNDI.
+
+| `shared-cache-mode`, `validation-mode`
+| Honoured, `UNSPECIFIED` and `AUTO` by default.
+
+| `qualifier`, `scope`
+| Used by `noether-jpa-cdi` for the CDI beans of the unit (see <<cdi-beans>>); ignored elsewhere.
+|===
+
+[#databases]
+== Databases
+
+[cols="1,2,3"]
+|===
+| Database | Dialect | Tested with
+
+| H2 | `noether-jpa-dialect-h2` | H2 2.3.232, the unit and integration tests
+| PostgreSQL | `noether-jpa-dialect-postgresql` | PostgreSQL 17, the Jakarta Persistence TCK
+|===
+
+Noether picks the dialect when the factory first needs it, from `DatabaseMetaData.getDatabaseProductName()`, among
+the dialects found through `ServiceLoader`. A database no dialect serves fails with a `PersistenceException` that
+names the product and the dialects found; `io.vidocq.noether.jpa.dialect` names the dialect explicitly.
+
+Noether writes table and column names as the mapping gives them and does not quote reserved words: a column named
+after a reserved word of the database (`year` on H2 2.x) must be renamed or quoted, or the unit must declare
+`<delimited-identifiers/>`.
+
+[#containers]
+== Containers and servers
+
+[#server-deployment]
 [WARNING]
 .Deploying on an application server
 ====
@@ -84,6 +270,7 @@ Tested on Open Liberty 26.0.0.10 by `noether-it-openliberty`.
 ----
 ====
 
+[#cdi-jta]
 [NOTE]
 .JTA units on a CDI container
 ====
@@ -114,6 +301,7 @@ extension brings them. A bare Vauban application, without the Vidocq extension, 
 the factory of a JTA unit fails at creation with a `PersistenceException` that names the missing bean.
 ====
 
+[#cdi-beans]
 [NOTE]
 .Persistence units as CDI beans
 ====
@@ -155,6 +343,7 @@ Tested by `noether-jpa-cdi-module-it` (`InjectedUnitModuleTest`) on Vauban and M
 TCK 3.2.1 does not exercise `<qualifier>` or `<scope>` (TCK-GAP-001 in `PERSISTENCE_TCK_PROPOSALS.md`).
 ====
 
+[#quarkus]
 [NOTE]
 .Running on Quarkus
 ====
@@ -191,7 +380,14 @@ quarkus.datasource."allocations".jdbc.transactions=disabled
 ----
 ====
 
-== Query entity graph hints
+[#boundaries]
+== Mapping and loading boundaries
+
+The exact limits of the mappings and loading plans that go beyond the common cases. A shape outside them is
+refused when the factory starts, or loaded the complete, ordinary way; it is never silently mapped another way. The
+decision numbers (D14, D22, ...) point to `noether-persistence/ROADMAP.md`.
+
+=== Query entity graph hints
 
 [cols="2,4"]
 |===
@@ -214,7 +410,7 @@ loading. Mixed graphs may combine same-row to-ones with complete collection read
 No eager requirement is suppressed; D10 lazy eligibility and D13
 batch bounds remain unchanged. See xref:internals.adoc[] for the shared hydration path.
 
-== Find entity graph hints (D15, 2026-10-16)
+=== Find entity graph hints (D15, 2026-10-16)
 
 The same standard hints drive eligible direct/nested to-one SQL for non-locking
 database finds. Composite root keys, mapped converters and secondary-table columns
@@ -230,7 +426,7 @@ are unchanged. Plain/locking finds, unsupported polymorphic/inherited types and
 unsupported graph paths retain ordinary loading. Collection nodes outside D16 below
 use complete follow-up loading.
 
-== One leaf collection graph (D16, 2026-10-16)
+=== One leaf collection graph (D16, 2026-10-16)
 
 Both graph hints can join one explicitly requested root collection through the
 existing collection-fetch assembler. Eligible queries select one concrete root,
@@ -258,7 +454,7 @@ extra/filtering joins, complex/polymorphic/inherited shapes, embedded/treated pa
 and entity/embeddable map keys keep complete existing fallbacks. Nested/multiple
 collection SQL is future work, not a Cartesian-product expansion.
 
-== One collection with to-one subgraphs (D17, 2026-10-16)
+=== One collection with to-one subgraphs (D17, 2026-10-16)
 
 The single graph-requested root collection of D16 may carry an element subgraph, when the
 collection is entity-valued and the subgraph holds only direct or nested to-one nodes
@@ -281,7 +477,7 @@ collections of targets), polymorphic/inherited targets, embedded subgraphs, root
 nodes beside the collection and the D16 query/map-key restrictions keep the complete
 existing fallback. Explicit JOIN FETCH semantics are unchanged.
 
-== Mixed root collection and root to-one graphs (D18, 2026-10-16)
+=== Mixed root collection and root to-one graphs (D18, 2026-10-16)
 
 D18 extends the historical D16/D17 scopes above: exactly one explicitly requested
 root collection may coexist with direct/nested root to-one branches, for example
@@ -309,7 +505,7 @@ explicit fetch joins retain their established complete fallback or explicit refu
 Multiple collection SQL fetching, nested collections, broader fetch eligibility and
 broader lazy/batch/mapping support remain separate prioritized roadmap items.
 
-== Multiple root collection graphs (D19, 2026-10-16)
+=== Multiple root collection graphs (D19, 2026-10-16)
 
 D19 supersedes only the historical multiple-root-collection fallback above. Two or
 more requested root collections, for example `Order.lines.product` and
@@ -341,7 +537,7 @@ bound does not cover those extra fallback reads. Single-collection and explicit
 JOIN FETCH SQL remain unchanged. Nested collection graphs, broader fetch/lazy/batch
 eligibility and missing mappings are the remaining prioritized lots.
 
-== Two collection graph edges (D20, 2026-10-16)
+=== Two collection graph edges (D20, 2026-10-16)
 
 D20 supersedes D19's nested-collection fallback for *two collection edges beginning
 at a root collection*: `Order.lines.discounts`, or `Order.lines.product.tags`.
@@ -375,7 +571,7 @@ single-collection graphs keep their existing collectors. Deeper graphs and broad
 fetch/lazy/batch/mapping eligibility remain separate backlog items.
 
 [[d33-three-collection-edges]]
-== Three collection edges in nested entity graphs (D33, 2026-10-18)
+=== Three collection edges in nested entity graphs (D33, 2026-10-18)
 
 D33 extends the staged D19/D20 collectors to at most three collection edges along
 a nested FETCH/LOAD graph path that begins at a root collection, for example
@@ -399,7 +595,7 @@ ordinary loading or established refusal. Broader polymorphic/map-key/locking
 eligibility and collection joins are not included.
 
 [[d34-root-to-one-three-collection-edges]]
-== Three collection edges through root to-one paths (D34, 2026-10-18)
+=== Three collection edges through root to-one paths (D34, 2026-10-18)
 
 D34 extends D21's root-to-one seed route to at most three collection edges along
 one FETCH/LOAD graph path, for example
@@ -415,7 +611,7 @@ non-hydratable owners/targets and complex query shapes retain complete ordinary
 loading or established explicit refusal. This does not add collection joins or
 change D33's separate root-collection route and other graph eligibility.
 
-== To-one relationships in element-collection values (D24, 2026-10-16)
+=== To-one relationships in element-collection values (D24, 2026-10-16)
 
 Embeddable `@ElementCollection` values support owning `@ManyToOne` and
 `@OneToOne` to non-polymorphic, single-table targets with supported direct
@@ -450,7 +646,7 @@ projections; D28 adds whole relationship-bearing value projections. Collection
 fetch joins and fetch graphs use complete ordinary loading; owners with these
 values are not eligible for optimized row hydration or lazy batching.
 
-== Composite primary-key targets (D29, 2026-10-17)
+=== Composite primary-key targets (D29, 2026-10-17)
 
 Owning element-value to-ones may target direct composite primary keys represented
 by `@EmbeddedId` or `@IdClass` when every key component is BASIC. Explicit
@@ -475,7 +671,7 @@ polymorphic/JOINED/TABLE_PER_CLASS targets and unsupported owner keys/indexes
 remain unsupported.
 Broader query and mapping support requires separate bounded lots.
 
-== Simple MapsId primary-key targets (D30, 2026-10-17)
+=== Simple MapsId primary-key targets (D30, 2026-10-17)
 
 An element-value owning to-one may target an entity whose simple `@Id` is a
 shared primary key derived through one owning `@OneToOne @MapsId` to a
@@ -490,7 +686,7 @@ nested or chained `@MapsId`, business-key, polymorphic and other unsupported
 target mappings remain outside this support. This does not widen collection
 fetching, graph hydration, lazy references or batching.
 
-== Direct composite MapsId targets (D31/D37, 2026-10-18)
+=== Direct composite MapsId targets (D31/D37, 2026-10-18)
 
 An element-value owning to-one may target an entity with a direct `@EmbeddedId`
 made entirely of BASIC attributes, when one or more distinct named components are derived
@@ -508,7 +704,7 @@ business keys, polymorphism and other
 unsupported mappings remain refused. Collection fetch/graph hydration,
 optimized row loading, lazy references and batching are unchanged.
 
-== Whole composite MapsId element targets (D38/D39, 2026-10-18)
+=== Whole composite MapsId element targets (D38/D39, 2026-10-18)
 
 An element-value owning to-one may reference a dependent whose whole direct
 all-BASIC `@EmbeddedId` is shared through exactly one owning
@@ -531,7 +727,7 @@ Named-component composite parents beyond D40/D41/D42 below, nested/non-BASIC/cha
 relationship-valued parent keys, overlapping derivation, polymorphic/business/
 join-table mappings and broader collection fetch/lazy/batch support are not added.
 
-== Named composite MapsId element targets (D40/D41/D42, 2026-10-18)
+=== Named composite MapsId element targets (D40/D41/D42, 2026-10-18)
 
 An element-value owning to-one may target an entity with an `@EmbeddedId`
 containing distinct embedded components mapped by named owning to-one
@@ -559,7 +755,7 @@ Unmapped nested remainder, deeper/non-BASIC/relationship-valued/chained parent
 identities, polymorphic/business/join-table
 mappings and broader collection fetch/lazy/batch support remain outside this lot.
 
-== Relationship-valued IdClass targets (D32/D35/D36, 2026-10-18)
+=== Relationship-valued IdClass targets (D32/D35/D36, 2026-10-18)
 
 An element-value owning to-one may target an entity using `@IdClass` when
 one or more `@Id` components are owning `@ManyToOne` or `@OneToOne` FKs to
@@ -586,7 +782,7 @@ polymorphism and other unsupported mappings remain refused. Collection
 fetch/graph hydration, optimized row loading, lazy references and batching are
 unchanged.
 
-== Inverse collection-element boundary (D25, 2026-10-17)
+=== Inverse collection-element boundary (D25, 2026-10-17)
 
 This is a bootstrap-validation follow-up, not inverse relationship loading.
 Persistence 3.2 §2.7 gives embeddables no entity identity: an association back
@@ -608,7 +804,7 @@ different rows. Duplicate values/targets and list/map positions do not create
 element identity. No inverse FK/column, lifecycle/query support or orphan removal
 is added. D24 owning behavior is unchanged; see the dated D25/TCK evidence.
 
-== Simple-parent MapsId derived identity (D23, 2026-10-16)
+=== Simple-parent MapsId derived identity (D23, 2026-10-16)
 
 The existing P5 mappings now have a strengthened bounded contract:
 
@@ -649,7 +845,7 @@ derived from BASIC EmbeddedId/IdClass parents. This does not imply arbitrary nes
 composite/partial key support or broader optimized loading.
 See the detailed Persistence roadmap and `TCK.md` for the exact evidence.
 
-== Secondary-table business-key to-one joins (D26/D43, 2026-10-18)
+=== Secondary-table business-key to-one joins (D26/D43, 2026-10-18)
 
 D26 extends the historical D22 boundary below to one immutable, non-null,
 insertable, unique non-ID BASIC column in a declared target secondary table.
@@ -688,7 +884,7 @@ nullable/nonunique/ambiguous keys and inverse business collections stay refused.
 Ordinary primary-key references are unchanged. See the prioritized roadmap and
 xref:tck.adoc[D26/D43 verification]; D5/D9–D25 evidence remains historical.
 
-== Querying to-one references in element collections (D27, 2026-10-17)
+=== Querying to-one references in element collections (D27, 2026-10-17)
 
 JPQL and Criteria can navigate an owning to-one association inside a collection
 embeddable to target attributes, compare the entity by identity, and project the
@@ -704,7 +900,7 @@ added; ordinary collection loading is unchanged. Broader mapping/query shapes
 remain separate work; see the D27 contract and test evidence in the Persistence
 roadmap.
 
-== Projecting relationship-bearing element values (D28, 2026-10-17)
+=== Projecting relationship-bearing element values (D28, 2026-10-17)
 
 JPQL and Criteria can select an entire supported collection embeddable value,
 including nested embeddables and owning to-one attributes. Each relationship is
@@ -717,7 +913,7 @@ This enables value projection only: whole-value comparisons involving
 relationships, unsupported D24 mapping shapes, and collection fetch, graph,
 lazy-reference, or batching optimizations remain outside this support.
 
-== Unique business-key to-one joins (D22, 2026-10-16)
+=== Unique business-key to-one joins (D22, 2026-10-16)
 
 D22 prioritizes relational mapping over further graph optimization.
 An owning `ManyToOne` or `OneToOne` may reference single/composite *non-ID BASIC*
@@ -767,7 +963,7 @@ collections and out-of-band or mutable business keys. These remaining mapping
 boundaries precede deeper graph/lazy/batch optimization in the roadmap.
 Historical D5/D9–D21 and BUG evidence is retained.
 
-== Root to-one collection graphs (D21, 2026-10-16)
+=== Root to-one collection graphs (D21, 2026-10-16)
 
 D21 supersedes D20's root-to-one-collection fallback for finite, acyclic root
 to-one paths to hydratable collection owners, for example `customer.addresses`
@@ -804,7 +1000,7 @@ guards, explicit fetch joins and earlier graph eligibility are unchanged.
 Deeper-than-three/cyclic graph optimization, broader fetch/lazy/batch eligibility
 and missing mappings remain separate priorities.
 
-== Lazy read batching
+=== Lazy read batching
 
 [cols="3,1,4"]
 |===
@@ -831,3 +1027,20 @@ auto-flush. Like the ordinary lazy loader they read the database, do not consult
 per pending identity and do not force cache publication. Normal transaction publication
 still applies; graphs containing unloaded to-one references remain excluded from L2.
 Detach/clear/close behavior is unchanged. See xref:internals.adoc[] for hydration details.
+
+[#building]
+== Building Noether from source
+
+Noether builds with Java 25 (Temurin) and Maven 3.9.16, both pinned in `.sdkmanrc`. The build needs the snapshots of
+`vidocq-parent`, Mansart and Vauban: declare `https://maven.vidocq.dev/snapshots/` as a repository in your Maven
+`settings.xml`, because the POM declares it for plugins only.
+
+[source,sh]
+----
+sdk env
+./mvnw -ntp install -DskipTests   # full build
+./mvnw -ntp test                  # unit and module-path tests
+----
+
+The official TCK runners and the benchmarks are separate; see xref:tck.adoc[TCK] and
+xref:performance.adoc[Performance].

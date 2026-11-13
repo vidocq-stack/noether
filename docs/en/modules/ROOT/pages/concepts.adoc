@@ -1,61 +1,197 @@
 = Concepts
-:description: Noether ownership and persistence boundaries.
+:description: How Noether reaches entities, tracks them, loads them and talks to the database.
 
-Noether provides the Persistence context, ORM mapping, JPQL/Criteria execution,
-schema generation and generated entity access. Its SQL uses a dedicated sealed
-AST and dialect SPI, not the Jakarta Data dialect SPI.
+[.lead]
+Noether implements the standard Jakarta Persistence model: a persistence unit, an `EntityManagerFactory` per unit,
+an `EntityManager` with its persistence context. This page explains the choices Noether makes inside that model,
+and what they mean for an application. For the exact boundaries of each feature, see
+xref:reference.adoc[Reference].
 
-Mansart Data remains a direct JDBC repository implementation. Pool and
-Transactions are independent Mansart building blocks reused by Noether: the
-pool through the optional `noether-jpa-pool-mansart`, a `ServiceLoader`
-provider that `noether-jpa-core` does not depend on.
-Data/JPA integration and processor mutualisation remain deferred.
+== The pieces of a unit
 
-`SINGLE_TABLE`, `JOINED` and `TABLE_PER_CLASS` are within the delivered engineering scope.
-Table-per-class polymorphic ranges use SQL unions of concrete tables and hierarchy-wide
-unique identifiers; `IDENTITY` generation is explicitly refused. Validation is an optional bridge;
-the included provider remains provisional. See the module roadmaps for precise
-scope and remaining limitations.
+[cols="1,3"]
+|===
+| Piece | In Noether
 
-LAZY collections — one-to-many, many-to-many and element collections declared through a
-collection or map interface — load on first access within their persistence context, using
-typed wrappers assigned by the generated access. Once the owner is detached or its entity
-manager closed, an unloaded collection throws `PersistenceException`; initialized ones stay
-usable. EAGER mappings, fetch joins and fetch/load graphs initialize them. Concrete collection
-field types and collections inside embeddables stay eager.
+| Persistence unit
+| Declared in `META-INF/persistence.xml`, in code with `PersistenceConfiguration`, or handed over by a container as a
+  `PersistenceUnitInfo`. Its managed classes come from `<class>` elements, from `orm.xml` mapping files, or from a
+  scan of the unit's root when classes are not listed.
 
-Owning LAZY many-to-one and one-to-one foreign-key properties can hold an interceptable
-generated entity subclass. The context registers one instance for the target identity:
-reading its simple identifier does not select a row; another getter or a setter loads
-that same instance once. `isLoaded` reports the pending state without SQL and `load`
-initializes it. Missing targets throw `EntityNotFoundException`; detached/closed unloaded
-references throw `PersistenceException` rather than exposing default field values.
-EAGER, fetch joins, Criteria fetches and entity graphs initialize their required targets.
+| `EntityManagerFactory`
+| Built once per unit: it reads the mapping, plans the access to every entity, generates the schema when asked, and
+  holds the optional second-level cache and the connection pool of a Java SE unit. Thread-safe.
 
-The target must be a public, non-final/non-sealed property-access class directly extending
-`Object`, with a single annotated basic identifier, no interfaces, no non-private instance
-fields and no non-interceptable instance methods. The owning getter and class must be
-non-final. Field access, final forms, inverse one-to-one, join tables, embedded paths,
-inheritance, composite/derived keys and XML-only/remapped target identifiers stay eager.
-Final entity classes are a non-portable eager-only extension. See xref:internals.adoc[]
-for generation and cache boundaries.
+| `EntityManager`
+| One unit of work. Not thread-safe, as the specification says: use one per thread, or let a container hand out
+  one per transaction.
 
-JPQL `JOIN FETCH` / `LEFT JOIN FETCH` and Criteria `fetch` of a to-one relationship read the
-target from the same SQL row as its owner. The context still holds one instance per identity:
-an unloaded reference is filled in place, and an instance already managed (even modified) is
-kept as is. Only non-`DISTINCT`, non-grouped, non-locking top-level selects of the root
-variable, with fetch paths `variable.attribute` to targets of one concrete entity type (no
-subclass, no joined or table-per-class inheritance), are read this way; other query shapes
-and `find` keep complete follow-up loading. Collection fetch joins have their separate
-D12 row-assembly path.
+| Persistence context
+| The set of entities an entity manager manages: one instance per identity, plus a snapshot of the state each one
+  had when it was read or last flushed.
+|===
 
-Query entity graphs (D14) use that same to-one hydration path for one concrete-root
-entity selection. Graph nodes and nested to-one subgraphs contribute LEFT fetch joins;
-LOAD additionally includes mapped eager to-ones. FETCH may still overfetch eager state
-through the ordinary loader, so omitted eager attributes are not guaranteed unloaded.
-Collection graph nodes, unsupported types and complex query shapes keep complete
-follow-up loading. Graph-aware non-locking finds (D15, 2026-10-16) reuse this planner,
-key binders and staged hydration on eligible database reads, without query auto-flush
-or overwriting managed dirty state. Cache/managed hits retain their fast paths and
-graph completion. Nested/multiple collection SQL remains future work.
-See xref:reference.adoc[] for exact eligibility.
+[#entity-access]
+== Entity access
+
+A provider has to instantiate entities, read their state to write it, and write the state it reads from the
+database. Hibernate ORM and EclipseLink do it through reflection, or by enhancing the entity bytecode. Noether does
+it through an *access*: one class per entity, generated, that does those operations with ordinary bytecode.
+
+The access is generated in one of two ways:
+
+[cols="1,2,2"]
+|===
+| | At compile time (recommended) | When the factory starts
+
+| How
+| `noether-jpa-processor` in `annotationProcessorPaths`
+| Nothing to configure: the entity was compiled without the processor, a third-party jar for instance
+
+| What is generated
+| `Book$$NoetherAccess` in the entity's package, `_NoetherJpaAccess` per package, the canonical metamodel `Book_`
+| A hidden class defined through a private lookup into the entity's package
+
+| Java Modules
+| The package stays closed. The module `provides` its `_NoetherJpaAccess` (the processor prints the line)
+| The package must be open to Noether: `opens com.acme.shop.model to io.vidocq.noether.jpa.core;`
+
+| Ahead of time
+| Nothing is defined at run time. A Leyden AOT cache works; the project's AOT smoke test runs this way
+| Classes are defined at run time: not available to a GraalVM native image
+|===
+
+An access generated at compile time is used only while it matches the entity class. A class changed since the
+processor ran falls back to the start-time path, with a warning in the log.
+
+The mapping itself is read the same way. Noether reads the annotations from the class files with the JDK's
+Class-File API, overlays the `orm.xml` mapping files, and plans the access with the same code at compile time and at
+start time. Reflection is left to what the specification itself returns: `Attribute.getJavaMember()` in the
+metamodel.
+
+== The persistence context and the flush
+
+The persistence context holds one instance per identity. `find` of an identity already managed returns that
+instance without SQL; a query that returns its row returns that instance too, and never overwrites its state.
+
+Noether detects changes by comparison, not by interception. When an entity is read or flushed, the persistence
+context keeps a copy of its state, the *snapshot*. At flush, Noether compares each managed entity with its
+snapshot, and writes the rows that differ. Your classes are not enhanced, and a change made through a field, a
+setter or a method of the entity is seen the same way.
+
+The flush writes inserts, updates and deletes in an order the foreign keys accept, batches the statements of the
+same shape over JDBC, and checks the `@Version` of versioned entities. It runs before a commit and, when the flush
+mode is `AUTO` (the default), before every query run inside a transaction, so that the query sees the changes of the
+transaction (§3.10.8). Outside a transaction, a query flushes nothing.
+
+The cost of a flush grows with the number of managed entities. For a long unit of work that reads much and
+changes little, `clear()` or `detach()` what you are done with, or read through a query with a projection.
+
+[#lazy]
+== What `LAZY` means in Noether
+
+Lazy loading usually relies on intercepting the access to a field. Noether intercepts nothing at run time, so it
+loads lazily where it can do so with the classes it generates:
+
+* **Collections** — `@OneToMany`, `@ManyToMany` and `@ElementCollection`, `LAZY` by default — are loaded on first
+  access. The generated access assigns a collection wrapper that loads its elements once, in the owner's
+  persistence context. Once the owner is detached or its entity manager closed, touching an unloaded collection
+  throws `PersistenceException`: load it before, with a fetch join, an entity graph or by touching it. Collections
+  declared with a concrete type (`ArrayList` rather than `List`) and collections inside embeddables stay eager.
+* **To-one references** — `@ManyToOne` and `@OneToOne` declared `LAZY` — are lazy when the target class allows
+  Noether to generate a subclass of it: a public, non-final class with property access and a single basic
+  identifier, among other conditions listed in xref:reference.adoc[Reference]. The reference is then a managed
+  instance of that subclass: reading its identifier needs no SQL, any other method loads it once, in place.
+  Otherwise the reference is loaded with its owner: `LAZY` is a hint, as the specification allows.
+* **Batches.** The first access to an unloaded collection or reference also loads the others of the same kind
+  pending in the persistence context, up to `io.vidocq.noether.jpa.fetch.batch-size` (16 by default), in one
+  statement.
+
+`PersistenceUnitUtil.isLoaded` reports the state of each attribute without SQL. Fetch joins, `EAGER` mappings and
+`jakarta.persistence.fetchgraph` / `loadgraph` hints load what they name.
+
+== From a query to SQL
+
+JPQL and Criteria are two front ends of the same thing. Both produce one immutable query tree, which Noether
+translates to its own SQL tree, which the dialect renders for the database. A named query keeps its tree. Native
+queries are sent as written.
+
+[cols="1,3"]
+|===
+| Layer | Role
+
+| `noether-jpa-core`
+| Parses JPQL, builds Criteria, resolves paths against the mapping, builds the SQL tree.
+
+| `noether-jpa-dialect-spi`
+| The SQL tree (a sealed hierarchy) and the contract a dialect implements.
+
+| `noether-jpa-dialect-h2`, `noether-jpa-dialect-postgresql`
+| Render the tree for one database. Found through `ServiceLoader`, picked from the JDBC metadata of the database,
+  or named with `io.vidocq.noether.jpa.dialect`.
+|===
+
+Noether writes names as the mapping gives them: it does not quote reserved words. Quote them in the mapping, or use
+`<delimited-identifiers/>` (see xref:getting-started.adoc#reserved-words[reserved words]).
+
+== Threads
+
+JDBC runs on the thread that calls the entity manager: a query, a flush or a lazy load is never handed to another
+thread, and no lock is held across a blocking call. An application on virtual threads keeps its virtual threads,
+and a blocked database call parks only the virtual thread that made it.
+
+== Transactions and containers
+
+`noether-jpa-core` knows resource-local transactions only. JTA comes in through layers, each optional:
+
+[cols="1,3"]
+|===
+| Module | Role
+
+| `noether-jpa-core`
+| Resource-local units: `EntityTransaction`, connections from `jakarta.persistence.jdbc.*` or a `DataSource`.
+  JTA through an SPI, `TransactionIntegration`, and no dependency on a transaction manager.
+
+| `noether-jpa-jta`
+| The JTA bridge. It joins each persistence context to the container's transaction with an interposed
+  synchronization of the `TransactionSynchronizationRegistry`: flush before completion, detach after. The
+  container's data source enlists the connections and the container commits them; Noether never does.
+
+| `noether-jpa-cdi`
+| The CDI integration, a build compatible extension: `@PersistenceContext`, `@PersistenceUnit`, and `@Inject` of
+  every unit of `persistence.xml` (Jakarta EE 11 Platform §13.12). It takes the registry and the data source as
+  CDI beans; it is tested on Vauban and on Quarkus ArC.
+|===
+
+On a Jakarta EE server, the server bootstraps the unit and injects `@PersistenceContext` itself: the application
+carries `noether-jpa-core`, `noether-jpa-jta` and a dialect, and leaves `noether-jpa-cdi` out. See
+xref:usage.adoc#servers[Application servers].
+
+== Jakarta Persistence or Jakarta Data
+
+Both read and write entities; they answer different needs.
+
+[cols="1,2,2"]
+|===
+| | Jakarta Data (`mansart-jakarta-data`) | Jakarta Persistence (Noether)
+
+| Programming model
+| Repository interfaces, implemented at compile time
+| `EntityManager`, JPQL, Criteria
+
+| State
+| Stateless: each call reads or writes rows
+| A persistence context: managed entities, changes written at flush
+
+| Relationships
+| What the query selects
+| Loaded on demand, cascades, orphan removal
+
+| Fits
+| CRUD services, typed queries, pagination
+| Rich domain models, long units of work, applications ported from Hibernate ORM or EclipseLink
+|===
+
+Both use generated entity access and share no runtime code. The Jakarta Data processor and `noether-jpa-processor`
+can run in the same build: the canonical metamodel `Book_` comes from Noether, the Jakarta Data metamodel `_Book`
+from Mansart.

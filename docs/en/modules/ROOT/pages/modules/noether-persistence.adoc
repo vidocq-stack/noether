@@ -149,6 +149,7 @@ Data and JPA processors can run together in either order without duplicate canon
 JPA retains canonical output owned by another producer. Since Vidocq/mansart#95, Mansart Data writes only its Jakarta Data metamodel `_Book` and `Book_` comes from `noether-jpa-processor`, plural attributes included (BUG-20261009-09); Mansart Data does not yet compile an entity with a collection field (BUG-20261111-06).
 ====
 
+[#inheritance]
 == Inheritance
 
 `SINGLE_TABLE` is the default for entity hierarchies, even without `@Inheritance`.

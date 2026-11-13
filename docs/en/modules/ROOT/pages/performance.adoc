@@ -1,5 +1,29 @@
 = Performance
-:description: Current comparative evidence, measured bottlenecks and bounded optimization proposals.
+:description: Comparative measurements against Hibernate ORM and EclipseLink, the bottlenecks they showed, and how to reproduce them.
+
+[.lead]
+Noether is measured with a JMH harness that runs the same four workloads on Noether, Hibernate ORM and EclipseLink:
+a find by primary key, a JPQL query of 32 rows, a versioned update, and an insert-update-delete cycle. Every figure
+on this page comes from an entry of
+link:{repo-noether}/src/branch/main/noether-persistence/BENCH.md[`BENCH.md`], which holds the raw scores, errors
+and allocation.
+
+== In short
+
+* *On in-memory H2, against Hibernate ORM 5.6.15* (BENCH-20261111-07, one session), Noether has the higher
+  throughput on the four workloads — 935,077 against 517,832 finds per second, 130,653 against 67,493 queries — and
+  allocates 0.55x to 0.83x what Hibernate does per operation.
+* *On PostgreSQL 17* (BENCH-20261111-05), a database round trip dominates, and Noether and Hibernate 5.6 come out at
+  parity within the run-to-run variation. Noether allocates 0.61x to 0.78x Hibernate's (BENCH-20261111-08).
+* *Hibernate ORM 7.4 and EclipseLink 5.0 were not measured again* after the optimizations of 2026-11-11. At the
+  last comparison with them (BENCH-20261018-01 to -03, BENCH-20261111-01), before those optimizations, Noether was behind both
+  on every workload.
+
+These are single-fork, single-thread measurements of one entity without relationships: not a production latency,
+scalability or virtual-thread claim. The sections below give the methodology, the profiles and every change they
+led to, in the order they happened.
+
+== Running the harness
 
 The standalone JMH harness is isolated from production dependencies:
 

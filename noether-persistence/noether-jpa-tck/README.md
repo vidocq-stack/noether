@@ -44,7 +44,7 @@ two test resources lose one block, the local backport of upstream fix
 **Why.** The unit-wide delimited default makes the declared upper-case names case-sensitive, whereas the official
 PostgreSQL DDL creates them unquoted (folded to lower case) and the tests' native SQL is unquoted too. A correct
 provider fails these 25 tests against the 3.2.1 fixtures; see TCK-BUG-001 in
-[`../../PERISTENCE_TCK_PROPOSALS.md`](../../PERISTENCE_TCK_PROPOSALS.md). The provider is **not** changed: it keeps
+[`../../PERSISTENCE_TCK_PROPOSALS.md`](../../PERSISTENCE_TCK_PROPOSALS.md). The provider is **not** changed: it keeps
 honouring `<delimited-identifiers/>` (its own regression tests prove it); only the two fixtures are adapted. The
 maintainer decided this adoption; Noether does not seek a certification, and a patched score is never presented as
 an official result.

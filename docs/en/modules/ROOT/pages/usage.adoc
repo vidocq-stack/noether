@@ -1,38 +1,286 @@
 = Usage
-:description: Standard Jakarta Persistence bootstrap and generated access.
+:description: Configuring and using Noether: persistence units, connections, entities, queries, loading, CDI, Vidocq and application servers.
 
-Use the standard `jakarta.persistence` API and entity annotations.
-In `META-INF/persistence.xml`, the explicit provider is:
+[.lead]
+Noether is used through the standard Jakarta Persistence API: nothing in your code names Noether except the
+`<provider>` of a unit. This page goes through the tasks of an application, from declaring a unit to deploying it
+on a server. xref:getting-started.adoc[Getting started] builds a complete application first; the properties are
+listed in xref:reference.adoc#properties[Reference].
+
+[#units]
+== Declaring persistence units
+
+A unit is declared in `META-INF/persistence.xml` (versions 1.0 to 3.2), or in code with `PersistenceConfiguration`
+(see xref:getting-started.adoc[Getting started]). Name Noether as its provider:
 
 [source,xml]
 ----
 <provider>io.vidocq.noether.jpa.core.NoetherPersistenceProvider</provider>
 ----
 
-On the Java module path, declare generated-access providers with `provides
-io.vidocq.noether.jpa.core.spi.ManagedAccessProvider with
-your.package._NoetherJpaAccess;`. Generated-access entities do not require
-reflective opens. Opaque entities using the Class-File API bootstrap path must
-open their entity packages to `io.vidocq.noether.jpa.core`.
+A unit manages:
 
-A JTA unit needs a transaction bridge. On a Jakarta EE server, add `noether-jpa-jta`:
-the provider finds the server's `java:comp/TransactionSynchronizationRegistry` and the
-server's JTA data source enlists the connections (see
-xref:reference.adoc[Reference, "Deploying on an application server"]). On a CDI
-container, `noether-jpa-cdi` uses the same bridge: the container must provide a
-`jakarta.transaction.TransactionSynchronizationRegistry` bean and a `javax.sql.DataSource`
-bean whose connections it enlists in its transactions (see
-xref:reference.adoc[Reference, "JTA units on a CDI container"]). The core does not
-import CDI, JTA or Vauban. See
-xref:modules/noether-persistence.adoc[the detailed Persistence guide].
+* the classes its `<class>` elements list;
+* the classes its mapping files declare: `<mapping-file>` elements, and `META-INF/orm.xml` when it exists;
+* the classes of the `<jar-file>` elements;
+* unless `<exclude-unlisted-classes>` is set, every entity, embeddable, mapped superclass and converter of the unit's
+  root, the directory or jar that holds `META-INF/persistence.xml`.
 
-On Vauban, put `noether-jpa-cdi` on the annotation processor path next to
-`vauban-processor`, so that its build compatible extension runs at build time,
-and boot with `VaubanContainer.builder().scanClasspath()`, which reads what the
-build recorded. This needs a Vauban that includes Vidocq/vauban#285.
+A file can declare several units. Two units of the same root that do not exclude their unlisted classes both manage
+every class of that root: with schema generation, each creates every table in its own database. List the classes
+of each unit and exclude the others:
+
+[source,xml]
+----
+<persistence-unit name="ledger">
+    <class>com.acme.ledger.Entry</class>
+    <exclude-unlisted-classes>true</exclude-unlisted-classes>
+</persistence-unit>
+<persistence-unit name="archive">
+    <class>com.acme.ledger.Note</class>
+    <exclude-unlisted-classes>true</exclude-unlisted-classes>
+</persistence-unit>
+----
+
+The properties of a unit come from its `<properties>`, overridden by the map passed to
+`Persistence.createEntityManagerFactory(name, map)`.
+
+[#connections]
+== Connections
+
+A unit gets its connections in one of three ways:
+
+[cols="1,2,2"]
+|===
+| Source | How | Typical setting
+
+| JDBC properties
+| `jakarta.persistence.jdbc.url`, `.user`, `.password`, and `.driver` when the driver is not found by its URL
+| Java SE, tests
+
+| A `DataSource` object
+| `jakarta.persistence.nonJtaDataSource` (or `jakarta.persistence.dataSource`) in the map of
+  `createEntityManagerFactory`
+| An application that owns its pool
+
+| A container's data source
+| `<jta-data-source>` and `<non-jta-data-source>`: a JNDI name on an application server, the name of a `@Named`
+  `DataSource` bean with `noether-jpa-cdi`
+| Jakarta EE servers, CDI containers, Vidocq
+|===
+
+In Java SE, `<jta-data-source>` and `<non-jta-data-source>` cannot be resolved (there is no JNDI): use the JDBC
+properties, or pass the `DataSource` object.
+
+*Pooling JDBC-property units.* Add `noether-jpa-pool-mansart` at run time and Noether pools the connections of a unit
+configured by `jakarta.persistence.jdbc.*`; the pool closes with the factory. Without it, each transaction opens its
+own connection, and the factory says so in one `INFO` line.
+
+[cols="2,1,3"]
+|===
+| Property | Default | Meaning
+
+| `io.vidocq.noether.jpa.pool.max-size` | `10` | Most connections open at once.
+| `io.vidocq.noether.jpa.pool.min-idle` | `0` | Connections kept open while idle.
+| `io.vidocq.noether.jpa.pool.acquire-timeout` | `PT5S` | How long a caller waits for a connection (ISO-8601).
+| `io.vidocq.noether.jpa.pool` | | `false` turns the pool off for this unit.
+|===
+
+A `DataSource` passed to Noether is used as it is: Noether neither pools it nor sizes it.
+
+[#entities]
+== Entities and their access
+
+Compile the entities with `noether-jpa-processor`, as in xref:getting-started.adoc#pom[Getting started]. Then:
+
+* *On the module path*, the module of the entities declares what the processor generated, one line per entity
+  package (the processor prints it, and the factory names it when it is missing):
++
+[source,java]
+----
+provides io.vidocq.noether.jpa.core.spi.ManagedAccessProvider
+    with com.acme.shop.model._NoetherJpaAccess;
+----
+* *On the class path*, there is nothing to declare: the processor registers the accesses in `META-INF/services`.
+* *Entities compiled without the processor* (a third-party jar) get their access when the factory starts. On the
+  module path, their package must be open to Noether: `opens com.acme.shop.model to io.vidocq.noether.jpa.core;`.
+
+Annotations and `orm.xml` mapping files both work, together or alone (`metadata-complete`). Records are supported
+as embeddables. See xref:concepts.adoc#entity-access[Entity access].
+
+*Identifiers.* `IDENTITY`, `SEQUENCE`, `TABLE`, `UUID` and `AUTO` are supported. `AUTO` is a `UUID` for a `UUID`
+identifier, the named sequence when the generator names one, and otherwise a table generator: table `SEQUENCE`,
+columns `SEQ_NAME` and `SEQ_COUNT`, blocks of 50. A table generator allocates its blocks on a connection of its own,
+committed on its own, so the unit needs two connections at once: a Noether pool below two connections is refused,
+and a JTA unit allocates through its `<non-jta-data-source>`, which it then must have.
+
+== Reading and writing
+
+Jakarta Persistence 3.2 runs a unit of work in one call:
+
+[source,java]
+----
+factory.runInTransaction(em -> em.persist(new Book("Moderne Algebra", 1930)));
+
+Book book = factory.callInTransaction(em -> em.find(Book.class, id));
+----
+
+Both open an entity manager, begin a resource-local transaction, run the lambda, commit, and close the entity
+manager; an exception rolls back. The classic form works the same:
+
+[source,java]
+----
+try (var em = factory.createEntityManager()) {
+    var tx = em.getTransaction();
+    tx.begin();
+    try {
+        Book book = em.find(Book.class, id);
+        book.setTitle("Moderne Algebra I");    // written at commit: no call to save
+        tx.commit();
+    } finally {
+        if (tx.isActive()) tx.rollback();
+    }
+}
+----
+
+`persist`, `find`, `getReference`, `merge`, `remove`, `refresh`, `detach` and their cascades behave as the
+specification says. Optimistic locking uses `@Version`; pessimistic locks (`PESSIMISTIC_READ`,
+`PESSIMISTIC_WRITE`, `PESSIMISTIC_FORCE_INCREMENT`) lock the rows they read with `SELECT … FOR UPDATE`, or
+`FOR SHARE` for `PESSIMISTIC_READ` on PostgreSQL (H2 has no shared row lock and takes `FOR UPDATE`).
+
+[NOTE]
+====
+`jakarta.persistence.lock.timeout` applies when it is passed to `find`, `lock` or `refresh`, or set on the entity
+manager. Set in `persistence.xml` or on the factory, it is not applied yet, and a JPQL query reads it only from its
+own hint; `jakarta.persistence.query.timeout` likewise applies only as a query hint or through `setTimeout`
+(BUG-20261113-04).
+====
+
+[#queries]
+== Queries
+
+*JPQL*, with named or positional parameters and pagination:
+
+[source,java]
+----
+List<Book> page = em.createQuery("""
+        select b from Book b
+        where b.published between :from and :to
+        order by b.title""", Book.class)
+    .setParameter("from", 1920)
+    .setParameter("to", 1935)
+    .setFirstResult(20).setMaxResults(10)
+    .getResultList();
+----
+
+*Criteria*, typed with the canonical metamodel the processor generates (`Book_`):
+
+[source,java]
+----
+var cb = em.getCriteriaBuilder();
+var query = cb.createQuery(Book.class);
+var book = query.from(Book.class);
+query.where(cb.lessThan(book.get(Book_.published), 1925))
+     .orderBy(cb.asc(book.get(Book_.title)));
+List<Book> early = em.createQuery(query).getResultList();
+----
+
+*Named queries* come from `@NamedQuery`, `<named-query>` in `orm.xml`, or `addNamedQuery`, and are created with
+`createNamedQuery`. *Native queries* (`createNativeQuery`) are sent as written, with result
+mappings (`@SqlResultSetMapping`) and stored procedures (`createStoredProcedureQuery`).
+
+JPQL supports the 3.2 language: joins and fetch joins, `TREAT`, `TYPE`, subqueries, constructor expressions
+(`select new`), set operations (`union`, `intersect`, `except`), bulk `update` and `delete`, and the 3.2 functions.
+
+[#loading]
+== Loading relationships
+
+Collections are lazy by default and to-one references are lazy when their target allows it (see
+xref:concepts.adoc#lazy[What `LAZY` means]). To load what a use case needs in one go:
+
+* a fetch join: `select o from Order o join fetch o.lines where o.id = :id`;
+* an entity graph, passed as the `jakarta.persistence.fetchgraph` or `loadgraph` hint of a query or of `find`
+  (see <<entity-graphs,Query entity graphs>>);
+* `FetchType.EAGER` on the mapping.
+
+The first access to an unloaded collection or reference loads the other pending ones of the same kind in the same
+statement, up to `io.vidocq.noether.jpa.fetch.batch-size` (`16` by default, `1` turns batching off).
+
+A collection that was never loaded cannot be loaded once its owner is detached: it throws `PersistenceException`.
+Load it while the entity manager is open.
+
+== Inheritance
+
+`SINGLE_TABLE` (the default), `JOINED` and `TABLE_PER_CLASS` are supported, with annotations or `orm.xml`,
+including polymorphic queries, `TYPE` and `TREAT`. Under `TABLE_PER_CLASS`, identifiers must be unique across the
+hierarchy and `IDENTITY` is refused. See xref:modules/noether-persistence.adoc#inheritance[Inheritance].
+
+== Schema generation
+
+The standard `jakarta.persistence.schema-generation.*` properties create, drop or script the schema from the
+mapping, a script, or both. `drop-and-create` suits tests; production databases are usually managed by migration
+scripts, with `none` (the default).
+
+[source,xml]
+----
+<property name="jakarta.persistence.schema-generation.database.action" value="drop-and-create"/>
+<property name="jakarta.persistence.sql-load-script-source" value="META-INF/data.sql"/>
+----
+
+`EntityManagerFactory.getSchemaManager()` does the same from code: `create`, `drop`, `validate` (checks that the
+mapped tables and columns exist) and `truncate` (empties the unit's tables and runs the load script again, handy
+between tests).
+
+== Second-level cache and Bean Validation
+
+* *Second-level cache.* `<shared-cache-mode>` turns on the factory's cache: `ALL`, `ENABLE_SELECTIVE` (entities
+  marked `@Cacheable`, also the behaviour of `UNSPECIFIED`), `DISABLE_SELECTIVE` or `NONE`. Changes are published
+  to it only after their transaction commits. `find`, `refresh` and the entity manager honour
+  `jakarta.persistence.cache.retrieveMode` and `storeMode`; on a query, `setCacheRetrieveMode` and
+  `setCacheStoreMode` are recorded but not applied yet (BUG-20261113-05).
+* *Bean Validation.* With a Jakarta Validation provider on the path, entities are validated before persist and
+  update (`<validation-mode>` `AUTO`, the default). `CALLBACK` makes a missing provider an error, `NONE` turns
+  validation off. Noether's own `noether-validation` is a test stopgap, not published: bring a provider.
+
+[#cdi]
+== With CDI
+
+`noether-jpa-cdi` is a CDI 4.1 build compatible extension, so it needs no API of a particular container. It is
+tested on Vauban, on Quarkus ArC and in the Vidocq runtime. It injects the units of `persistence.xml`:
+
+[source,java]
+----
+@ApplicationScoped
+public class Library {
+
+    @PersistenceContext(unitName = "library")
+    EntityManager em;                  // container-managed, transaction-scoped
+
+    @PersistenceUnit(unitName = "library")
+    EntityManagerFactory factory;      // closed by the container, not by the application
+
+    @Transactional
+    public void add(Book book) {
+        em.persist(book);
+    }
+}
+----
+
+`unitName` may be left out when the application has one unit. `@PersistenceContext` gives transaction-scoped or
+extended, synchronized or unsynchronized entity managers.
+
+*JTA units* run on what the container provides, through `noether-jpa-jta`: a `TransactionSynchronizationRegistry`
+bean, and a `DataSource` bean whose connections the container enlists in its transactions — the bean `@Named` after
+the unit's `<jta-data-source>`, or the `@Default` one. Quarkus and Jakarta EE servers have both beans, and the
+Vidocq runtime brings them. Details, including `TABLE` identifiers and connection sharing, are in
+xref:reference.adoc#cdi-jta[Reference].
+
+*On Vauban*, put `noether-jpa-cdi` on the annotation processor path next to `vauban-processor`, so that its build
+compatible extension runs at build time, and boot with `VaubanContainer.builder().scanClasspath()`, which reads what
+the build recorded.
 
 [#inject-units]
-== Injecting a persistence unit with @Inject
+=== Injecting a persistence unit with @Inject
 
 Jakarta Persistence 3.2 lets a unit of `persistence.xml` name CDI qualifiers (`<qualifier>`, §8.2.1.5) and a CDI
 scope (`<scope>`, §8.2.1.6). Jakarta EE 11 Platform §13.12 then makes the unit injectable with `@Inject`.
@@ -78,10 +326,42 @@ scope (`<scope>`, §8.2.1.6). Jakarta EE 11 Platform §13.12 then makes the unit
   - With `scanClasspath()`, Vauban replays what its annotation processor recorded, and the processor cannot read
     `persistence.xml`. These beans are then missing, while `@PersistenceContext` and `@PersistenceUnit` still work.
 
-This needs a Vauban that includes Vidocq/vauban#286, the fixes of BUG-20261113-01 and BUG-20261113-02: a bean in an
+This needs a Vauban that includes Vidocq/vauban#286, the fixes of Vauban's BUG-20261113-01 and BUG-20261113-02: a bean in an
 extension's scope, and the exceptions of an interface-typed normal-scoped bean.
 
-== Composite business tuples in a target secondary table
+[#vidocq]
+== On Vidocq
+
+The Vidocq runtime assembles Noether for you. The `noether-persistence` extension brings `noether-jpa-core`,
+`noether-jpa-cdi`, the H2 and PostgreSQL dialects and Mansart Transactions; the units run on the data sources
+declared in the Vidocq configuration. Every factory an injection point names is created when the application starts,
+so a unit that cannot start fails the boot rather than the first request. See
+xref:dev@vidocq::modules/vidocq-runtime-extensions.adoc#noether-persistence[the `noether-persistence` extension].
+
+[#servers]
+== Application servers
+
+Noether runs unchanged where a container owns the transactions and the data sources:
+
+* *Jakarta EE servers* (tested on Open Liberty). The server bootstraps the unit and injects `@PersistenceContext`
+  itself. Turn on the server's persistence container without its own provider (on Open Liberty,
+  `persistenceContainer-3.2` rather than `persistence-3.2`), deploy `noether-jpa-core`, `noether-jpa-jta` and a
+  dialect in the WAR, and leave `noether-jpa-cdi` and `noether-jpa-pool-mansart` out. The exact dependencies and
+  exclusions are in xref:reference.adoc#server-deployment[Deploying on an application server].
+* *Quarkus.* Leave Quarkus' Hibernate ORM extension out, declare `noether-jpa-cdi`, a dialect, `quarkus-arc`,
+  `quarkus-narayana-jta` and `quarkus-agroal`, and configure the data source in `application.properties`. See
+  xref:reference.adoc#quarkus[Running on Quarkus].
+
+In both, a JTA unit with `TABLE` identifiers (or `AUTO` resolved to a table generator) needs a
+`<non-jta-data-source>` whose connections take part in no transaction.
+
+[#advanced-mappings]
+== Advanced mappings
+
+Shapes beyond the usual mappings that Noether supports, each within explicit limits. Shapes outside them are refused
+when the factory starts, never silently mapped another way.
+
+=== Composite business tuples in a target secondary table
 
 D43 permits owning `ManyToOne`/`OneToOne` joins to a composite tuple of
 immutable, non-null, insertable BASIC columns in one declared target
@@ -99,7 +379,7 @@ to the actual primary identity; converters, lifecycle/cache and association
 queries use the ordinary paths. Fetch graphs/joins remain complete eager
 fallbacks. Cross-table tuples and broader loading remain unsupported.
 
-== Relationship-valued IdClass targets in collection elements
+=== Relationship-valued IdClass targets in collection elements
 
 An embeddable element may hold an owning to-one to a target whose `@IdClass`
 contains multiple relationship-valued parts (D35). Give each target relationship
@@ -118,7 +398,7 @@ annotation-mapped. Nested/non-BASIC/chained parent identities and broader optimi
 fetch/lazy/batch loading are not added. See xref:reference.adoc[Reference] for
 the exact D32/D35/D36 mapping boundaries.
 
-== Multiple MapsId components in collection targets
+=== Multiple MapsId components in collection targets
 
 An element-value owning to-one may target an entity with a direct all-BASIC
 `@EmbeddedId` whose distinct components are derived by separate
@@ -134,7 +414,7 @@ collection rewrites, merge, refresh and shared-cache reads retain their semantic
 Overlapping mappings, nested/non-BASIC keys and composite/chained parents are
 not included, and no fetch/lazy/batch optimization is widened.
 
-== Whole composite MapsId collection targets
+=== Whole composite MapsId collection targets
 
 D38/D39 also permit an element-value owning to-one to reference a dependent with
 a whole direct all-BASIC `@EmbeddedId` shared through an owning
@@ -150,7 +430,7 @@ merge/refresh and cache paths. Named-component composite-parent derivation
 beyond D40/D41/D42 below, general nested/chained keys and broader loading optimizations
 are not included.
 
-== Named composite MapsId collection targets
+=== Named composite MapsId collection targets
 
 D40/D41/D42 permit distinct named embedded components of a collection relation
 target's `@EmbeddedId` to derive from an owning `@ManyToOne` or `@OneToOne`
@@ -172,7 +452,11 @@ Unmapped nested remainder, deeper/relationship-valued/chained parent keys and
 broader loading optimizations
 are not included.
 
-== Query entity graphs
+[#graphs-and-lazy-reads]
+== Entity graphs and lazy reads in detail
+
+[#entity-graphs]
+=== Query entity graphs
 
 Both JPQL and Criteria entity queries accept standard graph hints:
 
@@ -279,7 +563,7 @@ See xref:reference.adoc#_root_to_one_collection_graphs_d21_2026_10_16[].
 See xref:reference.adoc#d33-three-collection-edges[].
 See xref:internals.adoc#_query_graph_sql_loading_d14_2026_10_15[].
 
-== Find entity graphs
+=== Find entity graphs
 
 [source,java]
 ----
@@ -300,7 +584,7 @@ are supplied, find retains its existing merged plan, unlike query FETCH preceden
 Plain/locking finds, unsupported types/paths and collections retain complete ordinary
 loading. Existing cache/lock/timeout/refresh contracts are unchanged.
 
-== Bounded lazy reads
+=== Bounded lazy reads
 
 First access batches pending compatible lazy collections or to-one references in the
 same persistence context. The default group size is 16. For a different factory-wide
