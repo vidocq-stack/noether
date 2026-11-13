@@ -1522,9 +1522,8 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
 ## BUG-20261112-01 — The processor refuses a module that reads Noether's core through a `requires transitive`
 
 - **Date**: 2026-11-12
-- **Status**: FIXED on `fix/processor-transitive-readability` (stacked on `fix-proposals`): `NoetherJpaProcessor`
-  follows the `requires transitive` of the modules the application requires, as the module system does, before it
-  asks for the directive.
+- **Status**: FIXED in Vidocq/noether#70 (6c6fdf2): `NoetherJpaProcessor` follows the `requires transitive` of the
+  modules the application requires, as the module system does, before it asks for the directive.
 - **Affected module**: `noether-jpa-processor`, `NoetherJpaProcessor.readsProvider`
 - **Symptom**: an application module that reads `io.vidocq.noether.jpa.core` through a library, `requires lib;`
   where `lib` declares `requires transitive io.vidocq.noether.jpa.core;`, does not compile: `error: The accesses
@@ -1543,3 +1542,33 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
   - 2026-11-12: the Vidocq extension now follows the ecosystem's convention instead, its descriptor naming
     `module-info.requires = io.vidocq.noether.jpa.core` for `vidocq extension add` to write; the fix keeps the
     processor right for a library that hands the provider on.
+
+## BUG-20261113-01 — With two persistence units on Vidocq, every `@PersistenceUnit` injection is ambiguous
+
+- **Date**: 2026-11-13
+- **Status**: FIXED on `fix/factory-names-and-jrt-scan`: a unit's factory bean is named after the unit alone.
+- **Affected module**: `noether-jpa-cdi`, `NoetherPersistenceExtension.factoryName`
+- **Symptom**: a Vidocq application with two units (`ledger` and `archive`) does not boot: `CDI deployment
+  validation failed: Ambiguous dependency: field Ledger.factory of type EntityManagerFactory. Matching beans:
+  [EntityManagerFactory, EntityManagerFactory]`, the same for `Archive.factory`. The `@PersistenceContext` injections
+  resolve. One unit boots.
+- **Minimal reproduction**: `ContainerModuleTest.aUnitsFactoryHasTheSameNameWhateverOtherUnitsTheDeploymentHas`,
+  red on `ff43f6d` (`expected: "noetherPersistenceUnit0_container" but was: "noetherPersistenceUnit1_container"`):
+  ```sh
+  ./mvnw -ntp -pl noether-persistence/noether-jpa-cdi-module-it -am -Dtest=ContainerModuleTest \
+    -Dsurefire.failIfNoSpecifiedTests=false test
+  ```
+  End to end: `vidocq-runtime-it-noether-persistence` with the units `ledger` and `archive` (Vidocq/vidocq#541).
+- **Confirmed cause**: the factory of a unit was named `noetherPersistenceUnit<rank>_<unit>`, its rank among the
+  units the extension had met. The build of a Vidocq application records the synthetic beans
+  (`META-INF/vauban-synthetic-metadata.properties`: `noetherPersistenceUnit0_archive`, `noetherPersistenceUnit1_ledger`),
+  and its boot runs the extension again over the classes in another order: the factories came back under other names,
+  so Vauban kept them as other beans, two per unit. The context beans have no name, so the two registrations of each
+  one were the same bean.
+- **Investigations**:
+  - 2026-11-13: found by the two-unit IT of the Vidocq extension (Vidocq/noether#45, A8). Noether's own
+    `BuildTimeExtensionModuleTest` boots from the build's record with several units and passes: Vauban does not run
+    the extension again there. The name is now `noetherPersistenceUnit_<unit>`, a letter or a digit kept, any other
+    character written as its code point between underscores (`FactoryNameTest`); the Vidocq IT is green with it
+    (9 tests), `vauban-synthetic-metadata.properties` naming `noetherPersistenceUnit_archive` and
+    `noetherPersistenceUnit_ledger`.

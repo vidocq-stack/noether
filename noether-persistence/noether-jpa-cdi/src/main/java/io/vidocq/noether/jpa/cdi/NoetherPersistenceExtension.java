@@ -94,11 +94,10 @@ public final class NoetherPersistenceExtension implements BuildCompatibleExtensi
      */
     @Synthesis
     public void persistenceBeans(SyntheticComponents components) {
-        int index = 0;
         for (String unit : units) {
             components.addBean(EntityManagerFactory.class).type(EntityManagerFactory.class).scope(Singleton.class)
                 .qualifier(AnnotationBuilder.of(PersistenceBinding.class).value("unit:" + unit).build())
-                .name(factoryName(index++, unit))
+                .name(factoryName(unit))
                 .withParam("unit", unit).createWith(PersistenceFactoryCreator.class).disposeWith(PersistenceFactoryDisposer.class);
         }
         contexts.forEach((binding, definition) -> components.addBean(EntityManager.class).type(EntityManager.class)
@@ -110,9 +109,23 @@ public final class NoetherPersistenceExtension implements BuildCompatibleExtensi
             .createWith(PersistenceContextCreator.class).disposeWith(PersistenceContextDisposer.class));
     }
 
-    /** Unique, without dots (a dotted name would clash with any bean named after its first segment). */
-    static String factoryName(int index, String unit) {
-        return "noetherPersistenceUnit" + index + "_" + unit.replaceAll("\\W", "_");
+    /**
+     * Named after the unit alone, never after its rank among the units (BUG-20261113-01): the boot of an application may
+     * run this extension again over classes it sees in another order than the build did, and a second name registered
+     * a second factory of the same unit. Unique and without dots (a dotted name would clash with any bean named after
+     * its first segment): an ASCII letter or digit stays, any other character becomes its code point in hexadecimal
+     * between underscores, so two units never share a name.
+     */
+    static String factoryName(String unit) {
+        StringBuilder name = new StringBuilder("noetherPersistenceUnit_");
+        unit.codePoints().forEach(c -> {
+            if (c < 128 && Character.isLetterOrDigit(c)) {
+                name.appendCodePoint(c);
+            } else {
+                name.append('_').append(Integer.toHexString(c)).append('_');
+            }
+        });
+        return name.toString();
     }
 
     private static String string(AnnotationInfo annotation, String member, String fallback) {

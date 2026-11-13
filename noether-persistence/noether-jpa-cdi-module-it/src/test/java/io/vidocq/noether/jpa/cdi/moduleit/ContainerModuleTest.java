@@ -3,14 +3,43 @@ package io.vidocq.noether.jpa.cdi.moduleit;
 import io.vidocq.noether.jpa.cdi.*;
 import io.vidocq.noether.jpa.jta.SynchronizationRegistryIntegration;
 import io.vidocq.vauban.core.container.VaubanContainer;
+import jakarta.enterprise.inject.Any;
+import jakarta.enterprise.inject.spi.Bean;
 import jakarta.persistence.*;
 import jakarta.transaction.TransactionManager;
 import jakarta.transaction.TransactionSynchronizationRegistry;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.*;
 
 /** §7.7/ch.9, real Vauban CDI Lite on the module path plus real H2/Noether transactions. */
 class ContainerModuleTest {
+    /**
+     * BUG-20261113-01: a factory named after its rank among the units changed name with the other units of the
+     * deployment. The boot of a Vidocq application runs the extension again over its classes, sees them in another
+     * order than the build did, and registered a second factory per unit next to the one the build recorded: with two
+     * units, every {@code @PersistenceUnit} was ambiguous.
+     */
+    @Test
+    void aUnitsFactoryHasTheSameNameWhateverOtherUnitsTheDeploymentHas() {
+        String alone = factoryName("container", Repository.class);
+
+        assertThat(factoryName("container", ExplicitInjectionRepository.class, Repository.class)).isEqualTo(alone);
+    }
+
+    private static String factoryName(String unit, Class<?>... repositories) {
+        var builder = VaubanContainer.builder().addBeanClass(NoetherPersistenceExtension.class)
+            .addBeanClass(Transactions.class).addBeanClass(Services.class);
+        for (Class<?> repository : repositories) builder.addBeanClass(repository);
+        try (var container = builder.build()) {
+            Set<String> names = container.getBeanManager().getBeans(EntityManagerFactory.class, Any.Literal.INSTANCE)
+                .stream().map(Bean::getName).collect(Collectors.toSet());
+            return names.stream().filter(name -> name.endsWith(unit)).findFirst()
+                .orElseThrow(() -> new AssertionError("no factory of " + unit + " among " + names));
+        }
+    }
+
     @Test
     void existingInjectionPointsResolveSynthesizedPersistenceFields() throws Exception {
         try (var container = VaubanContainer.builder().addBeanClass(NoetherPersistenceExtension.class)
