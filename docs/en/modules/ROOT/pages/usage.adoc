@@ -387,8 +387,9 @@ scope (`<scope>`, §8.2.1.6). Jakarta EE 11 Platform §13.12 then makes the unit
   fails the deployment with a `DefinitionException` that names the unit.
 * **When the extension runs.** The beans come from the `persistence.xml` files the extension reads when it runs.
   - Vidocq runs it at build: `vidocq:generate` reads every `persistence.xml` of the application, and the start loads
-    what the extension did (Vidocq/vauban#288). The start runs it instead under `vidocq:dev`, or when the build could
-    not complete it: two units of one name, for instance, make the build warn and the start fail.
+    what the extension did (Vidocq/vauban#288), under `vidocq:dev` too. The start runs it instead on a test class
+    path, after an IDE build that did not run `vidocq:generate`, or when the build could not complete it: two units of
+    one name, for instance, make the build warn and the start fail.
   - A Vauban container built with `VaubanContainer.builder().addBeanClass(NoetherPersistenceExtension.class)` runs it
     at boot.
   - With `scanClasspath()`, Vauban replays what the build recorded. `vauban:generate` with `freezeExtensions`, the
