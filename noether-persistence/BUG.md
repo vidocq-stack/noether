@@ -1572,3 +1572,25 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     character written as its code point between underscores (`FactoryNameTest`); the Vidocq IT is green with it
     (9 tests), `vauban-synthetic-metadata.properties` naming `noetherPersistenceUnit_archive` and
     `noetherPersistenceUnit_ledger`.
+
+## BUG-20261113-02 — A unit declared in a module of a jlink image cannot list its managed classes
+
+- **Date**: 2026-11-13
+- **Status**: FIXED on `fix/factory-names-and-jrt-scan`: `ManagedClasses` walks a `jrt:` root as a directory of the
+  image's file system.
+- **Affected module**: `noether-jpa-core`, `ManagedClasses.scan`
+- **Symptom**: `PersistenceException: Unable to scan jrt:/<module>/ for the managed classes of the persistence unit`,
+  caused by `IOException: <module>/ not found`, for a unit that does not exclude its unlisted classes.
+- **Minimal reproduction**: `ManagedClassesTest.theRootOfAUnitInAModuleOfTheRuntimeImageIsScanned`, red on `ff43f6d`:
+  ```sh
+  ./mvnw -ntp -pl noether-persistence/noether-jpa-core -am -Dtest=ManagedClassesTest \
+    -Dsurefire.failIfNoSpecifiedTests=false test
+  ```
+- **Confirmed cause**: in a runtime image, the `persistence.xml` of a linked module is
+  `jrt:/<module>/META-INF/persistence.xml`, so the unit root is `jrt:/<module>/`. `scan` read every root that was not
+  a `file:` directory as an archive stream, and `jrt:/<module>/` is a directory of the image, not a stream.
+- **Investigations**:
+  - 2026-11-13: found while reviewing the Vidocq extension's documentation (`vidocq:jlink` links the application
+    module into the image). The test scans a JDK module, which declares no managed class; the walk is the one of a
+    `file:` directory, which `theAnnotatedClassesOfADirectoryRootAreAddedAfterTheListedOnes` covers with entities.
+    Not yet run in a real jlink image of an application.

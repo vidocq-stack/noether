@@ -126,4 +126,17 @@ class ManagedClassesTest {
         PersistenceUnitDefinition unit = unit(List.of(), false, null, List.of(missing.toUri().toURL()));
         assertThatThrownBy(() -> ManagedClasses.of(unit)).isInstanceOf(PersistenceException.class).hasMessageContaining("missing.jar");
     }
+
+    /**
+     * BUG-20261113-02: in a runtime image (jlink), the {@code persistence.xml} of a module linked into it is
+     * {@code jrt:/<module>/META-INF/persistence.xml}, so the root of its units is {@code jrt:/<module>/}, which is not
+     * a stream to read but a directory of the image's file system. The JDK module here declares no managed class.
+     */
+    @Test
+    void theRootOfAUnitInAModuleOfTheRuntimeImageIsScanned() throws Exception {
+        URL module = new java.net.URI("jrt:/java.transaction.xa/").toURL();
+
+        assertThat(ManagedClasses.of(unit(List.of("com.acme.Listed"), false, module, List.of())))
+            .containsExactly("com.acme.Listed");
+    }
 }

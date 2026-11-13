@@ -70,7 +70,7 @@ public final class ManagedClasses {
 
     private static void scan(URL location, Set<String> into) {
         try {
-            if ("file".equals(location.getProtocol()) && Files.isDirectory(Path.of(location.toURI()))) {
+            if (isDirectory(location)) {
                 Path root = Path.of(location.toURI());
                 try (Stream<Path> files = Files.walk(root)) {
                     for (Path file : (Iterable<Path>) files.filter(Files::isRegularFile)::iterator) {
@@ -98,6 +98,16 @@ public final class ManagedClasses {
         } catch (IOException | UncheckedIOException | URISyntaxException | IllegalArgumentException e) {
             throw new PersistenceException("Unable to scan " + location + " for the managed classes of the persistence unit", e);
         }
+    }
+
+    /**
+     * A directory of class files: a {@code file:} directory, or a module of the runtime image. The root of a unit
+     * declared in a module that jlink linked into the image is {@code jrt:/<module>/}, a directory of the image's file
+     * system and not a stream to read (BUG-20261113-02).
+     */
+    private static boolean isDirectory(URL location) throws URISyntaxException {
+        return "jrt".equals(location.getProtocol())
+            || "file".equals(location.getProtocol()) && Files.isDirectory(Path.of(location.toURI()));
     }
 
     /** A class file of the unnamed version; versioned entries, module and package descriptors are not classes. */
