@@ -1,6 +1,13 @@
 = What's new
 :description: Noether extraction and compatibility changes.
 
+== 2026-11-13 — An injection point without a unit name shares the factory of the only unit
+
+In an application with one unit, `@PersistenceContext` and `@PersistenceUnit` may leave the unit name out. These
+injection points now reach that unit's factory, the one the injection points that name the unit reach. Before, they
+had a second factory of their own, so within one transaction the two kinds of `@PersistenceContext` did not share a
+persistence context, and the unit's schema generation ran twice (BUG-20261113-03).
+
 == 2026-11-13 — Every persistence unit is injectable with @Inject
 
 `noether-jpa-cdi` now binds the `<qualifier>` and `<scope>` elements of `persistence.xml` (Jakarta Persistence 3.2,

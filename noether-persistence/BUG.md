@@ -1594,3 +1594,35 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     module into the image). The test scans a JDK module, which declares no managed class; the walk is the one of a
     `file:` directory, which `theAnnotatedClassesOfADirectoryRootAreAddedAfterTheListedOnes` covers with entities.
     Not yet run in a real jlink image of an application.
+
+## BUG-20261113-03 — An unnamed and a named injection point of an application's only unit get two factories
+
+- **Date**: 2026-11-13
+- **Status**: FIXED on `fix/one-factory-per-unit`: the factory of the injection points that name no unit is the
+  factory of the only unit of `persistence.xml` when other injection points name it
+  (`PersistenceFactoryCreator.factoryOfTheOnlyUnit`).
+- **Affected module**: `noether-jpa-cdi`, `NoetherPersistenceExtension.persistenceBeans` and `PersistenceFactoryCreator`
+- **Symptom**: in an application with one unit, `@PersistenceContext EntityManager` and
+  `@PersistenceContext(unitName = "<unit>") EntityManager` do not share the persistence context of a transaction
+  (§7.6.4): an entity one persists, the other does not contain. `@PersistenceUnit` and
+  `@PersistenceUnit(unitName = "<unit>")` give two factories, two metamodels, and the unit's schema generation runs
+  twice.
+- **Minimal reproduction**: `QuarkusPortabilityTest.anInjectionPointWithoutAUnitNameSharesTheFactoryAndContextOfTheOnlyUnit`
+  (`noether-it-quarkus`, whose descriptor has the one unit `library`; `Library` injects it with and without its name):
+  ```sh
+  ./mvnw -ntp -pl noether-it-other-containers/noether-it-quarkus -am -Dtest=QuarkusPortabilityTest \
+    -Dsurefire.failIfNoSpecifiedTests=false install
+  ```
+  The CDI module-it cannot show it: Vauban reads the descriptors through the loader of the bean classes as well, which
+  sees the module-it's five units, so a test class loader serving a one-unit descriptor changes nothing at synthesis.
+- **Confirmed cause**: the extension kept one internal factory per unit name its injection points wrote, and the empty
+  name was one of them: `""` and `"<unit>"` were two `@Singleton` factories, each created from the same descriptor,
+  and the persistence contexts of a transaction are kept per factory.
+- **Investigations**:
+  - 2026-11-13: seen while reading `persistenceBeans` for Vidocq/noether#72 (the `@Inject` beans had to pick one of the
+    two factories). Present before #72: the factory set was the set of written names.
+  - 2026-11-13: a first fix made the synthesis register the unnamed binding as an alias of the unit's factory. Green in
+    Noether, it broke the Vidocq IT `vidocq-runtime-it-noether-mansart-data`: Vauban had recorded the synthetic beans
+    at build time, where no descriptor is read, and the runtime synthesis then added differently shaped ones
+    (`Duplicate bean name 'noetherPersistenceUnit_'`, an ambiguous `EntityManager`). The fix keeps the bean
+    definitions the build records and decides in the creator, at runtime, where the descriptor is read.

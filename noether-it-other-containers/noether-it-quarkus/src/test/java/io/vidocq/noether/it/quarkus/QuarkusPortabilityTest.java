@@ -28,7 +28,9 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Noether, unchanged, as the Jakarta Persistence provider of a Quarkus application (Vidocq/noether#45): ArC runs
@@ -115,6 +117,17 @@ class QuarkusPortabilityTest {
         assertEquals("library", factory.getName());
         assertEquals(PersistenceUnitTransactionType.JTA, factory.getTransactionType());
         assertThrows(IllegalStateException.class, factory::close);
+    }
+
+    /**
+     * BUG-20261113-03: an injection point that leaves the name of the application's only unit out reaches that unit, so
+     * the factory and, within a transaction, the persistence context of the injection points that name it.
+     */
+    @Test
+    void anInjectionPointWithoutAUnitNameSharesTheFactoryAndContextOfTheOnlyUnit() {
+        assertEquals("library", library.unnamedFactory().getName());
+        assertSame(library.factory().getMetamodel(), library.unnamedFactory().getMetamodel());
+        assertTrue(library.unnamedContextManages("Unnamed"), "one persistence context per transaction (§7.6.4)");
     }
 
     /**

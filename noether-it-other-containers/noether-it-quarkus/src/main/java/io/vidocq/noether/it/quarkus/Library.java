@@ -48,6 +48,13 @@ public class Library {
     @PersistenceUnit(unitName = "library")
     EntityManagerFactory factory;
 
+    /** The application's only unit, named nowhere: the same unit, so the same factory and context (BUG-20261113-03). */
+    @PersistenceContext
+    EntityManager unnamed;
+
+    @PersistenceUnit
+    EntityManagerFactory unnamedFactory;
+
     @Inject
     TransactionSynchronizationRegistry registry;
 
@@ -57,6 +64,18 @@ public class Library {
 
     public EntityManagerFactory factory() {
         return factory;
+    }
+
+    public EntityManagerFactory unnamedFactory() {
+        return unnamedFactory;
+    }
+
+    /** Persists through the context that names the unit, then asks the one that names none (§7.6.4). */
+    @Transactional
+    public boolean unnamedContextManages(String title) {
+        Book book = new Book(title);
+        em.persist(book);
+        return unnamed.contains(book);
     }
 
     @Transactional
