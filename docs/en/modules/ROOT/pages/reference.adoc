@@ -360,10 +360,7 @@ Quarkus 3.40.1 by `noether-it-quarkus`.
 
 * **Leave Quarkus' Hibernate ORM extension out** (`quarkus-hibernate-orm`), or it owns `persistence.xml` and
   `@PersistenceContext`.
-* **Declare the unit in `META-INF/persistence.xml`**, with Noether as its provider. Noether reads no Quarkus
-  configuration of its own: the `quarkus.hibernate-orm.*` properties, and their units declared without
-  `persistence.xml`, belong to Hibernate ORM's extension and do nothing here. Quarkus' configuration only defines the
-  data sources, which Noether takes as CDI beans.
+* **Declare the unit in `META-INF/persistence.xml`**, with Noether as its provider.
 +
 [source,xml]
 ----

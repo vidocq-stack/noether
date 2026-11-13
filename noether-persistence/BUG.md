@@ -1682,3 +1682,29 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
   - 2026-11-13: found with BUG-20261113-04, while documenting the query hints; the four tests fail before the fix.
   - 2026-11-13: fixed with BUG-20261113-04. The official TCK sets cache modes on the entity manager, `find` and
     `refresh` only.
+
+## BUG-20261113-06 — Two persistence units of the same name: the first one on the class path wins silently
+
+- **Date**: 2026-11-13
+- **Status**: FIXED on `fix/duplicate-unit-names`: two units of one name, in one `persistence.xml` or in two, are
+  refused with a `PersistenceException` that names the unit and every file that declares it.
+- **Affected module**: `noether-jpa-core`, `PersistenceUnits` (`find`, `all`, `names`)
+- **Symptom**: an application whose modules each carry a `META-INF/persistence.xml` declaring a unit `ledger` gets
+  the first `ledger` in class path order from `Persistence.createEntityManagerFactory("ledger")`, with no warning; the
+  other declaration, its classes and its data source are ignored. `PersistenceUnits.all`, which `noether-jpa-cdi`
+  and the Vidocq extension read, returns both, so the CDI extension registers two units of one name.
+- **Minimal reproduction**: `PersistenceUnitsTest.twoUnitsOfOneNameInTwoJarsAreRefused` and
+  `twoUnitsOfOneNameInOneFileAreRefused`, red before the fix:
+  ```sh
+  ./mvnw -ntp -pl noether-persistence/noether-jpa-core -am -Dtest=PersistenceUnitsTest \
+    -Dsurefire.failIfNoSpecifiedTests=false install
+  ```
+- **Confirmed cause**: `find` returned the first unit of the name it met, and `all` kept every unit without comparing
+  names.
+- **Investigations**:
+  - 2026-11-13: found while answering whether an application may carry one `persistence.xml` per Maven module, so
+    per Java module. The maintainer decided that a duplicate name fails. `find` refuses a duplicate of the name it
+    looks for only, so a duplicate elsewhere does not stop an application that never uses it; `all`, which lists
+    every unit for the CDI extension, refuses any duplicate. A file the class loader lists twice (through a parent
+    loader) is read once and is not a duplicate. `find` now reads every `persistence.xml` of the loader, where it
+    used to stop at the first match.

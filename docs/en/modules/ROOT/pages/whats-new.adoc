@@ -5,6 +5,15 @@
 The changes to Noether that an application sees, newest first. An entry says what to check when an upgrade asks
 for a look.
 
+== 2026-11-13 — A persistence unit name is unique
+
+Two units of the same name, in one `persistence.xml` or in the files of two modules, now fail with a
+`PersistenceException` that names the unit and the files. Before, the first one on the class path won without a word,
+and the other's classes and data source were ignored (BUG-20261113-06). `createEntityManagerFactory` refuses only a
+duplicate of the unit it creates; `noether-jpa-cdi`, which reads every unit, refuses any duplicate.
+
+Check one thing when you upgrade: if two modules declare a unit under the same name, rename one of them.
+
 == 2026-11-13 — Timeouts from the unit, cache modes on queries
 
 `jakarta.persistence.lock.timeout` and `jakarta.persistence.query.timeout` set in `persistence.xml` or on the factory

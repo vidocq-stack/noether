@@ -29,6 +29,11 @@ A unit manages:
 * unless `<exclude-unlisted-classes>` is set, every entity, embeddable, mapped superclass and converter of the unit's
   root, the directory or jar that holds `META-INF/persistence.xml`.
 
+Each jar or directory of the application may carry its own `META-INF/persistence.xml`, so a Maven module, and the
+Java module it builds, can declare the units of its own entities: Noether reads every file, and a unit scans only its
+own root. A unit name is unique across all these files: two units of one name, in one file or in two, fail with a
+`PersistenceException` that names the files.
+
 A file can declare several units. Two units of the same root that do not exclude their unlisted classes both manage
 every class of that root: with schema generation, each creates every table in its own database. List the classes
 of each unit and exclude the others:
@@ -410,9 +415,8 @@ Noether runs unchanged where a container owns the transactions and the data sour
   dialect in the WAR, and leave `noether-jpa-cdi` and `noether-jpa-pool-mansart` out. The exact dependencies and
   exclusions are in xref:reference.adoc#server-deployment[Deploying on an application server].
 * *Quarkus.* Leave Quarkus' Hibernate ORM extension out, declare `noether-jpa-cdi`, a dialect, `quarkus-arc`,
-  `quarkus-narayana-jta` and `quarkus-agroal`, and configure the data source in `application.properties`. The unit
-  itself is declared in `META-INF/persistence.xml`: Noether does not read Quarkus' `quarkus.hibernate-orm.*`
-  properties. See xref:reference.adoc#quarkus[Running on Quarkus].
+  `quarkus-narayana-jta` and `quarkus-agroal`, configure the data source in `application.properties`, and declare
+  the unit in `META-INF/persistence.xml`. See xref:reference.adoc#quarkus[Running on Quarkus].
 
 In both, a JTA unit with `TABLE` identifiers (or `AUTO` resolved to a table generator) needs a
 `<non-jta-data-source>` whose connections take part in no transaction.
