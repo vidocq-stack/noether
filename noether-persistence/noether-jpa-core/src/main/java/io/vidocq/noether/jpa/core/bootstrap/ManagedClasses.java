@@ -71,32 +71,39 @@ public final class ManagedClasses {
     private static void scan(URL location, Set<String> into) {
         try {
             if (isDirectory(location)) {
-                Path root = Path.of(location.toURI());
-                try (Stream<Path> files = Files.walk(root)) {
-                    for (Path file : (Iterable<Path>) files.filter(Files::isRegularFile)::iterator) {
-                        String path = root.relativize(file).toString().replace(File.separatorChar, '/');
-                        if (isClassFile(path)) {
-                            consider(Files.readAllBytes(file), into);
-                        }
-                    }
-                }
+                scanDirectory(Path.of(location.toURI()), into);
             } else {
-                // jar:file:/x.jar!/ names the whole archive
-                URL archive = "jar".equals(location.getProtocol())
-                    ? ((JarURLConnection) location.openConnection()).getJarFileURL() : location;
-                URLConnection connection = archive.openConnection();
-                // the jar may have been rewritten under the same name since it was cached (see PersistenceUnits)
-                connection.setUseCaches(false);
-                try (InputStream in = connection.getInputStream(); JarInputStream jar = new JarInputStream(in)) {
-                    for (JarEntry entry = jar.getNextJarEntry(); entry != null; entry = jar.getNextJarEntry()) {
-                        if (!entry.isDirectory() && isClassFile(entry.getName())) {
-                            consider(jar.readAllBytes(), into);
-                        }
-                    }
-                }
+                scanArchive(location, into);
             }
         } catch (IOException | UncheckedIOException | URISyntaxException | IllegalArgumentException e) {
             throw new PersistenceException("Unable to scan " + location + " for the managed classes of the persistence unit", e);
+        }
+    }
+
+    private static void scanDirectory(Path root, Set<String> into) throws IOException {
+        try (Stream<Path> files = Files.walk(root)) {
+            for (Path file : (Iterable<Path>) files.filter(Files::isRegularFile)::iterator) {
+                String path = root.relativize(file).toString().replace(File.separatorChar, '/');
+                if (isClassFile(path)) {
+                    consider(Files.readAllBytes(file), into);
+                }
+            }
+        }
+    }
+
+    private static void scanArchive(URL location, Set<String> into) throws IOException {
+        // jar:file:/x.jar!/ names the whole archive
+        URL archive = "jar".equals(location.getProtocol())
+            ? ((JarURLConnection) location.openConnection()).getJarFileURL() : location;
+        URLConnection connection = archive.openConnection();
+        // the jar may have been rewritten under the same name since it was cached (see PersistenceUnits)
+        connection.setUseCaches(false);
+        try (InputStream in = connection.getInputStream(); JarInputStream jar = new JarInputStream(in)) {
+            for (JarEntry entry = jar.getNextJarEntry(); entry != null; entry = jar.getNextJarEntry()) {
+                if (!entry.isDirectory() && isClassFile(entry.getName())) {
+                    consider(jar.readAllBytes(), into);
+                }
+            }
         }
     }
 
