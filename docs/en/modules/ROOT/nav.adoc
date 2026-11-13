@@ -8,5 +8,4 @@
 ** xref:performance.adoc[Performance]
 ** xref:reference.adoc[Reference]
 ** xref:migration.adoc[Migration]
-** xref:modules/noether-persistence.adoc[Persistence]
 ** xref:modules/noether-validation.adoc[Validation stopgap]

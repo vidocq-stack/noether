@@ -48,11 +48,6 @@ library/
 
     <dependencies>
         <dependency>
-            <groupId>jakarta.persistence</groupId>
-            <artifactId>jakarta.persistence-api</artifactId>
-            <version>3.2.0</version>
-        </dependency>
-        <dependency>
             <groupId>io.vidocq.noether</groupId>
             <artifactId>noether-jpa-core</artifactId>
             <version>${noether.version}</version>
@@ -132,14 +127,11 @@ library/
 |===
 | Artifact | Scope | Why it is there
 
-| `jakarta.persistence-api`
-| compile
-| The Jakarta Persistence 3.2 API the application codes against.
-
 | `noether-jpa-core`
 | compile
-| The provider. The application compiles against it because the entity access the processor generates implements
-  its SPI, `io.vidocq.noether.jpa.core.spi`.
+| The provider. It brings the Jakarta Persistence 3.2 API the application codes against, so the POM does not declare
+  that API. The application also compiles against the provider itself, because the entity access the processor
+  generates implements its SPI, `io.vidocq.noether.jpa.core.spi`.
 
 | `noether-jpa-dialect-h2`
 | runtime
@@ -350,6 +342,9 @@ Next to `Book.class`, `target/classes/com/acme/library` holds what `noether-jpa-
 | `Book_`
 | The canonical metamodel of Jakarta Persistence (§6.2.1.1), for type-safe Criteria queries: `Book_.title`,
   `Book_.published`.
+
+| `Book_$$NoetherMetamodel`
+| Fills the fields of `Book_` when the factory starts, from inside the package, so the package needs no `opens`.
 |===
 
 Nothing is generated or defined when the application starts, and no package has to be opened, which is what an
@@ -376,6 +371,9 @@ try (var factory = unit.createEntityManagerFactory()) {
 }
 ----
 
+Such a unit manages the classes given to `managedClass(...)` and those its mapping files declare: nothing is
+scanned. It is not in `persistence.xml`, so `noether-jpa-cdi` does not see it and injects nothing for it.
+
 == Next steps
 
 * *Another database.* Replace `noether-jpa-dialect-h2` and `h2` with `noether-jpa-dialect-postgresql` and the
@@ -384,7 +382,7 @@ try (var factory = unit.createEntityManagerFactory()) {
   `@PersistenceUnit` and `@Inject` reach the units of `persistence.xml`. See xref:usage.adoc#cdi[Usage].
 * *Run on Vidocq.* The Vidocq runtime assembles Noether, the connection pool and the transactions for you. See
   xref:dev@vidocq::modules/vidocq-runtime-extensions.adoc#noether-persistence[the `noether-persistence` extension].
-* *Deploy on an application server.* Noether runs unchanged on Open Liberty and Quarkus. See
-  xref:usage.adoc#servers[Application servers].
+* *Deploy on an application server or on Quarkus.* Noether runs unchanged in a WAR on Open Liberty and in a Quarkus
+  application. See xref:usage.adoc#servers[Application servers].
 * *Understand the design.* xref:concepts.adoc[Concepts] explains the entity access, the persistence context and
   what `LAZY` means in Noether.

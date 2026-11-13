@@ -230,7 +230,30 @@ Tested on Open Liberty 26.0.0.10 by `noether-it-openliberty`.
   `-postgresql`), with what they bring transitively (`noether-jpa-dialect-spi`), and the entity accesses that
   `noether-jpa-processor` generated at compile time (in `annotationProcessorPaths`). The server brings the Jakarta
   APIs: exclude the Persistence API that `noether-jpa-core` declares at compile scope, keep the others `provided`.
-  The JDBC driver belongs to the server's data source.
+  The JDBC driver belongs to the server's data source. Noether registers no `ClassTransformer`: the classes deploy as
+  they were compiled.
++
+[source,xml]
+----
+<dependency>
+    <groupId>io.vidocq.noether</groupId>
+    <artifactId>noether-jpa-core</artifactId>
+    <exclusions>
+        <exclusion>
+            <groupId>jakarta.persistence</groupId>
+            <artifactId>jakarta.persistence-api</artifactId>
+        </exclusion>
+    </exclusions>
+</dependency>
+<dependency>
+    <groupId>io.vidocq.noether</groupId>
+    <artifactId>noether-jpa-jta</artifactId>
+</dependency>
+<dependency>
+    <groupId>io.vidocq.noether</groupId>
+    <artifactId>noether-jpa-dialect-h2</artifactId> <!-- or noether-jpa-dialect-postgresql -->
+</dependency>
+----
 * **Give a JTA unit with `TABLE` identifiers a `<non-jta-data-source>`.** This includes `AUTO` on an identifier that
   is not a `UUID` and names no sequence generator, which resolves to a table generator. The table generator commits
   each block of identifiers on a connection of its own. The server enlists every connection of the JTA data source in
@@ -251,24 +274,6 @@ Tested on Open Liberty 26.0.0.10 by `noether-it-openliberty`.
 <non-jta-data-source>jdbc/allocations</non-jta-data-source>
 ----
 * **Leave `noether-jpa-pool-mansart` out of the WAR**: the server's data source pools the connections.
-+
-[source,xml]
-----
-<dependency>
-    <groupId>io.vidocq.noether</groupId>
-    <artifactId>noether-jpa-core</artifactId>
-    <exclusions>
-        <exclusion>
-            <groupId>jakarta.persistence</groupId>
-            <artifactId>jakarta.persistence-api</artifactId>
-        </exclusion>
-    </exclusions>
-</dependency>
-<dependency>
-    <groupId>io.vidocq.noether</groupId>
-    <artifactId>noether-jpa-jta</artifactId>
-</dependency>
-----
 ====
 
 [#cdi-jta]
@@ -355,6 +360,19 @@ Quarkus 3.40.1 by `noether-it-quarkus`.
 
 * **Leave Quarkus' Hibernate ORM extension out** (`quarkus-hibernate-orm`), or it owns `persistence.xml` and
   `@PersistenceContext`.
+* **Declare the unit in `META-INF/persistence.xml`**, with Noether as its provider. Noether reads no Quarkus
+  configuration of its own: the `quarkus.hibernate-orm.*` properties, and their units declared without
+  `persistence.xml`, belong to Hibernate ORM's extension and do nothing here. Quarkus' configuration only defines the
+  data sources, which Noether takes as CDI beans.
++
+[source,xml]
+----
+<persistence-unit name="library" transaction-type="JTA">
+    <provider>io.vidocq.noether.jpa.core.NoetherPersistenceProvider</provider>
+    <class>com.acme.library.Book</class>
+    <exclude-unlisted-classes>true</exclude-unlisted-classes>
+</persistence-unit>
+----
 * **Declare** `noether-jpa-cdi`, a dialect, `quarkus-arc`, `quarkus-narayana-jta`, `quarkus-agroal` and the Quarkus
   JDBC driver extension of the database (`quarkus-jdbc-h2`, `quarkus-jdbc-postgresql`); the entity accesses come
   from `noether-jpa-processor` in `annotationProcessorPaths`. Leave `noether-jpa-pool-mansart` out: Agroal pools
@@ -380,6 +398,54 @@ quarkus.datasource."allocations".jdbc.transactions=disabled
 <non-jta-data-source>allocations</non-jta-data-source>
 ----
 ====
+
+[#inheritance]
+== Inheritance
+
+The three strategies of Jakarta Persistence are supported, through annotations or `orm.xml`.
+
+[cols="1,4"]
+|===
+| Strategy | Mapping
+
+| `SINGLE_TABLE`
+| The default for an entity hierarchy, even without `@Inheritance`. All subclass state is stored in the root entity's
+  primary table. The default discriminator column is `DTYPE`, of type `STRING`, and its default value is the entity
+  name. `@DiscriminatorColumn` and `@DiscriminatorValue` customize it, including `CHAR` and `INTEGER`; for these two
+  types, the values left unspecified are assigned in the order of the binary class names, skipping explicit values.
+
+| `JOINED`
+| The root and every entity subclass have a primary table. `@PrimaryKeyJoinColumn(s)` customize the subclass key; a
+  composite key is matched by `referencedColumnName`, not by annotation order. An explicit discriminator is honored;
+  without one, the presence of subclass rows identifies the concrete class. Inherited attributes stay in the table of
+  the entity that declares them, mapped-superclass state included; non-entity state is not persisted.
+
+| `TABLE_PER_CLASS` (optional in the specification, decision D5)
+| Each concrete entity, a concrete root included, has a primary table that holds its inherited state. An abstract
+  entity needs no table, and no discriminator is stored. Polymorphic JPQL and Criteria ranges are `UNION ALL` queries:
+  filters, aggregates, `TYPE`, `TREAT`, ordering and pagination run in SQL, not over merged results in memory.
+|===
+
+*Polymorphism.* `find(Base.class, id)` and queries over a base return the concrete descendants. Finding the same
+identity through a base type and a subclass type returns the same managed instance; through an incompatible sibling,
+`null`. Relationships use the same polymorphic loader, and an inherited collection keeps the mapping defaults of the
+entity that declares it. Callbacks, identifiers, versions, secondary and collection tables and dirty checking work
+under the three strategies. JPQL supports polymorphic ranges and entity selections,
+inherited and subclass attributes, and `TYPE` in selections and predicates, with entity literals and class-valued
+parameters, `IN` included.
+
+*Bulk statements.* A bulk update of a `JOINED` hierarchy captures the qualifying keys and the assigned values before it
+modifies any table. A bulk delete removes subclass rows before superclass rows and returns an entity count, not a
+count of table rows. Under `TABLE_PER_CLASS`, bulk statements operate on the selected concrete tables.
+
+*`TABLE_PER_CLASS` limits.*
+
+* Identifiers must be unique across the hierarchy. Assigned identifiers and shared `AUTO`, `SEQUENCE`, `TABLE` or
+  `UUID` generation are supported; `IDENTITY` is refused when the factory starts, because independent identity columns
+  could collide.
+* A polymorphic target has no single referenced table, so the generated DDL has no foreign-key constraint for it.
+* A pessimistic entity query locks the concrete result rows after selection and pagination. A purely scalar
+  pessimistic query over a union range is refused: select and lock the entities instead.
 
 [#boundaries]
 == Mapping and loading boundaries
@@ -427,6 +493,7 @@ are unchanged. Plain/locking finds, unsupported polymorphic/inherited types and
 unsupported graph paths retain ordinary loading. Collection nodes outside D16 below
 use complete follow-up loading.
 
+[[d16-one-leaf-collection-graph]]
 === One leaf collection graph (D16, 2026-10-16)
 
 Both graph hints can join one explicitly requested root collection through the
@@ -455,6 +522,7 @@ extra/filtering joins, complex/polymorphic/inherited shapes, embedded/treated pa
 and entity/embeddable map keys keep complete existing fallbacks. Nested/multiple
 collection SQL is future work, not a Cartesian-product expansion.
 
+[[d17-collection-to-one-subgraphs]]
 === One collection with to-one subgraphs (D17, 2026-10-16)
 
 The single graph-requested root collection of D16 may carry an element subgraph, when the
@@ -1001,6 +1069,7 @@ guards, explicit fetch joins and earlier graph eligibility are unchanged.
 Deeper-than-three/cyclic graph optimization, broader fetch/lazy/batch eligibility
 and missing mappings remain separate priorities.
 
+[[lazy-read-batching]]
 === Lazy read batching
 
 [cols="3,1,4"]

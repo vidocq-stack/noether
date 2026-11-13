@@ -22,6 +22,29 @@ factory) and `Client.tableGeneratorTest` (Java SE table generator schema). The c
 failsafe XML reports, independently of the runner; the history of every run is in
 link:{repo-noether}/src/branch/main/noether-persistence/TCK.md[`TCK.md`].
 
+[#history]
+=== Earlier results
+
+NOTE: All pre-extraction TCK, benchmark and integration results below were measured on Mansart, before 2026-10-11;
+they are not fresh Noether measurements.
+
+[cols="3,2"]
+|===
+| Run | Result
+
+| P4: entity operations, identifiers, callbacks, locks | 609 / 2135, no failure left that P4 owns
+| P5: relationships and collections | 635 / 2135, no failure left that P5 owns
+| P8: dedicated official metamodel and Criteria gate | 924 passes, no failures/errors and one upstream skip / 925
+| Pre-P11 untouched PostgreSQL 17 run | 2096 / 2135 passed, 35 errors and four official skips
+| P10 run with the TCK-BUG-001 fixture | 2121 / 2135 passed
+| P10 targeted official embeddable-metamodel regression gate | restored to 51/51; not a new full-suite score
+| Container integration: Vauban module-path/H2 tests, Vidocq Arquillian vehicle | 4/4 and 6/6
+|===
+
+Of the 35 pre-P11 errors, ten were second-level cache assertions fixed in P11, and 25 were confined to the two
+delimited-default fixtures that TCK-BUG-001 covers. The milestones P0 to P12 are described in
+link:{repo-noether}/src/branch/main/noether-persistence/ROADMAP.md[`noether-persistence/ROADMAP.md`].
+
 [#tck-bug-001]
 == The backported fixture, TCK-BUG-001
 
@@ -405,7 +428,7 @@ reports*. The full patched PostgreSQL *17-alpine* TCK finished *13:03:11 CEST*:
 *2135 tests / 2131 passed / 0 failures / 0 errors / 4 skips*, with identities/outcomes,
 *259 XML reports*, *518* derived-jar checks, the *85* original input files and
 official/derived SHA-256 independently verified unchanged. Locally patched, not
-certification. See xref:reference.adoc#_one_collection_with_to_one_subgraphs_d17_2026_10_16[].
+certification. See xref:reference.adoc#d17-collection-to-one-subgraphs[].
 The sections below are kept as recorded.
 
 === PostLoad collection cycle fix (2026-10-16)
@@ -431,7 +454,7 @@ Coverage checks values, SELECT totals and load state for JPQL/Criteria/find,
 FETCH/LOAD, empty/missing owners, nulls/duplicates/order/keys, managed dirty state,
 in-place identity, callbacks/snapshots/cache, no-auto-flush, graph/hint mutation,
 SQL owner pagination and safe nested/multiple/filtering/explicit-fetch fallbacks.
-See xref:reference.adoc#_one_leaf_collection_graph_d16_2026_10_16[] for exact scope.
+See xref:reference.adoc#d16-one-leaf-collection-graph[] for exact scope.
 
 The full final `./mvnw -ntp clean install` finished *2026-10-16 09:04:51 CEST*:
 *925/925 tests* across *85 XML reports*, zero failures/errors/skips.
@@ -533,7 +556,7 @@ fixture/cache checksums remain unchanged. Both official and derived jar hashes m
 the earlier evidence below. The runner exit status alone is not a conformance result.
 
 See `noether-persistence/TCK.md` for exact commands, reports, skips and hashes;
-xref:reference.adoc#_lazy_read_batching[] for the default 16 / allowed 1–256 setting,
+xref:reference.adoc#lazy-read-batching[] for the default 16 / allowed 1–256 setting,
 transaction/cache scope and complete ordinary-loader fallbacks. No official inputs
 were changed. SQL counts are correctness checks, not timing benchmarks; the result
 is locally patched, not certification. Earlier delivery evidence remains below.

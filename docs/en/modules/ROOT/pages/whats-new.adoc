@@ -1,5 +1,9 @@
 = What's new
-:description: Noether extraction and compatibility changes.
+:description: The changes to Noether that an application sees, newest first, and what to check when you upgrade.
+
+[.lead]
+The changes to Noether that an application sees, newest first. An entry says what to check when an upgrade asks
+for a look.
 
 == 2026-11-13 — Timeouts from the unit, cache modes on queries
 
@@ -37,7 +41,51 @@ Check two things when you upgrade:
 * **Ambiguous injections.** Two units without `<qualifier>` both give `@Default` beans, so an application's own
   `@Inject EntityManager` without a qualifier becomes ambiguous.
 
-See xref:usage.adoc[Usage].
+See xref:usage.adoc#inject-units[Injecting a persistence unit with @Inject].
+
+== 2026-11-13 — Several units on Vidocq, and units in a runtime image
+
+* *Several units on Vidocq.* An application with two units now boots. Before, every `@PersistenceUnit` injection was
+  ambiguous: the boot ran `noether-jpa-cdi` again over the classes in another order than the build, and the factory
+  of each unit came back under a second bean name (BUG-20261113-01).
+* *Units in a runtime image.* A unit declared in a module that `jlink` linked into a runtime image now finds its
+  classes: its root is `jrt:/<module>/`, which Noether now walks as a directory. Before, a unit that did not exclude
+  its unlisted classes failed with `Unable to scan jrt:/<module>/` (BUG-20261113-02). The walk is tested on a module of
+  the JDK image, not yet in the runtime image of an application.
+
+== 2026-11-12 — The processor accepts a module that reads Noether through a library
+
+An application module may read `io.vidocq.noether.jpa.core` through a library that declares
+`requires transitive io.vidocq.noether.jpa.core;`. Before, `noether-jpa-processor` failed the build and asked for a
+`requires` of its own, which the module did not need (BUG-20261112-01).
+
+== 2026-11-11 — JTA units run on the container's transactions
+
+`noether-jpa-cdi` no longer depends on Mansart Transactions. Before, it looked up Mansart's `TransactionManager` bean
+and enlisted a JDBC connection of its own, so on Quarkus it bypassed Agroal. A JTA unit now runs through
+`noether-jpa-jta` on two beans of the container (decision D45):
+
+* the `TransactionSynchronizationRegistry`, to which Noether registers an interposed synchronization: it flushes
+  before completion and detaches after it;
+* the `DataSource` named after the unit's `<jta-data-source>`, or the `@Default` one, whose connections the container
+  enlists and commits.
+
+Noether takes a connection for each unit of work and closes it when the work ends, so Agroal no longer warns at every
+commit that a connection was left open (BUG-20261111-05). A resource-local unit needs neither bean.
+
+Check one thing when you upgrade: a bare Vauban application, without the Vidocq runtime extension, must now produce
+both beans itself, or the factory of a JTA unit fails at creation with a `PersistenceException` that names the missing
+bean. Quarkus, Jakarta EE servers and the Vidocq runtime have them. See xref:reference.adoc#cdi-jta[JTA units on a CDI
+container].
+
+== 2026-11-11 — Jakarta EE servers and Quarkus
+
+* *Jakarta EE servers.* Noether is the Jakarta Persistence provider of a WAR (tested on Open Liberty). A server never
+  hands its provider a JTA bridge, so `noether-jpa-core` now finds `noether-jpa-jta` through `ServiceLoader` when a
+  JTA unit has none. Before, a JTA unit bootstrapped by the server was refused (BUG-20261111-01). See
+  xref:reference.adoc#server-deployment[Deploying on an application server].
+* *Quarkus.* `noether-jpa-cdi` runs on Quarkus ArC, with the portable CDI 4.1 Lite API only (BUG-20261111-02). See
+  xref:reference.adoc#quarkus[Running on Quarkus].
 
 == 2026-11-11 — A JTA unit allocates TABLE identifiers through its non-JTA data source
 
@@ -47,7 +95,7 @@ JTA data source, and the container refused the commit: every persist failed on O
 Quarkus (BUG-20261111-04). Such a unit without a non-JTA data source is now refused when its `EntityManagerFactory`
 is created. Declare a `<non-jta-data-source>` (on Open Liberty a `dataSource` with `transactional="false"`, on Quarkus
 a datasource with `quarkus.datasource."name".jdbc.transactions=disabled`), or use `SEQUENCE` or `IDENTITY`
-identifiers. Resource-local units do not change. See xref:reference.adoc[Reference].
+identifiers. Resource-local units do not change. See xref:reference.adoc#containers[Containers and servers].
 
 == 2026-11-11 — A TABLE generator needs two pooled connections
 
@@ -55,7 +103,7 @@ A unit with a `TABLE` identifier generator (or `AUTO` resolved to one) and a Noe
 `io.vidocq.noether.jpa.pool.max-size` is below 2 is now refused when its `EntityManagerFactory` is created. Before,
 the factory was created and the first persist waited for a second connection until the pool's acquire timeout
 (BUG-20261018-04). The generator still allocates on a connection of its own, committed on its own; set the pool
-size to 2 or more. See xref:modules/noether-persistence.adoc[Persistence].
+size to 2 or more. See xref:usage.adoc#entities[Entities and their access].
 
 == 2026-11-11 — The connection pool becomes an optional module
 
@@ -66,6 +114,40 @@ wants its connections pooled adds that module; on the module path the jar is eno
 transaction opens its own connection and the factory logs one line that says so. The
 `io.vidocq.noether.jpa.pool*` properties keep their names and meaning. Units given a `javax.sql.DataSource`
 (application servers, the Vidocq runtime) do not change, and no longer carry an unused pool.
+
+== 2026-11-11 — JDBC runs on the calling thread
+
+Every JDBC call now runs on the thread that makes it (decision D44). Before, a call from a platform thread moved to a
+new virtual thread and waited for it, which gained nothing and lost what a server binds to the calling thread, its
+transaction included. `JdbcExecution` is no longer part of the exported SPI.
+
+== 2026-11-11 — Less work on the hot paths
+
+A profile of `find`, JPQL queries and updates led to five changes that keep every check, callback and cache rule:
+a resource-local transaction gives its connection back in the auto-commit mode it came with, a flush reads the state
+of an entity once, the factory keeps the parse and SQL of a query string, the identity sets of a flush are sized to
+what it writes, and the rows of an entity without relationships become managed in one pass. Figures are in
+xref:performance.adoc#hot-paths-2026-11-11[Performance].
+
+== 2026-11-03 — A filter on deserialized attributes
+
+The bytes of a column mapped to a `Serializable` attribute are now read through a JEP 290 filter: it bounds the depth,
+references, array length and size of the stream, and accepts JDK classes (`java.*`), the declared type of the
+attribute and its subtypes, and the other classes of that type's package. Anything else is refused with a
+`PersistenceException`.
+
+Check one thing when you upgrade: a serialized value that holds classes of another package now needs that package in
+the system property `io.vidocq.noether.serialization.allow`, a comma-separated list of package prefixes. See
+xref:reference.adoc#properties[Configuration properties].
+
+== 2026-10-16 — SQL to-one fetch joins
+
+JPQL `JOIN FETCH` / `LEFT JOIN FETCH` and Criteria `fetch` of to-one relationships now load the
+owner and its fetched targets from one SQL statement instead of a select per target, keeping
+one managed instance per identity, hydrating unloaded references in place and never overwriting
+managed instances. `DISTINCT`, grouped, locking and nested queries, polymorphic or
+joined/table-per-class targets, collection fetches, entity graph hints and `find` keep the
+previous follow-up selects. Collection fetch hydration and batching are not part of this change.
 
 == 2026-10-15 — SQL collection fetch joins
 
@@ -79,17 +161,7 @@ Complex/multiple/polymorphic fetches retain complete secondary loading. Paginati
 SQL distinct-owner paging followed by complete secondary loads for single-root selections
 with scalar root ordering; unsupported projections/grouping/locks/element ordering fail
 explicitly before SQL. No partial collections or silent in-memory pagination.
-Batching remains the next prioritized lot. See xref:internals.adoc[] and xref:tck.adoc[].
-The preexisting D11 date below is retained as recorded, not rewritten by this delivery.
-
-== 2026-10-16 — SQL to-one fetch joins
-
-JPQL `JOIN FETCH` / `LEFT JOIN FETCH` and Criteria `fetch` of to-one relationships now load the
-owner and its fetched targets from one SQL statement instead of a select per target, keeping
-one managed instance per identity, hydrating unloaded references in place and never overwriting
-managed instances. `DISTINCT`, grouped, locking and nested queries, polymorphic or
-joined/table-per-class targets, collection fetches, entity graph hints and `find` keep the
-previous follow-up selects. Collection fetch hydration and batching are not part of this change.
+See xref:internals.adoc[] and xref:tck.adoc[].
 
 == 2026-10-15 — Bounded lazy to-one references
 

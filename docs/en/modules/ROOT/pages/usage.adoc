@@ -1,5 +1,6 @@
 = Usage
 :description: Configuring and using Noether: persistence units, connections, entities, queries, loading, CDI, Vidocq and application servers.
+:page-aliases: modules/noether-persistence.adoc
 
 [.lead]
 Noether is used through the standard Jakarta Persistence API: nothing in your code names Noether except the
@@ -11,7 +12,9 @@ listed in xref:reference.adoc#properties[Reference].
 == Declaring persistence units
 
 A unit is declared in `META-INF/persistence.xml` (versions 1.0 to 3.2), or in code with `PersistenceConfiguration`
-(see xref:getting-started.adoc[Getting started]). Name Noether as its provider:
+(see xref:getting-started.adoc[Getting started]). A unit declared in code manages only the classes given to
+`managedClass(...)` and those of its mapping files, and `noether-jpa-cdi` does not see it. Name Noether as the
+provider:
 
 [source,xml]
 ----
@@ -187,6 +190,9 @@ mappings (`@SqlResultSetMapping`) and stored procedures (`createStoredProcedureQ
 
 JPQL supports the 3.2 language: joins and fetch joins, `TREAT`, `TYPE`, subqueries, constructor expressions
 (`select new`), set operations (`union`, `intersect`, `except`), bulk `update` and `delete`, and the 3.2 functions.
+A constructor expression or a `@ConstructorResult` calls a public constructor of a class that need not be an entity;
+Noether looks the constructor up once per class, not per row. A stored-procedure query created outside a transaction
+runs in the transaction that is current when it executes.
 
 [#loading]
 == Loading relationships
@@ -196,20 +202,77 @@ xref:concepts.adoc#lazy[What `LAZY` means]). To load what a use case needs in on
 
 * a fetch join: `select o from Order o join fetch o.lines where o.id = :id`;
 * an entity graph, passed as the `jakarta.persistence.fetchgraph` or `loadgraph` hint of a query or of `find`
-  (see <<entity-graphs,Query entity graphs>>);
+  (see <<entity-graphs,Entity graphs>>);
 * `FetchType.EAGER` on the mapping.
 
 The first access to an unloaded collection or reference loads the other pending ones of the same kind in the same
-statement, up to `io.vidocq.noether.jpa.fetch.batch-size` (`16` by default, `1` turns batching off).
+statement, up to `io.vidocq.noether.jpa.fetch.batch-size` (`16` by default, from `1` to `256`; `1` turns batching
+off). The batch runs on the transaction's connection and does not flush pending changes first. It covers single-table,
+non-polymorphic mappings; the others load each collection or reference on its own.
 
 A collection that was never loaded cannot be loaded once its owner is detached: it throws `PersistenceException`.
 Load it while the entity manager is open.
 
+[#entity-graphs]
+=== Entity graphs
+
+An entity graph names what a query or a `find` loads with its result:
+
+[source,java]
+----
+var graph = em.createEntityGraph(Order.class);
+graph.addSubgraph("customer").addAttributeNodes("address");
+var orders = em.createQuery("select o from Order o order by o.id", Order.class)
+    .setHint("jakarta.persistence.fetchgraph", graph)
+    .setMaxResults(20)
+    .getResultList();
+
+var lines = em.createEntityGraph(Order.class);
+lines.addAttributeNodes("lines");
+var order = em.find(Order.class, id, Map.of("jakarta.persistence.loadgraph", lines));
+var same = em.find(lines, id);         // the typed overload of 3.2 applies the graph as a fetch graph
+----
+
+* *To-one nodes*, direct or nested, are read in the query's own SQL through left joins: an owner without a target
+  stays in the result.
+* *Collection nodes* of a query are read after the root query, one grouped statement per collection, so a page is cut
+  on the owners in SQL and every collection comes back complete. A path may hold up to three collection edges, starting at a
+  root collection (`lines.discounts.tags`) or behind root to-ones (`customer.addresses`).
+* *`loadgraph`* also loads the attributes mapped `EAGER`. *`fetchgraph`* loads the nodes of the graph, but does not
+  promise that an `EAGER` attribute it leaves out stays unloaded. When a query gets both hints, the fetch graph wins;
+  `find` merges them.
+* *`find`* applies a graph when it reads the database without a lock. An entity already in the persistence context or
+  in the second-level cache is not read again: what the graph adds is loaded, and its changes are kept.
+* *Other shapes* (a fourth collection edge, a path that comes back to a type, a polymorphic root, a query with
+  grouping, a lock, set operations or fetch joins of its own) are loaded completely the ordinary way, or refused with
+  an explicit error. A graph never yields a partial collection.
+
+The exact shapes are in xref:reference.adoc#boundaries[Mapping and loading boundaries].
+
+[#inheritance]
 == Inheritance
 
 `SINGLE_TABLE` (the default), `JOINED` and `TABLE_PER_CLASS` are supported, with annotations or `orm.xml`,
 including polymorphic queries, `TYPE` and `TREAT`. Under `TABLE_PER_CLASS`, identifiers must be unique across the
-hierarchy and `IDENTITY` is refused. See xref:modules/noether-persistence.adoc#inheritance[Inheritance].
+hierarchy and `IDENTITY` is refused. Defaults and limits are in xref:reference.adoc#inheritance[Inheritance].
+
+[#advanced-mappings]
+== Advanced mappings
+
+Noether supports some mappings beyond the common ones, each within explicit limits. A mapping outside them is refused
+when the factory starts, never mapped another way. Each one's limits are in
+xref:reference.adoc#boundaries[Mapping and loading boundaries]:
+
+* *To-one joins on a business key* rather than the primary key: unique, immutable basic columns of the target (D22),
+  or of one target secondary table, declared in that table's `uniqueConstraints` (D26, D43). Reference every column
+  with `@JoinColumns`. `JoinColumn.table` names the owner's table, never the target's. This is optional support that
+  other providers need not offer.
+* *Relationships inside element collections*: an embeddable element may hold an owning to-one (D24), which queries
+  navigate, compare and project like any other path (D27, D28).
+* *Derived identities* of the targets of those elements: shared keys through `@MapsId` (D23, D30, D31, D37 to D42),
+  composite keys (D29) and `@IdClass` keys whose parts are relationships (D32, D35, D36). A relationship part of an
+  `@IdClass` has the type of the parent's identifier, not the parent entity. `@JoinColumns` name the target's columns,
+  not the fields of its key class. Set the assigned key parts and the parents before `persist`.
 
 == Schema generation
 
@@ -323,8 +386,9 @@ scope (`<scope>`, §8.2.1.6). Jakarta EE 11 Platform §13.12 then makes the unit
   - With `scanClasspath()`, Vauban replays what its annotation processor recorded, and the processor cannot read
     `persistence.xml`. These beans are then missing, while `@PersistenceContext` and `@PersistenceUnit` still work.
 
-This needs a Vauban that includes Vidocq/vauban#286, the fixes of Vauban's BUG-20261113-01 and BUG-20261113-02: a bean in an
-extension's scope, and the exceptions of an interface-typed normal-scoped bean.
+On Vauban, these beans need a `0.4.0-SNAPSHOT` built on 2026-11-13 or later, which holds Vidocq/vauban#286: it keeps
+the scope an extension gives a bean, and unwraps the exceptions of an interface-typed normal-scoped bean (Vauban's
+BUG-20261113-01 and BUG-20261113-02). Vauban `0.4.0-RC2` and earlier lack it.
 
 [#vidocq]
 == On Vidocq
@@ -346,261 +410,9 @@ Noether runs unchanged where a container owns the transactions and the data sour
   dialect in the WAR, and leave `noether-jpa-cdi` and `noether-jpa-pool-mansart` out. The exact dependencies and
   exclusions are in xref:reference.adoc#server-deployment[Deploying on an application server].
 * *Quarkus.* Leave Quarkus' Hibernate ORM extension out, declare `noether-jpa-cdi`, a dialect, `quarkus-arc`,
-  `quarkus-narayana-jta` and `quarkus-agroal`, and configure the data source in `application.properties`. See
-  xref:reference.adoc#quarkus[Running on Quarkus].
+  `quarkus-narayana-jta` and `quarkus-agroal`, and configure the data source in `application.properties`. The unit
+  itself is declared in `META-INF/persistence.xml`: Noether does not read Quarkus' `quarkus.hibernate-orm.*`
+  properties. See xref:reference.adoc#quarkus[Running on Quarkus].
 
 In both, a JTA unit with `TABLE` identifiers (or `AUTO` resolved to a table generator) needs a
 `<non-jta-data-source>` whose connections take part in no transaction.
-
-[#advanced-mappings]
-== Advanced mappings
-
-Shapes beyond the usual mappings that Noether supports, each within explicit limits. Shapes outside them are refused
-when the factory starts, never silently mapped another way.
-
-=== Composite business tuples in a target secondary table
-
-D43 permits owning `ManyToOne`/`OneToOne` joins to a composite tuple of
-immutable, non-null, insertable BASIC columns in one declared target
-`SecondaryTable`. This is optional, nonportable non-PK reference support
-(Persistence 3.2 §11.1.26), not a portable JPA requirement.
-Declare the exact tuple in that secondary table's `uniqueConstraints` and
-reference every component with `JoinColumns`; explicit join order may differ
-from attribute and constraint order. The target PK and secondary PK join
-must each remain single-column.
-
-`JoinColumn.table` names the owner's FK table, never the referenced table;
-do not use it to select a target secondary table. Noether resolves that table
-from the unambiguous referenced BASIC columns. Reads resolve the whole tuple
-to the actual primary identity; converters, lifecycle/cache and association
-queries use the ordinary paths. Fetch graphs/joins remain complete eager
-fallbacks. Cross-table tuples and broader loading remain unsupported.
-
-=== Relationship-valued IdClass targets in collection elements
-
-An embeddable element may hold an owning to-one to a target whose `@IdClass`
-contains multiple relationship-valued parts (D35). Give each target relationship
-an owning FK to a non-polymorphic parent; use the parent's ID type for
-the corresponding field in the IdClass, not the parent entity type. Other parts
-remain BASIC. D36 adds parents with direct all-BASIC `@EmbeddedId` or `@IdClass`
-keys alongside simple IDs; use that parent key class for the relationship-named
-IdClass field. Explicit element `@JoinColumns` reference the target's physical
-FK/basic columns, not the IdClass field names.
-
-The collection row stores the full tuple and resolves the target's managed
-identity. JPQL/Criteria navigation, target/whole-value projection, duplicates
-and null references retain their ordinary semantics. Owner/value mappings may
-use metadata-complete ORM XML, but relationship-valued target identifiers remain
-annotation-mapped. Nested/non-BASIC/chained parent identities and broader optimized
-fetch/lazy/batch loading are not added. See xref:reference.adoc[Reference] for
-the exact D32/D35/D36 mapping boundaries.
-
-=== Multiple MapsId components in collection targets
-
-An element-value owning to-one may target an entity with a direct all-BASIC
-`@EmbeddedId` whose distinct components are derived by separate
-`@MapsId("componentName")` owning to-one relationships (D37).
-Each parent must have a simple ID and be non-polymorphic; the named component
-must use that ID's Java type. Other key parts remain application-supplied.
-Generated parent IDs are propagated by the normal persist lifecycle before
-collection rows bind the target's complete physical FK tuple.
-
-The full mapping may use annotations or metadata-complete ORM XML. Repeated
-references resolve one managed target; query projections/navigation and normal
-collection rewrites, merge, refresh and shared-cache reads retain their semantics.
-Overlapping mappings, nested/non-BASIC keys and composite/chained parents are
-not included, and no fetch/lazy/batch optimization is widened.
-
-=== Whole composite MapsId collection targets
-
-D38/D39 also permit an element-value owning to-one to reference a dependent with
-a whole direct all-BASIC `@EmbeddedId` shared through an owning
-`@OneToOne @MapsId` without a component name. The parent must use the same
-key class through a direct all-BASIC `@EmbeddedId` or `@IdClass` and be
-non-polymorphic, without derived identity. Parent identifier declaration order
-need not match the embedded key's order; values are copied by generated
-attribute access, not physical tuple position.
-Reference the dependent's physical PK/FK columns in the element's
-`@JoinColumns`, not necessarily the embedded key's default column names.
-Both annotations and metadata-complete XML use the normal persist, query,
-merge/refresh and cache paths. Named-component composite-parent derivation
-beyond D40/D41/D42 below, general nested/chained keys and broader loading optimizations
-are not included.
-
-=== Named composite MapsId collection targets
-
-D40/D41/D42 permit distinct named embedded components of a collection relation
-target's `@EmbeddedId` to derive from an owning `@ManyToOne` or `@OneToOne`
-`@MapsId("componentName")`. The parent must be non-polymorphic and have a
-direct all-BASIC `@EmbeddedId` or `@IdClass` of the corresponding component's
-Java type.
-Parent identifier declaration order need not match the component's attribute
-order. Other BASIC parts may be assigned or derived from simple-ID parents.
-Supply the assigned parts and parents before persist; normal cascade ordering
-derives each component before collection rows are bound.
-
-Element `@JoinColumns` reference the dependent's physical parent-FK columns
-and remaining BASIC key columns. Default joins also use that complete tuple.
-Annotations and metadata-complete ORM XML use the same generated access, query,
-merge/refresh and shared-cache paths; mutable and record outer key classes work.
-Record keys use actual parent-FK scalar values during construction, including
-primitive components mixed with composite ones (BUG-20261018-02).
-Unmapped nested remainder, deeper/relationship-valued/chained parent keys and
-broader loading optimizations
-are not included.
-
-[#graphs-and-lazy-reads]
-== Entity graphs and lazy reads in detail
-
-[#entity-graphs]
-=== Query entity graphs
-
-Both JPQL and Criteria entity queries accept standard graph hints:
-
-[source,java]
-----
-var graph = em.createEntityGraph(Order.class);
-graph.addSubgraph("customer").addAttributeNodes("address");
-var orders = em.createQuery("select o from Order o order by o.id", Order.class)
-    .setHint("jakarta.persistence.fetchgraph", graph)
-    .setFirstResult(0).setMaxResults(20).getResultList();
-----
-
-Eligible direct and nested to-ones are hydrated from the query's LEFT-joined rows,
-without filtering null targets. `loadgraph` additionally includes mapped eager to-ones;
-`fetchgraph` only contributes explicit nodes to SQL but may still overfetch eager state
-through the loader. It does not guarantee omitted eager attributes remain unloaded.
-Graph/hint changes are honored on query reuse.
-
-This is bounded to one concrete-root entity selection without distinct/grouping/locking,
-set operations, explicit collection fetches or conditional/treated joins. Unsupported
-graph nodes retain complete follow-up reads. D16 additionally supports one leaf root
-collection (including DISTINCT queries) without existing joins:
-
-[source,java]
-----
-var graph = em.createEntityGraph(Order.class);
-graph.addAttributeNodes("lines");
-var orders = em.createQuery("select o from Order o order by o.id", Order.class)
-    .setHint("jakarta.persistence.loadgraph", graph).getResultList();
-var order = em.find(Order.class, id, Map.of("jakarta.persistence.fetchgraph", graph));
-----
-
-Empty owners stay present and collections are complete. Finite query pages use SQL
-owner paging plus complete secondary reads. At D16, subgraphs on the collection, multiple
-collections and mixed explicit to-one graph nodes retain existing complete loading.
-See xref:reference.adoc#_one_leaf_collection_graph_d16_2026_10_16[] for exact boundaries.
-D17 adds to-one subgraphs on that collection, loaded in the same SELECT:
-
-[source,java]
-----
-var graph = em.createEntityGraph(Order.class);
-graph.addSubgraph("lines").addSubgraph("product").addAttributeNodes("supplier");
-var orders = em.createQuery("select o from Order o", Order.class)
-    .setHint("jakarta.persistence.fetchgraph", graph).getResultList();
-----
-
-Multiple root collections use independent grouped SQL reads (D19):
-
-[source,java]
-----
-graph.addAttributeNodes("payments");
-// Re-execution replans the mutable graph and reads complete lines and payments separately.
-var withPayments = em.createQuery("select o from Order o", Order.class)
-    .setHint("jakarta.persistence.loadgraph", graph).getResultList();
-----
-
-Two collection edges beginning at a root collection use grouped split reads (D20):
-
-[source,java]
-----
-graph.addSubgraph("lines").addSubgraph("discounts").addAttributeNodes("supplier");
-// The root query pages only orders; lines and their discounts are then read completely.
-var page = em.createQuery("select o from Order o order by o.id", Order.class)
-    .setHint("jakarta.persistence.fetchgraph", graph).setMaxResults(20).getResultList();
-var order = em.find(Order.class, id, Map.of("jakarta.persistence.loadgraph", graph));
-----
-
-Finite element-to-one chains may lead to the second collection's owners, for example
-`lines.product.tags`. D21 also groups collections reached through finite root to-one
-chains, without adding a third collection edge:
-
-[source,java]
-----
-var customerGraph = em.createEntityGraph(Order.class);
-customerGraph.addSubgraph("customer").addSubgraph("addresses").addAttributeNodes("country");
-var orders = em.createQuery("select o from Order o order by o.id", Order.class)
-    .setHint("jakarta.persistence.loadgraph", customerGraph).setMaxResults(20).getResultList();
-var orderWithAddresses = em.find(Order.class, id,
-    Map.of("jakarta.persistence.fetchgraph", customerGraph));
-----
-
-Shared customers are grouped by distinct identity, not read once per order.
-Null customers retain their orders; empty address collections remain complete.
-Independent root collection branches and element to-one subgraphs may coexist.
-The owner seed and every required collection stage complete before callbacks.
-D33 adds a third edge to nested collection paths that begin at a root collection:
-
-[source,java]
-----
-var deepGraph = em.createEntityGraph(Order.class);
-deepGraph.addSubgraph("lines").addSubgraph("discounts").addAttributeNodes("tags");
-var deepOrders = em.createQuery("select o from Order o order by o.id", Order.class)
-    .setHint("jakarta.persistence.fetchgraph", deepGraph).setMaxResults(20).getResultList();
-----
-
-Each collection edge is read separately after SQL-only root pagination; callbacks
-run after the third-level values are complete. D34 also supports three collection
-edges on paths reached through a root to-one, such as
-`Order.customer.recommendations.bundles.labels`. Explicit type-revisiting cycles,
-a fourth edge and unsupported polymorphic/complex targets retain complete
-ordinary loading or established explicit refusal.
-See xref:reference.adoc#_two_collection_graph_edges_d20_2026_10_16[].
-See xref:reference.adoc#_root_to_one_collection_graphs_d21_2026_10_16[].
-See xref:reference.adoc#d33-three-collection-edges[].
-See xref:internals.adoc#_query_graph_sql_loading_d14_2026_10_15[].
-
-=== Find entity graphs
-
-[source,java]
-----
-var graph = em.createEntityGraph(Order.class);
-graph.addSubgraph("customer").addAttributeNodes("address");
-var order = em.find(Order.class, id, Map.of("jakarta.persistence.loadgraph", graph));
-// The 3.2 typed overload applies the graph as a fetch graph:
-var sameOrder = em.find(graph, id);
-----
-
-Eligible non-locking cache misses read direct/nested to-ones with the root through
-LEFT joins (D15, 2026-10-16), including mapped composite root keys and converted
-secondary-table state. LOAD adds mapped eager to-ones; FETCH may overfetch omitted
-eager state. Managed/cache hits are not unnecessarily reread; graph state is completed
-without overwriting dirty entities. Unloaded references hydrate in place.
-Find never auto-flushes like a query. Mutable graphs are reread per call. If both hints
-are supplied, find retains its existing merged plan, unlike query FETCH precedence.
-Plain/locking finds, unsupported types/paths and collections retain complete ordinary
-loading. Existing cache/lock/timeout/refresh contracts are unchanged.
-
-=== Bounded lazy reads
-
-First access batches pending compatible lazy collections or to-one references in the
-same persistence context. The default group size is 16. For a different factory-wide
-bound, set:
-
-[source,xml]
-----
-<property name="io.vidocq.noether.jpa.fetch.batch-size" value="32"/>
-----
-
-Values must be integers from 1 to 256; 1 disables grouping. Composite collection-owner
-keys also respect a 512-key-parameter budget. This is separate from JDBC write batching.
-Entity collections can require one collection-row statement plus several bounded
-full-state target statements. They do not issue one `find` per element.
-Lists, duplicate bags and maps preserve persisted null basic values, and empty owners
-remain empty. To-one references hydrate in place; reading their identifier needs no SQL.
-
-The optimization is bounded to single-table/non-polymorphic mappings and eligible D10
-references. Complex mappings keep complete ordinary loading, not partial collections.
-The current transaction connection is reused; pending writes are not auto-flushed.
-Detached/cleared/closed contexts still reject unloaded access. For exact eligibility and
-cache behavior, see xref:reference.adoc#_lazy_read_batching[].
