@@ -83,6 +83,34 @@ class UnitAnnotationsTest {
             .hasMessageContaining("@jakarta.inject.Qualifier");
     }
 
+    /**
+     * A {@code <qualifier>} or a {@code <scope>} is a binary class name (JLS §13.1); anything else, an array descriptor,
+     * a resource path or a name with an ignorable character, is refused before the loader sees it.
+     */
+    @Test
+    void aNameThatIsNotABinaryClassNameIsRefusedBeforeLoading() {
+        for (String name : List.of("[Ljava.lang.Deprecated;", "java/lang/Deprecated", " java.lang.Deprecated",
+                "java..lang.Deprecated", "java.lang.", "", "java.lang.Depre\u0000cated", "1java.Deprecated")) {
+            var qualifier = unit(List.of(name), null);
+            var scope = unit(List.of(), name);
+            assertThatThrownBy(() -> UnitAnnotations.qualifiers(qualifier, LOADER))
+                .isInstanceOf(DefinitionException.class)
+                .hasMessageContaining("'ledger'")
+                .hasMessageContaining("not a binary class name");
+            assertThatThrownBy(() -> UnitAnnotations.scope(scope, LOADER))
+                .isInstanceOf(DefinitionException.class)
+                .hasMessageContaining("not a binary class name");
+        }
+    }
+
+    @Test
+    void aNestedAnnotationIsNamedWithItsBinaryName() {
+        var nested = unit(List.of(Tagged.class.getName()), null);
+
+        assertThat(Tagged.class.getName()).contains("$");
+        assertThat(UnitAnnotations.qualifiers(nested, LOADER)).containsExactly(Tagged.class);
+    }
+
     @Test
     void anAnnotationThatIsNotAScopeIsRefused() {
         var notAScope = unit(List.of(), Tagged.class.getName());
