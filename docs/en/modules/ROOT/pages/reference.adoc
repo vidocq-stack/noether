@@ -14,14 +14,14 @@ All Noether artifacts are under `io.vidocq.noether`:
 | `noether-jpa-dialect-h2`, `noether-jpa-dialect-postgresql` | Dialect adapters
 | `noether-jpa-processor` | APT and generated entity access
 | `noether-jpa-jta` | JTA bridge of a Jakarta EE server (`java:comp/TransactionSynchronizationRegistry`)
-| `noether-jpa-cdi` | Persistence injection on a CDI container; JTA through the container's registry (`noether-jpa-jta`)
+| `noether-jpa-cdi` | Persistence injection on a CDI container (`@PersistenceContext`, `@PersistenceUnit`, and `@Inject` of each unit of `persistence.xml`); JTA through the container's registry (`noether-jpa-jta`)
 | `noether-validation`, `noether-validation-core` | Provisional local-only Validation
 |===
 
 Java module names retain their suffixes under `io.vidocq.noether.jpa.*` and
 `io.vidocq.noether.validation.*`. External dependencies stay under
 `io.vidocq.mansart` and `io.vidocq.vauban`. `mansart.version` pins the independent
-Mansart version. Integration vehicles and all provisional Validation artifacts
+Mansart version, and `vauban.version` the Vauban of the CDI module-it. Integration vehicles and all provisional Validation artifacts
 are excluded from release publishing.
 
 [WARNING]
@@ -112,6 +112,47 @@ extension. It depends on no transaction manager: a JTA unit runs on what the con
 Quarkus (`quarkus-narayana-jta`, `quarkus-agroal`) and Jakarta EE servers have both beans. On Vidocq the runtime
 extension brings them. A bare Vauban application, without the Vidocq extension, produces them itself. Without them,
 the factory of a JTA unit fails at creation with a `PersistenceException` that names the missing bean.
+====
+
+[NOTE]
+.Persistence units as CDI beans
+====
+For every unit of `persistence.xml`, `noether-jpa-cdi` adds the beans of Jakarta EE 11 Platform §13.12. Each has the
+qualifiers of the unit's `<qualifier>` elements, or `@Default` when there are none, and no interceptor binding.
+
+[cols="3,2,2,4"]
+|===
+| Bean type | Scope | Name | Instance
+
+| `EntityManager` (JTA units only)
+| `<scope>`, or `@TransactionScoped`
+| none
+| A container-managed persistence context (§7.6). In one transaction it shares the persistence context of
+`@PersistenceContext`.
+
+| `EntityManagerFactory`
+| `@ApplicationScoped`
+| the unit name
+| The factory `@PersistenceUnit` injects; `close()` throws `IllegalStateException`.
+
+| `CriteriaBuilder`, `PersistenceUnitUtil`, `Cache`, `SchemaManager`, `Metamodel`
+| `@Dependent`
+| none
+| What that factory returns.
+|===
+
+* **Resource-local units.** A resource-local unit has no `EntityManager` bean: Jakarta Persistence 3.2 §7.6 makes a
+  container-managed entity manager a JTA one. A `<scope>` on such a unit is logged as a warning and ignored.
+* **Errors.** A `<qualifier>` must name an annotation annotated `@jakarta.inject.Qualifier`. A `<scope>` must name one
+  annotated `@jakarta.inject.Scope` or `@jakarta.enterprise.context.NormalScope`. Any other name, or a class the
+  deployment cannot load, fails the deployment with a `DefinitionException` that names the unit.
+* **Containers.** The default scope, `jakarta.transaction.TransactionScoped`, needs its context in the container
+  (`mansart-transactions-cdi`). The beans exist where the extension reads `persistence.xml` when it runs: Vidocq, and
+  a Vauban container that registers `NoetherPersistenceExtension`. Vauban's `scanClasspath()` boots from the build
+  record, which does not hold them. Not tested on Quarkus or on a Jakarta EE server.
+
+Tested by `noether-jpa-cdi-module-it` (`InjectedUnitModuleTest`) on Vauban and Mansart Transactions. The Persistence
+TCK 3.2.1 does not exercise `<qualifier>` or `<scope>` (TCK-GAP-001 in `PERSISTENCE_TCK_PROPOSALS.md`).
 ====
 
 [NOTE]

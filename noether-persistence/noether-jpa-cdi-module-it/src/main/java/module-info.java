@@ -5,6 +5,9 @@ module io.vidocq.noether.jpa.cdi.moduleit {
     // The transaction manager and the JDBC XA adapter a container assembles; noether-jpa-cdi depends on neither.
     requires io.vidocq.mansart.transactions.core;
     requires io.vidocq.mansart.transactions.jdbc;
+    // The transaction manager, its synchronization registry and the @TransactionScoped context of the units'
+    // EntityManager beans, as mansart-transactions-cdi hands them to a container.
+    requires io.vidocq.mansart.transactions.cdi;
     requires io.vidocq.vauban.core;
     requires jakarta.persistence;
     requires jakarta.transaction;

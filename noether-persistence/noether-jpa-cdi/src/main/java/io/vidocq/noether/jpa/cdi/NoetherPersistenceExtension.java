@@ -1,15 +1,27 @@
 package io.vidocq.noether.jpa.cdi;
 
+import io.vidocq.noether.jpa.core.spi.PersistenceDescriptors;
+import io.vidocq.noether.jpa.core.spi.PersistenceDescriptors.UnitInjection;
+import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.Dependent;
+import jakarta.enterprise.inject.Default;
 import jakarta.enterprise.inject.build.compatible.spi.*;
 import jakarta.enterprise.lang.model.AnnotationInfo;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import jakarta.persistence.*;
+import jakarta.persistence.criteria.CriteriaBuilder;
+import jakarta.persistence.metamodel.Metamodel;
+import java.lang.annotation.Annotation;
 import java.util.*;
 
 /** CDI 4.1 Lite persistence injection through portable enhancement and synthesis; no entity/member reflection. */
 public final class NoetherPersistenceExtension implements BuildCompatibleExtension {
+    private static final System.Logger LOGGER = System.getLogger(NoetherPersistenceExtension.class.getName());
+    /** The parameters of the synthetic beans, read by their creators; also the members of {@code @PersistenceContext}. */
+    private static final String UNIT = "unit";
+    private static final String CONTEXT_TYPE = "contextType";
+    private static final String SYNCHRONIZATION = "synchronization";
     private record Context(String unit, String type, String synchronization, Map<String,String> properties) {}
     private final Set<String> units = new LinkedHashSet<>();
     private final Map<String, Context> contexts = new LinkedHashMap<>();
@@ -52,7 +64,7 @@ public final class NoetherPersistenceExtension implements BuildCompatibleExtensi
         units.add(unit);
         if (context == null) return "unit:" + unit;
         String type = enumeration(context, "type", "TRANSACTION");
-        String synchronization = enumeration(context, "synchronization", "SYNCHRONIZED");
+        String synchronization = enumeration(context, SYNCHRONIZATION, "SYNCHRONIZED");
         Map<String,String> properties = new TreeMap<>();
         if (context.hasMember("properties")) {
             for (var value : context.member("properties").asArray()) {
@@ -94,19 +106,76 @@ public final class NoetherPersistenceExtension implements BuildCompatibleExtensi
      */
     @Synthesis
     public void persistenceBeans(SyntheticComponents components) {
-        for (String unit : units) {
+        ClassLoader loader = PersistenceFactoryCreator.loader();
+        List<UnitInjection> declared = PersistenceDescriptors.injections(loader);
+        Set<String> factories = new LinkedHashSet<>(units);
+        for (UnitInjection unit : declared) {
+            String key = factoryKey(unit.name(), units, declared.size());
+            factories.add(key);
+            injectableBeans(components, unit, key, loader);
+        }
+        for (String unit : factories) {
             components.addBean(EntityManagerFactory.class).type(EntityManagerFactory.class).scope(Singleton.class)
                 .qualifier(AnnotationBuilder.of(PersistenceBinding.class).value("unit:" + unit).build())
                 .name(factoryName(unit))
-                .withParam("unit", unit).createWith(PersistenceFactoryCreator.class).disposeWith(PersistenceFactoryDisposer.class);
+                .withParam(UNIT, unit).createWith(PersistenceFactoryCreator.class).disposeWith(PersistenceFactoryDisposer.class);
         }
         contexts.forEach((binding, definition) -> components.addBean(EntityManager.class).type(EntityManager.class)
             .scope(Dependent.class).qualifier(AnnotationBuilder.of(PersistenceBinding.class).value(binding).build())
-            .withParam("unit", definition.unit).withParam("contextType", definition.type)
-            .withParam("synchronization", definition.synchronization)
+            .withParam(UNIT, definition.unit).withParam(CONTEXT_TYPE, definition.type)
+            .withParam(SYNCHRONIZATION, definition.synchronization)
             .withParam("propertyNames", definition.properties.keySet().toArray(String[]::new))
             .withParam("propertyValues", definition.properties.values().toArray(String[]::new))
             .createWith(PersistenceContextCreator.class).disposeWith(PersistenceContextDisposer.class));
+    }
+
+    /**
+     * The key of the one factory a unit of {@code persistence.xml} runs on: the factory its injection points already
+     * share, the one an injection point without a unit name reaches when the unit is the deployment's only one, otherwise
+     * its own.
+     */
+    static String factoryKey(String unit, Set<String> injected, int declaredUnits) {
+        if (injected.contains(unit)) return unit;
+        return injected.contains("") && declaredUnits == 1 ? "" : unit;
+    }
+
+    /**
+     * Jakarta EE 11 Platform §13.12: every unit of {@code persistence.xml} is injectable with {@code @Inject}, under the
+     * qualifiers its {@code <qualifier>} elements name, or {@code @Default}. The {@code EntityManagerFactory} bean is
+     * application scoped and named after the unit; five dependent beans give its parts. The {@code EntityManager} bean
+     * takes the scope of {@code <scope>}, or {@code @TransactionScoped}; a resource-local unit has none, a
+     * container-managed entity manager being a JTA one (Jakarta Persistence 3.2, §7.6).
+     */
+    private static void injectableBeans(SyntheticComponents components, UnitInjection unit, String key, ClassLoader loader) {
+        List<Class<? extends Annotation>> qualifiers = UnitAnnotations.qualifiers(unit, loader);
+        qualified(components.addBean(EntityManagerFactory.class).type(EntityManagerFactory.class), qualifiers)
+            .scope(ApplicationScoped.class).name(unit.name()).withParam(UNIT, key).createWith(UnitBeans.Factory.class);
+        part(components, CriteriaBuilder.class, UnitBeans.Criteria.class, qualifiers, key);
+        part(components, PersistenceUnitUtil.class, UnitBeans.Util.class, qualifiers, key);
+        part(components, Cache.class, UnitBeans.SecondLevelCache.class, qualifiers, key);
+        part(components, SchemaManager.class, UnitBeans.Schema.class, qualifiers, key);
+        part(components, Metamodel.class, UnitBeans.Model.class, qualifiers, key);
+        if (unit.jta()) {
+            qualified(components.addBean(EntityManager.class).type(EntityManager.class), qualifiers)
+                .scope(UnitAnnotations.scope(unit, loader)).withParam(UNIT, key)
+                .withParam(CONTEXT_TYPE, PersistenceContextType.TRANSACTION.name())
+                .withParam(SYNCHRONIZATION, SynchronizationType.SYNCHRONIZED.name())
+                .createWith(PersistenceContextCreator.class).disposeWith(PersistenceContextDisposer.class);
+        } else if (unit.scopeName() != null) {
+            LOGGER.log(System.Logger.Level.WARNING, "Persistence unit ''{0}'' names the scope {1}, but it is resource-local:"
+                + " only a JTA unit is an injectable EntityManager (Jakarta Persistence 3.2, §7.6)", unit.name(), unit.scopeName());
+        }
+    }
+
+    private static <T> void part(SyntheticComponents components, Class<T> type, Class<? extends SyntheticBeanCreator<T>> creator,
+            List<Class<? extends Annotation>> qualifiers, String key) {
+        qualified(components.addBean(type).type(type), qualifiers).scope(Dependent.class).withParam(UNIT, key).createWith(creator);
+    }
+
+    private static <T> SyntheticBeanBuilder<T> qualified(SyntheticBeanBuilder<T> bean, List<Class<? extends Annotation>> qualifiers) {
+        if (qualifiers.isEmpty()) bean.qualifier(Default.class);
+        qualifiers.forEach(bean::qualifier);
+        return bean;
     }
 
     /**

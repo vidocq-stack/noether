@@ -50,7 +50,7 @@ public final class PersistenceFactoryCreator implements SyntheticBeanCreator<Ent
         return new SynchronizationRegistryIntegration(ContainerTransactions.registry(lookup, unit));
     }
 
-    private static ClassLoader loader() {
+    static ClassLoader loader() {
         ClassLoader loader = Thread.currentThread().getContextClassLoader();
         return loader == null ? PersistenceFactoryCreator.class.getClassLoader() : loader;
     }

@@ -30,6 +30,7 @@ import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collections;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -116,6 +117,40 @@ class PersistenceDescriptorsTest {
             assertThat(PersistenceDescriptors.transactions("overridden", loader))
                 .hasValueSatisfying(overridden -> assertThat(overridden.jta()).isTrue());
             assertThat(PersistenceDescriptors.transactions("missing", loader)).isEmpty();
+        }
+    }
+
+    /**
+     * §8.2.1.5, §8.2.1.6 and Jakarta EE 11 Platform §13.12: a container makes every unit of the deployment injectable
+     * with {@code @Inject}, under the qualifiers and the scope the descriptor names, so it asks for all of them.
+     */
+    @Test
+    void everyUnitIsInjectableUnderTheQualifiersAndTheScopeItsDescriptorNames() throws IOException {
+        String descriptor = "<persistence xmlns=\"https://jakarta.ee/xml/ns/persistence\" version=\"3.2\">"
+            + "<persistence-unit name=\"ledger\" transaction-type=\"JTA\">"
+            + "<qualifier>com.acme.Ledger</qualifier><qualifier>com.acme.Audited</qualifier>"
+            + "<scope>jakarta.enterprise.context.RequestScoped</scope></persistence-unit>"
+            + "<persistence-unit name=\"plain\" transaction-type=\"JTA\"/>"
+            + "<persistence-unit name=\"local\" transaction-type=\"RESOURCE_LOCAL\"><qualifier>com.acme.Local</qualifier>"
+            + "</persistence-unit>"
+            + "</persistence>";
+        try (var loader = new URLClassLoader(new URL[] {root("injections", descriptor), root("more", units("more"))}, null)) {
+            assertThat(PersistenceDescriptors.injections(loader)).containsExactly(
+                new PersistenceDescriptors.UnitInjection("ledger", List.of("com.acme.Ledger", "com.acme.Audited"),
+                    "jakarta.enterprise.context.RequestScoped", true),
+                new PersistenceDescriptors.UnitInjection("plain", List.of(), null, true),
+                new PersistenceDescriptors.UnitInjection("local", List.of("com.acme.Local"), null, false),
+                new PersistenceDescriptors.UnitInjection("more", List.of(), null, false));
+        }
+    }
+
+    @Test
+    void aDescriptorSeenThroughTwoClassLoadersGivesItsUnitsOnce() throws IOException {
+        URL root = root("twice", units("twice"));
+        try (var parent = new URLClassLoader(new URL[] {root}, null);
+             var child = new URLClassLoader(new URL[] {root}, parent)) {
+            assertThat(PersistenceDescriptors.injections(child)).extracting(PersistenceDescriptors.UnitInjection::name)
+                .containsExactly("twice");
         }
     }
 

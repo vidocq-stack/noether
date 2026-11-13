@@ -1,5 +1,6 @@
 package io.vidocq.noether.jpa.cdi.moduleit;
 
+import io.vidocq.mansart.transactions.cdi.MansartTransactionsProducer;
 import io.vidocq.noether.jpa.cdi.NoetherPersistenceExtension;
 import io.vidocq.vauban.core.container.VaubanContainer;
 import jakarta.persistence.EntityManager;
@@ -42,7 +43,7 @@ class DescriptorUnitModuleTest {
 
     @Test
     void aJtaUnitThatNamesNoDataSourceRunsOnTheDefaultDataSourceBean() throws Exception {
-        try (var container = container(Transactions.class, DataSources.class, DefaultSourceRepository.class)) {
+        try (var container = container(MansartTransactionsProducer.class, DataSources.class, DefaultSourceRepository.class)) {
             EntityManager manager = container.select(DefaultSourceRepository.class).manager;
             TransactionManager tm = container.select(TransactionManager.class);
             tm.begin();
@@ -61,7 +62,7 @@ class DescriptorUnitModuleTest {
 
     @Test
     void aJtaUnitNamingItsJtaDataSourceRunsOnTheBeanOfThatName() throws Exception {
-        try (var container = container(Transactions.class, DataSources.class, NamedSourceRepository.class)) {
+        try (var container = container(MansartTransactionsProducer.class, DataSources.class, NamedSourceRepository.class)) {
             EntityManager manager = container.select(NamedSourceRepository.class).manager;
             TransactionManager tm = container.select(TransactionManager.class);
             tm.begin();
@@ -85,7 +86,7 @@ class DescriptorUnitModuleTest {
 
     @Test
     void withoutTheNamedDataSourceAJtaUnitFailsAtFactoryCreation() {
-        try (var container = container(Transactions.class, NamedSourceRepository.class)) {
+        try (var container = container(MansartTransactionsProducer.class, NamedSourceRepository.class)) {
             assertThatThrownBy(() -> container.select(NamedSourceRepository.class))
                 .satisfies(failure -> assertThat(causes(failure)).anyMatch(PersistenceException.class::isInstance))
                 .hasStackTraceContaining("xml-ledger")
@@ -109,7 +110,7 @@ class DescriptorUnitModuleTest {
      */
     @Test
     void aJtaUnitAllocatesTableIdentifiersThroughTheBeanNamedAfterItsNonJtaDataSource() throws Exception {
-        try (var container = container(Transactions.class, DataSources.class, VoucherRepository.class)) {
+        try (var container = container(MansartTransactionsProducer.class, DataSources.class, VoucherRepository.class)) {
             EntityManager manager = container.select(VoucherRepository.class).manager;
             TransactionManager tm = container.select(TransactionManager.class);
 
@@ -125,7 +126,7 @@ class DescriptorUnitModuleTest {
 
     @Test
     void withoutTheNonJtaDataSourceBeanAJtaUnitFailsAtFactoryCreation() {
-        try (var container = container(Transactions.class, VoucherRepository.class, DefaultSource.class)) {
+        try (var container = container(MansartTransactionsProducer.class, VoucherRepository.class, DefaultSource.class)) {
             assertThatThrownBy(() -> container.select(VoucherRepository.class))
                 .satisfies(failure -> assertThat(causes(failure)).anyMatch(PersistenceException.class::isInstance))
                 .hasStackTraceContaining("xml-vouchers")

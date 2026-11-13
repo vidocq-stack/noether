@@ -31,6 +31,56 @@ On Vauban, put `noether-jpa-cdi` on the annotation processor path next to
 and boot with `VaubanContainer.builder().scanClasspath()`, which reads what the
 build recorded. This needs a Vauban that includes Vidocq/vauban#285.
 
+[#inject-units]
+== Injecting a persistence unit with @Inject
+
+Jakarta Persistence 3.2 lets a unit of `persistence.xml` name CDI qualifiers (`<qualifier>`, §8.2.1.5) and a CDI
+scope (`<scope>`, §8.2.1.6). Jakarta EE 11 Platform §13.12 then makes the unit injectable with `@Inject`.
+`noether-jpa-cdi` adds these beans for every unit of `persistence.xml`:
+
+[source,xml]
+----
+<persistence-unit name="accounting" transaction-type="JTA">
+    <qualifier>com.acme.Ledger</qualifier>
+    <scope>jakarta.enterprise.context.RequestScoped</scope>
+    <class>com.acme.Entry</class>
+</persistence-unit>
+----
+
+[source,java]
+----
+@Inject @Ledger EntityManager entries;           // @RequestScoped here; @TransactionScoped without <scope>
+@Inject @Ledger EntityManagerFactory factory;    // @ApplicationScoped, the bean named "accounting"
+@Inject @Ledger CriteriaBuilder criteriaBuilder; // also PersistenceUnitUtil, Cache, SchemaManager, Metamodel
+----
+
+* **Qualifiers.** A unit without `<qualifier>` gives `@Default` beans. With two such units, an unqualified
+  `@Inject EntityManager` is ambiguous: give the units qualifiers.
+* **Scope.** Without `<scope>`, the `EntityManager` bean is `@TransactionScoped`, so the container must register
+  that scope's context: `mansart-transactions-cdi` does, and the Vidocq runtime brings it. Outside a transaction, a
+  call on that entity manager throws `ContextNotActiveException`.
+* **The same unit as the Jakarta Persistence annotations.**
+  - The entity manager is the one `@PersistenceContext` injects: in one transaction, both work on one persistence
+    context.
+  - The factory is the one `@PersistenceUnit` injects. The container closes it, and `close()` throws
+    `IllegalStateException`.
+* **Resource-local units.** A resource-local unit gets the factory beans but no `EntityManager` bean, because a
+  container-managed entity manager is a JTA one (Jakarta Persistence 3.2, §7.6). Create its entity managers from the
+  injected factory.
+* **Bean names.** The `EntityManagerFactory` bean is named after its unit, so no other bean may have that name.
+  For example, a data source bean `@Named("accounting")` and a unit `accounting` fail the deployment with a
+  duplicate bean name. Give the data source another name, then name it in `<jta-data-source>`.
+* **Errors.** A `<qualifier>` or `<scope>` that the deployment cannot load, or that is not a qualifier or a scope,
+  fails the deployment with a `DefinitionException` that names the unit.
+* **When the extension runs.** The beans come from the `persistence.xml` the extension reads when it runs.
+  - Vidocq, and a Vauban container built with `VaubanContainer.builder().addBeanClass(NoetherPersistenceExtension.class)`,
+    run it at boot.
+  - With `scanClasspath()`, Vauban replays what its annotation processor recorded, and the processor cannot read
+    `persistence.xml`. These beans are then missing, while `@PersistenceContext` and `@PersistenceUnit` still work.
+
+This needs a Vauban that includes Vidocq/vauban#286, the fixes of BUG-20261113-01 and BUG-20261113-02: a bean in an
+extension's scope, and the exceptions of an interface-typed normal-scoped bean.
+
 == Composite business tuples in a target secondary table
 
 D43 permits owning `ManyToOne`/`OneToOne` joins to a composite tuple of

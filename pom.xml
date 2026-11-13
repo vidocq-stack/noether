@@ -69,6 +69,11 @@
 
     <properties>
         <mansart.version>0.4.0-SNAPSHOT</mansart.version>
+        <!--
+            The Vauban the CDI module-it runs on. A property, not a literal: a Vauban pull request builds Noether as
+            its consumer with this property set to the pull-request version; a literal kept the published SNAPSHOT.
+        -->
+        <vauban.version>0.4.0-SNAPSHOT</vauban.version>
         <maven.compiler.source>25</maven.compiler.source>
         <maven.compiler.target>25</maven.compiler.target>
 

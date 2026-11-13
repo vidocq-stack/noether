@@ -74,20 +74,27 @@ public final class PersistenceUnits {
      * loader lists twice, through a parent loader for instance, is read once.
      */
     public static List<String> names(ClassLoader loader) {
+        return all(loader).stream().map(PersistenceUnitDefinition::name).toList();
+    }
+
+    /**
+     * The units of every {@code persistence.xml} of {@code loader}, in class path order. A file that the loader lists
+     * twice, through a parent loader for instance, is read once.
+     */
+    public static List<PersistenceUnitDefinition> all(ClassLoader loader) {
         try {
-            List<String> names = new ArrayList<>();
+            List<PersistenceUnitDefinition> units = new ArrayList<>();
             Set<String> read = new HashSet<>();
             Enumeration<URL> files = loader.getResources(RESOURCE);
             while (files.hasMoreElements()) {
                 URL file = files.nextElement();
                 if (read.add(file.toExternalForm())) {
                     try (InputStream in = open(file)) {
-                        PersistenceXmlParser.parse(in, PersistenceXmlParser.rootOf(file), loader)
-                            .forEach(unit -> names.add(unit.name()));
+                        units.addAll(PersistenceXmlParser.parse(in, PersistenceXmlParser.rootOf(file), loader));
                     }
                 }
             }
-            return names;
+            return units;
         } catch (IOException e) {
             throw new PersistenceException("Unable to read " + RESOURCE, e);
         }

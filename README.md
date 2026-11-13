@@ -28,6 +28,17 @@ Vauban application produces them). No published module depends on Mansart
 Transactions. Jakarta Data remains in Mansart; no
 Data/JPA bridge is introduced.
 
+`noether-jpa-cdi` also makes every unit of `persistence.xml` injectable with
+`@Inject` (Jakarta EE 11 Platform §13.12):
+
+- an `EntityManagerFactory` bean named after the unit;
+- an `EntityManager` bean for a JTA unit;
+- five dependent beans: `CriteriaBuilder`, `PersistenceUnitUtil`, `Cache`, `SchemaManager` and `Metamodel`.
+
+Each bean carries the qualifiers of the unit's `<qualifier>` elements, and the `EntityManager` bean takes the scope
+of `<scope>` (Vidocq/noether#72). The Persistence TCK does not cover this; the gap is recorded in
+[PERSISTENCE_TCK_PROPOSALS.md](PERSISTENCE_TCK_PROPOSALS.md).
+
 ## Build
 
 Java 25 (Temurin) and Maven 3.9.16 are pinned in `.sdkmanrc`. From this repository:

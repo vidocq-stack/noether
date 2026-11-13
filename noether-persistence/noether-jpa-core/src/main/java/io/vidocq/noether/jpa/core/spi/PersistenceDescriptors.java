@@ -49,7 +49,37 @@ public final class PersistenceDescriptors {
         }
     }
 
+    /**
+     * How a container makes a declared unit injectable with {@code @Inject} (§8.2.1.5, §8.2.1.6; Jakarta EE 11
+     * Platform §13.12).
+     *
+     * @param name the name of the unit
+     * @param qualifierNames the {@code qualifier} elements, the fully qualified names of the unit's qualifier
+     *        annotations, in their order; empty when the unit names none, and its beans are then {@code @Default}
+     * @param scopeName the {@code scope} element, the fully qualified name of the scope of the unit's entity manager,
+     *        or {@code null} when the unit names none
+     * @param jta whether the effective transaction type of the unit is JTA: a container-managed entity manager is a
+     *        JTA entity manager (§7.6)
+     */
+    public record UnitInjection(String name, List<String> qualifierNames, String scopeName, boolean jta) {
+        public UnitInjection {
+            qualifierNames = List.copyOf(qualifierNames);
+        }
+    }
+
     private PersistenceDescriptors() {
+    }
+
+    /**
+     * Every unit the {@code META-INF/persistence.xml} files of {@code loader} declare, as a container injects it, in
+     * class path order.
+     *
+     * @throws PersistenceException if a file cannot be read
+     */
+    public static List<UnitInjection> injections(ClassLoader loader) {
+        return PersistenceUnits.all(loader).stream().map(unit -> new UnitInjection(unit.name(),
+            unit.qualifierAnnotationNames(), unit.scopeAnnotationName(),
+            UnitSettings.of(unit, Map.of(), Map.of()).transactionType() == PersistenceUnitTransactionType.JTA)).toList();
     }
 
     /**

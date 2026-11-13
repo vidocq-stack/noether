@@ -12,7 +12,9 @@
             <property name="jakarta.persistence.schema-generation.database.action" value="drop-and-create"/>
         </properties>
     </persistence-unit>
+    <!-- Platform §13.12: @Inject @Ledger EntityManager and @Inject @Ledger EntityManagerFactory reach this unit. -->
     <persistence-unit name="xml-ledger" transaction-type="JTA">
+        <qualifier>io.vidocq.noether.jpa.cdi.moduleit.Ledger</qualifier>
         <jta-data-source>ledger</jta-data-source>
         <class>io.vidocq.noether.jpa.cdi.moduleit.Record</class>
         <exclude-unlisted-classes>true</exclude-unlisted-classes>
@@ -28,7 +30,19 @@
             <property name="jakarta.persistence.schema-generation.database.action" value="drop-and-create"/>
         </properties>
     </persistence-unit>
+    <!-- An application-scoped EntityManager in place of the transaction-scoped one (§8.2.1.6). -->
+    <persistence-unit name="xml-archive" transaction-type="JTA">
+        <qualifier>io.vidocq.noether.jpa.cdi.moduleit.Archive</qualifier>
+        <scope>jakarta.enterprise.context.ApplicationScoped</scope>
+        <class>io.vidocq.noether.jpa.cdi.moduleit.Record</class>
+        <exclude-unlisted-classes>true</exclude-unlisted-classes>
+        <properties>
+            <property name="jakarta.persistence.schema-generation.database.action" value="drop-and-create"/>
+        </properties>
+    </persistence-unit>
+    <!-- A resource-local unit has no EntityManager bean: its scope is logged as ignored (Jakarta Persistence 3.2, §7.6). -->
     <persistence-unit name="xml-local" transaction-type="RESOURCE_LOCAL">
+        <scope>jakarta.enterprise.context.RequestScoped</scope>
         <class>io.vidocq.noether.jpa.cdi.moduleit.Record</class>
         <exclude-unlisted-classes>true</exclude-unlisted-classes>
         <properties>

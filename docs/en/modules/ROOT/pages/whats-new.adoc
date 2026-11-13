@@ -1,6 +1,26 @@
 = What's new
 :description: Noether extraction and compatibility changes.
 
+== 2026-11-13 — Every persistence unit is injectable with @Inject
+
+`noether-jpa-cdi` now binds the `<qualifier>` and `<scope>` elements of `persistence.xml` (Jakarta Persistence 3.2,
+§8.2.1.5 and §8.2.1.6), as Jakarta EE 11 Platform §13.12 requires. For each unit, it adds:
+
+* an `EntityManagerFactory` bean, `@ApplicationScoped` and named after the unit;
+* for a JTA unit, an `EntityManager` bean in the unit's `<scope>`, `@TransactionScoped` by default;
+* five `@Dependent` beans: `CriteriaBuilder`, `PersistenceUnitUtil`, `Cache`, `SchemaManager` and `Metamodel`.
+
+They carry the unit's qualifiers, or `@Default`, and reach the same factory and persistence context as
+`@PersistenceUnit` and `@PersistenceContext` (Vidocq/noether#72).
+
+Check two things when you upgrade:
+
+* **Bean names.** A bean whose name is a unit name now collides with that unit's factory bean.
+* **Ambiguous injections.** Two units without `<qualifier>` both give `@Default` beans, so an application's own
+  `@Inject EntityManager` without a qualifier becomes ambiguous.
+
+See xref:usage.adoc[Usage].
+
 == 2026-11-11 — A JTA unit allocates TABLE identifiers through its non-JTA data source
 
 A JTA unit with a `TABLE` identifier generator (or `AUTO` resolved to one) now allocates its blocks through its

@@ -1,5 +1,6 @@
 package io.vidocq.noether.jpa.cdi.moduleit;
 
+import io.vidocq.mansart.transactions.cdi.MansartTransactionsProducer;
 import io.vidocq.noether.jpa.cdi.*;
 import io.vidocq.noether.jpa.jta.SynchronizationRegistryIntegration;
 import io.vidocq.vauban.core.container.VaubanContainer;
@@ -30,7 +31,7 @@ class ContainerModuleTest {
 
     private static String factoryName(String unit, Class<?>... repositories) {
         var builder = VaubanContainer.builder().addBeanClass(NoetherPersistenceExtension.class)
-            .addBeanClass(Transactions.class).addBeanClass(Services.class);
+            .addBeanClass(MansartTransactionsProducer.class).addBeanClass(Services.class);
         for (Class<?> repository : repositories) builder.addBeanClass(repository);
         try (var container = builder.build()) {
             Set<String> names = container.getBeanManager().getBeans(EntityManagerFactory.class, Any.Literal.INSTANCE)
@@ -43,7 +44,7 @@ class ContainerModuleTest {
     @Test
     void existingInjectionPointsResolveSynthesizedPersistenceFields() throws Exception {
         try (var container = VaubanContainer.builder().addBeanClass(NoetherPersistenceExtension.class)
-                .addBeanClass(Transactions.class).addBeanClass(Services.class).addBeanClass(ExplicitInjectionRepository.class).build()) {
+                .addBeanClass(MansartTransactionsProducer.class).addBeanClass(Services.class).addBeanClass(ExplicitInjectionRepository.class).build()) {
             var repository = container.select(ExplicitInjectionRepository.class);
             assertThat(repository.manager).isNotNull();
             assertThat(repository.factory).isNotNull();
@@ -60,7 +61,7 @@ class ContainerModuleTest {
     @Test
     void persistenceSetterParametersReceiveTheirEnhancedQualifier() {
         try (var container = VaubanContainer.builder().addBeanClass(NoetherPersistenceExtension.class)
-                .addBeanClass(Transactions.class).addBeanClass(Services.class).addBeanClass(SetterRepository.class).build()) {
+                .addBeanClass(MansartTransactionsProducer.class).addBeanClass(Services.class).addBeanClass(SetterRepository.class).build()) {
             assertThat(container.select(SetterRepository.class).manager).isNotNull();
         }
     }
@@ -68,7 +69,7 @@ class ContainerModuleTest {
     @Test
     void persistenceAnnotationsInjectThroughTheActualContainer() throws Exception {
         try (var container = VaubanContainer.builder().addBeanClass(NoetherPersistenceExtension.class)
-                .addBeanClass(Transactions.class).addBeanClass(Services.class).addBeanClass(Repository.class).build()) {
+                .addBeanClass(MansartTransactionsProducer.class).addBeanClass(Services.class).addBeanClass(Repository.class).build()) {
             Repository repository = container.select(Repository.class);
             assertThat(repository.manager).isNotNull();
             assertThat(repository.factory).isNotNull();
@@ -82,7 +83,7 @@ class ContainerModuleTest {
 
     @Test
     void actualContainerRegistryDrivesScopedIdentityAndExtendedLifecycle() throws Exception {
-        try (var container = VaubanContainer.builder().addBeanClass(Transactions.class).addBeanClass(Services.class).build()) {
+        try (var container = VaubanContainer.builder().addBeanClass(MansartTransactionsProducer.class).addBeanClass(Services.class).build()) {
             TransactionManager tm = container.select(TransactionManager.class);
             TransactionSynchronizationRegistry registry = container.select(TransactionSynchronizationRegistry.class);
             var integration = new SynchronizationRegistryIntegration(registry);
