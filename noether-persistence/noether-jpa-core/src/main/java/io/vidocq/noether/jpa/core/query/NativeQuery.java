@@ -91,7 +91,7 @@ public class NativeQuery extends AbstractQuery implements Query {
 
     public NativeQuery(String sqlString, FlushModeType flushMode, Executor executor, QueryRuntime runtime, Class<?> resultClass,
             String resultSetMapping, java.util.function.BooleanSupplier open) {
-        super(flushMode, open);
+        super(flushMode, open, runtime.defaults());
         if (sqlString == null || sqlString.isBlank()) {
             throw new IllegalArgumentException("A native query needs SQL");
         }
@@ -162,7 +162,7 @@ public class NativeQuery extends AbstractQuery implements Query {
     public List getResultList() {
         checkOpen();
         List<Object> parameters = parameters();
-        return runtime.read(getFlushMode(), connection -> read(connection, parameters));
+        return runtime.read(getFlushMode(), getCacheRetrieveMode(), getCacheStoreMode(), connection -> read(connection, parameters));
     }
 
     @Override
@@ -571,6 +571,7 @@ public class NativeQuery extends AbstractQuery implements Query {
     @Override
     public Query setHint(String hintName, Object value) {
         checkOpen();
+        standardHint(hintName, value);
         hint(hintName, value);
         return this;
     }

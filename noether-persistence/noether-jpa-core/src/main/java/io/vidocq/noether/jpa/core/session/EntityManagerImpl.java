@@ -638,16 +638,28 @@ final class EntityManagerImpl implements EntityManager {
     /** The standard lock timeout hint (§3.11.4), in milliseconds. */
     private static final String LOCK_TIMEOUT = "jakarta.persistence.lock.timeout";
 
-    /** The lock timeout of an operation: its hint, else the entity manager's property, else none (the database's). */
-    private Integer lockTimeout(Map<String, Object> hints, Integer fallback) {
-        Object value = hints != null && hints.containsKey(LOCK_TIMEOUT) ? hints.get(LOCK_TIMEOUT) : properties.get(LOCK_TIMEOUT);
+    /**
+     * The lock timeout of an operation: its hint, else the entity manager's property, else the unit's, else none (the
+     * database's).
+     */
+    Integer lockTimeout(Map<String, Object> hints) {
+        return hints != null && hints.containsKey(LOCK_TIMEOUT) ? milliseconds(hints.get(LOCK_TIMEOUT)) : timeout(LOCK_TIMEOUT);
+    }
+
+    /** A timeout property of this entity manager, else of its unit (§8.2.1.9), in milliseconds; {@code null} for none. */
+    private Integer timeout(String name) {
+        Object value = properties.containsKey(name) ? properties.get(name) : factory.settings().properties().get(name);
+        return milliseconds(value);
+    }
+
+    private static Integer milliseconds(Object value) {
         if (value == null) {
-            return fallback;
+            return null;
         }
         try {
             return value instanceof Number number ? number.intValue() : Integer.parseInt(value.toString().strip());
         } catch (NumberFormatException e) {
-            return fallback; // §3.11: a hint that cannot be used is ignored
+            return null; // §3.11: a hint that cannot be used is ignored
         }
     }
 
@@ -847,7 +859,7 @@ final class EntityManagerImpl implements EntityManager {
                     return entityClass.cast(restored.get());
                 }
             }
-            Integer timeout = lockTimeout(properties, null);
+            Integer timeout = lockTimeout(properties);
             long cacheGeneration = factory.cache().generation();
             if (transaction.isActive() && store != CacheStoreMode.BYPASS) {
                 captureCacheGeneration(cacheGeneration);
@@ -1092,7 +1104,7 @@ final class EntityManagerImpl implements EntityManager {
         try {
             requireTransaction("lock");
             ManagedEntity entry = managedEntry(entity);
-            Integer timeout = lockTimeout(properties, null);
+            Integer timeout = lockTimeout(properties);
             withTransactionConnection(connection -> {
                 factory.locks(connection).lock(entry.type(), entry, lockMode, timeout, true, connection, context);
                 return null;
@@ -1134,7 +1146,7 @@ final class EntityManagerImpl implements EntityManager {
                 if (Locks.pessimistic(lockMode)) {
                     // lock the row first: the refresh then reads what no one can change any more
                     withTransactionConnection(connection -> {
-                        factory.locks(connection).lock(entry.type(), entry, lockMode, lockTimeout(Map.of(), null), false, connection,
+                        factory.locks(connection).lock(entry.type(), entry, lockMode, lockTimeout(Map.of()), false, connection,
                             context);
                         return null;
                     });
@@ -1189,6 +1201,39 @@ final class EntityManagerImpl implements EntityManager {
 
     /** What the queries of this entity manager run with: its connection, its persistence context, its flush. */
     private final QueryRuntime queries = new QueryRuntime() {
+
+        /** The cache modes of the query whose entities are being loaded; {@code null} outside one (BUG-20261113-05). */
+        private CacheRetrieveMode queryRetrieveMode;
+        private CacheStoreMode queryStoreMode;
+
+        private CacheRetrieveMode loadRetrieveMode() {
+            return queryRetrieveMode != null ? queryRetrieveMode : cacheRetrieveMode;
+        }
+
+        private CacheStoreMode loadStoreMode() {
+            return queryStoreMode != null ? queryStoreMode : cacheStoreMode;
+        }
+
+        @Override
+        public Defaults defaults() {
+            return new Defaults(timeout(UnitSettings.QUERY_TIMEOUT), timeout(UnitSettings.LOCK_TIMEOUT),
+                cacheRetrieveMode, cacheStoreMode);
+        }
+
+        @Override
+        public <T> T read(FlushModeType queryFlushMode, CacheRetrieveMode retrieveMode, CacheStoreMode storeMode,
+                Function<Connection, T> work) {
+            CacheRetrieveMode outerRetrieveMode = queryRetrieveMode;
+            CacheStoreMode outerStoreMode = queryStoreMode;
+            queryRetrieveMode = retrieveMode;
+            queryStoreMode = storeMode;
+            try {
+                return read(queryFlushMode, work);
+            } finally {
+                queryRetrieveMode = outerRetrieveMode;
+                queryStoreMode = outerStoreMode;
+            }
+        }
         @Override
         public MappedUnit mapping() {
             return factory.mapping();
@@ -1283,15 +1328,15 @@ final class EntityManagerImpl implements EntityManager {
                 io.vidocq.noether.jpa.core.spi.LazyReference.initialize(known.get().instance());
                 return known.get().instance();
             }
-            if (!cacheInvalidationPending && cacheRetrieveMode == CacheRetrieveMode.USE
-                    && cacheStoreMode != CacheStoreMode.REFRESH) {
+            if (!cacheInvalidationPending && loadRetrieveMode() == CacheRetrieveMode.USE
+                    && loadStoreMode() != CacheStoreMode.REFRESH) {
                 Optional<Object> cached = factory.cache().restore(type, id, context);
                 if (cached.isPresent()) {
                     return cached.get();
                 }
             }
             long cacheGeneration = factory.cache().generation();
-            if (transaction.isActive() && cacheStoreMode != CacheStoreMode.BYPASS) {
+            if (transaction.isActive() && loadStoreMode() != CacheStoreMode.BYPASS) {
                 captureCacheGeneration(cacheGeneration);
             }
             return stored(type, id, factory.loader(connection).load(type, id, connection, context), cacheGeneration);
@@ -1300,12 +1345,12 @@ final class EntityManagerImpl implements EntityManager {
         @Override
         public void hydrate(MappedEntity type, Object id, Object[] values, boolean[] nulls, Connection connection) {
             Optional<ManagedEntity> known = context.find(new EntityKey(type.root(), id));
-            if (known.isEmpty() && !cacheInvalidationPending && cacheRetrieveMode == CacheRetrieveMode.USE
-                    && cacheStoreMode != CacheStoreMode.REFRESH && factory.cache().restore(type, id, context).isPresent()) {
+            if (known.isEmpty() && !cacheInvalidationPending && loadRetrieveMode() == CacheRetrieveMode.USE
+                    && loadStoreMode() != CacheStoreMode.REFRESH && factory.cache().restore(type, id, context).isPresent()) {
                 return; // as find(): the shared cache's state, when it is the one find would give
             }
             long cacheGeneration = factory.cache().generation();
-            if (known.isEmpty() && transaction.isActive() && cacheStoreMode != CacheStoreMode.BYPASS) {
+            if (known.isEmpty() && transaction.isActive() && loadStoreMode() != CacheStoreMode.BYPASS) {
                 captureCacheGeneration(cacheGeneration);
             }
             Object loaded = factory.loader(connection).load(type, id, values, nulls, connection, context);
@@ -1338,13 +1383,13 @@ final class EntityManagerImpl implements EntityManager {
             for (var row : rows) {
                 EntityKey key = row.key();
                 if (context.find(key).isPresent()) continue;
-                if (!cacheInvalidationPending && cacheRetrieveMode == CacheRetrieveMode.USE
-                        && cacheStoreMode != CacheStoreMode.REFRESH
+                if (!cacheInvalidationPending && loadRetrieveMode() == CacheRetrieveMode.USE
+                        && loadStoreMode() != CacheStoreMode.REFRESH
                         && factory.cache().restore(row.type(), row.id(), context).isPresent()) continue;
                 fresh.putIfAbsent(key, row.type());
             }
             long generation = factory.cache().generation();
-            if (!fresh.isEmpty() && transaction.isActive() && cacheStoreMode != CacheStoreMode.BYPASS) captureCacheGeneration(generation);
+            if (!fresh.isEmpty() && transaction.isActive() && loadStoreMode() != CacheStoreMode.BYPASS) captureCacheGeneration(generation);
             factory.loader(connection).loadCollections(rows, collections, connection, context);
             for (var item : fresh.entrySet()) {
                 stored(item.getKey(), context.find(item.getKey()).orElseThrow().instance(), generation);
@@ -1363,12 +1408,12 @@ final class EntityManagerImpl implements EntityManager {
         private Object stored(EntityKey key, Object loaded, long cacheGeneration) {
             if (loaded != null) {
                 if (transaction.isActive()) {
-                    if (cacheStoreMode == CacheStoreMode.BYPASS) {
+                    if (loadStoreMode() == CacheStoreMode.BYPASS) {
                         bypassStore.add(key);
                     } else {
                         transactionCacheCandidates.add(key);
                     }
-                } else if (cacheStoreMode != CacheStoreMode.BYPASS) {
+                } else if (loadStoreMode() != CacheStoreMode.BYPASS) {
                     factory.cache().store(loaded, cacheGeneration);
                 }
             }

@@ -144,20 +144,21 @@ prefixes whose classes may be deserialized from a column mapped to a `Serializab
 
 | `jakarta.persistence.lock.timeout`
 |
-| Milliseconds. Applied as a hint of `find`, `lock`, `refresh` or a query; set on the entity manager, to `find`,
-  `lock` and `refresh` only. Not yet applied from `persistence.xml` or the factory (BUG-20261113-04).
+| Milliseconds. From `persistence.xml`, the factory or the entity manager, to every `find`, `lock`, `refresh`, JPQL
+  and criteria query; a hint of one of them overrides it. `0` locks without waiting where the database can.
 
 | `jakarta.persistence.query.timeout`
 |
-| Milliseconds, rounded up to seconds for JDBC. Applied as a query hint (or `setTimeout`). Not yet applied from the
-  entity manager, `persistence.xml` or the factory (BUG-20261113-04).
+| Milliseconds, rounded up to seconds for JDBC. From `persistence.xml`, the factory or the entity manager, to every
+  query; a query hint or `setTimeout` overrides it.
 
 | `jakarta.persistence.cache.retrieveMode`, `.storeMode`
 | `USE`
-| On the entity manager and on `find` / `refresh`. On a query, recorded but not applied yet (BUG-20261113-05).
+| On the entity manager, on `find` / `refresh`, and on a query, which starts with its entity manager's modes.
 |===
 
-Query hints: `jakarta.persistence.query.timeout`, `jakarta.persistence.lock.timeout`, and
+Query hints: `jakarta.persistence.query.timeout`, `jakarta.persistence.lock.timeout` (JPQL and criteria queries),
+`jakarta.persistence.cache.retrieveMode` and `storeMode` (a constant or its name), and
 `jakarta.persistence.fetchgraph` / `loadgraph` whose value is an `EntityGraph` of the unit (a graph name is
 refused). Noether defines no hint of its own.
 

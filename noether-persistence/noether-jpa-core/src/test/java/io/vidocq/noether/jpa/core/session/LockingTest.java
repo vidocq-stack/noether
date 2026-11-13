@@ -140,6 +140,26 @@ class LockingTest {
     }
 
     @Test
+    void anOperationTakesTheLockTimeoutOfItsUnitThenOfItsEntityManagerThenOfItsHints() { // BUG-20261113-04
+        EntityManagerFactory bounded = new PersistenceConfiguration("locking-bounded")
+            .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
+            .managedClass(Crew.class).managedClass(Sailor.class)
+            .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:locking-bounded-" + DATABASES.incrementAndGet())
+            .property(PersistenceConfiguration.JDBC_USER, "sa")
+            .property("jakarta.persistence.lock.timeout", 250)
+            .createEntityManagerFactory();
+        try {
+            EntityManagerImpl session = bounded.createEntityManager().unwrap(EntityManagerImpl.class);
+            assertThat(session.lockTimeout(Map.of())).isEqualTo(250);
+            session.setProperty("jakarta.persistence.lock.timeout", "50");
+            assertThat(session.lockTimeout(Map.of())).isEqualTo(50);
+            assertThat(session.lockTimeout(Map.of("jakarta.persistence.lock.timeout", 10))).isEqualTo(10);
+        } finally {
+            bounded.close();
+        }
+    }
+
+    @Test
     void aPessimisticForcedIncrementWritesANewVersion() throws SQLException {
         em.getTransaction().begin();
         Crew crew = em.find(Crew.class, 1L);

@@ -1626,3 +1626,59 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     at build time, where no descriptor is read, and the runtime synthesis then added differently shaped ones
     (`Duplicate bean name 'noetherPersistenceUnit_'`, an ambiguous `EntityManager`). The fix keeps the bean
     definitions the build records and decides in the creator, at runtime, where the descriptor is read.
+
+## BUG-20261113-04 — The lock and query timeouts of a unit are ignored, and a query ignores its entity manager's
+
+- **Date**: 2026-11-13
+- **Status**: FIXED on `fix/timeouts-and-cache-modes`: a timeout is read from the operation's hint, else the entity
+  manager's properties, else the unit's (`EntityManagerImpl.timeout`); a query starts with them
+  (`QueryRuntime.defaults`), and every query reads the query timeout and cache mode hints (`AbstractQuery.standardHint`).
+- **Affected module**: `noether-jpa-core`, `EntityManagerImpl.lockTimeout`, `JpqlQuery`, `NativeQuery.setHint`
+- **Symptom**: `jakarta.persistence.lock.timeout` and `jakarta.persistence.query.timeout`, standard properties of a
+  unit (§8.2.1.9, `persistence.xml` or `createEntityManagerFactory`), have no effect:
+  - a `find`, `lock` or `refresh` without a lock timeout hint waits for the database's own timeout, even with the
+    property on the unit;
+  - a JPQL or criteria query takes neither timeout from its unit nor from its entity manager
+    (`createEntityManager(Map)`, `setProperty`): `getTimeout()` is `null` and the lock timeout is the database's;
+  - a native query ignores the `jakarta.persistence.query.timeout` hint (`setTimeout` works).
+- **Minimal reproduction**: `QueryTimeoutsTest` and
+  `LockingTest.anOperationTakesTheLockTimeoutOfItsUnitThenOfItsEntityManagerThenOfItsHints` (`noether-jpa-core`):
+  ```sh
+  ./mvnw -ntp -pl noether-persistence/noether-jpa-core -am -Dtest='QueryTimeoutsTest,LockingTest' \
+    -Dsurefire.failIfNoSpecifiedTests=false install
+  ```
+  H2 has no lock timeout scoped to a transaction (its dialect returns none), so the lock timeout a session or a query
+  will apply is read through package-private accessors; on PostgreSQL it becomes `SET LOCAL lock_timeout`.
+- **Confirmed cause**: `EntityManagerImpl.lockTimeout` read the operation's hints, then the entity manager's own
+  properties, never the unit's. A query was created with no timeout and only its own hints set one; `NativeQuery`
+  kept every hint as given without reading it.
+- **Investigations**:
+  - 2026-11-13: found while checking the property table of the reworked reference page against the code; the eight
+    tests above fail before the fix.
+  - 2026-11-13: fixed; every test of `noether-jpa-core` passes. The official TCK sets neither property and passes only
+    an unrecognised hint to its queries, so it does not see the change.
+
+## BUG-20261113-05 — The cache retrieve and store modes of a query are not applied
+
+- **Date**: 2026-11-13
+- **Status**: FIXED on `fix/timeouts-and-cache-modes`: a query reads with its own cache modes
+  (`QueryRuntime.read(FlushModeType, CacheRetrieveMode, CacheStoreMode, Function)`), which start as its entity
+  manager's.
+- **Affected module**: `noether-jpa-core`, `AbstractQuery`, `EntityManagerImpl` (its query runtime)
+- **Symptom**: `setCacheRetrieveMode`, `setCacheStoreMode` and the `jakarta.persistence.cache.retrieveMode` /
+  `storeMode` hints of a query (Jakarta Persistence 3.2 `Query`) are recorded but not applied: the entities a
+  query loads follow the entity manager's modes. A query with `CacheStoreMode.BYPASS` still publishes its rows to the
+  second-level cache, and one with `REFRESH` returns the cached state instead of the database's. A new query also
+  reports `USE` / `USE` whatever its entity manager's modes, and the hints do not change what the getters report.
+- **Minimal reproduction**: the four `QueryRowHydrationTest` tests marked BUG-20261113-05 (`noether-jpa-core`):
+  ```sh
+  ./mvnw -ntp -pl noether-persistence/noether-jpa-core -am -Dtest=QueryRowHydrationTest \
+    -Dsurefire.failIfNoSpecifiedTests=false install
+  ```
+- **Confirmed cause**: the query runtime of `EntityManagerImpl` (`find`, `hydrate`, `hydrateCollections`, `stored`)
+  reads the entity manager's `cacheRetrieveMode` and `cacheStoreMode` fields; a query's modes stay in `AbstractQuery`
+  and nothing reads them.
+- **Investigations**:
+  - 2026-11-13: found with BUG-20261113-04, while documenting the query hints; the four tests fail before the fix.
+  - 2026-11-13: fixed with BUG-20261113-04. The official TCK sets cache modes on the entity manager, `find` and
+    `refresh` only.

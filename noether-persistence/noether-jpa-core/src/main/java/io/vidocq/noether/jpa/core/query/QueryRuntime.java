@@ -22,6 +22,8 @@ package io.vidocq.noether.jpa.core.query;
 import io.vidocq.noether.jpa.core.mapping.MappedEntity;
 import io.vidocq.noether.jpa.core.mapping.MappedUnit;
 import io.vidocq.noether.jpa.dialect.Dialect;
+import jakarta.persistence.CacheRetrieveMode;
+import jakarta.persistence.CacheStoreMode;
 import jakarta.persistence.FlushModeType;
 import jakarta.persistence.LockModeType;
 import java.sql.Connection;
@@ -65,6 +67,33 @@ public interface QueryRuntime {
      * marks the transaction for rollback (§3.12).
      */
     <T> T read(FlushModeType flushMode, Function<Connection, T> work);
+
+    /**
+     * {@link #read(FlushModeType, Function)} with the cache modes of a query in effect while {@code work} loads its
+     * entities, in place of the entity manager's (BUG-20261113-05).
+     */
+    default <T> T read(FlushModeType flushMode, CacheRetrieveMode retrieveMode, CacheStoreMode storeMode,
+            Function<Connection, T> work) {
+        return read(flushMode, work);
+    }
+
+    /**
+     * What a new query starts with: the query and lock timeouts of the entity manager, else of its unit (§8.2.1.9),
+     * and the entity manager's cache modes. The query's hints and setters override them (BUG-20261113-04).
+     */
+    default Defaults defaults() {
+        return Defaults.NONE;
+    }
+
+    /**
+     * The timeouts, in milliseconds or {@code null} for the database's own, and the cache modes a new query starts
+     * with.
+     */
+    record Defaults(Integer queryTimeout, Integer lockTimeout, CacheRetrieveMode retrieveMode, CacheStoreMode storeMode) {
+
+        /** No timeout, and the default cache modes. */
+        public static final Defaults NONE = new Defaults(null, null, CacheRetrieveMode.USE, CacheStoreMode.USE);
+    }
 
     /**
      * Runs a bulk statement's {@code work} on the connection of the active transaction —

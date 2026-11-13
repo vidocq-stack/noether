@@ -148,13 +148,9 @@ specification says. Optimistic locking uses `@Version`; pessimistic locks (`PESS
 `PESSIMISTIC_WRITE`, `PESSIMISTIC_FORCE_INCREMENT`) lock the rows they read with `SELECT … FOR UPDATE`, or
 `FOR SHARE` for `PESSIMISTIC_READ` on PostgreSQL (H2 has no shared row lock and takes `FOR UPDATE`).
 
-[NOTE]
-====
-`jakarta.persistence.lock.timeout` applies when it is passed to `find`, `lock` or `refresh`, or set on the entity
-manager. Set in `persistence.xml` or on the factory, it is not applied yet, and a JPQL query reads it only from its
-own hint; `jakarta.persistence.query.timeout` likewise applies only as a query hint or through `setTimeout`
-(BUG-20261113-04).
-====
+`jakarta.persistence.lock.timeout` and `jakarta.persistence.query.timeout` can be set in `persistence.xml`, on the
+factory, on the entity manager, or on one operation: a hint of `find`, `lock`, `refresh` or a query, or
+`setTimeout`. The narrowest wins. A query takes the timeouts of its entity manager when it is created.
 
 [#queries]
 == Queries
@@ -235,9 +231,10 @@ between tests).
 
 * *Second-level cache.* `<shared-cache-mode>` turns on the factory's cache: `ALL`, `ENABLE_SELECTIVE` (entities
   marked `@Cacheable`, also the behaviour of `UNSPECIFIED`), `DISABLE_SELECTIVE` or `NONE`. Changes are published
-  to it only after their transaction commits. `find`, `refresh` and the entity manager honour
-  `jakarta.persistence.cache.retrieveMode` and `storeMode`; on a query, `setCacheRetrieveMode` and
-  `setCacheStoreMode` are recorded but not applied yet (BUG-20261113-05).
+  to it only after their transaction commits. `jakarta.persistence.cache.retrieveMode` and `storeMode` apply to the
+  entity manager, to `find` and `refresh`, and to a query (`setCacheRetrieveMode`, `setCacheStoreMode` or the
+  hints). A query starts with the modes of its entity manager; `BYPASS` reads the database without publishing what it
+  loads, `REFRESH` replaces the cached state with the database's.
 * *Bean Validation.* With a Jakarta Validation provider on the path, entities are validated before persist and
   update (`<validation-mode>` `AUTO`, the default). `CALLBACK` makes a missing provider an error, `NONE` turns
   validation off. Noether's own `noether-validation` is a test stopgap, not published: bring a provider.

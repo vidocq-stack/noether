@@ -170,6 +170,62 @@ class QueryRowHydrationTest {
     }
 
     @Test
+    void aQueryBypassesTheSharedCacheWithItsOwnCacheModes() { // BUG-20261113-05
+        Row row = em.createQuery("select r from QrRow r where r.id = 1", Row.class)
+            .setCacheRetrieveMode(CacheRetrieveMode.BYPASS)
+            .setCacheStoreMode(CacheStoreMode.BYPASS)
+            .getSingleResult();
+        assertThat(row.label).isEqualTo("row-1");
+        assertThat(factory.getCache().contains(Row.class, 1)).isFalse();
+    }
+
+    @Test
+    void aQueryWithTheRefreshStoreModeReplacesTheCachedState() throws SQLException { // BUG-20261113-05
+        em.find(Row.class, 1);
+        em.clear();
+        try (var sql = database.createStatement()) {
+            sql.executeUpdate("UPDATE QR_ROW SET label = 'db:external' WHERE id = 1");
+        }
+        Row row = em.createQuery("select r from QrRow r where r.id = 1", Row.class)
+            .setCacheStoreMode(CacheStoreMode.REFRESH)
+            .getSingleResult();
+        assertThat(row.label).isEqualTo("external");
+        em.clear();
+        resetStatistics();
+        assertThat(em.find(Row.class, 1).label).isEqualTo("external");
+        assertThat(selects()).isZero();
+    }
+
+    @Test
+    void theCacheModeHintsOfAQueryAreItsCacheModes() { // BUG-20261113-05
+        TypedQuery<Row> jpql = em.createQuery("select r from QrRow r where r.id = 1", Row.class)
+            .setHint("jakarta.persistence.cache.retrieveMode", CacheRetrieveMode.BYPASS)
+            .setHint("jakarta.persistence.cache.storeMode", "BYPASS");
+        assertThat(jpql.getCacheRetrieveMode()).isEqualTo(CacheRetrieveMode.BYPASS);
+        assertThat(jpql.getCacheStoreMode()).isEqualTo(CacheStoreMode.BYPASS);
+        jpql.getSingleResult();
+        assertThat(factory.getCache().contains(Row.class, 1)).isFalse();
+
+        Query nativeQuery = em.createNativeQuery("select id, label, version from QR_ROW where id = 2", Row.class)
+            .setHint("jakarta.persistence.cache.storeMode", CacheStoreMode.BYPASS);
+        assertThat(nativeQuery.getCacheStoreMode()).isEqualTo(CacheStoreMode.BYPASS);
+        nativeQuery.getSingleResult();
+        assertThat(factory.getCache().contains(Row.class, 2)).isFalse();
+    }
+
+    @Test
+    void aQueryStartsWithTheCacheModesOfItsEntityManager() { // BUG-20261113-05
+        em.setCacheRetrieveMode(CacheRetrieveMode.BYPASS);
+        em.setCacheStoreMode(CacheStoreMode.REFRESH);
+        TypedQuery<Row> jpql = em.createQuery("select r from QrRow r", Row.class);
+        assertThat(jpql.getCacheRetrieveMode()).isEqualTo(CacheRetrieveMode.BYPASS);
+        assertThat(jpql.getCacheStoreMode()).isEqualTo(CacheStoreMode.REFRESH);
+        Query nativeQuery = em.createNativeQuery("select 1");
+        assertThat(nativeQuery.getCacheRetrieveMode()).isEqualTo(CacheRetrieveMode.BYPASS);
+        assertThat(nativeQuery.getCacheStoreMode()).isEqualTo(CacheStoreMode.REFRESH);
+    }
+
+    @Test
     void scalarAggregateAndDistinctQueriesRetainTheirResults() throws SQLException {
         assertThat(em.createQuery("select r.label from QrRow r where r.id = 1", String.class).getSingleResult())
             .isEqualTo("row-1");

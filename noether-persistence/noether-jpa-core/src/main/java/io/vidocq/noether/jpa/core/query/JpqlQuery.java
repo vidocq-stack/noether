@@ -264,7 +264,9 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         Compiled compiled = parsed != null ? parsed.plan(runtime.mapping(), null, false, false).compiled()
             : Translator.translate(tree, runtime.mapping(), null, null, null);
         checkResultClass(jpql, tree, compiled, resultClass);
-        super(flushMode, runtime::isOpen);
+        QueryRuntime.Defaults defaults = runtime.defaults();
+        super(flushMode, runtime::isOpen, defaults);
+        this.lockTimeout = defaults.lockTimeout();
         this.jpql = jpql;
         this.runtime = runtime;
         this.resultClass = resultClass;
@@ -574,7 +576,8 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
             p -> values.get(key(p)), null, null, lockMode == LockModeType.NONE, graphRows);
         Compiled read = page(translated, execution, graphRows, !split.isEmpty(), maxResults);
         QueryPlans.Plan shared = plan != null && plan.compiled() == read ? plan : null; // not a page translated for this run
-        return (List<X>) runtime.read(getFlushMode(), connection -> execute(read, shared, split, connection));
+        return (List<X>) runtime.read(getFlushMode(), getCacheRetrieveMode(), getCacheStoreMode(),
+            connection -> execute(read, shared, split, connection));
     }
 
     /** What must hold before a query reads: it is a select, its parameters are bound, its lock has a transaction. */
@@ -1337,12 +1340,12 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         return this;
     }
 
-    /** The standard hints (§3.11.? 3.2: §3.12): query and lock timeouts, in milliseconds; others are kept as given. */
+    /** The standard hints (§3.11.? 3.2: §3.12): query and lock timeouts, in milliseconds, and cache modes; others are kept as given. */
     @Override
     public TypedQuery<X> setHint(String hintName, Object value) {
         checkOpen();
         switch (hintName) {
-            case "jakarta.persistence.query.timeout" -> timeout(milliseconds(hintName, value));
+            case QUERY_TIMEOUT, CACHE_RETRIEVE_MODE, CACHE_STORE_MODE -> standardHint(hintName, value);
             case "jakarta.persistence.lock.timeout" -> lockTimeout = milliseconds(hintName, value);
             case "jakarta.persistence.fetchgraph", "jakarta.persistence.loadgraph" ->
                 runtime.validateGraph(value, resultClass != null && runtime.mapping().entity(resultClass).isPresent() ? resultClass : null);
@@ -1353,12 +1356,9 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         return this;
     }
 
-    private static Integer milliseconds(String hint, Object value) {
-        try {
-            return value == null ? null : value instanceof Number number ? number.intValue() : Integer.valueOf(value.toString().trim());
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("The hint " + hint + " is a number of milliseconds, not " + value, e);
-        }
+    /** The lock timeout this query applies, in milliseconds; {@code null} for the database's own. */
+    Integer lockTimeout() {
+        return lockTimeout;
     }
 
     @Override

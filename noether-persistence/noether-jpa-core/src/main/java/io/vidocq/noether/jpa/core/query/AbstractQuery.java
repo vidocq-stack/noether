@@ -37,19 +37,75 @@ import java.util.function.BooleanSupplier;
  */
 abstract class AbstractQuery {
 
+    /** The standard query timeout hint, in milliseconds. */
+    static final String QUERY_TIMEOUT = "jakarta.persistence.query.timeout";
+    /** The standard cache retrieve mode hint. */
+    static final String CACHE_RETRIEVE_MODE = "jakarta.persistence.cache.retrieveMode";
+    /** The standard cache store mode hint. */
+    static final String CACHE_STORE_MODE = "jakarta.persistence.cache.storeMode";
+
     private final Map<String, Object> hints = new LinkedHashMap<>();
     private FlushModeType flushMode;
     private int maxResults = Integer.MAX_VALUE;
     private int firstResult;
     private Integer timeout;
-    private CacheRetrieveMode cacheRetrieveMode = CacheRetrieveMode.USE;
-    private CacheStoreMode cacheStoreMode = CacheStoreMode.USE;
+    private CacheRetrieveMode cacheRetrieveMode;
+    private CacheStoreMode cacheStoreMode;
     private final BooleanSupplier open;
 
-    /** @param open whether the entity manager that created the query is still open */
-    AbstractQuery(FlushModeType flushMode, BooleanSupplier open) {
+    /**
+     * @param open whether the entity manager that created the query is still open
+     * @param defaults the timeout and the cache modes the query takes from its entity manager and its unit
+     */
+    AbstractQuery(FlushModeType flushMode, BooleanSupplier open, QueryRuntime.Defaults defaults) {
         this.flushMode = flushMode;
         this.open = open;
+        this.timeout = defaults.queryTimeout();
+        this.cacheRetrieveMode = defaults.retrieveMode();
+        this.cacheStoreMode = defaults.storeMode();
+    }
+
+    /**
+     * Applies the standard hints every query reads: the query timeout and the cache modes. Returns whether
+     * {@code hintName} is one of them.
+     */
+    boolean standardHint(String hintName, Object value) {
+        switch (hintName) {
+            case QUERY_TIMEOUT -> timeout(milliseconds(hintName, value));
+            case CACHE_RETRIEVE_MODE -> cacheRetrieveMode(mode(CacheRetrieveMode.class, hintName, value));
+            case CACHE_STORE_MODE -> cacheStoreMode(mode(CacheStoreMode.class, hintName, value));
+            default -> {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** A timeout hint, in milliseconds: a number, or its text. */
+    static Integer milliseconds(String hint, Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        try {
+            return Integer.valueOf(value.toString().trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("The hint " + hint + " is a number of milliseconds, not " + value, e);
+        }
+    }
+
+    /** A cache mode hint: the constant, or its name. */
+    private static <E extends Enum<E>> E mode(Class<E> type, String hint, Object value) {
+        if (type.isInstance(value)) {
+            return type.cast(value);
+        }
+        try {
+            return Enum.valueOf(type, String.valueOf(value).strip());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("The hint " + hint + " is a " + type.getSimpleName() + ", not " + value, e);
+        }
     }
 
     /** §3.11 (PERSISTENCE:SPEC:608): every method of a query of a closed entity manager is an IllegalStateException. */

@@ -1,6 +1,17 @@
 = What's new
 :description: Noether extraction and compatibility changes.
 
+== 2026-11-13 — Timeouts from the unit, cache modes on queries
+
+`jakarta.persistence.lock.timeout` and `jakarta.persistence.query.timeout` set in `persistence.xml` or on the factory
+now apply, and a query takes both timeouts from its entity manager; a native query reads the query timeout hint. The
+cache modes of a query, set with `setCacheRetrieveMode`, `setCacheStoreMode` or their hints, now decide what it reads
+from and publishes to the second-level cache, and a query starts with the modes of its entity manager
+(BUG-20261113-04, BUG-20261113-05).
+
+Check one thing when you upgrade: a unit that sets either timeout now applies it to every operation, where only the
+operations given a hint used to apply one.
+
 == 2026-11-13 — An injection point without a unit name shares the factory of the only unit
 
 In an application with one unit, `@PersistenceContext` and `@PersistenceUnit` may leave the unit name out. These
