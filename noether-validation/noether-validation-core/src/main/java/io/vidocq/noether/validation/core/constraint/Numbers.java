@@ -44,7 +44,7 @@ final class Numbers {
     static BigDecimal parseOrNull(CharSequence value) {
         try {
             return new BigDecimal(value.toString());
-        } catch (NumberFormatException e) {
+        } catch (NumberFormatException _) {
             return null;
         }
     }

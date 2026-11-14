@@ -32,6 +32,6 @@ import java.util.Collection;
 public final class NotEmptyValidatorForCollection implements ConstraintValidator<NotEmpty, Collection<?>> {
     @Override
     public boolean isValid(Collection<?> value, ConstraintValidatorContext context) {
-        return value != null && value.size() > 0;
+        return value != null && !value.isEmpty();
     }
 }

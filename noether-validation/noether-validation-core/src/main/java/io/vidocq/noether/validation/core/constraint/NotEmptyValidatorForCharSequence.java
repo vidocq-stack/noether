@@ -31,6 +31,6 @@ import jakarta.validation.constraints.NotEmpty;
 public final class NotEmptyValidatorForCharSequence implements ConstraintValidator<NotEmpty, CharSequence> {
     @Override
     public boolean isValid(CharSequence value, ConstraintValidatorContext context) {
-        return value != null && value.length() > 0;
+        return value != null && !value.isEmpty();
     }
 }

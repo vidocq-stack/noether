@@ -48,7 +48,6 @@ public final class DigitsValidatorForBigInteger implements ConstraintValidator<D
         if (value == null) {
             return true;
         }
-        BigDecimal number = new BigDecimal(value);
-        return number != null && Numbers.fits(number, maxInteger, maxFraction);
+        return Numbers.fits(new BigDecimal(value), maxInteger, maxFraction);
     }
 }

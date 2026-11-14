@@ -272,10 +272,17 @@ final class NoetherConfigurationImpl implements NoetherConfiguration, Configurat
         return xmlClassName != null ? Instantiator.create(xmlClassName, type) : fallback.get();
     }
 
+    /** The resolver of the bootstrap state, else its default one; {@code null} without a bootstrap state. */
+    private ValidationProviderResolver providerResolver() {
+        if (bootstrapState == null) {
+            return null;
+        }
+        ValidationProviderResolver resolver = bootstrapState.getValidationProviderResolver();
+        return resolver != null ? resolver : bootstrapState.getDefaultValidationProviderResolver();
+    }
+
     private ValidationProvider<?> providerNamed(String className) {
-        ValidationProviderResolver resolver = bootstrapState != null && bootstrapState.getValidationProviderResolver() != null
-            ? bootstrapState.getValidationProviderResolver()
-            : bootstrapState != null ? bootstrapState.getDefaultValidationProviderResolver() : null;
+        ValidationProviderResolver resolver = providerResolver();
         if (resolver != null) {
             for (ValidationProvider<?> provider : resolver.getValidationProviders()) {
                 if (provider.getClass().getName().equals(className)) {

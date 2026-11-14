@@ -32,6 +32,6 @@ import java.util.Map;
 public final class NotEmptyValidatorForMap implements ConstraintValidator<NotEmpty, Map<?, ?>> {
     @Override
     public boolean isValid(Map<?, ?> value, ConstraintValidatorContext context) {
-        return value != null && value.size() > 0;
+        return value != null && !value.isEmpty();
     }
 }

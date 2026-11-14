@@ -31,9 +31,13 @@ import jakarta.validation.Validation;
 import jakarta.validation.ValidationException;
 import jakarta.validation.ValidatorFactory;
 import jakarta.validation.executable.ExecutableType;
+import jakarta.validation.spi.BootstrapState;
+import jakarta.validation.spi.ConfigurationState;
+import jakarta.validation.spi.ValidationProvider;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.time.Clock;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
@@ -147,6 +151,39 @@ class ConfigurationBootstrapTest {
         withValidationXml("<default-provider>com.acme.DoesNotExist</default-provider>");
         Configuration<?> config = configuration();
         assertThatThrownBy(config::buildValidatorFactory).isInstanceOf(ValidationException.class);
+    }
+
+    /** A provider the configured resolver lists besides Noether; it remembers the configuration it was built from. */
+    private static final class SecondProvider implements ValidationProvider<NoetherConfiguration> {
+        private ConfigurationState built;
+
+        @Override
+        public NoetherConfiguration createSpecializedConfiguration(BootstrapState state) {
+            throw new UnsupportedOperationException("bootstrapped through Noether");
+        }
+
+        @Override
+        public Configuration<?> createGenericConfiguration(BootstrapState state) {
+            throw new UnsupportedOperationException("bootstrapped through Noether");
+        }
+
+        @Override
+        public ValidatorFactory buildValidatorFactory(ConfigurationState state) {
+            built = state;
+            return new NoetherValidationProvider().buildValidatorFactory(state);
+        }
+    }
+
+    @Test
+    void theDefaultProviderOfValidationXmlIsTakenFromTheConfiguredResolver() { // 5.4.5, 8.1.1
+        SecondProvider second = new SecondProvider();
+        withValidationXml("<default-provider>" + SecondProvider.class.getName() + "</default-provider>");
+        Configuration<?> configuration = Validation.byProvider(NoetherValidationProvider.class)
+            .providerResolver(() -> List.of(new NoetherValidationProvider(), second)).configure();
+        try (ValidatorFactory factory = configuration.buildValidatorFactory()) {
+            assertThat(factory).isNotNull();
+            assertThat(second.built).isSameAs(configuration);
+        }
     }
 
     @Test

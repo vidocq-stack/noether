@@ -22,7 +22,6 @@ package io.vidocq.noether.validation.core.constraint;
 import jakarta.validation.ConstraintValidator;
 import jakarta.validation.ConstraintValidatorContext;
 import jakarta.validation.constraints.Max;
-import java.math.BigDecimal;
 
 /**
  * Checks that a {@code Number} is <= the annotation value; {@code null} is valid.

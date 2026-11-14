@@ -86,12 +86,12 @@ public final class PathImpl implements Path {
     public String toString() {
         StringBuilder out = new StringBuilder();
         for (NodeImpl node : nodes) {
-            if (node.isInIterable() && out.length() > 0) {
+            if (node.isInIterable() && !out.isEmpty()) {
                 Object at = node.getIndex() != null ? node.getIndex() : node.getKey();
                 out.append('[').append(at == null ? "" : at).append(']');
             }
             if (node.getName() != null) {
-                if (out.length() > 0) {
+                if (!out.isEmpty()) {
                     out.append('.');
                 }
                 out.append(node.getName());

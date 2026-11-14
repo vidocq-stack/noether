@@ -80,7 +80,7 @@ public final class EmailValidatorForCharSequence implements ConstraintValidator<
 
     @Override
     public boolean isValid(CharSequence value, ConstraintValidatorContext context) {
-        if (value == null || value.length() == 0) {
+        if (value == null || value.isEmpty()) {
             return true;
         }
         String address = value.toString();
@@ -123,7 +123,7 @@ public final class EmailValidatorForCharSequence implements ConstraintValidator<
         String ascii;
         try {
             ascii = IDN.toASCII(domain);
-        } catch (IllegalArgumentException e) {
+        } catch (IllegalArgumentException _) {
             return false;
         }
         if (ascii.isEmpty() || ascii.length() > MAX_DOMAIN_LENGTH) {

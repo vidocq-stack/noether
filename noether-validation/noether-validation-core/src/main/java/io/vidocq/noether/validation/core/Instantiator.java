@@ -44,7 +44,7 @@ final class Instantiator {
         } catch (ClassNotFoundException | LinkageError e) {
             try {
                 loaded = Class.forName(className, false, Instantiator.class.getClassLoader());
-            } catch (ClassNotFoundException | LinkageError second) {
+            } catch (ClassNotFoundException | LinkageError _) {
                 throw new ValidationException("Unable to load class " + className, e);
             }
         }
@@ -76,7 +76,7 @@ final class Instantiator {
             return MethodHandles.lookup().findConstructor(clazz, noArg);
         } catch (NoSuchMethodException e) {
             throw new ValidationException(clazz.getName() + " has no no-arg constructor", e);
-        } catch (IllegalAccessException notPublic) {
+        } catch (IllegalAccessException _) {
             try {
                 return MethodHandles.privateLookupIn(clazz, MethodHandles.lookup()).findConstructor(clazz, noArg);
             } catch (NoSuchMethodException e) {
