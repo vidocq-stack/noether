@@ -470,6 +470,7 @@ class CollectionFetchJoinTest {
                 case "sorted" -> assertThat(owner.sorted).extracting(c -> c.id).containsExactly(10L, 11L);
                 case "shared" -> assertThat(owners.get(2).shared.iterator().next()).isSameAs(
                     owner.shared.stream().filter(c -> c.id == 10).findFirst().orElseThrow());
+                default -> throw new IllegalArgumentException("no check for " + attribute);
             }
             assertThat(owners).hasSize(3);
             assertThat(selects()).as(attribute).isEqualTo(1);
@@ -486,6 +487,7 @@ class CollectionFetchJoinTest {
                 case "bag" -> assertThat(owner.bag).containsExactlyInAnyOrder("same", "same", "different", null);
                 case "settings" -> assertThat(owner.settings).containsEntry("null-value", null).hasSize(3);
                 case "named" -> assertThat(owner.named).containsKeys("first", "second").hasSize(2);
+                default -> throw new IllegalArgumentException("no check for " + attribute);
             }
             assertThat(selects()).as(attribute).isEqualTo(1);
         }

@@ -38,7 +38,7 @@ class AnnotationFactoryTest {
 
     private static SampleAnnotation fromClassFile(String field) {
         return (SampleAnnotation) ClassFileReader.fieldAnnotations(SampleBean.class, field).stream()
-            .filter(a -> a instanceof SampleAnnotation).findFirst().orElseThrow();
+            .filter(SampleAnnotation.class::isInstance).findFirst().orElseThrow();
     }
 
     @Test
@@ -104,7 +104,7 @@ class AnnotationFactoryTest {
             SampleAnnotation expected = jdk(field);
             assertThat(read).isEqualTo(expected);
             assertThat(expected).isEqualTo(read);
-            assertThat(read.hashCode()).isEqualTo(expected.hashCode());
+            assertThat(read).hasSameHashCodeAs(expected);
         }
         assertThat(fromClassFile("defaults")).isNotEqualTo(jdk("everything"));
     }

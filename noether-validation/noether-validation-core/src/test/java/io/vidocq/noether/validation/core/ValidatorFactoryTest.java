@@ -20,6 +20,7 @@
 package io.vidocq.noether.validation.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import jakarta.validation.MessageInterpolator;
@@ -47,7 +48,7 @@ class ValidatorFactoryTest {
     void closingTwiceIsHarmless() {
         ValidatorFactory f = factory();
         f.close();
-        f.close();
+        assertThatCode(f::close).doesNotThrowAnyException();
     }
 
     @Test

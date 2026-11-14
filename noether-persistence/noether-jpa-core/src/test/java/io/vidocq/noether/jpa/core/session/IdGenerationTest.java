@@ -90,12 +90,10 @@ class IdGenerationTest {
     void aSequenceAssignsTheIdentifierAtPersistByBlocks() throws SQLException {
         EntityManager em = emf.createEntityManager();
         em.getTransaction().begin();
-        List<Account> accounts = new ArrayList<>();
         for (int i = 0; i < 25; i++) {
             Account account = new Account();
             em.persist(account);
             assertThat(account.getNumber()).isEqualTo(i + 1L); // assigned at persist, before any flush
-            accounts.add(account);
         }
         em.getTransaction().commit();
         assertThat(scalar("select count(*) from BANK.ACCOUNTS")).isEqualTo(25);

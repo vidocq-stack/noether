@@ -97,7 +97,7 @@ class QueryRowHydrationTest {
         query.select(root).orderBy(builder.asc(root.get("id")));
         List<Row> rows = em.createQuery(query).setFirstResult(10).setMaxResults(3).getResultList();
         assertThat(rows).extracting(row -> row.id).containsExactly(11, 12, 13);
-        assertThat(Row.LOADED).containsExactlyElementsOf(rows);
+        assertThat(rows).containsExactlyElementsOf(Row.LOADED);
         assertThat(selects()).isEqualTo(1);
     }
 
@@ -115,7 +115,7 @@ class QueryRowHydrationTest {
     }
 
     @Test
-    void snapshotsAvoidSpuriousWritesAndRetainVersionedUpdates() throws SQLException {
+    void snapshotsAvoidSpuriousWritesAndRetainVersionedUpdates() {
         Row row = em.createQuery("select r from QrRow r where r.id = 1", Row.class).getSingleResult();
         long initial = row.version;
         em.getTransaction().begin();
@@ -241,9 +241,9 @@ class QueryRowHydrationTest {
             select r from QrRow r, QrRow other
             where r.id = 1 and other.id <= 3 order by other.id
             """, Row.class).getResultList();
-        assertThat(rows).hasSize(3);
-        assertThat(rows).allSatisfy(row -> assertThat(row).isSameAs(rows.getFirst()));
-        assertThat(Row.LOADED).containsExactly(rows.getFirst());
+        assertThat(rows).hasSize(3)
+            .allSatisfy(row -> assertThat(row).isSameAs(rows.getFirst()));
+        assertThat(Row.LOADED).singleElement().isEqualTo(rows.getFirst());
         assertThat(selects()).isEqualTo(1);
     }
 

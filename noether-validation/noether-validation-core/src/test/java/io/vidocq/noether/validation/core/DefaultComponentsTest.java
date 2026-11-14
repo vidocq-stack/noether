@@ -20,6 +20,7 @@
 package io.vidocq.noether.validation.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import jakarta.validation.ConstraintValidator;
@@ -104,7 +105,8 @@ class DefaultComponentsTest {
 
     @Test
     void releasingAnInstanceDoesNothing() {
-        factory.releaseInstance(factory.getInstance(PublicValidator.class));
+        PublicValidator instance = factory.getInstance(PublicValidator.class);
+        assertThatCode(() -> factory.releaseInstance(instance)).doesNotThrowAnyException();
     }
 
     @Test

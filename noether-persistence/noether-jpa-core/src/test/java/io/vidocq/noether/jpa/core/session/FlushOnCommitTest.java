@@ -147,6 +147,7 @@ class FlushOnCommitTest {
             manager.getTransaction().begin();
             manager.flush();
             manager.getTransaction().commit();
+            assertThat(manager.getTransaction().isActive()).isFalse();
         }
     }
 

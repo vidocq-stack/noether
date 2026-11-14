@@ -29,13 +29,13 @@ public class StampListener {
     }
 
     @PrePersist
-    public void prePersist(Record record) {
+    public void prePersist(Record entity) {
         Journal.write("StampListener.prePersist");
     }
 
     @PreUpdate
-    public void preUpdate(Record record) {
-        record.stamp("updated");
+    public void preUpdate(Record entity) {
+        entity.stamp("updated");
         Journal.write("StampListener.preUpdate");
     }
 }

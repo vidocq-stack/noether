@@ -610,7 +610,7 @@ class SecondaryBusinessKeyToOneTest {
     }
 
     @Test
-    void compositeSecondaryTupleKeepsConvertedComponentBinder() throws Exception {
+    void compositeSecondaryTupleKeepsConvertedComponentBinder() {
         try (var factory = configuration(false, Converted.class, ConvertedTupleOwner.class).createEntityManagerFactory();
              var em = factory.createEntityManager()) {
             var target = new Converted();

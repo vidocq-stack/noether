@@ -135,6 +135,7 @@ class MappedUnitTest {
                 case BasicAttribute basic -> assertThat(unit.binder(basic)).as(basic.name()).isNotNull();
                 case EmbeddedAttribute embedded -> assertBinders(unit, embedded.embeddable().attributes());
                 default -> {
+                    // only basic and embedded attributes bind column values: nothing to check
                 }
             }
         }

@@ -186,7 +186,7 @@ class ConfigurationBootstrapTest {
         TraversableResolver resolver = new DefaultTraversableResolver();
         ConstraintValidatorFactory validators = new DefaultConstraintValidatorFactory();
         ParameterNameProvider names = new DefaultParameterNameProvider();
-        jakarta.validation.ClockProvider clock = () -> Clock.systemUTC();
+        jakarta.validation.ClockProvider clock = Clock::systemUTC;
         try (ValidatorFactory factory = configuration().messageInterpolator(interpolator).traversableResolver(resolver)
                 .constraintValidatorFactory(validators).parameterNameProvider(names).clockProvider(clock).buildValidatorFactory()) {
             assertThat(factory.getMessageInterpolator()).isSameAs(interpolator);

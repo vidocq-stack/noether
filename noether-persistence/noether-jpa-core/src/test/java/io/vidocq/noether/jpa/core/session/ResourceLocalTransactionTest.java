@@ -204,7 +204,7 @@ class ResourceLocalTransactionTest {
             Thread closer = Thread.ofVirtual().start(() -> {
                 try {
                     start.await();
-                } catch (InterruptedException e) {
+                } catch (InterruptedException _) {
                     Thread.currentThread().interrupt();
                 }
                 factory.close();
@@ -212,7 +212,7 @@ class ResourceLocalTransactionTest {
             start.countDown();
             try {
                 owner.getTransaction().commit();
-            } catch (IllegalStateException | RollbackException expected) {
+            } catch (IllegalStateException | RollbackException _) {
                 // the factory won: the transaction was rolled back, and the owner is told so
             }
             closer.join();
@@ -246,7 +246,7 @@ class ResourceLocalTransactionTest {
     }
 
     @Test
-    void workThatEndsItsOwnTransactionIsNotCommittedAgain() throws SQLException {
+    void workThatEndsItsOwnTransactionIsNotCommittedAgain() {
         String result = emf.callInTransaction(inner -> {
             inner.getTransaction().rollback();
             return "rolled back by the work";

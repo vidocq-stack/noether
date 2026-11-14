@@ -28,7 +28,6 @@ import io.vidocq.noether.jpa.core.model.build.fixtures.rel.Emp;
 import io.vidocq.noether.jpa.core.model.build.fixtures.rel.Meeting;
 import io.vidocq.noether.jpa.core.model.build.fixtures.rel.Room;
 import io.vidocq.noether.jpa.core.model.build.fixtures.rel.RoomKey;
-import io.vidocq.noether.jpa.core.model.build.fixtures.rel.RoomKey;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.NoResultException;

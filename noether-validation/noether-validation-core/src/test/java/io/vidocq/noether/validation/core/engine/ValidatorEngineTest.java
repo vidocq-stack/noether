@@ -99,7 +99,7 @@ class ValidatorEngineTest {
         Set<ConstraintViolation<Person>> violations = validator.validate(person);
         assertThat(paths(violations)).contains("first");
         ConstraintViolation<Person> custom = violations.stream().filter(v -> v.getMessage().equals("too short")).findFirst().orElseThrow();
-        assertThat(custom.getPropertyPath().toString()).isEqualTo("first");
+        assertThat(custom.getPropertyPath()).hasToString("first");
     }
 
     @Test
@@ -160,7 +160,7 @@ class ValidatorEngineTest {
         person.others.add(new Address(null, "12345"));
         ConstraintViolation<Person> violation = validator.validate(person).stream()
             .filter(v -> v.getPropertyPath().toString().contains("street")).findFirst().orElseThrow();
-        assertThat(violation.getPropertyPath().toString()).isEqualTo("others[1].street");
+        assertThat(violation.getPropertyPath()).hasToString("others[1].street");
         List<Path.Node> nodes = nodesOf(violation);
         assertThat(nodes.get(0).getName()).isEqualTo("others");
         assertThat(nodes.get(0).isInIterable()).isFalse();
@@ -169,7 +169,7 @@ class ValidatorEngineTest {
         assertThat(nodes.get(1).getIndex()).isEqualTo(1);
         assertThat(nodes.get(1).getKey()).isNull();
         assertThat(nodes.get(1).as(Path.PropertyNode.class).getContainerClass()).isEqualTo(List.class);
-        assertThat(nodes.get(1).as(Path.PropertyNode.class).getTypeArgumentIndex()).isEqualTo(0);
+        assertThat(nodes.get(1).as(Path.PropertyNode.class).getTypeArgumentIndex()).isZero();
     }
 
     @Test
@@ -178,7 +178,7 @@ class ValidatorEngineTest {
         person.byName.put("home", new Address(null, "12345"));
         ConstraintViolation<Person> violation = validator.validate(person).stream()
             .filter(v -> v.getPropertyPath().toString().contains("street")).findFirst().orElseThrow();
-        assertThat(violation.getPropertyPath().toString()).isEqualTo("byName[home].street");
+        assertThat(violation.getPropertyPath()).hasToString("byName[home].street");
         Path.Node leaf = nodesOf(violation).get(1);
         assertThat(leaf.getKey()).isEqualTo("home");
         assertThat(leaf.getIndex()).isNull();
@@ -204,7 +204,7 @@ class ValidatorEngineTest {
         person.array = new Address[] {new Address("ok", "12345"), null, new Address(null, "12345")};
         ConstraintViolation<Person> violation = validator.validate(person).stream()
             .filter(v -> v.getPropertyPath().toString().contains("street")).findFirst().orElseThrow();
-        assertThat(violation.getPropertyPath().toString()).isEqualTo("array[2].street");
+        assertThat(violation.getPropertyPath()).hasToString("array[2].street");
         Path.Node leaf = nodesOf(violation).get(1);
         assertThat(leaf.getIndex()).isEqualTo(2);
         assertThat(leaf.as(Path.PropertyNode.class).getContainerClass()).isEqualTo(Object[].class);
@@ -435,8 +435,7 @@ class ValidatorEngineTest {
 
                     @Override
                     public boolean isCascadable(Object o, Path.Node n, Class<?> r, Path p, java.lang.annotation.ElementType t) {
-                        seen.add(p);
-                        return true;
+                        return isReachable(o, n, r, p, t);
                     }
                 }).buildValidatorFactory()) {
             Person person = new Person("Alice");

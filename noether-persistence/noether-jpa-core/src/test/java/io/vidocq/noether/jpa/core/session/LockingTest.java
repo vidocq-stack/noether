@@ -116,7 +116,7 @@ class LockingTest {
     }
 
     @Test
-    void aPessimisticLockKeepsOthersFromTheRowUntilCommit() throws SQLException { // §3.5.6
+    void aPessimisticLockKeepsOthersFromTheRowUntilCommit() { // §3.5.6
         em.getTransaction().begin();
         em.find(Crew.class, 1L, LockModeType.PESSIMISTIC_WRITE);
         EntityManager other = emf.createEntityManager();

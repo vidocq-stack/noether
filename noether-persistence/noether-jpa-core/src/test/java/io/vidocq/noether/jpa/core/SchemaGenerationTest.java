@@ -61,13 +61,13 @@ class SchemaGenerationTest {
         try (var factory = configuration("p9-create")
                 .property("jakarta.persistence.schema-generation.database.action", "drop-and-create")
                 .createEntityManagerFactory()) {
-            Record record = new Record();
-            record.text = "created";
-            factory.runInTransaction(em -> em.persist(record));
-            assertThat(record.id).isPositive();
+            Record entity = new Record();
+            entity.text = "created";
+            factory.runInTransaction(em -> em.persist(entity));
+            assertThat(entity.id).isPositive();
             factory.getSchemaManager().validate();
             factory.getSchemaManager().truncate();
-            Record missing = factory.callInTransaction(em -> em.find(Record.class, record.id));
+            Record missing = factory.callInTransaction(em -> em.find(Record.class, entity.id));
             assertThat(missing).isNull();
             factory.getSchemaManager().drop(true);
             assertThatThrownBy(() -> factory.getSchemaManager().validate()).isInstanceOf(jakarta.persistence.SchemaValidationException.class);
@@ -80,7 +80,7 @@ class SchemaGenerationTest {
     void scriptsUseCallerWritersWithoutClosingThem() { // §9.4.2
         var create = new StringWriter();
         var drop = new StringWriter();
-        try (var factory = configuration("p9-writer")
+        try (var _ = configuration("p9-writer")
                 .property("jakarta.persistence.schema-generation.database.action", "none")
                 .property("jakarta.persistence.schema-generation.scripts.action", "drop-and-create")
                 .property("jakarta.persistence.schema-generation.scripts.create-target", create)

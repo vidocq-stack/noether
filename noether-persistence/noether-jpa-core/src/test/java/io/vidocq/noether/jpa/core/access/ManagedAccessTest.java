@@ -176,7 +176,7 @@ class ManagedAccessTest {
     @Test
     void aClassIsNotBuiltFromComponents() {
         ManagedAccess access = Accesses.of(model(Customer.class));
-        assertThatThrownBy(() -> access.construct()).isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(access::construct).isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test

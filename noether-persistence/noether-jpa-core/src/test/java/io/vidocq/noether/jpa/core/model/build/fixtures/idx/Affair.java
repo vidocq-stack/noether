@@ -32,6 +32,7 @@ import jakarta.persistence.MapKeyEnumerated;
 import jakarta.persistence.MapKeyJoinColumn;
 import jakarta.persistence.OrderColumn;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -60,7 +61,7 @@ public class Affair {
     private Map<String, Sighting> sightings = new HashMap<>();
     @ElementCollection
     @MapKeyEnumerated(EnumType.STRING)
-    private Map<Trait, String> notes = new HashMap<>();
+    private Map<Trait, String> notes = new EnumMap<>(Trait.class);
 
     protected Affair() {
     }

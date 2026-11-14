@@ -63,7 +63,7 @@ class LazyCollectionTest {
                 return (Connection) Proxy.newProxyInstance(Connection.class.getClassLoader(),
                     new Class<?>[] { Connection.class }, (proxy, method, arguments) -> {
                         if (method.getName().startsWith("prepare") && arguments != null && arguments[0] instanceof String sql) {
-                            record(sql);
+                            capture(sql);
                         }
                         try {
                             Object result = method.invoke(delegate, arguments);
@@ -88,7 +88,7 @@ class LazyCollectionTest {
         em = factory.createEntityManager();
     }
 
-    private void record(String sql) {
+    private void capture(String sql) {
         statements.add(sql.toLowerCase(Locale.ROOT));
         threads.add(Thread.currentThread());
     }
@@ -97,7 +97,7 @@ class LazyCollectionTest {
         return (Statement) Proxy.newProxyInstance(Statement.class.getClassLoader(), new Class<?>[] { Statement.class },
             (proxy, method, arguments) -> {
                 if (method.getName().startsWith("execute") && arguments != null && arguments[0] instanceof String sql) {
-                    record(sql);
+                    capture(sql);
                 }
                 try {
                     return method.invoke(statement, arguments);
@@ -172,7 +172,7 @@ class LazyCollectionTest {
         assertThat(threads).containsOnly(Thread.currentThread());
         assertThat(owner.children.get(0).owner).isSameAs(owner);
         assertThat(owner.children.get(0)).isSameAs(em.find(Child.class, 10L));
-        assertThat(owner.children.size()).isEqualTo(2);
+        assertThat(owner.children).hasSize(2);
         assertThat(statements).hasSize(firstAccess);
         assertThat(util.isLoaded(owner, "children")).isTrue();
         assertThat(util.isLoaded(owner, "tags")).isFalse();

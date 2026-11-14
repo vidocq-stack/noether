@@ -68,12 +68,12 @@ class CallbacksTest {
     }
 
     private Record stored() {
-        Record record = new Record(1, "first");
+        Record entity = new Record(1, "first");
         em.getTransaction().begin();
-        em.persist(record);
+        em.persist(entity);
         em.getTransaction().commit();
         Journal.ENTRIES.clear();
-        return record;
+        return entity;
     }
 
     @Test
@@ -87,9 +87,9 @@ class CallbacksTest {
 
     @Test
     void anUpdateCallsPreUpdateWhoseChangesAreWrittenThenPostUpdate() throws SQLException {
-        Record record = stored();
+        Record entity = stored();
         em.getTransaction().begin();
-        record.text("second");
+        entity.text("second");
         em.getTransaction().commit();
         assertThat(Journal.ENTRIES).containsExactly("StampListener.preUpdate", "Record.updated");
         try (Statement query = database.createStatement(); ResultSet row = query.executeQuery("select stamp from Record")) {
@@ -108,9 +108,9 @@ class CallbacksTest {
 
     @Test
     void removeCallsPreRemoveAndTheDeletePostRemove() {
-        Record record = stored();
+        Record entity = stored();
         em.getTransaction().begin();
-        em.remove(record);
+        em.remove(entity);
         assertThat(Journal.ENTRIES).containsExactly("Record.removing");
         em.getTransaction().commit();
         assertThat(Journal.ENTRIES).containsExactly("Record.removing", "Record.removed");
@@ -120,9 +120,9 @@ class CallbacksTest {
     void aLoadAndARefreshCallPostLoad() {
         stored();
         em.clear();
-        Record record = em.find(Record.class, 1L);
+        Record entity = em.find(Record.class, 1L);
         assertThat(Journal.ENTRIES).containsExactly("AuditListener.postLoad", "Record.loaded");
-        em.refresh(record);
+        em.refresh(entity);
         assertThat(Journal.ENTRIES).hasSize(4);
     }
 
