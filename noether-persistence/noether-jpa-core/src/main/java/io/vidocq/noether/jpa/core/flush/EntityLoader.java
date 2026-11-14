@@ -26,6 +26,7 @@ import io.vidocq.noether.jpa.core.jdbc.type.ValueBinder;
 import io.vidocq.noether.jpa.core.mapping.CollectionMapping;
 import io.vidocq.noether.jpa.core.mapping.ElementCollectionMapping;
 import io.vidocq.noether.jpa.core.mapping.IndexMapping;
+import io.vidocq.noether.jpa.core.mapping.InheritanceMapping;
 import io.vidocq.noether.jpa.core.mapping.LazyCollection;
 import io.vidocq.noether.jpa.core.mapping.EntityStatements;
 import io.vidocq.noether.jpa.core.mapping.MappedEntity;
@@ -404,14 +405,10 @@ public final class EntityLoader {
     private Object assembleFetched(AttributeModel model, IndexMapping index, List<Indexed> elements, MappedEntity target) {
         if (target != null) {
             AssociationAttribute a = (AssociationAttribute) model;
-            return assemble(a.javaType(), index, elements, target, a.orderBy(),
-                target.model().attributes(), target.access(), target::id, describe(a));
+            return assemble(a.javaType(), index, elements, target, relationshipOrdering(a, target));
         }
         ElementCollectionAttribute e = (ElementCollectionAttribute) model;
-        EmbeddedAttribute embedded = e.element() instanceof EmbeddedAttribute b ? b : null;
-        return assemble(e.javaType(), index, elements, null, e.orderBy(),
-            embedded == null ? List.of() : embedded.embeddable().attributes(),
-            embedded == null ? null : unit.access(embedded.embeddable()), UnaryOperator.identity(), e.name());
+        return assemble(e.javaType(), index, elements, null, elementOrdering(e, e.name()));
     }
 
     /** Makes a new instance of {@code type} managed from its {@code row}, then resolves its relationships. */
@@ -511,20 +508,31 @@ public final class EntityLoader {
         }
         MappedEntity root = entity(inheritance.root().javaType());
         if (inheritance.discriminator() != null) {
-            Row row = row(root, id, connection, LockModeType.NONE, null);
-            if (row == null) {
-                return null;
-            }
-            Object discriminator = null;
-            List<EntityStatements.Column> columns = root.statements().columns();
-            for (int c = 0; c < columns.size(); c++) {
-                if (columns.get(c).attribute() < 0) {
-                    discriminator = row.values()[c];
-                }
-            }
-            Class<?> concrete = inheritance.concrete(discriminator);
-            return requested.model().javaType().isAssignableFrom(concrete) ? entity(concrete) : null;
+            return concreteByDiscriminator(requested, inheritance, root, id, connection);
         }
+        return concreteByRow(requested, inheritance, id, connection);
+    }
+
+    /** The entity the discriminator of the root row names, if it is a {@code requested} one; {@code null} without a row. */
+    private MappedEntity concreteByDiscriminator(MappedEntity requested, InheritanceMapping inheritance, MappedEntity root,
+            Object id, Connection connection) {
+        Row row = row(root, id, connection, LockModeType.NONE, null);
+        if (row == null) {
+            return null;
+        }
+        Object discriminator = null;
+        List<EntityStatements.Column> columns = root.statements().columns();
+        for (int c = 0; c < columns.size(); c++) {
+            if (columns.get(c).attribute() < 0) {
+                discriminator = row.values()[c];
+            }
+        }
+        Class<?> concrete = inheritance.concrete(discriminator);
+        return requested.model().javaType().isAssignableFrom(concrete) ? entity(concrete) : null;
+    }
+
+    /** Without a discriminator: the most specific concrete {@code requested} entity whose table has the row; {@code null}. */
+    private MappedEntity concreteByRow(MappedEntity requested, InheritanceMapping inheritance, Object id, Connection connection) {
         List<io.vidocq.noether.jpa.core.model.EntityModel> candidates = inheritance.hierarchy().stream()
             .filter(e -> requested.model().javaType().isAssignableFrom(e.javaType()))
             .filter(e -> !inheritance.abstractEntity(e))
@@ -555,7 +563,7 @@ public final class EntityLoader {
         Object[] previous = new Object[type.model().attributes().size()];
         type.access().read(instance, previous);
         Object[] state = state(type, instance, row);
-        relationships(type, id, instance, state, row, connection, context, previous);
+        relationships(type, id, instance, state, row, connection, context, previous, java.util.Set.of());
         type.deriveId(instance);
         type.access().read(instance, state);
         Object[] snapshot = type.state().snapshot(state);
@@ -576,81 +584,108 @@ public final class EntityLoader {
      */
     private void relationships(MappedEntity type, Object id, Object instance, Object[] state, Row row, Connection connection,
             PersistenceContext context) {
-        relationships(type, id, instance, state, row, connection, context, null);
+        relationships(type, id, instance, state, row, connection, context, null, java.util.Set.of());
     }
 
     /**
      * Like {@link #relationships(MappedEntity, Object, Object, Object[], Row, Connection, PersistenceContext)};
-     * {@code previous}, the state of a refreshed instance, keeps a LAZY collection that was not loaded unloaded.
+     * {@code previous}, the state of a refreshed instance, keeps a LAZY collection that was not loaded unloaded, and the
+     * collections {@code fetchedCollections} names were set with the row.
      */
     private void relationships(MappedEntity type, Object id, Object instance, Object[] state, Row row, Connection connection,
-            PersistenceContext context, Object[] previous) {
-        relationships(type, id, instance, state, row, connection, context, previous, java.util.Set.of());
-    }
-
-    private void relationships(MappedEntity type, Object id, Object instance, Object[] state, Row row, Connection connection,
             PersistenceContext context, Object[] previous, java.util.Set<Integer> fetchedCollections) {
-        EntityStatements statements = type.statements();
         List<AttributeModel> attributes = type.model().attributes();
         for (int i = 0; i < attributes.size(); i++) {
             if (fetchedCollections.contains(i)) continue;
-            Object value;
-            if (attributes.get(i) instanceof AssociationAttribute association && association.singleValued()) {
-                Optional<EntityStatements.Reference> owned = statements.reference(i);
-                if (owned.isPresent()) {
-                    Object[] tuple = statements.referencedValues(owned.get(), row.values());
-                    Object key = null;
-                    MappedEntity target = entity(association.targetEntity());
-                    if (tuple != null && owned.get().businessKey()) {
-                        var referenced = statements.referencedColumns(owned.get());
-                        var referencedTable = statements.referencedTable(owned.get());
-                        List<Object[]> found = keys(new Select(referencedTable.select().table(),
-                            referencedTable.select().conditions(),
-                            referenced.stream().map(EntityStatements.Column::name).toList()),
-                            referenced.stream().map(EntityStatements.Column::binder).toList(), tuple,
-                            target.statements().keyColumns().stream().map(EntityStatements.Column::binder).toList(),
-                            describe(association), connection);
-                        if (found.size() != 1) throw new PersistenceException("Business-key join " + association.name()
-                            + " must resolve exactly one target identity");
-                        key = target.statements().key(found.getFirst());
-                    } else if (tuple != null) {
-                        key = target.statements().key(tuple);
-                    }
-                    value = key == null ? null : reference(association, target, key, connection, context);
-                } else if (!association.owning()) {
-                    List<Indexed> owners = inverse(association, null, id, statements, connection, context);
-                    value = owners.isEmpty() ? null : owners.getFirst().element();
-                } else {
-                    CollectionMapping mapping = statements.collection(i).orElseThrow();
-                    if (!(mapping instanceof CollectionMapping.JoinTable table)) continue;
-                    List<Object[]> found = keys(table.targets(), table.ownerBinders(), statements.keyValues(id),
-                        table.targetBinders(), describe(association), connection);
-                    value = found.isEmpty() || Arrays.stream(found.getFirst()).allMatch(java.util.Objects::isNull)
-                        ? null : find(entity(association.targetEntity()),
-                        entity(association.targetEntity()).statements().key(found.getFirst()), connection, context);
-                }
-            } else if (attributes.get(i) instanceof AssociationAttribute || attributes.get(i) instanceof ElementCollectionAttribute) {
-                if (previous != null && LazyCollection.unloaded(previous[i])
-                        && ((LazyCollection) previous[i]).owner() == instance && lazy(type, i, context)) {
-                    value = previous[i]; // §3.2.5: still not loaded, it will read the refreshed rows on its first access
-                } else if (lazy(type, i, context) && (previous == null || !cascadesRefresh(attributes.get(i)))) {
-                    value = LazyCollection.of(attributes.get(i).javaType(), instance, i, attributes.get(i).name(),
-                        context.lazyLoader());
-                } else {
-                    value = collection(type, i, id, connection, context);
-                    if (value == NOT_MAPPED) {
-                        continue; // a shape not mapped yet: the collection keeps what the instance holds
-                    }
-                }
-            } else {
-                continue;
+            Object value = switch (attributes.get(i)) {
+                case AssociationAttribute association when association.singleValued() ->
+                    toOne(type, id, i, association, row, connection, context);
+                case AssociationAttribute _, ElementCollectionAttribute _ ->
+                    collectionValue(type, id, instance, i, previous, connection, context);
+                default -> NOT_MAPPED;
+            };
+            if (value != NOT_MAPPED) {
+                state[i] = value;
+                type.access().set(instance, i, value);
             }
-            state[i] = value;
-            type.access().set(instance, i, value);
         }
     }
 
-    /** No value: a collection whose shape is not mapped yet keeps what the instance holds. */
+    /**
+     * The value of the single-valued relationship {@code i}: the instance its owned foreign key references, the owner of
+     * an inverse one-to-one, or the target of its join table; {@link #NOT_MAPPED} for a shape not mapped yet.
+     */
+    private Object toOne(MappedEntity type, Object id, int i, AssociationAttribute association, Row row, Connection connection,
+            PersistenceContext context) {
+        EntityStatements statements = type.statements();
+        Optional<EntityStatements.Reference> owned = statements.reference(i);
+        if (owned.isPresent()) {
+            return ownedReference(statements, owned.get(), association, row, connection, context);
+        }
+        if (!association.owning()) {
+            List<Indexed> owners = inverse(association, null, id, statements, connection, context);
+            return owners.isEmpty() ? null : owners.getFirst().element();
+        }
+        CollectionMapping mapping = statements.collection(i).orElseThrow();
+        if (!(mapping instanceof CollectionMapping.JoinTable table)) return NOT_MAPPED;
+        List<Object[]> found = keys(table.targets(), table.ownerBinders(), statements.keyValues(id),
+            table.targetBinders(), describe(association), connection);
+        return found.isEmpty() || Arrays.stream(found.getFirst()).allMatch(java.util.Objects::isNull)
+            ? null : find(entity(association.targetEntity()),
+            entity(association.targetEntity()).statements().key(found.getFirst()), connection, context);
+    }
+
+    /** The instance the owned foreign key {@code owned} of {@code row} references; {@code null} for a {@code NULL} key. */
+    private Object ownedReference(EntityStatements statements, EntityStatements.Reference owned, AssociationAttribute association,
+            Row row, Connection connection, PersistenceContext context) {
+        Object[] tuple = statements.referencedValues(owned, row.values());
+        MappedEntity target = entity(association.targetEntity());
+        if (tuple == null) {
+            return null;
+        }
+        Object key = owned.businessKey()
+            ? businessKeyTarget(statements, owned, association, target, tuple, connection)
+            : target.statements().key(tuple);
+        return key == null ? null : reference(association, target, key, connection, context);
+    }
+
+    /** The identity of the one target whose columns a business-key join references hold {@code tuple}. */
+    private Object businessKeyTarget(EntityStatements statements, EntityStatements.Reference owned,
+            AssociationAttribute association, MappedEntity target, Object[] tuple, Connection connection) {
+        var referenced = statements.referencedColumns(owned);
+        var referencedTable = statements.referencedTable(owned);
+        List<Object[]> found = keys(new Select(referencedTable.select().table(),
+            referencedTable.select().conditions(),
+            referenced.stream().map(EntityStatements.Column::name).toList()),
+            referenced.stream().map(EntityStatements.Column::binder).toList(), tuple,
+            target.statements().keyColumns().stream().map(EntityStatements.Column::binder).toList(),
+            describe(association), connection);
+        if (found.size() != 1) throw new PersistenceException("Business-key join " + association.name()
+            + " must resolve exactly one target identity");
+        return target.statements().key(found.getFirst());
+    }
+
+    /**
+     * The value of the collection {@code i}: on a refresh ({@code previous}), a LAZY collection still not loaded stays;
+     * else a new LAZY collection, or the collection read now; {@link #NOT_MAPPED} for a shape not mapped yet.
+     */
+    private Object collectionValue(MappedEntity type, Object id, Object instance, int i, Object[] previous,
+            Connection connection, PersistenceContext context) {
+        AttributeModel attribute = type.model().attributes().get(i);
+        if (previous != null && LazyCollection.unloaded(previous[i])
+                && ((LazyCollection) previous[i]).owner() == instance && lazy(type, i, context)) {
+            return previous[i]; // §3.2.5: still not loaded, it will read the refreshed rows on its first access
+        }
+        if (lazy(type, i, context) && (previous == null || !cascadesRefresh(attribute))) {
+            return LazyCollection.of(attribute.javaType(), instance, i, attribute.name(), context.lazyLoader());
+        }
+        return collection(type, i, id, connection, context);
+    }
+
+    /**
+     * No value: the attribute keeps what the instance holds — a collection or a relationship whose shape is not mapped
+     * yet, or an attribute that is not a relationship.
+     */
     private static final Object NOT_MAPPED = new Object();
 
     /**
@@ -727,104 +762,161 @@ public final class EntityLoader {
         AttributeModel model = type.model().attributes().get(attribute);
         ElementCollectionMapping elements = type.statements().elementCollection(attribute).orElse(null);
         MappedEntity target = model instanceof AssociationAttribute a ? entity(a.targetEntity()) : null;
-        Select select;
-        List<ValueBinder> owners;
-        List<ValueBinder> readers = new ArrayList<>();
-        IndexMapping index;
-        int elementWidth;
+        BatchRead read;
         if (elements != null) {
-            select = elements.select();
-            owners = elements.ownerBinders();
-            index = elements.index();
-            if (index != null) readers.addAll(index.binders());
-            readers.addAll(elements.columns().stream().map(EntityStatements.Column::binder).toList());
-            elementWidth = elements.columns().size();
+            read = BatchRead.of(elements);
+        } else if (target == null || !batchable(target)) {
+            return false;
         } else {
-            if (target == null || !batchable(target)) return false;
-            CollectionMapping mapping = type.statements().collection(attribute).orElse(null);
-            index = indexOf(mapping);
-            if (mapping instanceof CollectionMapping.JoinTable table) {
-                select = table.targets();
-                owners = table.ownerBinders();
-                readers.addAll(table.targetBinders());
-            } else if (mapping instanceof CollectionMapping.ForeignKey foreign) {
-                select = foreign.targets();
-                owners = foreign.ownerBinders();
-                readers.addAll(foreign.targetBinders());
-            } else if (mapping instanceof CollectionMapping.MappedBy inverse) {
-                AssociationAttribute association = inverse.association();
-                int owning = -1;
-                for (int i = 0; i < target.model().attributes().size(); i++) {
-                    if (target.model().attributes().get(i).name().equals(association.mappedBy())) owning = i;
-                }
-                var reference = target.statements().reference(owning).orElse(null);
-                if (reference == null) return false; // inverse join tables retain the ordinary loader
-                select = target.statements().ownersSelect(reference);
-                owners = Arrays.stream(reference.columns()).mapToObj(c -> target.statements().columns().get(c).binder()).toList();
-                readers.addAll(target.statements().keyColumns().stream().map(EntityStatements.Column::binder).toList());
-                if (index != null && index.stored()) {
-                    List<Identifier> columns = new ArrayList<>(select.columns());
-                    columns.addAll(index.columns());
-                    select = new Select(select.table(), columns, select.conditions());
-                }
-            } else return false;
-            elementWidth = readers.size();
-            if (index != null && index.stored()) readers.addAll(index.binders());
+            read = relationshipBatch(type.statements().collection(attribute).orElse(null), target);
         }
-        if (index != null && index.keyEntity() != null || owners.size() > 512) return false;
-
-        List<ManagedEntity> group = new ArrayList<>();
-        group.add(requested);
-        for (ManagedEntity candidate : context.entries()) {
-            if (group.size() >= bound(owners.size())) break;
-            if (candidate == requested || candidate.type() != type || candidate.key() == null
-                    || candidate.status() != ManagedEntity.Status.MANAGED
-                    || LazyReference.unloaded(candidate.instance())) continue;
-            Object value = type.access().get(candidate.instance(), attribute);
-            if (LazyCollection.unloaded(value) && ((LazyCollection) value).owner() == candidate.instance()) group.add(candidate);
+        if (read == null || read.index() != null && read.index().keyEntity() != null || read.owners().size() > 512) {
+            return false;
         }
+        List<ManagedEntity> group = batchGroup(type, attribute, requested, read.owners().size(), context);
         List<Object[]> keys = group.stream().map(e -> type.statements().keyValues(e.key().id())).toList();
-        List<Row> rows = batchKeys(select, owners, keys, readers, connection);
+        List<Row> rows = batchKeys(read.select(), read.owners(), keys, read.readers(), connection);
         List<FetchedElement> fetched = new ArrayList<>();
         for (ManagedEntity entry : group) fetched.add(new FetchedElement(entry.key().id(), null, new Object[0], false));
-        List<Object> targetIds = new ArrayList<>();
-        for (Row row : rows) {
-            int width = owners.size();
-            Object ownerId = type.statements().key(Arrays.copyOf(row.values(), width));
-            Object value;
-            Object[] indexes;
-            if (elements != null) {
-                int indexWidth = elements.indexColumns().size();
-                value = elements.element(Arrays.copyOfRange(row.values(), width + indexWidth, width + indexWidth + elementWidth),
-                    Arrays.copyOfRange(row.nulls(), width + indexWidth, width + indexWidth + elementWidth),
-                    (targetType, targetId) -> loadElementTarget(targetType, targetId, connection, context));
-                indexes = nullableValues(row, width, width + indexWidth);
-            } else {
-                Object[] id = nullableValues(row, width, width + elementWidth);
-                if (Arrays.stream(id).allMatch(Objects::isNull)) continue;
-                value = target.statements().key(id);
-                targetIds.add(value);
-                indexes = nullableValues(row, width + elementWidth, row.values().length);
-            }
-            fetched.add(new FetchedElement(ownerId, value, indexes, true));
-        }
-        if (target != null) {
-            List<Object> missing = targetIds.stream().distinct().filter(id -> context.find(new EntityKey(target.root(), id))
-                .map(e -> LazyReference.unloaded(e.instance())).orElse(true)).toList();
-            for (int from = 0; from < missing.size(); from += bound(target.statements().keyColumns().size())) {
-                List<Object> chunk = missing.subList(from, Math.min(missing.size(), from + bound(target.statements().keyColumns().size())));
-                loadRows(entityRows(target, chunk, connection), null, -1, List.of(), connection, context, null);
-            }
-            // A dangling FK must not publish a partial collection or an uninitialized reference.
-            for (Object id : targetIds) {
-                var known = context.find(new EntityKey(target.root(), id));
-                if (known.isEmpty() || LazyReference.unloaded(known.get().instance())) {
-                    throw new jakarta.persistence.EntityNotFoundException("Missing collection target " + id);
-                }
-            }
+        if (elements != null) {
+            fetched.addAll(elementRows(type, elements, read, rows, connection, context));
+        } else {
+            List<FetchedElement> targets = targetRows(type, target, read, rows);
+            fetched.addAll(targets);
+            loadTargets(target, targets.stream().map(FetchedElement::element).toList(), connection, context);
         }
         loadCollection(List.of(), type, attribute, fetched, connection, context);
         return true;
+    }
+
+    /**
+     * How a batch reads a collection for several owners: its select, the binders of the owner key it is given and of
+     * the columns it reads — the element's ({@code elementWidth} of them) and its index's — and the index.
+     */
+    private record BatchRead(Select select, List<ValueBinder> owners, List<ValueBinder> readers, IndexMapping index,
+            int elementWidth) {
+
+        /** An element collection: its index columns, then its element columns. */
+        static BatchRead of(ElementCollectionMapping elements) {
+            List<ValueBinder> readers = new ArrayList<>();
+            if (elements.index() != null) readers.addAll(elements.index().binders());
+            readers.addAll(elements.columns().stream().map(EntityStatements.Column::binder).toList());
+            return new BatchRead(elements.select(), elements.ownerBinders(), readers, elements.index(), elements.columns().size());
+        }
+
+        /** A relationship: the key columns of its targets, then the index columns its table stores. */
+        static BatchRead of(Select select, List<ValueBinder> owners, List<ValueBinder> targets, IndexMapping index) {
+            List<ValueBinder> readers = new ArrayList<>(targets);
+            if (index != null && index.stored()) readers.addAll(index.binders());
+            return new BatchRead(select, owners, readers, index, targets.size());
+        }
+    }
+
+    /** How a batch reads the relationship collection {@code mapping}; {@code null} for a shape the ordinary loader keeps. */
+    private static BatchRead relationshipBatch(CollectionMapping mapping, MappedEntity target) {
+        IndexMapping index = indexOf(mapping);
+        return switch (mapping) {
+            case CollectionMapping.JoinTable table -> BatchRead.of(table.targets(), table.ownerBinders(), table.targetBinders(), index);
+            case CollectionMapping.ForeignKey foreign ->
+                BatchRead.of(foreign.targets(), foreign.ownerBinders(), foreign.targetBinders(), index);
+            case CollectionMapping.MappedBy inverse -> inverseBatch(target, inverse, index);
+            case null, default -> null;
+        };
+    }
+
+    /** An inverse collection, read through the foreign key of its owning side; inverse join tables return {@code null}. */
+    private static BatchRead inverseBatch(MappedEntity target, CollectionMapping.MappedBy inverse, IndexMapping index) {
+        AssociationAttribute association = inverse.association();
+        int owning = -1;
+        for (int i = 0; i < target.model().attributes().size(); i++) {
+            if (target.model().attributes().get(i).name().equals(association.mappedBy())) owning = i;
+        }
+        var reference = target.statements().reference(owning).orElse(null);
+        if (reference == null) return null; // inverse join tables retain the ordinary loader
+        Select select = target.statements().ownersSelect(reference);
+        List<ValueBinder> owners = Arrays.stream(reference.columns())
+            .mapToObj(c -> target.statements().columns().get(c).binder()).toList();
+        if (index != null && index.stored()) {
+            List<Identifier> columns = new ArrayList<>(select.columns());
+            columns.addAll(index.columns());
+            select = new Select(select.table(), columns, select.conditions());
+        }
+        return BatchRead.of(select, owners, target.statements().keyColumns().stream().map(EntityStatements.Column::binder).toList(),
+            index);
+    }
+
+    /**
+     * The owners whose collection {@code attribute} one batch loads: {@code requested}, then the managed owners of its
+     * entity that still hold theirs unloaded, up to the bound of the owner key width.
+     */
+    private List<ManagedEntity> batchGroup(MappedEntity type, int attribute, ManagedEntity requested, int ownerWidth,
+            PersistenceContext context) {
+        List<ManagedEntity> group = new ArrayList<>();
+        group.add(requested);
+        for (ManagedEntity candidate : context.entries()) {
+            if (group.size() >= bound(ownerWidth)) break;
+            if (holdsUnloaded(type, attribute, requested, candidate)) group.add(candidate);
+        }
+        return group;
+    }
+
+    /** Whether {@code candidate}, another managed and loaded instance of {@code type}, holds its own unloaded collection. */
+    private static boolean holdsUnloaded(MappedEntity type, int attribute, ManagedEntity requested, ManagedEntity candidate) {
+        if (candidate == requested || candidate.type() != type || candidate.key() == null
+                || candidate.status() != ManagedEntity.Status.MANAGED
+                || LazyReference.unloaded(candidate.instance())) return false;
+        Object value = type.access().get(candidate.instance(), attribute);
+        return LazyCollection.unloaded(value) && ((LazyCollection) value).owner() == candidate.instance();
+    }
+
+    /** The elements of an element collection a batch read, each with its owner and its index. */
+    private List<FetchedElement> elementRows(MappedEntity type, ElementCollectionMapping elements, BatchRead read,
+            List<Row> rows, Connection connection, PersistenceContext context) {
+        int width = read.owners().size();
+        int indexWidth = elements.indexColumns().size();
+        int from = width + indexWidth;
+        int to = from + read.elementWidth();
+        List<FetchedElement> fetched = new ArrayList<>();
+        for (Row row : rows) {
+            Object ownerId = type.statements().key(Arrays.copyOf(row.values(), width));
+            Object value = elements.element(Arrays.copyOfRange(row.values(), from, to), Arrays.copyOfRange(row.nulls(), from, to),
+                (targetType, targetId) -> loadElementTarget(targetType, targetId, connection, context));
+            fetched.add(new FetchedElement(ownerId, value, nullableValues(row, width, from), true));
+        }
+        return fetched;
+    }
+
+    /** The target identities of a relationship a batch read, each with its owner and its index; rows without one skipped. */
+    private static List<FetchedElement> targetRows(MappedEntity type, MappedEntity target, BatchRead read, List<Row> rows) {
+        int width = read.owners().size();
+        int to = width + read.elementWidth();
+        List<FetchedElement> fetched = new ArrayList<>();
+        for (Row row : rows) {
+            Object ownerId = type.statements().key(Arrays.copyOf(row.values(), width));
+            Object[] id = nullableValues(row, width, to);
+            if (Arrays.stream(id).anyMatch(Objects::nonNull)) {
+                fetched.add(new FetchedElement(ownerId, target.statements().key(id), nullableValues(row, to, row.values().length),
+                    true));
+            }
+        }
+        return fetched;
+    }
+
+    /** Loads, in batches, the targets {@code targetIds} names that are not loaded yet; a dangling foreign key fails. */
+    private void loadTargets(MappedEntity target, List<Object> targetIds, Connection connection, PersistenceContext context) {
+        List<Object> missing = targetIds.stream().distinct().filter(id -> context.find(new EntityKey(target.root(), id))
+            .map(e -> LazyReference.unloaded(e.instance())).orElse(true)).toList();
+        for (int from = 0; from < missing.size(); from += bound(target.statements().keyColumns().size())) {
+            List<Object> chunk = missing.subList(from, Math.min(missing.size(), from + bound(target.statements().keyColumns().size())));
+            loadRows(entityRows(target, chunk, connection), null, -1, List.of(), connection, context, null);
+        }
+        // A dangling FK must not publish a partial collection or an uninitialized reference.
+        for (Object id : targetIds) {
+            var known = context.find(new EntityKey(target.root(), id));
+            if (known.isEmpty() || LazyReference.unloaded(known.get().instance())) {
+                throw new jakarta.persistence.EntityNotFoundException("Missing collection target " + id);
+            }
+        }
     }
 
     /** Reads full entity statement columns, then lets the same D12 assembler register/hydrate every identity. */
@@ -863,22 +955,7 @@ public final class EntityLoader {
         List<Expression> columns = new ArrayList<>();
         select.conditions().forEach(c -> columns.add(new Expression.Column("b", c)));
         select.columns().forEach(c -> columns.add(new Expression.Column("b", c)));
-        Expression predicate = null;
-        if (binders.size() == 1) {
-            List<Expression> parameters = new ArrayList<>();
-            for (int i = 0; i < keys.size(); i++) parameters.add(new Expression.Parameter(i));
-            predicate = new Expression.In(new Expression.Column("b", select.conditions().getFirst()), parameters, false);
-        } else {
-            for (int i = 0; i < keys.size(); i++) {
-                Expression tuple = null;
-                for (int c = 0; c < binders.size(); c++) {
-                    Expression comparison = new Expression.Binary(new Expression.Column("b", select.conditions().get(c)),
-                        Expression.Operator.EQ, new Expression.Parameter(i * binders.size() + c));
-                    tuple = tuple == null ? comparison : new Expression.Binary(tuple, Expression.Operator.AND, comparison);
-                }
-                predicate = predicate == null ? tuple : new Expression.Binary(predicate, Expression.Operator.OR, tuple);
-            }
-        }
+        Expression predicate = keyPredicate(select, binders.size(), keys.size());
         Query query = new Query(false, columns, List.of(new Query.From(select.table(), "b", List.of())), predicate,
             List.of(), null, List.of(), null, null);
         var rendered = engine.dialect().renderQuery(query);
@@ -893,21 +970,49 @@ public final class EntityLoader {
             }
             try (ResultSet rows = statement.executeQuery()) {
                 while (rows.next()) {
-                    Object[] values = new Object[allReaders.size()];
-                    boolean[] nulls = new boolean[values.length];
-                    for (int c = 0; c < values.length; c++) {
-                        values[c] = allReaders.get(c).read(rows, c + 1);
-                        nulls[c] = rows.wasNull();
-                        // Preserve primitive binder defaults in state columns, as the ordinary row loader does.
-                        if (nulls[c] && c < binders.size()) values[c] = null;
-                    }
-                    result.add(new Row(values, nulls));
+                    result.add(batchRow(rows, allReaders, binders.size()));
                 }
             }
         } catch (SQLException failure) {
             throw new PersistenceException("The lazy batch read failed: " + failure.getMessage(), failure);
         }
         return result;
+    }
+
+    /**
+     * The predicate of a batch of {@code count} keys of {@code width} columns: an {@code IN} list for a single key column,
+     * else an {@code OR} of complete key tuples.
+     */
+    private static Expression keyPredicate(Select select, int width, int count) {
+        if (width == 1) {
+            List<Expression> parameters = new ArrayList<>();
+            for (int i = 0; i < count; i++) parameters.add(new Expression.Parameter(i));
+            return new Expression.In(new Expression.Column("b", select.conditions().getFirst()), parameters, false);
+        }
+        Expression predicate = null;
+        for (int i = 0; i < count; i++) {
+            Expression tuple = null;
+            for (int c = 0; c < width; c++) {
+                Expression comparison = new Expression.Binary(new Expression.Column("b", select.conditions().get(c)),
+                    Expression.Operator.EQ, new Expression.Parameter(i * width + c));
+                tuple = tuple == null ? comparison : new Expression.Binary(tuple, Expression.Operator.AND, comparison);
+            }
+            predicate = predicate == null ? tuple : new Expression.Binary(predicate, Expression.Operator.OR, tuple);
+        }
+        return predicate;
+    }
+
+    /** The current row of a batch read; its owner key columns read {@code NULL} as {@code null}. */
+    private static Row batchRow(ResultSet rows, List<ValueBinder> readers, int keyWidth) throws SQLException {
+        Object[] values = new Object[readers.size()];
+        boolean[] nulls = new boolean[values.length];
+        for (int c = 0; c < values.length; c++) {
+            values[c] = readers.get(c).read(rows, c + 1);
+            nulls[c] = rows.wasNull();
+            // Preserve primitive binder defaults in state columns, as the ordinary row loader does.
+            if (nulls[c] && c < keyWidth) values[c] = null;
+        }
+        return new Row(values, nulls);
     }
 
     /** The elements of the collection attribute {@code i} of the instance {@code id}, read from the database. */
@@ -957,8 +1062,7 @@ public final class EntityLoader {
         if (elements == null) {
             return NOT_MAPPED;
         }
-        return assemble(association.javaType(), indexOf(mapping), elements, target, association.orderBy(),
-            target.model().attributes(), target.access(), target::id, describe(association));
+        return assemble(association.javaType(), indexOf(mapping), elements, target, relationshipOrdering(association, target));
     }
 
     private static IndexMapping indexOf(CollectionMapping mapping) {
@@ -1004,6 +1108,31 @@ public final class EntityLoader {
 
     private List<Indexed> inverse(AssociationAttribute inverse, IndexMapping index, Object id, EntityStatements statements,
             Connection connection, PersistenceContext context, MappedEntity owner) {
+        int attribute = owningAttribute(inverse, owner);
+        EntityStatements ownerStatements = owner.statements();
+        Object[] key = statements.keyValues(id);
+        List<Object[]> rows;
+        int width;
+        Optional<EntityStatements.Reference> reference = ownerStatements.reference(attribute);
+        Optional<CollectionMapping> collection = ownerStatements.collection(attribute);
+        IndexMapping stored = index != null && index.stored() ? index : null;
+        if (reference.isPresent()) {
+            if (reference.get().businessKey()) {
+                key = businessKeyValues(ownerStatements, reference.get(), id, context);
+            }
+            width = ownerStatements.keyColumns().size();
+            rows = ownersByForeignKey(inverse, ownerStatements, reference.get(), stored, key, connection);
+        } else if (collection.isPresent() && collection.get() instanceof CollectionMapping.JoinTable table) {
+            width = table.ownerBinders().size();
+            rows = keys(table.owners(), table.targetBinders(), key, table.ownerBinders(), describe(inverse), connection);
+        } else {
+            return new ArrayList<>(); // owned through a shape not mapped yet
+        }
+        return indexedOwners(owner, rows, width, stored, connection, context);
+    }
+
+    /** The attribute of {@code owner} that maps the inverse relationship {@code inverse}; fails when it has none. */
+    private static int owningAttribute(AssociationAttribute inverse, MappedEntity owner) {
         int attribute = -1;
         List<AttributeModel> attributes = owner.model().attributes();
         for (int i = 0; i < attributes.size(); i++) {
@@ -1015,45 +1144,47 @@ public final class EntityLoader {
             throw new PersistenceException("The relationship " + inverse.name() + " of " + inverse.declaringClass().getName()
                 + " is mapped by " + inverse.mappedBy() + ", which " + owner.model().entityName() + " does not have");
         }
-        EntityStatements ownerStatements = owner.statements();
-        Object[] key = statements.keyValues(id);
-        List<Object[]> rows;
-        int width;
-        Optional<EntityStatements.Reference> reference = ownerStatements.reference(attribute);
-        Optional<CollectionMapping> collection = ownerStatements.collection(attribute);
-        boolean stored = index != null && index.stored();
-        if (reference.isPresent()) {
-            if (reference.get().businessKey()) {
-                MappedEntity referenced = entity(reference.get().target());
-                Object instance = context.find(new EntityKey(referenced.root(), id)).orElseThrow().instance();
-                key = ownerStatements.referencedColumns(reference.get()).stream()
-                    .map(c -> referenced.access().get(instance, c.attribute())).toArray();
-            }
-            List<ValueBinder> foreignKey = new ArrayList<>();
-            for (int c : reference.get().columns()) {
-                foreignKey.add(ownerStatements.columns().get(c).binder());
-            }
-            List<ValueBinder> readers = new ArrayList<>(ownerStatements.keyColumns().stream().map(EntityStatements.Column::binder).toList());
-            width = readers.size();
-            Select select = ownerStatements.ownersSelect(reference.get());
-            if (stored) { // the index lives beside the foreign key, in the table of the target
-                List<Identifier> columns = new ArrayList<>(select.columns());
-                columns.addAll(index.columns());
-                select = new Select(select.table(), columns, select.conditions());
-                readers.addAll(index.binders());
-            }
-            rows = keys(select, foreignKey, key, readers, describe(inverse), connection);
-        } else if (collection.isPresent() && collection.get() instanceof CollectionMapping.JoinTable table) {
-            width = table.ownerBinders().size();
-            rows = keys(table.owners(), table.targetBinders(), key, table.ownerBinders(), describe(inverse), connection);
-        } else {
-            return new ArrayList<>(); // owned through a shape not mapped yet
+        return attribute;
+    }
+
+    /** The values of the columns a business-key {@code reference} joins on, read from the managed target {@code id}. */
+    private Object[] businessKeyValues(EntityStatements ownerStatements, EntityStatements.Reference reference, Object id,
+            PersistenceContext context) {
+        MappedEntity referenced = entity(reference.target());
+        Object instance = context.find(new EntityKey(referenced.root(), id)).orElseThrow().instance();
+        return ownerStatements.referencedColumns(reference).stream()
+            .map(c -> referenced.access().get(instance, c.attribute())).toArray();
+    }
+
+    /**
+     * The keys of the owners whose foreign key {@code reference} holds {@code key}, each followed by its index when the
+     * table of the owners stores it ({@code stored}, else {@code null}).
+     */
+    private List<Object[]> ownersByForeignKey(AssociationAttribute inverse, EntityStatements ownerStatements,
+            EntityStatements.Reference reference, IndexMapping stored, Object[] key, Connection connection) {
+        List<ValueBinder> foreignKey = new ArrayList<>();
+        for (int c : reference.columns()) {
+            foreignKey.add(ownerStatements.columns().get(c).binder());
         }
+        List<ValueBinder> readers = new ArrayList<>(ownerStatements.keyColumns().stream().map(EntityStatements.Column::binder).toList());
+        Select select = ownerStatements.ownersSelect(reference);
+        if (stored != null) { // the index lives beside the foreign key, in the table of the target
+            List<Identifier> columns = new ArrayList<>(select.columns());
+            columns.addAll(stored.columns());
+            select = new Select(select.table(), columns, select.conditions());
+            readers.addAll(stored.binders());
+        }
+        return keys(select, foreignKey, key, readers, describe(inverse), connection);
+    }
+
+    /** The managed owners of {@code rows}, each with the index its row holds after the key when {@code stored}. */
+    private List<Indexed> indexedOwners(MappedEntity owner, List<Object[]> rows, int width, IndexMapping stored,
+            Connection connection, PersistenceContext context) {
         List<Indexed> owners = new ArrayList<>();
         for (Object[] row : rows) {
-            Object element = find(owner, ownerStatements.key(Arrays.copyOf(row, width)), connection, context);
+            Object element = find(owner, owner.statements().key(Arrays.copyOf(row, width)), connection, context);
             if (element != null) {
-                owners.add(new Indexed(element, stored ? index(index, row, width, connection, context) : null));
+                owners.add(new Indexed(element, stored != null ? index(stored, row, width, connection, context) : null));
             }
         }
         return owners;
@@ -1082,8 +1213,7 @@ public final class EntityLoader {
      *
      * @param target the entity of the elements of a relationship, {@code null} for an element collection
      */
-    private Object assemble(Class<?> type, IndexMapping index, List<Indexed> read, MappedEntity target, String orderBy,
-            List<AttributeModel> attributes, ManagedAccess access, UnaryOperator<Object> natural, String where) {
+    private Object assemble(Class<?> type, IndexMapping index, List<Indexed> read, MappedEntity target, Ordering ordering) {
         // Element-collection rows may contain SQL NULL. Absent LEFT rows were removed before assembly.
         List<Indexed> elements = new ArrayList<>(target == null ? read
             : read.stream().filter(e -> e.element() != null).toList());
@@ -1106,7 +1236,7 @@ public final class EntityLoader {
             values = new ArrayList<>(elements.stream().map(Indexed::element).toList());
         } else {
             values = new ArrayList<>(elements.stream().map(Indexed::element).toList());
-            order(orderBy, attributes, access, natural, where, values);
+            order(ordering, values);
         }
         Collection<Object> collection = CollectionMapping.newCollection(type);
         collection.addAll(values);
@@ -1176,11 +1306,7 @@ public final class EntityLoader {
         }
         ElementCollectionAttribute model = mapping.model();
         String where = "the element collection " + model.name() + " of " + model.declaringClass().getName();
-        if (model.element() instanceof EmbeddedAttribute embedded) {
-            return assemble(model.javaType(), index, elements, null, model.orderBy(), embedded.embeddable().attributes(),
-                unit.access(embedded.embeddable()), UnaryOperator.identity(), where);
-        }
-        return assemble(model.javaType(), index, elements, null, model.orderBy(), List.of(), null, UnaryOperator.identity(), where);
+        return assemble(model.javaType(), index, elements, null, elementOrdering(model, where));
     }
 
     private Object loadElementTarget(Class<?> targetType, Object[] key, Connection connection, PersistenceContext context) {
@@ -1191,30 +1317,56 @@ public final class EntityLoader {
     // ---- @OrderBy (§11.1.42) ------------------------------------------------------------------------------
 
     /**
-     * Sorts {@code elements} by {@code orderBy}: a list of paths into the elements — attributes, through embeddables
-     * by dots — each ascending unless {@code DESC}; without a path (an empty {@code @OrderBy}, or {@code ASC} / {@code DESC}
-     * alone) by {@code natural}: the identifier of an entity, the value of a basic element.
-     *
-     * @param attributes the attributes of the elements, and {@code access} reads them; none for basic elements
+     * Sorts {@code elements} by the {@code orderBy} of {@code ordering}: a list of paths into the elements — attributes,
+     * through embeddables by dots — each ascending unless {@code DESC}; without a path (an empty {@code @OrderBy}, or
+     * {@code ASC} / {@code DESC} alone) by its {@code natural} order: the identifier of an entity, the value of a basic
+     * element.
      */
-    private void order(String orderBy, List<AttributeModel> attributes, ManagedAccess access, UnaryOperator<Object> natural,
-            String where, List<Object> elements) {
-        if (orderBy == null || elements.size() < 2) {
+    private void order(Ordering ordering, List<Object> elements) {
+        if (ordering.orderBy() == null || elements.size() < 2) {
             return;
         }
         Comparator<Object> comparator = null;
-        for (String item : orderBy.isEmpty() ? new String[] {""} : orderBy.split(",")) {
-            String[] parts = item.trim().split("\\s+");
-            boolean pathless = parts[0].isEmpty() || parts[0].equalsIgnoreCase("ASC") || parts[0].equalsIgnoreCase("DESC");
-            UnaryOperator<Object> key = pathless ? natural : path(parts[0], attributes, access, where);
-            String direction = pathless ? parts[0] : direction(parts);
-            Comparator<Object> by = (a, b) -> compare(key.apply(a), key.apply(b));
-            if (direction.equalsIgnoreCase("DESC")) {
-                by = by.reversed();
-            }
+        String[] items = ordering.orderBy().isEmpty() ? new String[] {""} : ordering.orderBy().split(",");
+        for (String item : items) {
+            Comparator<Object> by = orderItem(item, ordering);
             comparator = comparator == null ? by : comparator.thenComparing(by);
         }
         elements.sort(comparator);
+    }
+
+    /**
+     * How the elements of a collection are sorted: its {@code orderBy}, the {@code attributes} of its elements and the
+     * {@code access} that reads them (none for basic elements), the {@code natural} order of an item without a path,
+     * and {@code where}, the collection named in messages.
+     */
+    private record Ordering(String orderBy, List<AttributeModel> attributes, ManagedAccess access, UnaryOperator<Object> natural,
+            String where) {
+    }
+
+    /** The ordering of a relationship collection: by the attributes of its target entity, by identifier by default. */
+    private static Ordering relationshipOrdering(AssociationAttribute association, MappedEntity target) {
+        return new Ordering(association.orderBy(), target.model().attributes(), target.access(), target::id, describe(association));
+    }
+
+    /** The ordering of an element collection: by the attributes of an embeddable element, by the value by default. */
+    private Ordering elementOrdering(ElementCollectionAttribute elements, String where) {
+        if (elements.element() instanceof EmbeddedAttribute embedded) {
+            return new Ordering(elements.orderBy(), embedded.embeddable().attributes(), unit.access(embedded.embeddable()),
+                UnaryOperator.identity(), where);
+        }
+        return new Ordering(elements.orderBy(), List.of(), null, UnaryOperator.identity(), where);
+    }
+
+    /** The order of one {@code @OrderBy} item: by its path, else by the natural order, descending if it says {@code DESC}. */
+    private Comparator<Object> orderItem(String item, Ordering ordering) {
+        String[] parts = item.trim().split("\\s+");
+        boolean pathless = parts[0].isEmpty() || parts[0].equalsIgnoreCase("ASC") || parts[0].equalsIgnoreCase("DESC");
+        UnaryOperator<Object> key = pathless ? ordering.natural()
+            : path(parts[0], ordering.attributes(), ordering.access(), ordering.where());
+        String direction = pathless ? parts[0] : direction(parts);
+        Comparator<Object> by = (a, b) -> compare(key.apply(a), key.apply(b));
+        return direction.equalsIgnoreCase("DESC") ? by.reversed() : by;
     }
 
     /** The direction of an {@code @OrderBy} item that names a path: the word after it, ascending without one. */
@@ -1276,6 +1428,7 @@ public final class EntityLoader {
         boolean[] nulls = new boolean[values.length];
         Arrays.fill(nulls, true); // a missing secondary row reads as NULL columns
         FlushEngine.Sql sql = engine.sql(type);
+        Row result = new Row(values, nulls);
         try {
             for (int t = 0; t < statements.tables().size(); t++) {
                 EntityStatements.TableStatements table = statements.tables().get(t);
@@ -1284,31 +1437,11 @@ public final class EntityLoader {
                     Locks.timeout(engine.dialect(), timeout, connection);
                     text = engine.dialect().render(table.select().locked(Locks.rowLock(mode), timeout != null && timeout == 0));
                 }
-                try (PreparedStatement select = connection.prepareStatement(text)) {
-                    List<EntityStatements.Parameter> parameters = table.selectParameters();
-                    for (int i = 0; i < parameters.size(); i++) {
-                        columns.get(parameters.get(i).column()).binder().bind(engine.dialect(), select, i + 1, key[i]);
-                    }
-                    try (ResultSet row = select.executeQuery()) {
-                        if (!row.next()) {
-                            if (t == 0 || unit.inheritance(type.model().javaType()).joined()
-                                    && t < unit.inheritance(type.model().javaType()).chain().size()) {
-                                return null;
-                            }
-                            continue;
-                        }
-                        int[] selected = table.selected();
-                        for (int i = 0; i < selected.length; i++) {
-                            values[selected[i]] = columns.get(selected[i]).binder().read(row, i + 1);
-                            nulls[selected[i]] = row.wasNull(); // the binder's last read is this column's
-                            if (nulls[selected[i]] && columns.get(selected[i]).foreignKey() != null) {
-                                values[selected[i]] = null;
-                            }
-                        }
-                    }
+                if (!readTable(columns, table, text, key, result, connection) && rowRequired(type, t)) {
+                    return null;
                 }
             }
-            return new Row(values, nulls);
+            return result;
         } catch (SQLException e) {
             if (Locks.pessimistic(mode)) {
                 throw Locks.failure(engine.dialect(), e, null);
@@ -1318,6 +1451,43 @@ public final class EntityLoader {
     }
 
     /** Writes the row into {@code instance}; what the row does not hold keeps its current value. */
+    /**
+     * Reads the row of the table {@code table} at {@code key} into the columns of {@code into} it selects; whether there
+     * is one.
+     */
+    private boolean readTable(List<EntityStatements.Column> columns, EntityStatements.TableStatements table, String text,
+            Object[] key, Row into, Connection connection) throws SQLException {
+        try (PreparedStatement select = connection.prepareStatement(text)) {
+            List<EntityStatements.Parameter> parameters = table.selectParameters();
+            for (int i = 0; i < parameters.size(); i++) {
+                columns.get(parameters.get(i).column()).binder().bind(engine.dialect(), select, i + 1, key[i]);
+            }
+            try (ResultSet row = select.executeQuery()) {
+                if (!row.next()) {
+                    return false;
+                }
+                int[] selected = table.selected();
+                for (int i = 0; i < selected.length; i++) {
+                    into.values()[selected[i]] = columns.get(selected[i]).binder().read(row, i + 1);
+                    into.nulls()[selected[i]] = row.wasNull(); // the binder's last read is this column's
+                    if (into.nulls()[selected[i]] && columns.get(selected[i]).foreignKey() != null) {
+                        into.values()[selected[i]] = null;
+                    }
+                }
+                return true;
+            }
+        }
+    }
+
+    /**
+     * Whether an instance has no row when the table {@code t} of its entity has none: its primary table, or a table of
+     * its joined inheritance chain; a missing secondary row reads as {@code NULL} columns.
+     */
+    private boolean rowRequired(MappedEntity type, int t) {
+        return t == 0 || unit.inheritance(type.model().javaType()).joined()
+            && t < unit.inheritance(type.model().javaType()).chain().size();
+    }
+
     private static Object[] state(MappedEntity type, Object instance, Row row) {
         return state(type, instance, row.values(), row.nulls());
     }
