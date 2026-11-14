@@ -58,7 +58,7 @@ public final class MappedEntity {
             StatePolicy state, Function<EntityModel, EntityStatements> statements, int rank, Function<Class<?>, MappedEntity> entities) {
         this.model = model;
         this.entities = entities;
-        this.parts = parts(model, embeddedId, idClass);
+        this.parts = parts(model, idClass);
         this.mapsId = model.attributes().stream().anyMatch(a -> a instanceof AssociationAttribute r && r.mapsId() != null);
         this.relationships = model.attributes().stream().anyMatch(a -> a instanceof AssociationAttribute
             || a instanceof io.vidocq.noether.jpa.core.model.ElementCollectionAttribute);
@@ -96,9 +96,9 @@ public final class MappedEntity {
     static int[] idIndexes(EntityModel model) {
         List<AttributeModel> parts = switch (model.id()) {
             case IdModel.Single single -> List.of(single.attribute());
-            case IdModel.Embedded embedded -> List.of(embedded.attribute());
+            case IdModel.Embedded(var attribute) -> List.of(attribute);
             case IdModel.ByIdClass byIdClass -> byIdClass.attributes();
-            case IdModel.Derived derived -> List.of(derived.relationship());
+            case IdModel.Derived(var relationship) -> List.of(relationship);
         };
         List<Integer> indexes = new ArrayList<>();
         for (AttributeModel part : parts) {
@@ -173,19 +173,19 @@ public final class MappedEntity {
      * {@code @MapsId} names, or the whole identifier for an {@code @MapsId} without value, is the key of the parent;
      * so is an {@code @Id} relationship, and the only {@code @Id} of an entity sharing the id class of its parent.
      */
-    private static List<KeyPart> parts(EntityModel model, ManagedAccess embeddedId, ManagedAccess idClass) {
+    private static List<KeyPart> parts(EntityModel model, ManagedAccess idClass) {
         int whole = mapsId(model, "");
         List<KeyPart> parts = new ArrayList<>();
         switch (model.id()) {
             case IdModel.Single single -> parts.add(whole >= 0 ? new KeyPart(whole, -1, true)
                 : new KeyPart(model.attributes().indexOf(single.attribute()), -1, false));
-            case IdModel.Derived derived -> parts.add(new KeyPart(model.attributes().indexOf(derived.relationship()), -1, true));
-            case IdModel.Embedded embedded -> {
+            case IdModel.Derived(var relationship) -> parts.add(new KeyPart(model.attributes().indexOf(relationship), -1, true));
+            case IdModel.Embedded(var embedded) -> {
                 if (whole >= 0) {
                     parts.add(new KeyPart(whole, -1, true));
                 } else {
-                    int attribute = model.attributes().indexOf(embedded.attribute());
-                    List<AttributeModel> components = embedded.attribute().embeddable().attributes();
+                    int attribute = model.attributes().indexOf(embedded);
+                    List<AttributeModel> components = embedded.embeddable().attributes();
                     for (int c = 0; c < components.size(); c++) {
                         int mapped = mapsId(model, components.get(c).name());
                         parts.add(mapped >= 0 ? new KeyPart(mapped, c, true) : new KeyPart(attribute, c, false));
@@ -276,7 +276,7 @@ public final class MappedEntity {
         }
         return switch (model.id()) {
             case IdModel.Single single -> access.get(instance, model.attributes().indexOf(single.attribute()));
-            case IdModel.Embedded embedded -> access.get(instance, model.attributes().indexOf(embedded.attribute()));
+            case IdModel.Embedded(var embedded) -> access.get(instance, model.attributes().indexOf(embedded));
             case IdModel.ByIdClass _ -> {
                 Object[] components = new Object[parts.size()];
                 for (int i = 0; i < components.length; i++) {
@@ -396,9 +396,9 @@ public final class MappedEntity {
                 }
                 return primaryKey;
             }
-            case IdModel.Embedded embedded -> {
-                if (!embedded.attribute().javaType().isInstance(primaryKey)) {
-                    throw invalid(primaryKey, embedded.attribute().javaType());
+            case IdModel.Embedded(var embedded) -> {
+                if (!embedded.javaType().isInstance(primaryKey)) {
+                    throw invalid(primaryKey, embedded.javaType());
                 }
                 for (KeyPart part : parts) {
                     values(part, embeddedId.get(primaryKey, part.component()), values);
@@ -446,14 +446,5 @@ public final class MappedEntity {
             case Byte b when generated && b == 0 -> null;
             default -> value;
         };
-    }
-
-    private static CompositeId parts(Object[] parts) {
-        for (Object part : parts) {
-            if (part == null) {
-                return null;
-            }
-        }
-        return CompositeId.of(parts);
     }
 }

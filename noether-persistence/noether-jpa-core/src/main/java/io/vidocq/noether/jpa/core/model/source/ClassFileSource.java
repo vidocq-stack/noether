@@ -43,6 +43,8 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class ClassFileSource implements ClassInfos {
 
+    /** The package of the Jakarta Persistence annotation types, whose defaults and member types are shared. */
+    private static final String JPA = "jakarta.persistence.";
     /** The defaults of annotation types, per annotation type name; shared, the annotation types do not change. */
     private static final Map<String, Map<String, Object>> SHARED_DEFAULTS = new ConcurrentHashMap<>();
     /** The member types of the Jakarta Persistence annotation types, shared like their defaults. */
@@ -150,7 +152,7 @@ public final class ClassFileSource implements ClassInfos {
 
     /** The members' defaults of an annotation type, read from its own class file; empty if it cannot be found. */
     private Map<String, Object> defaults(String annotationType) {
-        Map<String, Object> known = annotationType.startsWith("jakarta.persistence.") ? SHARED_DEFAULTS.get(annotationType)
+        Map<String, Object> known = annotationType.startsWith(JPA) ? SHARED_DEFAULTS.get(annotationType)
             : this.defaults.get(annotationType);
         if (known != null) {
             return known;
@@ -160,14 +162,14 @@ public final class ClassFileSource implements ClassInfos {
             this.defaults.putIfAbsent(annotationType, Map.of());
             return Map.of();
         }
-        Map<String, Object> defaults = new LinkedHashMap<>();
+        Map<String, Object> memberDefaults = new LinkedHashMap<>();
         for (MethodModel method : ClassFile.of().parse(bytes).methods()) {
             method.findAttribute(Attributes.annotationDefault())
-                .ifPresent(d -> defaults.put(method.methodName().stringValue(), value(d.defaultValue())));
+                .ifPresent(d -> memberDefaults.put(method.methodName().stringValue(), value(d.defaultValue())));
         }
-        Map<String, Object> result = Map.copyOf(defaults);
+        Map<String, Object> result = Map.copyOf(memberDefaults);
         // put, not computeIfAbsent: reading the defaults may read nested annotation types
-        (annotationType.startsWith("jakarta.persistence.") ? SHARED_DEFAULTS : this.defaults).putIfAbsent(annotationType, result);
+        (annotationType.startsWith(JPA) ? SHARED_DEFAULTS : this.defaults).putIfAbsent(annotationType, result);
         return result;
     }
 
@@ -196,7 +198,7 @@ public final class ClassFileSource implements ClassInfos {
             }
         }
         Map<String, ClassDesc> result = java.util.Collections.unmodifiableMap(members);
-        if (annotationType.startsWith("jakarta.persistence.")) {
+        if (annotationType.startsWith(JPA)) {
             SHARED_MEMBERS.putIfAbsent(annotationType, result);
         }
         return result;

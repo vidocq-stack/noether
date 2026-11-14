@@ -20,6 +20,8 @@ public final class LazySubclassGenerator {
     private static final ClassDesc REFERENCE = ClassDesc.of(LazyReference.class.getName());
     private static final ClassDesc STATE = ClassDesc.of(LazyReference.State.class.getName());
     private static final MethodTypeDesc VOID = MethodTypeDesc.of(CD_void);
+    /** The field holding the {@link LazyReference.State}, and the two {@link LazyReference} methods that read and write it. */
+    private static final String STATE_NAME = "$noetherState";
 
     private LazySubclassGenerator() {}
 
@@ -55,26 +57,27 @@ public final class LazySubclassGenerator {
 
     /** The bootstrap uses a distinct name so stale build-time output cannot substitute for freshly planned code. */
     public static byte[] bytes(ClassInfo info, List<AccessPlanner.Member> members, String className) {
-        ClassDesc parent = ClassDesc.of(info.name()), self = ClassDesc.of(className);
+        ClassDesc parent = ClassDesc.of(info.name());
+        ClassDesc self = ClassDesc.of(className);
         String identifier = ((MethodInfo) members.stream()
             .filter(m -> m.element().isAnnotated("jakarta.persistence.Id")).findFirst().orElseThrow().element()).name();
         return ClassFile.of().build(self, builder -> {
             builder.withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_FINAL | ClassFile.ACC_SUPER | ClassFile.ACC_SYNTHETIC);
             builder.withSuperclass(parent);
             builder.withInterfaceSymbols(REFERENCE);
-            builder.withField("$noetherState", STATE, ClassFile.ACC_PRIVATE);
+            builder.withField(STATE_NAME, STATE, ClassFile.ACC_PRIVATE);
             builder.withMethodBody(INIT_NAME, VOID, ClassFile.ACC_PUBLIC,
                 code -> code.aload(0).invokespecial(parent, INIT_NAME, VOID).return_());
-            builder.withMethodBody("$noetherState", MethodTypeDesc.of(STATE), ClassFile.ACC_PUBLIC,
-                code -> code.aload(0).getfield(self, "$noetherState", STATE).areturn());
-            builder.withMethodBody("$noetherState", MethodTypeDesc.of(CD_void, STATE), ClassFile.ACC_PUBLIC,
-                code -> code.aload(0).aload(1).putfield(self, "$noetherState", STATE).return_());
+            builder.withMethodBody(STATE_NAME, MethodTypeDesc.of(STATE), ClassFile.ACC_PUBLIC,
+                code -> code.aload(0).getfield(self, STATE_NAME, STATE).areturn());
+            builder.withMethodBody(STATE_NAME, MethodTypeDesc.of(CD_void, STATE), ClassFile.ACC_PUBLIC,
+                code -> code.aload(0).aload(1).putfield(self, STATE_NAME, STATE).return_());
             for (MethodInfo method : info.methods()) {
                 if (method.name().startsWith("<") || method.isPrivate() || method.isStatic() || method.isSynthetic()
                         || method.name().equals(identifier) && method.type().parameterCount() == 0) continue;
                 builder.withMethodBody(method.name(), method.type(), method.flags() & (ClassFile.ACC_PUBLIC | ClassFile.ACC_PROTECTED),
                     code -> {
-                        code.aload(0).getfield(self, "$noetherState", STATE)
+                        code.aload(0).getfield(self, STATE_NAME, STATE)
                             .invokestatic(STATE, "initialize", MethodTypeDesc.of(CD_void, STATE)).aload(0);
                         int local = 1;
                         for (ClassDesc parameter : method.type().parameterList()) {

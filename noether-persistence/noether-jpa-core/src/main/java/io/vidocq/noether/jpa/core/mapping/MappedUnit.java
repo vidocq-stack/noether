@@ -346,22 +346,22 @@ public final class MappedUnit {
                 if (target.attributes().stream().anyMatch(a -> a instanceof AssociationAttribute r && r.mapsId() != null)) {
                     throw new PersistenceException(problem + "chained derived identifiers are not supported");
                 }
-                if (target.id() instanceof IdModel.Embedded embedded
-                        && embedded.attribute().embeddable().attributes().stream().anyMatch(a -> !(a instanceof BasicAttribute))
+                if (target.id() instanceof IdModel.Embedded(var embedded)
+                        && embedded.embeddable().attributes().stream().anyMatch(a -> !(a instanceof BasicAttribute))
                         || target.id() instanceof IdModel.ByIdClass byIdClass
                             && byIdClass.attributes().stream().anyMatch(a -> !(a instanceof BasicAttribute))) {
                     throw new PersistenceException(problem + "nested or relationship-valued target identifiers are not supported");
                 }
                 Class<?> targetId = switch (target.id()) {
                     case IdModel.Single single -> single.attribute().javaType();
-                    case IdModel.Embedded embedded -> embedded.attribute().javaType();
+                    case IdModel.Embedded(var embedded) -> embedded.javaType();
                     case IdModel.ByIdClass byIdClass -> byIdClass.idClass();
                     case IdModel.Derived _ -> throw new PersistenceException(problem + "chained derived identifiers are not supported");
                 };
                 AttributeModel dependent = switch (owner.id()) {
                     case IdModel.Single single when name.isEmpty() && single.generation().isEmpty() -> single.attribute();
-                    case IdModel.Embedded embedded when name.isEmpty() -> embedded.attribute();
-                    case IdModel.Embedded embedded -> embedded.attribute().embeddable().attributes().stream()
+                    case IdModel.Embedded(var embedded) when name.isEmpty() -> embedded;
+                    case IdModel.Embedded(var embedded) -> embedded.embeddable().attributes().stream()
                         .filter(a -> a.name().equals(name)).findFirst()
                         .orElseThrow(() -> new PersistenceException(problem + "no direct embedded identifier attribute " + name));
                     default -> throw new PersistenceException(problem + "requires an assigned simple or embedded identifier");
@@ -373,8 +373,8 @@ public final class MappedUnit {
                     throw new PersistenceException(problem + "requires insertable primary-table join columns");
                 }
             }
-            if (!mapped.isEmpty() && owner.id() instanceof IdModel.Embedded embedded
-                    && embedded.attribute().embeddable().attributes().stream()
+            if (!mapped.isEmpty() && owner.id() instanceof IdModel.Embedded(var embedded)
+                    && embedded.embeddable().attributes().stream()
                         .anyMatch(a -> !(a instanceof BasicAttribute) && !mapped.contains(a.name()))) {
                 throw new PersistenceException("Invalid @MapsId identifier of " + owner.entityName()
                     + ": unmapped nested embedded identifier parts are not supported");
@@ -448,17 +448,17 @@ public final class MappedUnit {
     }
 
     public Identifier queryColumn(MappedEntity entity, EntityStatements.Column column) {
-        var inheritance = inheritance(entity.model().javaType());
-        if (!inheritance.tablePerClass()) return column.name();
+        var mapping = inheritance(entity.model().javaType());
+        if (!mapping.tablePerClass()) return column.name();
         if (column.table() == 0) {
-            var root = mapped.get(inheritance.root().javaType());
+            var root = mapped.get(mapping.root().javaType());
             String attribute = entity.model().attributes().get(column.attribute()).name();
             var inherited = root.statements().columns().stream()
                 .filter(c -> root.model().attributes().get(c.attribute()).name().equals(attribute)
                     && java.util.Arrays.equals(c.path(), column.path()) && java.util.Objects.equals(c.foreignKey(), column.foreignKey()))
                 .findFirst();
             if (inherited.isPresent()) return inherited.get().name();
-            var declaring = inheritance.declaringEntity(entity.model().attributes().get(column.attribute()).declaringClass());
+            var declaring = mapping.declaringEntity(entity.model().attributes().get(column.attribute()).declaringClass());
             return Identifier.quoted("_n_" + declaring.entityName() + "_" + column.name().name());
         }
         String table = entity.statements().tables().get(column.table()).select().table().name().name();

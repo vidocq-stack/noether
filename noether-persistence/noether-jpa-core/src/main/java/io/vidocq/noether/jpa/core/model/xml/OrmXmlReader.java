@@ -104,9 +104,9 @@ final class OrmXmlReader {
                     "the entity reference &" + r.getLocalName() + "; is not allowed in a mapping file", null);
                 case XMLStreamConstants.START_ELEMENT -> {
                     if (validation == null) {
-                        String version = checkRoot(r, file, line);
+                        checkRoot(r, file, line);
                         validation = new Validation(file, r);
-                        validation.start(version);
+                        validation.start();
                     }
                     Builder builder = new Builder(r.getLocalName(), line);
                     AttributesImpl attributes = new AttributesImpl();
@@ -157,11 +157,14 @@ final class OrmXmlReader {
 
     /** The namespace an element is validated in: the 3.2 one for the elements of the document's orm namespace. */
     private static String validationNamespace(String namespace, String documentNamespace) {
-        return documentNamespace.equals(namespace) ? JAKARTA : namespace == null ? "" : namespace;
+        if (documentNamespace.equals(namespace)) {
+            return JAKARTA;
+        }
+        return namespace == null ? "" : namespace;
     }
 
-    /** §12.2: the root is {@code entity-mappings}, in the namespace of its version; the version it declares. */
-    private static String checkRoot(XMLStreamReader r, MappingFile file, int line) {
+    /** §12.2: the root is {@code entity-mappings}, in the namespace of the version it declares. */
+    private static void checkRoot(XMLStreamReader r, MappingFile file, int line) {
         if (!"entity-mappings".equals(r.getLocalName())) {
             throw error(file, line, "the root element is <" + r.getLocalName() + ">, not <entity-mappings>", null);
         }
@@ -177,7 +180,6 @@ final class OrmXmlReader {
             throw error(file, line, "the version " + declared + " does not match the namespace " + r.getNamespaceURI()
                 + " (expected " + expected + ")", null);
         }
-        return declared;
     }
 
     static PersistenceException error(MappingFile file, int line, String message, Throwable cause) {
@@ -216,7 +218,7 @@ final class OrmXmlReader {
             for (String property : List.of(XMLConstants.ACCESS_EXTERNAL_DTD, XMLConstants.ACCESS_EXTERNAL_SCHEMA)) {
                 try {
                     handler.setProperty(property, "");
-                } catch (SAXException unsupported) {
+                } catch (SAXException _) {
                     // the bundled schema is already loaded; nothing is fetched while validating
                 }
             }
@@ -224,7 +226,7 @@ final class OrmXmlReader {
             handler.setDocumentLocator(this);
         }
 
-        void start(String version) {
+        void start() {
             this.namespace = reader.getNamespaceURI();
             run(() -> {
                 handler.startDocument();

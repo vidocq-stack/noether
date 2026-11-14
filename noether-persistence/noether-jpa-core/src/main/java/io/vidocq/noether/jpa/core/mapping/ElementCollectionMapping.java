@@ -200,9 +200,12 @@ public record ElementCollectionMapping(int attribute, ElementCollectionAttribute
         ManagedAccess access = column.accesses()[depth];
         int slot = column.path()[depth];
         Object previous = access.get(instance, slot);
-        Object value = depth + 1 == column.path().length
-            ? previous == null ? null : action.apply(association(column), previous)
-            : mapPath(previous, column, depth + 1, action);
+        Object value;
+        if (depth + 1 == column.path().length) {
+            value = previous == null ? null : action.apply(association(column), previous);
+        } else {
+            value = mapPath(previous, column, depth + 1, action);
+        }
         if (value == previous) return instance;
         if (access.type().isRecord()) {
             Object[] state = new Object[access.attributes().size()];

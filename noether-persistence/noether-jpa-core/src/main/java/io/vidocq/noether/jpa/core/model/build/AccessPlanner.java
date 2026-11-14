@@ -51,6 +51,8 @@ public final class AccessPlanner {
     private static final String ID = JPA + "Id";
     private static final String EMBEDDED_ID = JPA + "EmbeddedId";
     private static final String TRANSIENT = JPA + "Transient";
+    /** The prefix of the JDK classes, which are never entities, mapped superclasses, embeddables nor listeners. */
+    private static final String JAVA_PACKAGES = "java.";
     private static final Set<String> NOT_EMBEDDED = Set.of(JPA + "OneToOne", JPA + "ManyToOne", JPA + "OneToMany",
         JPA + "ManyToMany", JPA + "ElementCollection");
 
@@ -66,7 +68,7 @@ public final class AccessPlanner {
     }
 
     /** The lifecycle callback annotations (§3.6.2), in the order a descriptor lists them. */
-    public static final List<String> CALLBACKS = List.of("PrePersist", "PostPersist", "PreRemove", "PostRemove", "PreUpdate",
+    public static final List<String> CALLBACK_KINDS = List.of("PrePersist", "PostPersist", "PreRemove", "PostRemove", "PreUpdate",
         "PostUpdate", "PostLoad");
 
     /**
@@ -117,7 +119,7 @@ public final class AccessPlanner {
                 chain.addFirst(current);
             }
             String superclass = current.superclassName();
-            current = superclass == null || superclass.startsWith("java.") ? null : source.read(superclass).orElse(null);
+            current = superclass == null || superclass.startsWith(JAVA_PACKAGES) ? null : source.read(superclass).orElse(null);
         }
         return chain;
     }
@@ -200,7 +202,7 @@ public final class AccessPlanner {
             return Optional.empty();
         }
         String name = ClassFileSource.binaryName(type);
-        if (!explicit && name.startsWith("java.")) {
+        if (!explicit && name.startsWith(JAVA_PACKAGES)) {
             return Optional.empty();
         }
         Optional<ClassInfo> info = source.read(name);
@@ -232,10 +234,11 @@ public final class AccessPlanner {
         List<Callback> callbacks = new ArrayList<>();
         for (String listener : listeners) {
             List<ClassInfo> chain = new ArrayList<>();
-            for (Optional<ClassInfo> current = source.read(listener); current.isPresent(); ) {
+            Optional<ClassInfo> current = source.read(listener);
+            while (current.isPresent()) {
                 chain.addFirst(current.get());
                 String superclass = current.get().superclassName();
-                current = superclass == null || superclass.startsWith("java.") ? Optional.empty() : source.read(superclass);
+                current = superclass == null || superclass.startsWith(JAVA_PACKAGES) ? Optional.empty() : source.read(superclass);
             }
             Set<String> seen = new HashSet<>();
             for (ClassInfo info : chain) {
@@ -261,7 +264,7 @@ public final class AccessPlanner {
 
     /** The callback annotation of {@code method}, if it has one. */
     private static String kind(MethodInfo method) {
-        for (String kind : CALLBACKS) {
+        for (String kind : CALLBACK_KINDS) {
             if (method.isAnnotated(JPA + kind)) {
                 return kind;
             }

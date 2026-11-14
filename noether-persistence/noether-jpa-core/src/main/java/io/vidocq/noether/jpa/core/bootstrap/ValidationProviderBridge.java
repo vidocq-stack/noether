@@ -101,26 +101,14 @@ final class ValidationProviderBridge {
         if (configured == null) {
             return defaultGroup ? new Class<?>[] { Default.class } : new Class<?>[0];
         }
-        List<?> values = configured instanceof String names
-            ? names.isBlank() ? List.of() : List.of(names.split(",", -1))
-            : configured instanceof Class<?>[] array ? List.of(array)
-            : configured instanceof Class<?> type ? List.of(type)
-            : configured instanceof List<?> list ? list
-            : throwInvalidGroups(configured);
+        List<?> values = groupValues(configured);
         List<Class<?>> groups = new ArrayList<>(values.size());
         for (Object value : values) {
-            Class<?> group;
-            if (value instanceof Class<?> type) {
-                group = type;
-            } else if (value instanceof String name) {
-                try {
-                    group = Class.forName(name.strip(), false, loader);
-                } catch (ClassNotFoundException e) {
-                    throw new PersistenceException("Validation group " + name + " cannot be loaded", e);
-                }
-            } else {
-                throw new PersistenceException("Unsupported validation group value " + value);
-            }
+            Class<?> group = switch (value) {
+                case Class<?> type -> type;
+                case String name -> group(name, loader);
+                case null, default -> throw new PersistenceException("Unsupported validation group value " + value);
+            };
             if (!group.isInterface()) {
                 throw new PersistenceException("Validation group " + group.getName() + " must be an interface");
             }
@@ -129,9 +117,30 @@ final class ValidationProviderBridge {
         return groups.toArray(Class<?>[]::new);
     }
 
-    private static List<?> throwInvalidGroups(Object configured) {
+    /** The groups a validation group property lists, as classes or as class names. */
+    private static List<?> groupValues(Object configured) {
+        if (configured instanceof String names) {
+            return names.isBlank() ? List.of() : List.of(names.split(",", -1));
+        }
+        if (configured instanceof Class<?>[] array) {
+            return List.of(array);
+        }
+        if (configured instanceof Class<?> type) {
+            return List.of(type);
+        }
+        if (configured instanceof List<?> list) {
+            return list;
+        }
         throw new PersistenceException("Validation group property must be a comma-separated String, Class, Class[] or List, not "
             + configured.getClass().getName());
+    }
+
+    private static Class<?> group(String name, ClassLoader loader) {
+        try {
+            return Class.forName(name.strip(), false, loader);
+        } catch (ClassNotFoundException e) {
+            throw new PersistenceException("Validation group " + name + " cannot be loaded", e);
+        }
     }
 
     private record PersistenceTraversableResolver(TraversableResolver delegate, MappedUnit mapping)

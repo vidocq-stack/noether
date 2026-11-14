@@ -45,8 +45,8 @@ public final class Accesses {
     }
 
     /** The access of a class that is neither an entity nor an embeddable of the model (an {@code @IdClass}). */
-    public static ManagedAccess of(Class<?> type, boolean record, List<AttributeModel> attributes) {
-        return AccessGenerator.generate(type, record, attributes, List.of());
+    public static ManagedAccess of(Class<?> type, boolean isRecord, List<AttributeModel> attributes) {
+        return AccessGenerator.generate(type, isRecord, attributes, List.of());
     }
 
     /**

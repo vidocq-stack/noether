@@ -83,17 +83,18 @@ final class AccessGenerator {
     private static final MethodTypeDesc GETTER = MethodTypeDesc.of(CD_Object, CD_Object);
     private static final MethodTypeDesc SETTER = MethodTypeDesc.of(CD_void, CD_Object, CD_Object);
     private static final MethodTypeDesc BULK = MethodTypeDesc.of(CD_void, CD_Object, CD_Object.arrayType());
+    private static final String INVOKE_EXACT = "invokeExact";
 
     private AccessGenerator() {
     }
 
-    static ManagedAccess generate(Class<?> type, boolean record, List<AttributeModel> attributes, List<CallbackModel> callbackModels) {
+    static ManagedAccess generate(Class<?> type, boolean isRecord, List<AttributeModel> attributes, List<CallbackModel> callbackModels) {
         List<MethodHandle> handles = new ArrayList<>();
         try {
             MethodHandles.Lookup lookup = Handles.lookupIn(type);
             int creator = -1;
             int lazyCreator = -1;
-            if (record) {
+            if (isRecord) {
                 creator = add(handles, canonicalConstructor(lookup, type, attributes));
             } else if (!Modifier.isAbstract(type.getModifiers())) {
                 creator = add(handles, lookup.findConstructor(type, MethodType.methodType(void.class))
@@ -101,12 +102,12 @@ final class AccessGenerator {
                 lazyCreator = lazyCreator(type, lookup, handles);
             }
             int[] getters = new int[attributes.size()];
-            int[] setters = new int[record ? 0 : attributes.size()];
+            int[] setters = new int[isRecord ? 0 : attributes.size()];
             for (int i = 0; i < attributes.size(); i++) {
                 AttributeModel attribute = attributes.get(i);
                 MethodHandles.Lookup declaring = Handles.lookupIn(attribute.declaringClass());
                 getters[i] = add(handles, getter(declaring, attribute).asType(MethodType.methodType(Object.class, Object.class)));
-                if (!record) {
+                if (!isRecord) {
                     setters[i] = add(handles, setter(declaring, attribute)
                         .asType(MethodType.methodType(void.class, Object.class, Object.class)));
                 }
@@ -127,7 +128,7 @@ final class AccessGenerator {
                 }
                 callbacks[i] = add(handles, handle.asType(MethodType.methodType(void.class, Object.class)));
             }
-            byte[] bytes = bytes(type, record, creator, lazyCreator, getters, setters, callbacks);
+            byte[] bytes = bytes(type, isRecord, creator, lazyCreator, getters, setters, callbacks);
             MethodHandles.Lookup hidden = Handles.own().defineHiddenClassWithClassData(bytes, List.copyOf(handles), true);
             return (ManagedAccess) hidden.findConstructor(hidden.lookupClass(),
                 MethodType.methodType(void.class, Class.class, List.class, List.class))
@@ -159,13 +160,13 @@ final class AccessGenerator {
         Class<?> subclass;
         try {
             subclass = Class.forName(name, false, type.getClassLoader());
-        } catch (ClassNotFoundException absent) {
+        } catch (ClassNotFoundException _) {
             try {
                 subclass = lookup.defineClass(LazySubclassGenerator.bytes(info, members, name));
             } catch (LinkageError concurrentDefinition) {
                 try {
                     subclass = Class.forName(name, false, type.getClassLoader());
-                } catch (ClassNotFoundException notConcurrent) {
+                } catch (ClassNotFoundException _) {
                     throw concurrentDefinition;
                 }
             }
@@ -228,7 +229,7 @@ final class AccessGenerator {
 
     // ---- bytecode ---------------------------------------------------------------------------------------
 
-    private static byte[] bytes(Class<?> type, boolean record, int creator, int lazyCreator, int[] getters, int[] setters, int[] callbacks) {
+    private static byte[] bytes(Class<?> type, boolean isRecord, int creator, int lazyCreator, int[] getters, int[] setters, int[] callbacks) {
         ClassDesc self = ClassDesc.of(AccessGenerator.class.getPackageName(), "Access_" + type.getSimpleName());
         return ClassFile.of().build(self, cb -> {
             cb.withFlags(ClassFile.ACC_FINAL | ClassFile.ACC_SUPER | ClassFile.ACC_SYNTHETIC);
@@ -237,38 +238,38 @@ final class AccessGenerator {
                 .aload(0).aload(1).aload(2).aload(3).invokespecial(CD_MANAGED_ACCESS, INIT_NAME, CONSTRUCTOR).return_());
             if (lazyCreator >= 0) {
                 cb.withMethodBody("instantiateLazy", INSTANTIATE, ClassFile.ACC_PUBLIC, code -> code
-                    .ldc(handle(lazyCreator)).invokevirtual(CD_MethodHandle, "invokeExact", INSTANTIATE).areturn());
+                    .ldc(handle(lazyCreator)).invokevirtual(CD_MethodHandle, INVOKE_EXACT, INSTANTIATE).areturn());
             }
-            if (creator >= 0 && record) {
+            if (creator >= 0 && isRecord) {
                 cb.withMethodBody("construct", CONSTRUCT, ClassFile.ACC_PUBLIC | ClassFile.ACC_VARARGS, code -> code
-                    .ldc(handle(creator)).aload(1).invokevirtual(CD_MethodHandle, "invokeExact", CONSTRUCT).areturn());
+                    .ldc(handle(creator)).aload(1).invokevirtual(CD_MethodHandle, INVOKE_EXACT, CONSTRUCT).areturn());
             } else if (creator >= 0) {
                 cb.withMethodBody("instantiate", INSTANTIATE, ClassFile.ACC_PUBLIC, code -> code
-                    .ldc(handle(creator)).invokevirtual(CD_MethodHandle, "invokeExact", INSTANTIATE).areturn());
+                    .ldc(handle(creator)).invokevirtual(CD_MethodHandle, INVOKE_EXACT, INSTANTIATE).areturn());
             }
             cb.withMethodBody("get", GET, ClassFile.ACC_PUBLIC, code -> dispatch(code, getters, index -> code
-                .ldc(handle(index)).aload(1).invokevirtual(CD_MethodHandle, "invokeExact", GETTER).areturn()));
-            if (!record) {
+                .ldc(handle(index)).aload(1).invokevirtual(CD_MethodHandle, INVOKE_EXACT, GETTER).areturn()));
+            if (!isRecord) {
                 cb.withMethodBody("set", SET, ClassFile.ACC_PUBLIC, code -> dispatch(code, setters, index -> code
-                    .ldc(handle(index)).aload(1).aload(3).invokevirtual(CD_MethodHandle, "invokeExact", SETTER).return_()));
+                    .ldc(handle(index)).aload(1).aload(3).invokevirtual(CD_MethodHandle, INVOKE_EXACT, SETTER).return_()));
             }
             if (callbacks.length > 0) {
                 cb.withMethodBody("callback", CALLBACK, ClassFile.ACC_PUBLIC, code -> dispatch(code, callbacks, index -> code
-                    .ldc(handle(index)).aload(1).invokevirtual(CD_MethodHandle, "invokeExact", INVOKE).return_()));
+                    .ldc(handle(index)).aload(1).invokevirtual(CD_MethodHandle, INVOKE_EXACT, INVOKE).return_()));
             }
             // straight-line bulk copies: state[i] = getter(instance), setter(instance, state[i])
             cb.withMethodBody("read", BULK, ClassFile.ACC_PUBLIC, code -> {
                 for (int i = 0; i < getters.length; i++) {
                     code.aload(2).loadConstant(i).ldc(handle(getters[i])).aload(1)
-                        .invokevirtual(CD_MethodHandle, "invokeExact", GETTER).aastore();
+                        .invokevirtual(CD_MethodHandle, INVOKE_EXACT, GETTER).aastore();
                 }
                 code.return_();
             });
-            if (!record) {
+            if (!isRecord) {
                 cb.withMethodBody("write", BULK, ClassFile.ACC_PUBLIC, code -> {
                     for (int i = 0; i < setters.length; i++) {
                         code.ldc(handle(setters[i])).aload(1).aload(2).loadConstant(i).aaload()
-                            .invokevirtual(CD_MethodHandle, "invokeExact", SETTER);
+                            .invokevirtual(CD_MethodHandle, INVOKE_EXACT, SETTER);
                     }
                     code.return_();
                 });

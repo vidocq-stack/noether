@@ -62,11 +62,23 @@ public final class OrmOverlay implements ClassInfos {
     private static final String TRANSIENT = JPA + "Transient";
     private static final String CONVERTER = JPA + "Converter";
     private static final String CASCADE_TYPE = JPA + "CascadeType";
+    private static final String TABLE = JPA + "Table";
+    private static final String SECONDARY_TABLE = JPA + "SecondaryTable";
+    private static final String CONVERT = JPA + "Convert";
+    /** The annotation members written more than once. */
+    private static final String VALUE = "value";
+    private static final String ATTRIBUTE_NAME = "attributeName";
+    private static final String CASCADE = "cascade";
+    /** The values of {@code AccessType}, as an {@code access} attribute writes them. */
+    private static final String FIELD_ACCESS = "FIELD";
+    private static final String PROPERTY_ACCESS = "PROPERTY";
+    private static final String THE_CLASS = "the class ";
+    private static final String CANNOT_BE_FOUND = " cannot be found";
     private static final List<String> CALLBACKS = List.of("pre-persist", "post-persist", "pre-remove", "post-remove", "pre-update",
         "post-update", "post-load");
     private static final Set<String> RELATIONSHIPS = Set.of(JPA + "ManyToOne", JPA + "OneToOne", JPA + "OneToMany",
         JPA + "ManyToMany");
-    private static final Set<String> TABLES = Set.of(JPA + "Table", JPA + "SecondaryTable", JPA + "JoinTable",
+    private static final Set<String> TABLES = Set.of(TABLE, SECONDARY_TABLE, JPA + "JoinTable",
         JPA + "CollectionTable", JPA + "SequenceGenerator", JPA + "TableGenerator");
     /** The attribute mappings of {@code <attributes>} and the annotation each one stands for (§12.2.3.x). */
     private static final Map<String, String> MAPPINGS = Map.ofEntries(Map.entry("id", ID), Map.entry("embedded-id", EMBEDDED_ID),
@@ -77,7 +89,7 @@ public final class OrmOverlay implements ClassInfos {
     /** The subelements whose annotation member is not the camel case of their name. */
     private static final Map<String, String> MEMBERS = Map.of("entity-result", "entities", "constructor-result", "classes",
         "column-result", "columns", "field-result", "fields", "check-constraint", "check", "named-attribute-node", "attributeNodes",
-        "primary-key-join-column", "pkJoinColumns", "constraint-mode", "value");
+        XmlNames.PRIMARY_KEY_JOIN_COLUMN, "pkJoinColumns", "constraint-mode", VALUE);
     private static final Map<String, String> PRIMITIVES = Map.of("boolean", "Z", "byte", "B", "char", "C", "short", "S", "int", "I",
         "long", "J", "float", "F", "double", "D");
 
@@ -115,7 +127,6 @@ public final class OrmOverlay implements ClassInfos {
     private String unitSchema;
     private String unitCatalog;
     private String unitAccess;
-    private Context unitDefaults;
 
     private OrmOverlay(ClassFileSource raw) {
         this.raw = raw;
@@ -137,7 +148,7 @@ public final class OrmOverlay implements ClassInfos {
         for (Map.Entry<String, Declaration> declaration : overlay.declarations.entrySet()) {
             if (overlay.read(declaration.getKey()).isEmpty()) {
                 throw error(declaration.getValue().context(), declaration.getValue().element(),
-                    "the class " + declaration.getKey() + " cannot be found");
+                    THE_CLASS + declaration.getKey() + CANNOT_BE_FOUND);
             }
         }
         return overlay;
@@ -178,13 +189,13 @@ public final class OrmOverlay implements ClassInfos {
     // ---- reading the documents (§12.2.1, §12.2.2) -----------------------------------------------------------
 
     private Context context(XmlElement root, MappingFile file) {
-        return new Context(file, root.childText("package"), root.childText("schema"), root.childText("catalog"),
-            root.childText("access"));
+        return new Context(file, root.childText(XmlNames.PACKAGE), root.childText(XmlNames.SCHEMA), root.childText(XmlNames.CATALOG),
+            root.childText(XmlNames.ACCESS));
     }
 
     /** {@code persistence-unit-metadata} (§12.2.1): the defaults of the whole unit, whichever file writes them. */
     private void unitMetadata(XmlElement root, Context context) {
-        Optional<XmlElement> metadata = root.child("persistence-unit-metadata");
+        Optional<XmlElement> metadata = root.child(XmlNames.PERSISTENCE_UNIT_METADATA);
         if (metadata.isEmpty()) {
             return;
         }
@@ -195,15 +206,16 @@ public final class OrmOverlay implements ClassInfos {
         }
         for (XmlElement element : defaults.get().children()) {
             switch (element.name()) {
-                case "description" -> {
+                case XmlNames.DESCRIPTION -> {
+                    // documentation only
                 }
-                case "schema" -> unitSchema = unitDefault(unitSchema, element, context);
-                case "catalog" -> unitCatalog = unitDefault(unitCatalog, element, context);
-                case "access" -> unitAccess = unitDefault(unitAccess, element, context);
+                case XmlNames.SCHEMA -> unitSchema = unitDefault(unitSchema, element, context);
+                case XmlNames.CATALOG -> unitCatalog = unitDefault(unitCatalog, element, context);
+                case XmlNames.ACCESS -> unitAccess = unitDefault(unitAccess, element, context);
                 case "cascade-persist" -> cascadePersist = true;
                 case "delimited-identifiers" -> delimitedIdentifiers = true;
-                case "entity-listeners" -> {
-                    for (XmlElement listener : element.children("entity-listener")) {
+                case XmlNames.ENTITY_LISTENERS -> {
+                    for (XmlElement listener : element.children(XmlNames.ENTITY_LISTENER)) {
                         String name = listener(listener, context);
                         if (!defaultListeners.contains(name)) {
                             defaultListeners.add(name);
@@ -213,7 +225,6 @@ public final class OrmOverlay implements ClassInfos {
                 default -> throw unsupported(context, element);
             }
         }
-        unitDefaults = context;
     }
 
     private static String unitDefault(String known, XmlElement element, Context context) {
@@ -228,28 +239,30 @@ public final class OrmOverlay implements ClassInfos {
     private void declare(XmlElement root, Context context) {
         for (XmlElement element : root.children()) {
             switch (element.name()) {
-                case "description", "persistence-unit-metadata", "package", "schema", "catalog", "access" -> {
+                case XmlNames.DESCRIPTION, XmlNames.PERSISTENCE_UNIT_METADATA, XmlNames.PACKAGE, XmlNames.SCHEMA, XmlNames.CATALOG,
+                    XmlNames.ACCESS -> {
+                    // documentation, or read by unitMetadata and context
                 }
-                case "sequence-generator" -> unitAnnotations.add(withSchema(convert(JPA + "SequenceGenerator", element, context, Set.of()),
-                    schema(context), catalog(context)));
-                case "table-generator" -> unitAnnotations.add(withSchema(convert(JPA + "TableGenerator", element, context, Set.of()),
-                    schema(context), catalog(context)));
-                case "named-query" -> unitAnnotations.add(convert(JPA + "NamedQuery", element, context, Set.of()));
+                case XmlNames.SEQUENCE_GENERATOR -> unitAnnotations.add(withSchema(
+                    convert(JPA + "SequenceGenerator", element, context, Set.of()), schema(context), catalog(context)));
+                case XmlNames.TABLE_GENERATOR -> unitAnnotations.add(withSchema(
+                    convert(JPA + "TableGenerator", element, context, Set.of()), schema(context), catalog(context)));
+                case XmlNames.NAMED_QUERY -> unitAnnotations.add(convert(JPA + "NamedQuery", element, context, Set.of()));
                 case "named-native-query" -> unitAnnotations.add(convert(JPA + "NamedNativeQuery", element, context, Set.of()));
                 case "named-stored-procedure-query" -> unitAnnotations.add(convert(JPA + "NamedStoredProcedureQuery", element, context,
                     Set.of()));
                 case "sql-result-set-mapping" -> unitAnnotations.add(convert(JPA + "SqlResultSetMapping", element, context, Set.of()));
-                case "entity", "mapped-superclass", "embeddable", "converter" -> {
-                    String name = className(element.attribute("class"), context);
+                case XmlNames.ENTITY, XmlNames.MAPPED_SUPERCLASS, XmlNames.EMBEDDABLE, XmlNames.CONVERTER -> {
+                    String name = className(element.attribute(XmlNames.CLASS), context);
                     Declaration known = declarations.get(name);
                     if (known != null) {
-                        throw error(context, element, "the class " + name + " is already mapped at line " + known.element().line()
+                        throw error(context, element, THE_CLASS + name + " is already mapped at line " + known.element().line()
                             + " of " + known.context().file().name());
                     }
                     declarations.put(name, new Declaration(element, context));
                     mapped.add(name);
-                    element.child("entity-listeners").ifPresent(listeners ->
-                        listeners.children("entity-listener").forEach(listener -> listener(listener, context)));
+                    element.child(XmlNames.ENTITY_LISTENERS).ifPresent(listeners ->
+                        listeners.children(XmlNames.ENTITY_LISTENER).forEach(listener -> listener(listener, context)));
                     for (XmlElement callback : element.children()) {
                         if (CALLBACKS.contains(callback.name())) {
                             replacedCallbacks.computeIfAbsent(name, _ -> new LinkedHashSet<>()).add(kind(callback.name()));
@@ -263,13 +276,13 @@ public final class OrmOverlay implements ClassInfos {
 
     /** An {@code entity-listener}: its class, and the callback methods its subelements name (§12.2.2.x). */
     private String listener(XmlElement listener, Context context) {
-        String name = className(listener.attribute("class"), context);
+        String name = className(listener.attribute(XmlNames.CLASS), context);
         for (XmlElement callback : listener.children()) {
-            if (callback.name().equals("description")) {
+            if (callback.name().equals(XmlNames.DESCRIPTION)) {
                 continue;
             }
             String kind = kind(callback.name());
-            Named named = new Named(callback.attribute("method-name"), context, callback.line());
+            Named named = new Named(callback.attribute(XmlNames.METHOD_NAME), context, callback.line());
             Named known = listenerCallbacks.computeIfAbsent(name, _ -> new LinkedHashMap<>()).putIfAbsent(kind, named);
             if (known != null && !known.method().equals(named.method())) {
                 throw error(context, callback, "the " + kind + " method of the listener " + name + " is " + known.method()
@@ -292,7 +305,7 @@ public final class OrmOverlay implements ClassInfos {
             for (XmlElement callback : declaration.getValue().element().children()) {
                 if (CALLBACKS.contains(callback.name())) {
                     place(declaration.getKey(), kind(callback.name()),
-                        new Named(callback.attribute("method-name"), declaration.getValue().context(), callback.line()), 0);
+                        new Named(callback.attribute(XmlNames.METHOD_NAME), declaration.getValue().context(), callback.line()), 0);
                 }
             }
         }
@@ -304,7 +317,8 @@ public final class OrmOverlay implements ClassInfos {
     }
 
     private void place(String className, String kind, Named named, int parameters) {
-        for (Optional<ClassInfo> current = raw.read(className); current.isPresent(); ) {
+        Optional<ClassInfo> current = raw.read(className);
+        while (current.isPresent()) {
             ClassInfo info = current.get();
             boolean declared = info.methods().stream().anyMatch(m -> m.name().equals(named.method()) && !m.isStatic()
                 && m.type().parameterCount() == parameters);
@@ -316,7 +330,7 @@ public final class OrmOverlay implements ClassInfos {
             current = superclass == null || superclass.startsWith("java.") ? Optional.empty() : raw.read(superclass);
         }
         if (raw.read(className).isEmpty()) {
-            throw OrmXmlReader.error(named.context().file(), named.line(), "the class " + className + " cannot be found", null);
+            throw OrmXmlReader.error(named.context().file(), named.line(), THE_CLASS + className + CANNOT_BE_FOUND, null);
         }
         throw OrmXmlReader.error(named.context().file(), named.line(), "the " + kind + " callback " + named.method() + " of "
             + className + " is not a method " + (parameters == 0 ? "without parameter" : "with one parameter")
@@ -343,12 +357,12 @@ public final class OrmOverlay implements ClassInfos {
         List<List<AnnotationInfo>> methods = new ArrayList<>();
         info.methods().forEach(m -> methods.add(kept(m.annotations(), complete)));
         if (declaration != null) {
-            if (declaration.element().name().equals("converter")) {
+            if (declaration.element().name().equals(XmlNames.CONVERTER)) {
                 String autoApply = declaration.element().attribute("auto-apply");
                 remove(type, CONVERTER);
                 type.add(raw.annotation(CONVERTER, autoApply == null ? Map.of() : Map.of("autoApply", parseBoolean(autoApply))));
             } else {
-                declared(info, declaration, complete, type, fields, methods);
+                declared(info, declaration, type, fields, methods);
             }
         }
         for (String kind : replaced) {
@@ -365,8 +379,8 @@ public final class OrmOverlay implements ClassInfos {
             }
         }
         if (schema != null || catalog != null) {
-            if (type.stream().anyMatch(a -> a.typeName().equals(ENTITY)) && type.stream().noneMatch(a -> a.typeName().equals(JPA + "Table"))) {
-                type.add(raw.annotation(JPA + "Table", Map.of()));
+            if (type.stream().anyMatch(a -> a.typeName().equals(ENTITY)) && type.stream().noneMatch(a -> a.typeName().equals(TABLE))) {
+                type.add(raw.annotation(TABLE, Map.of()));
             }
             schemas(type, schema, catalog);
             fields.forEach(annotations -> schemas(annotations, schema, catalog));
@@ -402,13 +416,13 @@ public final class OrmOverlay implements ClassInfos {
     }
 
     /** An {@code entity}, {@code mapped-superclass} or {@code embeddable} element (§12.2.3 to §12.2.5). */
-    private void declared(ClassInfo info, Declaration declaration, boolean complete, List<AnnotationInfo> type,
-            List<List<AnnotationInfo>> fields, List<List<AnnotationInfo>> methods) {
+    private void declared(ClassInfo info, Declaration declaration, List<AnnotationInfo> type, List<List<AnnotationInfo>> fields,
+            List<List<AnnotationInfo>> methods) {
         XmlElement element = declaration.element();
         Context context = declaration.context();
         String kind = switch (element.name()) {
-            case "entity" -> ENTITY;
-            case "mapped-superclass" -> MAPPED_SUPERCLASS;
+            case XmlNames.ENTITY -> ENTITY;
+            case XmlNames.MAPPED_SUPERCLASS -> MAPPED_SUPERCLASS;
             default -> EMBEDDABLE;
         };
         Map<String, Object> written = new LinkedHashMap<>();
@@ -428,57 +442,59 @@ public final class OrmOverlay implements ClassInfos {
 
         String access = access(info, element, context, type, fields, methods);
         if (element.attribute("cacheable") != null) {
-            replace(type, JPA + "Cacheable", raw.annotation(JPA + "Cacheable", Map.of("value", parseBoolean(element.attribute("cacheable")))));
+            replace(type, JPA + "Cacheable", raw.annotation(JPA + "Cacheable", Map.of(VALUE, parseBoolean(element.attribute("cacheable")))));
         }
         Map<String, List<AnnotationInfo>> merged = new LinkedHashMap<>();
         List<AnnotationInfo> secondaryTables = new ArrayList<>();
         List<AnnotationInfo> primaryKeyJoinColumns = new ArrayList<>();
         for (XmlElement child : element.children()) {
             switch (child.name()) {
-                case "description", "attributes", "pre-persist", "post-persist", "pre-remove", "post-remove", "pre-update",
+                case XmlNames.DESCRIPTION, XmlNames.ATTRIBUTES, "pre-persist", "post-persist", "pre-remove", "post-remove", "pre-update",
                     "post-update", "post-load" -> {
+                    // documentation, or read below (attributes) and by resolveCallbacks (callbacks)
                 }
-                case "table" -> replace(type, JPA + "Table", convert(JPA + "Table", child, context, Set.of()));
-                case "secondary-table" -> secondaryTables.add(convert(JPA + "SecondaryTable", child, context, Set.of()));
-                case "primary-key-join-column" -> primaryKeyJoinColumns.add(convert(JPA + "PrimaryKeyJoinColumn", child, context, Set.of()));
+                case "table" -> replace(type, TABLE, convert(TABLE, child, context, Set.of()));
+                case "secondary-table" -> secondaryTables.add(convert(SECONDARY_TABLE, child, context, Set.of()));
+                case XmlNames.PRIMARY_KEY_JOIN_COLUMN -> primaryKeyJoinColumns.add(convert(JPA + "PrimaryKeyJoinColumn", child, context,
+                    Set.of()));
                 case "id-class" -> replace(type, JPA + "IdClass", convert(JPA + "IdClass", child, context, Set.of()));
                 case "inheritance" -> replace(type, JPA + "Inheritance", convert(JPA + "Inheritance", child, context, Set.of()));
                 case "discriminator-value" -> replace(type, JPA + "DiscriminatorValue", text(JPA + "DiscriminatorValue", child, context));
                 case "discriminator-column" -> replace(type, JPA + "DiscriminatorColumn",
                     convert(JPA + "DiscriminatorColumn", child, context, Set.of()));
-                case "sequence-generator", "table-generator", "named-query", "named-native-query", "named-stored-procedure-query",
-                    "sql-result-set-mapping", "named-entity-graph", "attribute-override", "convert" -> {
+                case XmlNames.SEQUENCE_GENERATOR, XmlNames.TABLE_GENERATOR, XmlNames.NAMED_QUERY, "named-native-query",
+                    "named-stored-procedure-query", "sql-result-set-mapping", "named-entity-graph", XmlNames.ATTRIBUTE_OVERRIDE,
+                    XmlNames.CONVERT -> {
                     String annotation = JPA + camel(child.name(), true);
                     merged.computeIfAbsent(annotation, _ -> new ArrayList<>()).add(convert(annotation, child, context, Set.of()));
                 }
-                case "association-override" -> {
-                    merged.computeIfAbsent(JPA + "AssociationOverride", _ -> new ArrayList<>())
-                        .add(convert(JPA + "AssociationOverride", child, context, Set.of()));
-                }
+                case XmlNames.ASSOCIATION_OVERRIDE -> merged.computeIfAbsent(JPA + "AssociationOverride", _ -> new ArrayList<>())
+                    .add(convert(JPA + "AssociationOverride", child, context, Set.of()));
                 case "exclude-default-listeners" -> replace(type, JPA + "ExcludeDefaultListeners",
                     raw.annotation(JPA + "ExcludeDefaultListeners", Map.of()));
                 case "exclude-superclass-listeners" -> replace(type, JPA + "ExcludeSuperclassListeners",
                     raw.annotation(JPA + "ExcludeSuperclassListeners", Map.of()));
-                case "entity-listeners" -> {
+                case XmlNames.ENTITY_LISTENERS -> {
                     List<ClassDesc> listeners = new ArrayList<>();
-                    child.children("entity-listener").forEach(l -> listeners.add(ClassDesc.of(className(l.attribute("class"), context))));
-                    replace(type, JPA + "EntityListeners", raw.annotation(JPA + "EntityListeners", Map.of("value", listeners)));
+                    child.children(XmlNames.ENTITY_LISTENER).forEach(l ->
+                        listeners.add(ClassDesc.of(className(l.attribute(XmlNames.CLASS), context))));
+                    replace(type, JPA + "EntityListeners", raw.annotation(JPA + "EntityListeners", Map.of(VALUE, listeners)));
                 }
                 default -> throw unsupported(context, child);
             }
         }
         if (!secondaryTables.isEmpty()) {
-            group(type, JPA + "SecondaryTable", secondaryTables);
+            group(type, SECONDARY_TABLE, secondaryTables);
         }
         if (!primaryKeyJoinColumns.isEmpty()) {
             group(type, JPA + "PrimaryKeyJoinColumn", primaryKeyJoinColumns);
         }
         merged.forEach((annotation, written2) -> merge(type, annotation, written2,
-            annotation.equals(JPA + "Convert") ? "attributeName" : "name"));
-        Optional<XmlElement> attributes = element.child("attributes");
+            annotation.equals(CONVERT) ? ATTRIBUTE_NAME : "name"));
+        Optional<XmlElement> attributes = element.child(XmlNames.ATTRIBUTES);
         if (attributes.isPresent()) {
             for (XmlElement attribute : attributes.get().children()) {
-                if (!attribute.name().equals("description")) {
+                if (!attribute.name().equals(XmlNames.DESCRIPTION)) {
                     attribute(info, attribute, context, access, fields, methods);
                 }
             }
@@ -493,28 +509,28 @@ public final class OrmOverlay implements ClassInfos {
      */
     private String access(ClassInfo info, XmlElement element, Context context, List<AnnotationInfo> type,
             List<List<AnnotationInfo>> fields, List<List<AnnotationInfo>> methods) {
-        String written = element.attribute("access");
+        String written = element.attribute(XmlNames.ACCESS);
         if (written == null) {
             Optional<AnnotationInfo> annotated = type.stream().filter(a -> a.typeName().equals(ACCESS)).findFirst();
             if (annotated.isPresent()) {
-                return annotated.get().enumConstant("value");
+                return annotated.get().enumConstant(VALUE);
             }
             written = context.access() != null ? context.access() : unitAccess;
         }
         if (written != null) {
-            replace(type, ACCESS, raw.annotation(ACCESS, Map.of("value", new EnumValue(ACCESS_TYPE, written))));
+            replace(type, ACCESS, raw.annotation(ACCESS, Map.of(VALUE, new EnumValue(ACCESS_TYPE, written))));
             return written;
         }
         if (fields.stream().anyMatch(a -> annotated(a, ID) || annotated(a, EMBEDDED_ID))) {
-            return "FIELD";
+            return FIELD_ACCESS;
         }
         if (methods.stream().anyMatch(a -> annotated(a, ID) || annotated(a, EMBEDDED_ID))) {
-            return "PROPERTY";
+            return PROPERTY_ACCESS;
         }
-        Optional<XmlElement> id = element.child("attributes").flatMap(a -> a.children().stream()
+        Optional<XmlElement> id = element.child(XmlNames.ATTRIBUTES).flatMap(a -> a.children().stream()
             .filter(c -> c.name().equals("id") || c.name().equals("embedded-id")).findFirst());
         if (id.isPresent()) {
-            return info.field(id.get().attribute("name")).isPresent() ? "FIELD" : "PROPERTY";
+            return info.field(id.get().attribute("name")).isPresent() ? FIELD_ACCESS : PROPERTY_ACCESS;
         }
         String superclass = info.superclassName();
         while (superclass != null && !superclass.startsWith("java.")) {
@@ -524,13 +540,13 @@ public final class OrmOverlay implements ClassInfos {
             }
             Optional<AnnotationInfo> explicit = parent.get().annotation(ACCESS);
             if (explicit.isPresent()) {
-                return explicit.get().enumConstant("value");
+                return explicit.get().enumConstant(VALUE);
             }
             if (parent.get().fields().stream().anyMatch(f -> f.isAnnotated(ID) || f.isAnnotated(EMBEDDED_ID))) {
-                return "FIELD";
+                return FIELD_ACCESS;
             }
             if (parent.get().methods().stream().anyMatch(m -> m.isAnnotated(ID) || m.isAnnotated(EMBEDDED_ID))) {
-                return "PROPERTY";
+                return PROPERTY_ACCESS;
             }
             superclass = parent.get().superclassName();
         }
@@ -563,7 +579,7 @@ public final class OrmOverlay implements ClassInfos {
             }
         }
         if (field < 0 && getter < 0) {
-            throw error(context, attribute, "the class " + info.name() + " has no field or property " + name);
+            throw error(context, attribute, THE_CLASS + info.name() + " has no field or property " + name);
         }
         if (field >= 0) {
             removeJpa(fields.get(field));
@@ -581,26 +597,26 @@ public final class OrmOverlay implements ClassInfos {
             }
             return;
         }
-        String memberAccess = attribute.attribute("access");
+        String memberAccess = attribute.attribute(XmlNames.ACCESS);
         String access = memberAccess != null ? memberAccess : classAccess;
-        if ("FIELD".equals(access) && field < 0 || "PROPERTY".equals(access) && getter < 0) {
-            throw error(context, attribute, "the class " + info.name() + " has no " + ("FIELD".equals(access) ? "field " : "property ")
+        if (FIELD_ACCESS.equals(access) && field < 0 || PROPERTY_ACCESS.equals(access) && getter < 0) {
+            throw error(context, attribute, THE_CLASS + info.name() + " has no " + (FIELD_ACCESS.equals(access) ? "field " : "property ")
                 + name + " for its " + access + " access");
         }
         List<AnnotationInfo> annotations = mapping(attribute, context);
         if (memberAccess != null) {
-            annotations.add(raw.annotation(ACCESS, Map.of("value", new EnumValue(ACCESS_TYPE, memberAccess))));
+            annotations.add(raw.annotation(ACCESS, Map.of(VALUE, new EnumValue(ACCESS_TYPE, memberAccess))));
             // §2.3.2: the member the class access would read is not persistent besides the one named
-            if (memberAccess.equals("FIELD") && getter >= 0) {
+            if (memberAccess.equals(FIELD_ACCESS) && getter >= 0) {
                 methods.get(getter).add(raw.annotation(TRANSIENT, Map.of()));
-            } else if (memberAccess.equals("PROPERTY") && field >= 0) {
+            } else if (memberAccess.equals(PROPERTY_ACCESS) && field >= 0) {
                 fields.get(field).add(raw.annotation(TRANSIENT, Map.of()));
             }
         }
-        if (!"PROPERTY".equals(access) && field >= 0) {
+        if (!PROPERTY_ACCESS.equals(access) && field >= 0) {
             fields.get(field).addAll(annotations);
         }
-        if (!"FIELD".equals(access) && getter >= 0) {
+        if (!FIELD_ACCESS.equals(access) && getter >= 0) {
             methods.get(getter).addAll(annotations);
         }
     }
@@ -612,18 +628,18 @@ public final class OrmOverlay implements ClassInfos {
             throw unsupported(context, attribute);
         }
         List<AnnotationInfo> annotations = new ArrayList<>();
-        AnnotationInfo annotation = convertAttributes(main, attribute, context, Set.of("name", "access", "maps-id", "id"));
+        AnnotationInfo annotation = convertAttributes(main, attribute, context, Set.of("name", XmlNames.ACCESS, XmlNames.MAPS_ID, "id"));
         if (RELATIONSHIPS.contains(main)) {
             List<EnumValue> cascade = new ArrayList<>();
-            attribute.child("cascade").ifPresent(c -> c.children().forEach(type ->
+            attribute.child(XmlNames.CASCADE).ifPresent(c -> c.children().forEach(type ->
                 cascade.add(new EnumValue(CASCADE_TYPE, type.name().substring("cascade-".length()).toUpperCase(java.util.Locale.ROOT)))));
             if (!cascade.isEmpty()) {
-                annotation = annotation.with("cascade", cascade);
+                annotation = annotation.with(CASCADE, cascade);
             }
         }
         annotations.add(annotation);
-        if (attribute.attribute("maps-id") != null) {
-            annotations.add(raw.annotation(JPA + "MapsId", Map.of("value", attribute.attribute("maps-id"))));
+        if (attribute.attribute(XmlNames.MAPS_ID) != null) {
+            annotations.add(raw.annotation(JPA + "MapsId", Map.of(VALUE, attribute.attribute(XmlNames.MAPS_ID))));
         }
         if ("true".equals(attribute.attribute("id")) || "1".equals(attribute.attribute("id"))) {
             annotations.add(raw.annotation(ID, Map.of()));
@@ -631,16 +647,18 @@ public final class OrmOverlay implements ClassInfos {
         Map<String, List<AnnotationInfo>> repeated = new LinkedHashMap<>();
         for (XmlElement child : attribute.children()) {
             switch (child.name()) {
-                case "cascade" -> {
+                case XmlNames.CASCADE -> {
+                    // read above, with the relationship
                 }
                 case "column", "join-table", "collection-table", "order-column", "map-key", "map-key-class", "map-key-column",
-                    "generated-value", "sequence-generator", "table-generator" ->
+                    "generated-value", XmlNames.SEQUENCE_GENERATOR, XmlNames.TABLE_GENERATOR ->
                     annotations.add(convert(JPA + camel(child.name(), true), child, context, Set.of()));
-                case "order-by" -> annotations.add(raw.annotation(JPA + "OrderBy", Map.of("value", child.text().strip())));
+                case "order-by" -> annotations.add(raw.annotation(JPA + "OrderBy", Map.of(VALUE, child.text().strip())));
                 case "temporal", "enumerated", "map-key-temporal", "map-key-enumerated" ->
                     annotations.add(text(JPA + camel(child.name(), true), child, context));
                 case "lob" -> annotations.add(raw.annotation(JPA + "Lob", Map.of()));
-                case "join-column", "primary-key-join-column", "map-key-join-column", "attribute-override", "association-override", "convert" -> {
+                case "join-column", XmlNames.PRIMARY_KEY_JOIN_COLUMN, "map-key-join-column", XmlNames.ATTRIBUTE_OVERRIDE,
+                    XmlNames.ASSOCIATION_OVERRIDE, XmlNames.CONVERT -> {
                     String type = JPA + camel(child.name(), true);
                     repeated.computeIfAbsent(type, _ -> new ArrayList<>()).add(convert(type, child, context, Set.of()));
                 }
@@ -651,9 +669,9 @@ public final class OrmOverlay implements ClassInfos {
                         .add(override.with("name", "key." + override.string("name")));
                 }
                 case "map-key-convert" -> {
-                    AnnotationInfo convert = convert(JPA + "Convert", child, context, Set.of());
-                    String path = convert.isWritten("attributeName") ? "key." + convert.string("attributeName") : "key";
-                    repeated.computeIfAbsent(JPA + "Convert", _ -> new ArrayList<>()).add(convert.with("attributeName", path));
+                    AnnotationInfo convert = convert(CONVERT, child, context, Set.of());
+                    String path = convert.isWritten(ATTRIBUTE_NAME) ? "key." + convert.string(ATTRIBUTE_NAME) : "key";
+                    repeated.computeIfAbsent(CONVERT, _ -> new ArrayList<>()).add(convert.with(ATTRIBUTE_NAME, path));
                 }
                 default -> throw unsupported(context, child);
             }
@@ -669,7 +687,7 @@ public final class OrmOverlay implements ClassInfos {
         Map<String, ClassDesc> members = members(type, element, context);
         Map<String, Object> written = attributes(type, members, element, context, skipped);
         for (XmlElement child : element.children()) {
-            if (child.name().equals("description")) {
+            if (child.name().equals(XmlNames.DESCRIPTION)) {
                 continue;
             }
             String member = member(type, members, child.name(), element, context);
@@ -706,7 +724,7 @@ public final class OrmOverlay implements ClassInfos {
     /** An annotation whose {@code value} is the text of the element: {@code <temporal>DATE</temporal>}. */
     private AnnotationInfo text(String type, XmlElement element, Context context) {
         Map<String, ClassDesc> members = members(type, element, context);
-        return raw.annotation(type, Map.of("value", value(members.get("value"), element.text().strip(), element, context)));
+        return raw.annotation(type, Map.of(VALUE, value(members.get(VALUE), element.text().strip(), element, context)));
     }
 
     @SuppressWarnings("unchecked")
@@ -722,7 +740,7 @@ public final class OrmOverlay implements ClassInfos {
         Map<String, ClassDesc> members = raw.annotationMembers(type);
         if (members.isEmpty() && !type.equals(JPA + "Lob") && !type.equals(ID) && !type.equals(EMBEDDED_ID) && !type.equals(JPA + "Version")
                 && !type.equals(JPA + "Embedded") && !type.equals(TRANSIENT)) {
-            throw error(context, element, "the annotation type " + type + " cannot be found");
+            throw error(context, element, "the annotation type " + type + CANNOT_BE_FOUND);
         }
         return members;
     }
@@ -730,11 +748,11 @@ public final class OrmOverlay implements ClassInfos {
     /** The member an attribute or subelement names: its camel case, plural for an array, or a known exception. */
     private static String member(String type, Map<String, ClassDesc> members, String xmlName, XmlElement element, Context context) {
         List<String> candidates = new ArrayList<>();
-        if (xmlName.equals("class")) {
+        if (xmlName.equals(XmlNames.CLASS)) {
             candidates.add("type");
-            candidates.add("value");
+            candidates.add(VALUE);
         } else if (xmlName.equals("name") && type.equals(JPA + "NamedAttributeNode")) {
-            candidates.add("value");
+            candidates.add(VALUE);
         }
         if (MEMBERS.containsKey(xmlName)) {
             candidates.add(MEMBERS.get(xmlName));
@@ -780,7 +798,7 @@ public final class OrmOverlay implements ClassInfos {
                     throw error(context, element, "a value of type " + name + " cannot be written in a mapping file");
                 }
             };
-        } catch (NumberFormatException | StringIndexOutOfBoundsException e) {
+        } catch (NumberFormatException | StringIndexOutOfBoundsException _) {
             throw error(context, element, "'" + text + "' is not a " + type.displayName());
         }
     }
@@ -869,9 +887,9 @@ public final class OrmOverlay implements ClassInfos {
             return annotation;
         }
         if (type.startsWith(JPA) && type.endsWith("s") && TABLES.contains(type.substring(0, type.length() - 1))) {
-            List<AnnotationInfo> values = new ArrayList<>(annotation.annotations("value"));
+            List<AnnotationInfo> values = new ArrayList<>(annotation.annotations(VALUE));
             values.replaceAll(a -> withSchema(a, schema, catalog));
-            return annotation.with("value", values);
+            return annotation.with(VALUE, values);
         }
         return annotation;
     }
@@ -879,13 +897,13 @@ public final class OrmOverlay implements ClassInfos {
     /** §12.2.1.x {@code cascade-persist}: every relationship of the unit cascades the persist operation. */
     private void cascadePersist(List<AnnotationInfo> annotations) {
         annotations.replaceAll(a -> {
-            if (!RELATIONSHIPS.contains(a.typeName()) || a.enumConstants("cascade").contains("PERSIST")
-                    || a.enumConstants("cascade").contains("ALL")) {
+            if (!RELATIONSHIPS.contains(a.typeName()) || a.enumConstants(CASCADE).contains("PERSIST")
+                    || a.enumConstants(CASCADE).contains("ALL")) {
                 return a;
             }
-            List<Object> cascade = new ArrayList<>(a.isWritten("cascade") ? listOf(a.value("cascade")) : List.of());
+            List<Object> cascade = new ArrayList<>(a.isWritten(CASCADE) ? listOf(a.value(CASCADE)) : List.of());
             cascade.add(new EnumValue(CASCADE_TYPE, "PERSIST"));
-            return a.with("cascade", cascade);
+            return a.with(CASCADE, cascade);
         });
     }
 
@@ -914,7 +932,7 @@ public final class OrmOverlay implements ClassInfos {
     /** Replaces the {@code type} annotations, single or in their container, with {@code values}. */
     private void group(List<AnnotationInfo> annotations, String type, List<AnnotationInfo> values) {
         remove(annotations, type, container(type));
-        annotations.add(values.size() == 1 ? values.getFirst() : raw.annotation(container(type), Map.of("value", values)));
+        annotations.add(values.size() == 1 ? values.getFirst() : raw.annotation(container(type), Map.of(VALUE, values)));
     }
 
     /** Adds {@code values} to the {@code type} annotations, each replacing the annotated one with the same {@code key}. */
@@ -924,7 +942,7 @@ public final class OrmOverlay implements ClassInfos {
             if (annotation.typeName().equals(type)) {
                 all.add(annotation);
             } else if (annotation.typeName().equals(container(type))) {
-                all.addAll(annotation.annotations("value"));
+                all.addAll(annotation.annotations(VALUE));
             }
         }
         for (AnnotationInfo value : values) {

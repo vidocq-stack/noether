@@ -11,6 +11,10 @@ import static io.vidocq.noether.jpa.dialect.sql.SchemaStatement.Operation.*;
 
 /** Relational schema projected from the same mapped columns the flush engine uses (§9.4). */
 final class SchemaPlan {
+    private static final String JOIN_TABLE = "jakarta.persistence.JoinTable";
+    private static final String JOIN_COLUMN = "jakarta.persistence.JoinColumn";
+    private static final String FOREIGN_KEY = "foreignKey";
+    private static final String VALUE = "value";
     private final MappedUnit unit;
     private final Map<Table, LinkedHashMap<Identifier, SchemaStatement.Column>> tables = new LinkedHashMap<>();
     private final Map<Table, List<Identifier>> keys = new LinkedHashMap<>();
@@ -70,10 +74,10 @@ final class SchemaPlan {
                     addKeys(columnsByName, join.ownerColumns(), entity);
                     addKeys(columnsByName, join.targetColumns(), unit.entity(join.association().targetEntity()).orElseThrow());
                     addIndex(columnsByName, join.index());
-                    AnnotationInfo annotation = attributeAnnotation(model, join.association(), "jakarta.persistence.JoinTable");
-                    foreignKey(join.table(), join.ownerColumns(), entity, annotation == null ? null : annotation.annotation("foreignKey"));
+                    AnnotationInfo annotation = attributeAnnotation(model, join.association(), JOIN_TABLE);
+                    foreignKey(join.table(), join.ownerColumns(), entity, nested(annotation, FOREIGN_KEY));
                     foreignKey(join.table(), join.targetColumns(), unit.entity(join.association().targetEntity()).orElseThrow(),
-                        annotation == null ? null : annotation.annotation("inverseForeignKey"));
+                        nested(annotation, "inverseForeignKey"));
                     if (annotation != null) constraints(join.table(), annotation);
                     if (join.association().singleValued()) {
                         joinNullability(columnsByName, join.ownerColumns(), join.ownerJoins());
@@ -95,9 +99,8 @@ final class SchemaPlan {
                                 definition.precision(), definition.scale(), foreign.joins().get(k).nullable(), false, false, null));
                         }
                         addIndex(columnsByName, foreign.index());
-                        AnnotationInfo annotation = attributeAnnotation(model, foreign.association(), "jakarta.persistence.JoinColumn");
-                        foreignKey(table, foreign.ownerColumns(), entity,
-                            annotation == null ? null : annotation.annotation("foreignKey"));
+                        AnnotationInfo annotation = attributeAnnotation(model, foreign.association(), JOIN_COLUMN);
+                        foreignKey(table, foreign.ownerColumns(), entity, nested(annotation, FOREIGN_KEY));
                     }
                 } else if (collection instanceof CollectionMapping.MappedBy inverse && inverse.indexUpdate() != null) {
                     var target = unit.entity(inverse.association().targetEntity()).orElseThrow();
@@ -108,12 +111,11 @@ final class SchemaPlan {
             }
             for (var reference : statements.references()) {
                 var association = (AssociationAttribute) model.attributes().get(reference.attribute());
-                AnnotationInfo annotation = attributeAnnotation(model, association, "jakarta.persistence.JoinColumn");
+                AnnotationInfo annotation = attributeAnnotation(model, association, JOIN_COLUMN);
                 AnnotationInfo override = associationOverride(model, association);
                 var names = Arrays.stream(reference.columns()).mapToObj(c -> columns.get(c).name()).toList();
                 foreignKey(statements.select().table(), names, unit.entity(reference.target()).orElseThrow(),
-                    override != null && override.isWritten("foreignKey") ? override.annotation("foreignKey")
-                        : annotation == null ? null : annotation.annotation("foreignKey"),
+                    override != null && override.isWritten(FOREIGN_KEY) ? override.annotation(FOREIGN_KEY) : nested(annotation, FOREIGN_KEY),
                     statements.referencedColumns(reference).stream().map(EntityStatements.Column::name).toList(),
                     statements.referencedTable(reference).select().table());
                 if (reference.businessKey() && association.kind() == AssociationAttribute.Kind.ONE_TO_ONE) {
@@ -170,8 +172,7 @@ final class SchemaPlan {
                         secondaryKey(entity, annotation);
                     }
                     if (annotation.typeName().equals("jakarta.persistence.SecondaryTables")) {
-                        for (Object value : annotation.annotations("value")) {
-                            var secondary = (AnnotationInfo) value;
+                        for (AnnotationInfo secondary : annotation.annotations(VALUE)) {
                             constraints(annotationTable(secondary), secondary);
                             secondaryKey(entity, secondary);
                         }
@@ -197,9 +198,9 @@ final class SchemaPlan {
     }
 
     private void addKeys(Map<Identifier, SchemaStatement.Column> target, List<Identifier> names, MappedEntity entity) {
-        var keys = entity.statements().keyColumns();
+        var keyColumns = entity.statements().keyColumns();
         for (int i = 0; i < names.size(); i++) {
-            var key = keys.get(i);
+            var key = keyColumns.get(i);
             target.putIfAbsent(names.get(i), definition(names.get(i),
                 basic(entity, key), true, false));
         }
@@ -210,10 +211,9 @@ final class SchemaPlan {
         for (int i = 0; i < index.columns().size(); i++) {
             Identifier name = index.columns().get(i);
             BasicAttribute attribute = switch (index.index()) {
-                case CollectionIndex.ByColumn key -> key.key();
-                case CollectionIndex.ByPosition position -> position.position();
-                case CollectionIndex.ByEmbedded key ->
-                    embeddedKeyAttribute(key.key(), index.keyColumns().get(i).path());
+                case CollectionIndex.ByColumn(var key) -> key;
+                case CollectionIndex.ByPosition(var position) -> position;
+                case CollectionIndex.ByEmbedded(var key) -> embeddedKeyAttribute(key, index.keyColumns().get(i).path());
                 default -> null;
             };
             columns.putIfAbsent(name, definition(name, attribute, false, false));
@@ -261,17 +261,19 @@ final class SchemaPlan {
         Class<?> type = attribute.javaType();
         switch (attribute.conversion()) {
             case ValueConversion.Converted converted -> type = converted.databaseType();
-            case ValueConversion.EnumOrdinal ignored -> { return JDBCType.INTEGER; }
-            case ValueConversion.EnumString ignored -> { return JDBCType.VARCHAR; }
+            case ValueConversion.EnumOrdinal _ -> { return JDBCType.INTEGER; }
+            case ValueConversion.EnumString _ -> { return JDBCType.VARCHAR; }
             case ValueConversion.EnumByValue value -> type = value.valueType();
-            case ValueConversion.Temporal temporal -> {
-                return switch (temporal.type()) {
+            case ValueConversion.Temporal(var temporalType) -> {
+                return switch (temporalType) {
                     case DATE -> JDBCType.DATE;
                     case TIME -> JDBCType.TIME;
                     case TIMESTAMP -> JDBCType.TIMESTAMP;
                 };
             }
-            default -> {}
+            default -> {
+                // no conversion: the attribute type decides
+            }
         }
         if (attribute.lob()) return type == String.class || type == char[].class || type == Character[].class
             ? JDBCType.CLOB : JDBCType.BLOB;
@@ -329,16 +331,14 @@ final class SchemaPlan {
     }
 
     private void constraints(Table table, AnnotationInfo annotation) {
-        for (Object value : annotation.annotations("indexes")) {
-            var index = (AnnotationInfo) value;
+        for (AnnotationInfo index : annotation.annotations("indexes")) {
             String name = index.string("name");
             List<SchemaStatement.IndexColumn> columns = indexColumns(index.string("columnList"));
             indexes.add(new SchemaStatement(CREATE_INDEX, table, List.of(), List.of(),
                 identifier(name == null || name.isBlank() ? table.name().name() + "_idx_" + indexes.size() : name),
                 columns, index.bool("unique"), 1, 1));
         }
-        for (Object value : annotation.annotations("uniqueConstraints")) {
-            var constraint = (AnnotationInfo) value;
+        for (AnnotationInfo constraint : annotation.annotations("uniqueConstraints")) {
             String name = constraint.string("name");
             indexes.add(new SchemaStatement(ADD_UNIQUE_CONSTRAINT, table, List.of(), List.of(),
                 identifier(name == null || name.isBlank() ? table.name().name() + "_uk_" + indexes.size() : name),
@@ -394,9 +394,7 @@ final class SchemaPlan {
         List<Statement> statements = new ArrayList<>();
         foreignKeys.forEach(k -> statements.add(new ForeignKeyStatement(k.table(), k.name(), k.columns(),
             k.referencedTable(), k.referencedColumns(), k.definition(), true)));
-        var reversed = new ArrayList<>(tables.keySet());
-        Collections.reverse(reversed);
-        reversed.forEach(t -> statements.add(SchemaStatement.table(DROP_TABLE, t, List.of(), List.of())));
+        new ArrayList<>(tables.keySet()).reversed().forEach(t -> statements.add(SchemaStatement.table(DROP_TABLE, t, List.of(), List.of())));
         sequences.forEach(s -> statements.add(SchemaStatement.sequence(DROP_SEQUENCE, s.table(), 1, 1)));
         if (dropSchemas) {
             Set<Identifier> schemas = new LinkedHashSet<>();
@@ -423,10 +421,10 @@ final class SchemaPlan {
     private AnnotationInfo attributeAnnotation(EntityModel model, AttributeModel attribute, String type) {
         AnnotationInfo override = associationOverride(model, attribute);
         if (override != null) {
-            if (type.equals("jakarta.persistence.JoinTable") && override.isWritten("joinTable")) {
+            if (type.equals(JOIN_TABLE) && override.isWritten("joinTable")) {
                 return override.annotation("joinTable");
             }
-            if (type.equals("jakarta.persistence.JoinColumn")) {
+            if (type.equals(JOIN_COLUMN)) {
                 return override.annotations("joinColumns").stream().findFirst().orElse(null);
             }
         }
@@ -466,7 +464,7 @@ final class SchemaPlan {
         if (element == null) return null;
         List<AnnotationInfo> overrides = new ArrayList<>();
         element.annotation("jakarta.persistence.AssociationOverride").ifPresent(overrides::add);
-        element.annotation("jakarta.persistence.AssociationOverrides").ifPresent(a -> overrides.addAll(a.annotations("value")));
+        element.annotation("jakarta.persistence.AssociationOverrides").ifPresent(a -> overrides.addAll(a.annotations(VALUE)));
         return overrides.stream().filter(a -> a.string("name").equals(name)).findFirst().orElse(null);
     }
 
@@ -506,7 +504,7 @@ final class SchemaPlan {
         if (inheritance.tablePerClass() && (inheritance.abstractEntity(target.model())
                 || inheritance.hierarchy().stream().anyMatch(e -> e.javaType() != target.model().javaType()
                     && target.model().javaType().isAssignableFrom(e.javaType())))) return;
-        if (annotation != null && "NO_CONSTRAINT".equals(annotation.enumConstant("value"))) return;
+        if (annotation != null && "NO_CONSTRAINT".equals(annotation.enumConstant(VALUE))) return;
         String name = annotation == null ? null : annotation.string("name");
         Identifier constraint = identifier(name != null && !name.isBlank() ? name : table.name().name() + "_fk_" + foreignKeys.size());
         var statement = new ForeignKeyStatement(table, constraint, columns, referencedTable,
@@ -518,7 +516,12 @@ final class SchemaPlan {
     private void secondaryKey(MappedEntity entity, AnnotationInfo annotation) {
         Table table = annotationTable(annotation);
         List<Identifier> columns = keys.get(table);
-        if (columns != null) foreignKey(table, columns, entity, annotation.annotation("foreignKey"));
+        if (columns != null) foreignKey(table, columns, entity, annotation.annotation(FOREIGN_KEY));
+    }
+
+    /** The annotation {@code member} of {@code annotation}, or {@code null} without an annotation. */
+    private static AnnotationInfo nested(AnnotationInfo annotation, String member) {
+        return annotation == null ? null : annotation.annotation(member);
     }
 
     private Table annotationTable(AnnotationInfo annotation) {

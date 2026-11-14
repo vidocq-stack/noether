@@ -88,6 +88,8 @@ public final class EntityModelBuilder {
     private static final String EMBEDDED_ID = JPA + "EmbeddedId";
     private static final String ATTRIBUTE_OVERRIDE = JPA + "AttributeOverride";
     private static final String ATTRIBUTE_OVERRIDES = JPA + "AttributeOverrides";
+    private static final String ASSOCIATION_OVERRIDE = JPA + "AssociationOverride";
+    private static final String ASSOCIATION_OVERRIDES = JPA + "AssociationOverrides";
     private static final Map<String, AssociationAttribute.Kind> ASSOCIATIONS = Map.of(
         JPA + "OneToOne", AssociationAttribute.Kind.ONE_TO_ONE, JPA + "ManyToOne", AssociationAttribute.Kind.MANY_TO_ONE,
         JPA + "OneToMany", AssociationAttribute.Kind.ONE_TO_MANY, JPA + "ManyToMany", AssociationAttribute.Kind.MANY_TO_MANY);
@@ -167,7 +169,8 @@ public final class EntityModelBuilder {
     private List<NamedStoredProcedureModel> namedStoredProcedures(ClassInfo info) {
         List<AnnotationInfo> declarations = new ArrayList<>();
         info.annotation(JPA + "NamedStoredProcedureQuery").ifPresent(declarations::add);
-        info.annotation(JPA + "NamedStoredProcedureQueries").ifPresent(container -> declarations.addAll(container.annotations("value")));
+        info.annotation(JPA + "NamedStoredProcedureQueries")
+            .ifPresent(container -> declarations.addAll(container.annotations(Members.VALUE)));
         List<NamedStoredProcedureModel> procedures = new ArrayList<>();
         for (AnnotationInfo declaration : declarations) {
             List<NamedStoredProcedureModel.Parameter> parameters = declaration.annotations("parameters").stream()
@@ -186,13 +189,13 @@ public final class EntityModelBuilder {
     private List<SqlResultSetMappingModel> sqlResultSetMappings(ClassInfo info) {
         List<AnnotationInfo> mappings = new ArrayList<>();
         info.annotation(JPA + "SqlResultSetMapping").ifPresent(mappings::add);
-        info.annotation(JPA + "SqlResultSetMappings").ifPresent(container -> mappings.addAll(container.annotations("value")));
+        info.annotation(JPA + "SqlResultSetMappings").ifPresent(container -> mappings.addAll(container.annotations(Members.VALUE)));
         List<SqlResultSetMappingModel> result = new ArrayList<>();
         for (AnnotationInfo mapping : mappings) {
             List<SqlResultSetMappingModel.Result> items = new ArrayList<>();
             for (AnnotationInfo entity : mapping.annotations("entities")) {
                 List<SqlResultSetMappingModel.FieldResult> fields = entity.annotations("fields").stream()
-                    .map(field -> new SqlResultSetMappingModel.FieldResult(field.string("name"), field.string("column"))).toList();
+                    .map(field -> new SqlResultSetMappingModel.FieldResult(field.string("name"), field.string(Members.COLUMN))).toList();
                 items.add(new SqlResultSetMappingModel.EntityResult(Types.load(entity.type("entityClass"), loader), fields,
                     entity.string("discriminatorColumn")));
             }
@@ -220,14 +223,14 @@ public final class EntityModelBuilder {
         List<NamedQueryModel> queries = new ArrayList<>();
         List<AnnotationInfo> jpql = new ArrayList<>();
         info.annotation(JPA + "NamedQuery").ifPresent(jpql::add);
-        info.annotation(JPA + "NamedQueries").ifPresent(container -> jpql.addAll(container.annotations("value")));
+        info.annotation(JPA + "NamedQueries").ifPresent(container -> jpql.addAll(container.annotations(Members.VALUE)));
         for (AnnotationInfo query : jpql) {
             queries.add(new NamedQueryModel(query.string("name"), query.string("query"), false, resultClass(query),
                 query.enumConstant("lockMode"), hints(query), null));
         }
         List<AnnotationInfo> sql = new ArrayList<>();
         info.annotation(JPA + "NamedNativeQuery").ifPresent(sql::add);
-        info.annotation(JPA + "NamedNativeQueries").ifPresent(container -> sql.addAll(container.annotations("value")));
+        info.annotation(JPA + "NamedNativeQueries").ifPresent(container -> sql.addAll(container.annotations(Members.VALUE)));
         for (AnnotationInfo query : sql) {
             queries.add(new NamedQueryModel(query.string("name"), query.string("query"), true, resultClass(query), "NONE", hints(query),
                 nonEmpty(query.string("resultSetMapping"))));
@@ -242,7 +245,7 @@ public final class EntityModelBuilder {
 
     private static Map<String, String> hints(AnnotationInfo query) {
         Map<String, String> hints = new LinkedHashMap<>();
-        query.annotations("hints").forEach(hint -> hints.put(hint.string("name"), hint.string("value")));
+        query.annotations("hints").forEach(hint -> hints.put(hint.string("name"), hint.string(Members.VALUE)));
         return hints;
     }
 
@@ -273,9 +276,9 @@ public final class EntityModelBuilder {
         Map<String, AnnotationInfo> converts = converts(info);
         Map<String, AnnotationInfo> associationOverrides = new LinkedHashMap<>();
         for (ClassInfo declaring : hierarchy) {
-            declaring.annotation(JPA + "AssociationOverride").ifPresent(o -> associationOverrides.put(o.string("name"), o));
-            declaring.annotation(JPA + "AssociationOverrides").ifPresent(container ->
-                container.annotations("value").forEach(o -> associationOverrides.put(o.string("name"), o)));
+            declaring.annotation(ASSOCIATION_OVERRIDE).ifPresent(o -> associationOverrides.put(o.string("name"), o));
+            declaring.annotation(ASSOCIATION_OVERRIDES).ifPresent(container ->
+                container.annotations(Members.VALUE).forEach(o -> associationOverrides.put(o.string("name"), o)));
         }
 
         List<AttributeModel> attributes = new ArrayList<>();
@@ -284,10 +287,10 @@ public final class EntityModelBuilder {
             for (Member member : planner.members(declaring, AccessPlanner.classAccess(declaring, access))) {
                 boolean inherited = declaring != info;
                 AttributeModel attribute = attribute(member, inherited ? overrides : Map.of(), inherited ? converts : Map.of());
-                if (attribute instanceof EmbeddedAttribute embedded) {
+                if (attribute instanceof EmbeddedAttribute(var name, var javaType, var embeddedAccess, var owner, var embeddable,
+                        var columns)) {
                     Map<String, AnnotationInfo> nested = prefixed(associationOverrides, member.name() + ".");
-                    attribute = new EmbeddedAttribute(embedded.name(), embedded.javaType(), embedded.access(),
-                        embedded.declaringClass(), associationOverrides(embedded.embeddable(), nested), embedded.columns());
+                    attribute = new EmbeddedAttribute(name, javaType, embeddedAccess, owner, associationOverrides(embeddable, nested), columns);
                     associationOverrides.keySet().removeIf(path -> path.startsWith(member.name() + "."));
                 }
                 AnnotationInfo associationOverride = associationOverrides.remove(member.name());
@@ -317,7 +320,7 @@ public final class EntityModelBuilder {
             .reduce((first, second) -> second).map(c -> Types.load(c.name(), loader));
         return new EntityModel(type, entityName, table(info, entityName), AccessPlanner.classAccess(info, access), id, attributes, version,
             superEntity, secondaryTables(info), callbacks(info),
-            info.annotation(JPA + "Cacheable").map(annotation -> annotation.bool("value")).orElse(null));
+            info.annotation(JPA + "Cacheable").map(annotation -> annotation.bool(Members.VALUE)).orElse(null));
     }
 
     private void checkEntityClass(ClassInfo info) {
@@ -344,21 +347,21 @@ public final class EntityModelBuilder {
     private static List<SecondaryTableModel> secondaryTables(ClassInfo info) {
         List<AnnotationInfo> declared = new ArrayList<>();
         info.annotation(JPA + "SecondaryTable").ifPresent(declared::add);
-        info.annotation(JPA + "SecondaryTables").ifPresent(container -> declared.addAll(container.annotations("value")));
+        info.annotation(JPA + "SecondaryTables").ifPresent(container -> declared.addAll(container.annotations(Members.VALUE)));
         List<SecondaryTableModel> tables = new ArrayList<>();
         for (AnnotationInfo table : declared) {
             List<String> joinColumns = table.annotations("pkJoinColumns").stream().map(c -> nonEmpty(c.string("name")))
                 .filter(Objects::nonNull).toList();
-            tables.add(new SecondaryTableModel(new TableModel(table.string("name"), nonEmpty(table.string("schema")),
-                nonEmpty(table.string("catalog"))), joinColumns));
+            tables.add(new SecondaryTableModel(new TableModel(table.string("name"), nonEmpty(table.string(Members.SCHEMA)),
+                nonEmpty(table.string(Members.CATALOG))), joinColumns));
         }
         return tables;
     }
 
     private TableModel table(ClassInfo info, String entityName) {
         return info.annotation(JPA + "Table")
-            .map(t -> new TableModel(Optional.ofNullable(nonEmpty(t.string("name"))).orElse(entityName), nonEmpty(t.string("schema")),
-                nonEmpty(t.string("catalog"))))
+            .map(t -> new TableModel(Optional.ofNullable(nonEmpty(t.string("name"))).orElse(entityName), nonEmpty(t.string(Members.SCHEMA)),
+                nonEmpty(t.string(Members.CATALOG))))
             .orElse(new TableModel(entityName, null, null));
     }
 
@@ -404,7 +407,7 @@ public final class EntityModelBuilder {
         if (!base.owning()) {
             throw new PersistenceException("The @AssociationOverride " + base.name() + " must name an owning relationship (§11.1.2)");
         }
-        List<JoinColumnModel> columns = override.annotations("joinColumns").stream()
+        List<JoinColumnModel> columns = override.annotations(Members.JOIN_COLUMNS).stream()
             .map(EntityModelBuilder::joinColumn).toList();
         boolean tableWritten = override.isWritten("joinTable");
         if (tableWritten && !columns.isEmpty()) {
@@ -418,8 +421,8 @@ public final class EntityModelBuilder {
         }
         AnnotationInfo table = tableWritten ? override.annotation("joinTable") : null;
         JoinTableModel joinTable = table == null ? base.joinTable() : new JoinTableModel(nonEmpty(table.string("name")),
-            nonEmpty(table.string("schema")), nonEmpty(table.string("catalog")),
-            table.annotations("joinColumns").stream().map(EntityModelBuilder::joinColumn).toList(),
+            nonEmpty(table.string(Members.SCHEMA)), nonEmpty(table.string(Members.CATALOG)),
+            table.annotations(Members.JOIN_COLUMNS).stream().map(EntityModelBuilder::joinColumn).toList(),
             table.annotations("inverseJoinColumns").stream().map(EntityModelBuilder::joinColumn).toList());
         return new AssociationAttribute(base.name(), base.javaType(), base.access(), base.declaringClass(), base.kind(),
             base.targetEntity(), base.mappedBy(), base.cascade(), base.orphanRemoval(), base.fetch(), base.optional(),
@@ -439,14 +442,14 @@ public final class EntityModelBuilder {
         Set<CascadeType> cascade = EnumSet.noneOf(CascadeType.class);
         relationship.enumConstants("cascade").forEach(constant -> cascade.add(CascadeType.valueOf(constant)));
         boolean orphanRemoval = relationship.has("orphanRemoval") && relationship.bool("orphanRemoval");
-        FetchType fetch = FetchType.valueOf(relationship.enumConstant("fetch"));
-        boolean optional = !relationship.has("optional") || relationship.bool("optional");
+        FetchType fetch = FetchType.valueOf(relationship.enumConstant(Members.FETCH));
+        boolean optional = !relationship.has(Members.OPTIONAL) || relationship.bool(Members.OPTIONAL);
         JoinTableModel joinTable = element.annotation(JPA + "JoinTable").map(t -> new JoinTableModel(nonEmpty(t.string("name")),
-            nonEmpty(t.string("schema")), nonEmpty(t.string("catalog")), t.annotations("joinColumns").stream()
+            nonEmpty(t.string(Members.SCHEMA)), nonEmpty(t.string(Members.CATALOG)), t.annotations(Members.JOIN_COLUMNS).stream()
                 .map(EntityModelBuilder::joinColumn).toList(),
             t.annotations("inverseJoinColumns").stream().map(EntityModelBuilder::joinColumn).toList())).orElse(null);
-        String orderBy = element.annotation(JPA + "OrderBy").map(o -> o.string("value").trim()).orElse(null);
-        String mapsId = element.annotation(JPA + "MapsId").map(m -> m.string("value")).orElse(null);
+        String orderBy = element.annotation(JPA + "OrderBy").map(o -> o.string(Members.VALUE).trim()).orElse(null);
+        String mapsId = element.annotation(JPA + "MapsId").map(m -> m.string(Members.VALUE)).orElse(null);
         return new AssociationAttribute(member.name(), type, member.access(), declaring, kind, target, mappedBy, cascade, orphanRemoval,
             fetch, optional, joinColumns(element), joinTable, orderBy, index(member, type, declaring), mapsId);
     }
@@ -469,6 +472,11 @@ public final class EntityModelBuilder {
         if (arguments == null) {
             return null;
         }
+        return elementOrValueType(type, arguments);
+    }
+
+    /** Among the type arguments of a collection or map type, the type of its elements, or of the values of the map. */
+    private static Class<?> elementOrValueType(Class<?> type, List<Class<?>> arguments) {
         return Map.class.isAssignableFrom(type) && arguments.size() == 2 ? arguments.get(1) : arguments.getFirst();
     }
 
@@ -488,8 +496,7 @@ public final class EntityModelBuilder {
             elementType = Types.load(written, loader);
         } else {
             List<Class<?>> arguments = GenericSignatures.memberTypeArguments(member.signature(), element instanceof MethodInfo, loader);
-            elementType = arguments == null ? null : Map.class.isAssignableFrom(type) && arguments.size() == 2 ? arguments.get(1)
-                : arguments.getFirst();
+            elementType = arguments == null ? null : elementOrValueType(type, arguments);
         }
         if (elementType == null) {
             throw new PersistenceException("The element collection " + member.name() + " of " + member.owner().name() + " is a raw "
@@ -497,13 +504,14 @@ public final class EntityModelBuilder {
         }
         boolean embeddable = source.read(elementType.getName()).map(i -> i.isAnnotated(JPA + "Embeddable")).orElse(false);
         // §11.1.4: the overrides of the values of a map name them "value.<attribute>"
-        AttributeModel value = embeddable ? embedded(member, elementType, declaring, Map.of(), Map.class.isAssignableFrom(type) ? "value." : "")
+        String overridePrefix = Map.class.isAssignableFrom(type) ? "value." : "";
+        AttributeModel value = embeddable ? embedded(member, elementType, declaring, Map.of(), overridePrefix)
             : basic(member, elementType, declaring, null, conversion(member, elementType));
         CollectionTableModel table = element.annotation(JPA + "CollectionTable").map(t -> new CollectionTableModel(nonEmpty(t.string("name")),
-            nonEmpty(t.string("schema")), nonEmpty(t.string("catalog")), t.annotations("joinColumns").stream()
+            nonEmpty(t.string(Members.SCHEMA)), nonEmpty(t.string(Members.CATALOG)), t.annotations(Members.JOIN_COLUMNS).stream()
                 .map(EntityModelBuilder::joinColumn).toList())).orElse(CollectionTableModel.defaults());
-        String orderBy = element.annotation(JPA + "OrderBy").map(o -> o.string("value").trim()).orElse(null);
-        FetchType fetch = FetchType.valueOf(collection.enumConstant("fetch"));
+        String orderBy = element.annotation(JPA + "OrderBy").map(o -> o.string(Members.VALUE).trim()).orElse(null);
+        FetchType fetch = FetchType.valueOf(collection.enumConstant(Members.FETCH));
         return new ElementCollectionAttribute(member.name(), type, member.access(), declaring, member.signature(), value, table, orderBy,
             index(member, type, declaring), fetch);
     }
@@ -520,8 +528,8 @@ public final class EntityModelBuilder {
         if (!Map.class.isAssignableFrom(type)) {
             return element.annotation(JPA + "OrderColumn").<CollectionIndex>map(o -> {
                 String name = nonEmpty(o.string("name"));
-                ColumnModel column = new ColumnModel(name != null ? name : member.name() + "_ORDER", null, o.bool("nullable"),
-                    o.bool("insertable"), o.bool("updatable"), false, 255, 0, 0, nonEmpty(o.string("columnDefinition")));
+                ColumnModel column = new ColumnModel(name != null ? name : member.name() + "_ORDER", null, o.bool(Members.NULLABLE),
+                    o.bool(Members.INSERTABLE), o.bool(Members.UPDATABLE), false, 255, 0, 0, nonEmpty(o.string("columnDefinition")));
                 return new CollectionIndex.ByPosition(new BasicAttribute(column.name(), Integer.class, member.access(), declaring, column,
                     true, FetchType.EAGER, false, new ValueConversion.None(), false));
             }).orElse(null);
@@ -530,7 +538,7 @@ public final class EntityModelBuilder {
         if (mapKey.isPresent()) {
             return new CollectionIndex.ByAttribute(mapKey.get().has("name") ? mapKey.get().string("name") : "");
         }
-        Class<?> keyType = element.annotation(JPA + "MapKeyClass").map(k -> Types.load(k.type("value"), loader)).orElse(null);
+        Class<?> keyType = element.annotation(JPA + "MapKeyClass").map(k -> Types.load(k.type(Members.VALUE), loader)).orElse(null);
         if (keyType == null) {
             List<Class<?>> arguments = GenericSignatures.memberTypeArguments(member.signature(), element instanceof MethodInfo, loader);
             if (arguments == null || arguments.size() != 2) {
@@ -541,7 +549,7 @@ public final class EntityModelBuilder {
         List<JoinColumnModel> keyJoins = new ArrayList<>();
         element.annotation(JPA + "MapKeyJoinColumn").ifPresent(c -> keyJoins.add(joinColumn(c)));
         element.annotation(JPA + "MapKeyJoinColumns").ifPresent(container ->
-            container.annotations("value").forEach(c -> keyJoins.add(joinColumn(c))));
+            container.annotations(Members.VALUE).forEach(c -> keyJoins.add(joinColumn(c))));
         Optional<ClassInfo> keyInfo = source.read(keyType.getName());
         if (!keyJoins.isEmpty() || keyInfo.map(i -> i.isAnnotated(JPA + "Entity")).orElse(false)) {
             return new CollectionIndex.ByEntity(keyType, keyJoins);
@@ -571,11 +579,13 @@ public final class EntityModelBuilder {
             }
         }
         if (type.isEnum()) {
-            String enumType = member.element().annotation(JPA + "MapKeyEnumerated").map(e -> e.enumConstant("value")).orElse("ORDINAL");
+            String enumType = member.element().annotation(JPA + "MapKeyEnumerated").map(e -> e.enumConstant(Members.VALUE))
+                .orElse("ORDINAL");
             return "STRING".equals(enumType) ? new ValueConversion.EnumString() : new ValueConversion.EnumOrdinal();
         }
         if (Types.isLegacyTemporal(type)) {
-            String temporal = member.element().annotation(JPA + "MapKeyTemporal").map(t -> t.enumConstant("value")).orElse("TIMESTAMP");
+            String temporal = member.element().annotation(JPA + "MapKeyTemporal").map(t -> t.enumConstant(Members.VALUE))
+                .orElse("TIMESTAMP");
             return new ValueConversion.Temporal(TemporalType.valueOf(temporal));
         }
         return new ValueConversion.None();
@@ -586,13 +596,14 @@ public final class EntityModelBuilder {
         List<JoinColumnModel> columns = new ArrayList<>();
         element.annotation(JPA + "JoinColumn").ifPresent(c -> columns.add(joinColumn(c)));
         element.annotation(JPA + "JoinColumns").ifPresent(container ->
-            container.annotations("value").forEach(c -> columns.add(joinColumn(c))));
+            container.annotations(Members.VALUE).forEach(c -> columns.add(joinColumn(c))));
         return columns;
     }
 
     private static JoinColumnModel joinColumn(AnnotationInfo column) {
         return new JoinColumnModel(nonEmpty(column.string("name")), nonEmpty(column.string("referencedColumnName")),
-            nonEmpty(column.string("table")), column.bool("nullable"), column.bool("insertable"), column.bool("updatable"));
+            nonEmpty(column.string(Members.TABLE)), column.bool(Members.NULLABLE), column.bool(Members.INSERTABLE),
+            column.bool(Members.UPDATABLE));
     }
 
     // ---- basic attributes (§2.8, §11.1.6) ----------------------------------------------------------------
@@ -600,20 +611,20 @@ public final class EntityModelBuilder {
     private BasicAttribute basic(Member member, Class<?> type, Class<?> declaring, AnnotationInfo override,
             ValueConversion conversion) {
         Annotated element = member.element();
-        AnnotationInfo columnAnnotation = override != null ? override.annotation("column")
+        AnnotationInfo columnAnnotation = override != null ? override.annotation(Members.COLUMN)
             : element.annotation(JPA + "Column").orElse(null);
         ColumnModel column = columnAnnotation == null ? ColumnModel.defaultFor(member.name()) : column(columnAnnotation, member.name());
         Optional<AnnotationInfo> basicAnnotation = element.annotation(JPA + "Basic");
-        boolean optional = !type.isPrimitive() && basicAnnotation.map(b -> b.bool("optional")).orElse(true);
-        FetchType fetch = basicAnnotation.map(b -> FetchType.valueOf(b.enumConstant("fetch"))).orElse(FetchType.EAGER);
+        boolean optional = !type.isPrimitive() && basicAnnotation.map(b -> b.bool(Members.OPTIONAL)).orElse(true);
+        FetchType fetch = basicAnnotation.map(b -> FetchType.valueOf(b.enumConstant(Members.FETCH))).orElse(FetchType.EAGER);
         return new BasicAttribute(member.name(), type, member.access(), declaring, column, optional, fetch,
             element.isAnnotated(JPA + "Lob"), conversion, element.isAnnotated(JPA + "Version"));
     }
 
     private static ColumnModel column(AnnotationInfo column, String attributeName) {
         String name = nonEmpty(column.string("name"));
-        return new ColumnModel(name == null ? attributeName : name, nonEmpty(column.string("table")), column.bool("nullable"),
-            column.bool("insertable"), column.bool("updatable"), column.bool("unique"), column.integer("length"),
+        return new ColumnModel(name == null ? attributeName : name, nonEmpty(column.string(Members.TABLE)), column.bool(Members.NULLABLE),
+            column.bool(Members.INSERTABLE), column.bool(Members.UPDATABLE), column.bool("unique"), column.integer("length"),
             column.integer("precision"), column.integer("scale"), nonEmpty(column.string("columnDefinition")));
     }
 
@@ -638,11 +649,11 @@ public final class EntityModelBuilder {
                     }
                 }
             }
-            String enumType = member.element().annotation(JPA + "Enumerated").map(e -> e.enumConstant("value")).orElse("ORDINAL");
+            String enumType = member.element().annotation(JPA + "Enumerated").map(e -> e.enumConstant(Members.VALUE)).orElse("ORDINAL");
             return "STRING".equals(enumType) ? new ValueConversion.EnumString() : new ValueConversion.EnumOrdinal();
         }
         if (Types.isLegacyTemporal(type)) {
-            String temporal = member.element().annotation(JPA + "Temporal").map(t -> t.enumConstant("value")).orElse("TIMESTAMP");
+            String temporal = member.element().annotation(JPA + "Temporal").map(t -> t.enumConstant(Members.VALUE)).orElse("TIMESTAMP");
             return new ValueConversion.Temporal(TemporalType.valueOf(temporal));
         }
         return new ValueConversion.None();
@@ -668,7 +679,7 @@ public final class EntityModelBuilder {
         Map<String, AnnotationInfo> converts = new LinkedHashMap<>();
         List<AnnotationInfo> declared = new ArrayList<>();
         element.annotation(JPA + "Convert").ifPresent(declared::add);
-        element.annotation(JPA + "Converts").ifPresent(container -> declared.addAll(container.annotations("value")));
+        element.annotation(JPA + "Converts").ifPresent(container -> declared.addAll(container.annotations(Members.VALUE)));
         for (AnnotationInfo convert : declared) {
             String attributeName = convert.has("attributeName") ? nonEmpty(convert.string("attributeName")) : null;
             if (attributeName != null) {
@@ -704,11 +715,11 @@ public final class EntityModelBuilder {
         EmbeddableModel embeddable = converted(embeddable(type, member.access()), converts);
         List<AnnotationInfo> associationOverrides = new ArrayList<>();
         source.read(type.getName()).ifPresent(info -> {
-            info.annotation(JPA + "AssociationOverride").ifPresent(associationOverrides::add);
-            info.annotation(JPA + "AssociationOverrides").ifPresent(a -> associationOverrides.addAll(a.annotations("value")));
+            info.annotation(ASSOCIATION_OVERRIDE).ifPresent(associationOverrides::add);
+            info.annotation(ASSOCIATION_OVERRIDES).ifPresent(a -> associationOverrides.addAll(a.annotations(Members.VALUE)));
         });
-        member.element().annotation(JPA + "AssociationOverride").ifPresent(associationOverrides::add);
-        member.element().annotation(JPA + "AssociationOverrides").ifPresent(a -> associationOverrides.addAll(a.annotations("value")));
+        member.element().annotation(ASSOCIATION_OVERRIDE).ifPresent(associationOverrides::add);
+        member.element().annotation(ASSOCIATION_OVERRIDES).ifPresent(a -> associationOverrides.addAll(a.annotations(Members.VALUE)));
         Map<String, AnnotationInfo> effective = new LinkedHashMap<>();
         associationOverrides.forEach(a -> {
             String name = a.string("name");
@@ -721,7 +732,7 @@ public final class EntityModelBuilder {
         overrides(member.element()).forEach((written, override) -> {
             String path = written.startsWith(overridePrefix) ? written.substring(overridePrefix.length()) : written;
             if (columns.containsKey(path)) {
-                columns.put(path, column(override.annotation("column"), path.substring(path.lastIndexOf('.') + 1)));
+                columns.put(path, column(override.annotation(Members.COLUMN), path.substring(path.lastIndexOf('.') + 1)));
             }
         });
         return new EmbeddedAttribute(member.name(), type, member.access(), declaring, embeddable, columns);
@@ -740,11 +751,10 @@ public final class EntityModelBuilder {
                 }
                 attribute = associationOverride(association, override);
             }
-            if (attribute instanceof EmbeddedAttribute nested) {
-                Map<String, AnnotationInfo> paths = prefixed(remaining, nested.name() + ".");
-                attribute = new EmbeddedAttribute(nested.name(), nested.javaType(), nested.access(), nested.declaringClass(),
-                    associationOverrides(nested.embeddable(), paths), nested.columns());
-                remaining.keySet().removeIf(path -> path.startsWith(nested.name() + "."));
+            if (attribute instanceof EmbeddedAttribute(var name, var javaType, var access, var owner, var nested, var columns)) {
+                Map<String, AnnotationInfo> paths = prefixed(remaining, name + ".");
+                attribute = new EmbeddedAttribute(name, javaType, access, owner, associationOverrides(nested, paths), columns);
+                remaining.keySet().removeIf(path -> path.startsWith(name + "."));
             }
             attributes.add(attribute);
         }
@@ -771,8 +781,8 @@ public final class EntityModelBuilder {
                 case BasicAttribute basic when conversion.isPresent() -> new BasicAttribute(basic.name(), basic.javaType(),
                     basic.access(), basic.declaringClass(), basic.column(), basic.optional(), basic.fetch(), basic.lob(),
                     conversion.orElseThrow(), basic.version());
-                case EmbeddedAttribute nested -> new EmbeddedAttribute(nested.name(), nested.javaType(), nested.access(),
-                    nested.declaringClass(), converted(nested.embeddable(), prefixed(converts, nested.name() + ".")), nested.columns());
+                case EmbeddedAttribute(var name, var javaType, var access, var owner, var nested, var columns) ->
+                    new EmbeddedAttribute(name, javaType, access, owner, converted(nested, prefixed(converts, name + ".")), columns);
                 default -> attribute;
             });
         }
@@ -815,7 +825,7 @@ public final class EntityModelBuilder {
         Map<String, AnnotationInfo> overrides = new LinkedHashMap<>();
         element.annotation(ATTRIBUTE_OVERRIDE).ifPresent(o -> overrides.put(o.string("name"), o));
         element.annotation(ATTRIBUTE_OVERRIDES).ifPresent(container ->
-            container.annotations("value").forEach(o -> overrides.put(o.string("name"), o)));
+            container.annotations(Members.VALUE).forEach(o -> overrides.put(o.string("name"), o)));
         return overrides;
     }
 
@@ -845,7 +855,7 @@ public final class EntityModelBuilder {
         Optional<AnnotationInfo> idClass = hierarchy.stream().map(c -> c.annotation(JPA + "IdClass")).flatMap(Optional::stream)
             .reduce((first, second) -> second);
         if (idClass.isPresent()) {
-            return new IdModel.ByIdClass(Types.load(idClass.get().type("value"), loader), ids);
+            return new IdModel.ByIdClass(Types.load(idClass.get().type(Members.VALUE), loader), ids);
         }
         if (ids.size() > 1) {
             throw new PersistenceException("The entity " + entity.name() + " has several @Id attributes but no @IdClass (§2.4.1)");
@@ -872,9 +882,10 @@ public final class EntityModelBuilder {
         Optional<AnnotationInfo> table = generatorAnnotation("TableGenerator", generator, member.element(), entity);
         return Optional.of(new GenerationModel(strategy, generator,
             sequence.map(s -> new SequenceGeneratorModel(s.string("name"), nonEmpty(s.string("sequenceName")),
-                nonEmpty(s.string("schema")), nonEmpty(s.string("catalog")), s.integer("initialValue"), s.integer("allocationSize"))),
-            table.map(t -> new TableGeneratorModel(t.string("name"), nonEmpty(t.string("table")), nonEmpty(t.string("schema")),
-                nonEmpty(t.string("catalog")), nonEmpty(t.string("pkColumnName")), nonEmpty(t.string("valueColumnName")),
+                nonEmpty(s.string(Members.SCHEMA)), nonEmpty(s.string(Members.CATALOG)), s.integer("initialValue"),
+                s.integer("allocationSize"))),
+            table.map(t -> new TableGeneratorModel(t.string("name"), nonEmpty(t.string(Members.TABLE)), nonEmpty(t.string(Members.SCHEMA)),
+                nonEmpty(t.string(Members.CATALOG)), nonEmpty(t.string("pkColumnName")), nonEmpty(t.string("valueColumnName")),
                 nonEmpty(t.string("pkColumnValue")), t.integer("initialValue"), t.integer("allocationSize")))));
     }
 
@@ -908,7 +919,7 @@ public final class EntityModelBuilder {
     private static List<AnnotationInfo> generators(Annotated element, String kind) {
         List<AnnotationInfo> found = new ArrayList<>();
         element.annotation(JPA + kind).ifPresent(found::add);
-        element.annotation(JPA + kind + "s").ifPresent(container -> found.addAll(container.annotations("value")));
+        element.annotation(JPA + kind + "s").ifPresent(container -> found.addAll(container.annotations(Members.VALUE)));
         return found;
     }
 

@@ -44,8 +44,11 @@ final class EmbeddedPaths {
             int attribute = indexes.get(depth);
             if (instance == null && value == null) return null;
             if (instance == null && !access.type().isRecord()) instance = access.instantiate();
-            Object nested = depth + 1 == indexes.size() ? value
-                : set(instance == null ? null : access.get(instance, attribute), value, depth + 1);
+            Object nested = value;
+            if (depth + 1 != indexes.size()) {
+                Object current = instance == null ? null : access.get(instance, attribute);
+                nested = set(current, value, depth + 1);
+            }
             if (access.type().isRecord()) {
                 Object[] components = new Object[access.attributes().size()];
                 if (instance != null) access.read(instance, components);

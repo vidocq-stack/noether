@@ -40,7 +40,6 @@ public final class AnnotationInfo {
         this.defaults = defaults;
     }
 
-    /** The binary name of the annotation type. */
     /**
      * An annotation read by another source than the class files (the annotation processor reads the elements of the
      * compilation). Values are encoded as {@link ClassFileSource} encodes them: boxed primitives, {@code String},
@@ -53,6 +52,7 @@ public final class AnnotationInfo {
         return new AnnotationInfo(typeName, written, Map.copyOf(defaults));
     }
 
+    /** The binary name of the annotation type. */
     public String typeName() {
         return typeName;
     }

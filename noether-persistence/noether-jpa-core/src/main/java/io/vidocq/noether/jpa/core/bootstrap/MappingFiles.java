@@ -23,7 +23,6 @@ import io.vidocq.noether.jpa.core.model.xml.MappingFile;
 import jakarta.persistence.PersistenceException;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
@@ -92,10 +91,10 @@ public final class MappingFiles {
             URLConnection connection = entry.openConnection();
             // the jar may have been rewritten under the same name since it was cached (see PersistenceUnits)
             connection.setUseCaches(false);
-            try (InputStream _ = connection.getInputStream()) {
+            try (var _ = connection.getInputStream()) {
                 return entry;
             }
-        } catch (FileNotFoundException e) {
+        } catch (FileNotFoundException _) {
             return null;
         } catch (IOException | URISyntaxException | IllegalArgumentException e) {
             throw new PersistenceException("Unable to look for " + path + " in " + root, e);

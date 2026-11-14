@@ -40,6 +40,9 @@ import java.util.Objects;
 /** Relational inheritance metadata (§2.14), read from class files, never entity annotations by reflection. */
 public final class InheritanceMapping {
     private static final String JPA = "jakarta.persistence.";
+    private static final String VALUE = "value";
+    /** The {@code DiscriminatorType} whose values are numbers; the others are strings. */
+    private static final String INTEGER = "INTEGER";
     private final List<EntityModel> chain;
     private final List<EntityModel> hierarchy;
     private final boolean joined;
@@ -112,15 +115,16 @@ public final class InheritanceMapping {
         for (EntityModel entity : hierarchy) {
             var written = info(entity).annotation(JPA + "DiscriminatorValue");
             if (discriminator == null || "STRING".equals(discriminatorType)) {
-                Object value = discriminator == null ? entity.entityName() : written.map(a -> a.string("value")).orElse(entity.entityName());
-                values.put(entity.javaType(), value);
-                used.add(value);
+                Object entityValue = discriminator == null ? entity.entityName()
+                    : written.map(a -> a.string(VALUE)).orElse(entity.entityName());
+                values.put(entity.javaType(), entityValue);
+                used.add(entityValue);
             } else if (written.isPresent()) {
-                String text = written.get().string("value");
-                Object value;
-                if ("INTEGER".equals(discriminatorType)) {
+                String text = written.get().string(VALUE);
+                Object entityValue;
+                if (INTEGER.equals(discriminatorType)) {
                     try {
-                        value = Integer.valueOf(text);
+                        entityValue = Integer.valueOf(text);
                     } catch (NumberFormatException e) {
                         throw new PersistenceException("An INTEGER discriminator requires a numeric @DiscriminatorValue: "
                             + entity.javaType().getName(), e);
@@ -130,10 +134,10 @@ public final class InheritanceMapping {
                         throw new PersistenceException("A CHAR discriminator requires a one-character @DiscriminatorValue: "
                             + entity.javaType().getName());
                     }
-                    value = text;
+                    entityValue = text;
                 }
-                values.put(entity.javaType(), value);
-                used.add(value);
+                values.put(entity.javaType(), entityValue);
+                used.add(entityValue);
             }
         }
         // §11.1.13 leaves non-STRING defaults provider-defined: stable class-name order, avoiding explicit values.
@@ -144,7 +148,7 @@ public final class InheritanceMapping {
             }
             Object candidate;
             do {
-                if ("INTEGER".equals(discriminatorType)) {
+                if (INTEGER.equals(discriminatorType)) {
                     candidate = next++;
                 } else {
                     int code = 'A' + next++;
@@ -180,7 +184,7 @@ public final class InheritanceMapping {
                 ClassInfo info = info(entity);
                 info.annotation(JPA + "PrimaryKeyJoinColumn").ifPresent(a -> keys.add(a.string("name")));
                 info.annotation(JPA + "PrimaryKeyJoinColumns").ifPresent(a ->
-                    a.annotations("value").forEach(k -> keys.add(k.string("name"))));
+                    a.annotations(VALUE).forEach(k -> keys.add(k.string("name"))));
                 tables.add(new SecondaryTableModel(entity.table(), keys));
             }
         }
@@ -201,7 +205,7 @@ public final class InheritanceMapping {
             List<io.vidocq.noether.jpa.core.model.source.AnnotationInfo> joins = new ArrayList<>();
             ClassInfo info = info(chain.get(t));
             info.annotation(JPA + "PrimaryKeyJoinColumn").ifPresent(joins::add);
-            info.annotation(JPA + "PrimaryKeyJoinColumns").ifPresent(a -> joins.addAll(a.annotations("value")));
+            info.annotation(JPA + "PrimaryKeyJoinColumns").ifPresent(a -> joins.addAll(a.annotations(VALUE)));
             if (joins.isEmpty()) {
                 continue;
             }
@@ -267,7 +271,7 @@ public final class InheritanceMapping {
                         new IllegalArgumentException(type.getName() + " is not in the hierarchy of " + root().entityName()));
                     stored = discriminator == null ? entity.entityName() : discriminatorValue(entity);
                 }
-                if ("INTEGER".equals(discriminatorType) && discriminator != null) {
+                if (INTEGER.equals(discriminatorType) && discriminator != null) {
                     if (stored == null) statement.setNull(index, java.sql.Types.INTEGER);
                     else statement.setInt(index, ((Number) stored).intValue());
                 } else {
@@ -277,7 +281,7 @@ public final class InheritanceMapping {
 
             @Override
             public Object read(ResultSet results, int column) throws SQLException {
-                Object stored = "INTEGER".equals(discriminatorType) && discriminator != null
+                Object stored = INTEGER.equals(discriminatorType) && discriminator != null
                     ? results.getObject(column, Integer.class) : results.getString(column);
                 return stored == null || !entityTypes ? stored : concrete(stored);
             }

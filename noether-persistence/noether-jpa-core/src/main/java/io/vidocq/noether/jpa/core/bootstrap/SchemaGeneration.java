@@ -18,6 +18,12 @@ import java.util.*;
 /** §9.4/§7.12 schema lifecycle; owns only resources it opens, never supplied JDBC connections, readers or writers. */
 public final class SchemaGeneration implements SchemaManager {
     private static final String PREFIX = "jakarta.persistence.schema-generation.";
+    /** The actions (§8.2.1.10) and sources of the schema generation properties that are read more than once. */
+    private static final String CREATE = "create";
+    private static final String DROP_AND_CREATE = "drop-and-create";
+    private static final String METADATA = "metadata";
+    private static final String SCRIPT = "script";
+    private static final String SCRIPT_THEN_METADATA = "script-then-metadata";
     private final UnitSettings settings;
     private final ConnectionSource connections;
     private final MappedUnit mapping;
@@ -45,7 +51,7 @@ public final class SchemaGeneration implements SchemaManager {
             Dialect dialect = dialect(connection);
             SchemaPlan plan = new SchemaPlan(mapping);
             boolean schemas = Boolean.parseBoolean(settings.string(PREFIX + "create-database-schemas"));
-            List<String> create = creates(database) || creates(scripts) ? statements("create", plan.create(schemas), dialect) : List.of();
+            List<String> create = creates(database) || creates(scripts) ? statements(CREATE, plan.create(schemas), dialect) : List.of();
             List<String> drop = drops(database) || drops(scripts) ? statements("drop", plan.drop(false), dialect) : List.of();
             List<String> load = creates(database) || creates(scripts)
                 ? loadCommands() : List.of();
@@ -66,32 +72,32 @@ public final class SchemaGeneration implements SchemaManager {
     private String action(String name) {
         String value = settings.string(PREFIX + name);
         String action = value == null ? "none" : value.strip();
-        if (!Set.of("none", "create", "drop", "drop-and-create").contains(action)) {
+        if (!Set.of("none", CREATE, "drop", DROP_AND_CREATE).contains(action)) {
             throw new PersistenceException("Invalid schema generation action " + name + ": " + action);
         }
         return action;
     }
 
-    private static boolean creates(String action) { return action.equals("create") || action.equals("drop-and-create"); }
-    private static boolean drops(String action) { return action.equals("drop") || action.equals("drop-and-create"); }
+    private static boolean creates(String action) { return action.equals(CREATE) || action.equals(DROP_AND_CREATE); }
+    private static boolean drops(String action) { return action.equals("drop") || action.equals(DROP_AND_CREATE); }
 
     private List<String> statements(String kind, List<io.vidocq.noether.jpa.dialect.sql.Statement> metadata, Dialect dialect) {
         Object script = settings.property(PREFIX + kind + "-script-source");
         String source = settings.string(PREFIX + kind + "-source");
-        if (source == null) source = script == null ? "metadata" : "script";
-        if (!Set.of("metadata", "script", "metadata-then-script", "script-then-metadata").contains(source)) {
+        if (source == null) source = script == null ? METADATA : SCRIPT;
+        if (!Set.of(METADATA, SCRIPT, "metadata-then-script", SCRIPT_THEN_METADATA).contains(source)) {
             throw new PersistenceException("Invalid schema source " + source);
         }
-        if (!source.equals("metadata") && script == null) {
+        if (!source.equals(METADATA) && script == null) {
             throw new PersistenceException(kind + "-source requires a " + kind + "-script-source");
         }
         List<String> generated = metadata.stream().map(dialect::render).toList();
-        if (source.equals("metadata")) return generated;
+        if (source.equals(METADATA)) return generated;
         List<String> supplied = script(script);
-        if (source.equals("script")) return supplied;
+        if (source.equals(SCRIPT)) return supplied;
         List<String> combined = new ArrayList<>();
-        combined.addAll(source.equals("script-then-metadata") ? supplied : generated);
-        combined.addAll(source.equals("script-then-metadata") ? generated : supplied);
+        combined.addAll(source.equals(SCRIPT_THEN_METADATA) ? supplied : generated);
+        combined.addAll(source.equals(SCRIPT_THEN_METADATA) ? generated : supplied);
         return combined;
     }
 
@@ -164,7 +170,9 @@ public final class SchemaGeneration implements SchemaManager {
         try {
             URI uri = URI.create(value);
             if (uri.isAbsolute()) return uri.toURL();
-        } catch (IllegalArgumentException ignored) {}
+        } catch (IllegalArgumentException _) {
+            // not a URI: a resource of the unit, or a file path
+        }
         URL resource = mapping.loader().getResource(value);
         return resource != null ? resource : Path.of(value).toUri().toURL();
     }
@@ -277,9 +285,7 @@ public final class SchemaGeneration implements SchemaManager {
             for (var statement : new SchemaPlan(mapping).create(false)) {
                 if (!(statement instanceof SchemaStatement table) || table.operation() != SchemaStatement.Operation.CREATE_TABLE) continue;
                 Set<String> found = new HashSet<>();
-                String name = table.table().name().quoted() ? table.table().name().name()
-                    : metadata.storesUpperCaseIdentifiers() ? table.table().name().name().toUpperCase(Locale.ROOT)
-                    : table.table().name().name().toLowerCase(Locale.ROOT);
+                String name = storedName(table, metadata);
                 String schema = table.table().schema() == null ? connection.getSchema() : table.table().schema().name();
                 try (ResultSet columns = metadata.getColumns(connection.getCatalog(), schema, name, null)) {
                     while (columns.next()) found.add(columns.getString("COLUMN_NAME").toLowerCase(Locale.ROOT));
@@ -293,5 +299,14 @@ public final class SchemaGeneration implements SchemaManager {
         });
         if (!failures.isEmpty()) throw new SchemaValidationException("Schema does not match the persistence unit",
             failures.toArray(Exception[]::new));
+    }
+
+    /** The name of the table as the database stores it: a quoted name as written, else in the case the database folds to. */
+    private static String storedName(SchemaStatement table, DatabaseMetaData metadata) throws SQLException {
+        String name = table.table().name().name();
+        if (table.table().name().quoted()) {
+            return name;
+        }
+        return metadata.storesUpperCaseIdentifiers() ? name.toUpperCase(Locale.ROOT) : name.toLowerCase(Locale.ROOT);
     }
 }

@@ -143,7 +143,7 @@ public final class ManagedClasses {
             if (managed) {
                 into.add(model.thisClass().asInternalName().replace('/', '.'));
             }
-        } catch (IllegalArgumentException e) {
+        } catch (IllegalArgumentException _) {
             // not a class file Noether can read (newer version, obfuscated attributes): not a managed class
         }
     }

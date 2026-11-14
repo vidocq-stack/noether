@@ -45,10 +45,12 @@ public final class BeanValidation {
     private static final Validator NOOP = new Validator() {
         @Override
         public void validate(String event, Object entity) {
+            // validation is off: every entity is accepted
         }
 
         @Override
         public void close() {
+            // nothing was opened
         }
     };
 
@@ -88,7 +90,7 @@ public final class BeanValidation {
         try {
             Class.forName("jakarta.validation.Validation", false, loader);
             return true;
-        } catch (ClassNotFoundException absent) {
+        } catch (ClassNotFoundException _) {
             return false;
         }
     }
