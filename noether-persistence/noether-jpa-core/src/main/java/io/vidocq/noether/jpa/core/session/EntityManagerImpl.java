@@ -1040,14 +1040,8 @@ final class EntityManagerImpl implements EntityManager {
      */
     private void fetchAttribute(Object instance, Object value, FetchPlan targets, Connection connection) {
         io.vidocq.noether.jpa.core.spi.LazyReference.initialize(value);
-        if (value instanceof LazyCollection lazy && !lazy.initialized()) {
-            Optional<ManagedEntity> entry = lazy.owner() == instance ? context.entry(instance) : Optional.empty();
-            if (entry.isEmpty()) return;
-            if (connection == null) {
-                lazy.initialize();
-            } else {
-                factory.loader(connection).initialize(entry.get(), lazy, connection, context);
-            }
+        if (value instanceof LazyCollection lazy && !lazy.initialized() && !initializeOwned(instance, lazy, connection)) {
+            return;
         }
         if (targets.isEmpty() || LazyCollection.unloaded(value)) return;
         switch (value) {
@@ -1062,6 +1056,18 @@ final class EntityManagerImpl implements EntityManager {
             }
             case null, default -> fetch(value, targets, connection);
         }
+    }
+
+    /** Initializes {@code lazy} when {@code instance} owns it and is managed; whether it did. */
+    private boolean initializeOwned(Object instance, LazyCollection lazy, Connection connection) {
+        Optional<ManagedEntity> entry = lazy.owner() == instance ? context.entry(instance) : Optional.empty();
+        if (entry.isEmpty()) return false;
+        if (connection == null) {
+            lazy.initialize();
+        } else {
+            factory.loader(connection).initialize(entry.get(), lazy, connection, context);
+        }
+        return true;
     }
 
     private void completeGraph(Object instance, MappedEntity type, FetchPlan plan) {

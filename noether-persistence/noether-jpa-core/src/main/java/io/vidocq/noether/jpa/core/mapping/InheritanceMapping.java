@@ -42,7 +42,7 @@ import java.util.Set;
 /** Relational inheritance metadata (§2.14), read from class files, never entity annotations by reflection. */
 public final class InheritanceMapping {
     private static final String JPA = "jakarta.persistence.";
-    private static final String VALUE = "value";
+    private static final String MEMBER_VALUE = "value";
     /** The {@code DiscriminatorType} whose values are numbers; the others are strings. */
     private static final String INTEGER = "INTEGER";
     private final List<EntityModel> chain;
@@ -118,11 +118,11 @@ public final class InheritanceMapping {
             var written = info(entity).annotation(JPA + "DiscriminatorValue");
             if (discriminator == null || "STRING".equals(discriminatorType)) {
                 Object entityValue = discriminator == null ? entity.entityName()
-                    : written.map(a -> a.string(VALUE)).orElse(entity.entityName());
+                    : written.map(a -> a.string(MEMBER_VALUE)).orElse(entity.entityName());
                 values.put(entity.javaType(), entityValue);
                 used.add(entityValue);
             } else if (written.isPresent()) {
-                Object entityValue = writtenValue(entity, written.get().string(VALUE));
+                Object entityValue = writtenValue(entity, written.get().string(MEMBER_VALUE));
                 values.put(entity.javaType(), entityValue);
                 used.add(entityValue);
             }
@@ -197,7 +197,7 @@ public final class InheritanceMapping {
                 ClassInfo info = info(entity);
                 info.annotation(JPA + "PrimaryKeyJoinColumn").ifPresent(a -> keys.add(a.string("name")));
                 info.annotation(JPA + "PrimaryKeyJoinColumns").ifPresent(a ->
-                    a.annotations(VALUE).forEach(k -> keys.add(k.string("name"))));
+                    a.annotations(MEMBER_VALUE).forEach(k -> keys.add(k.string("name"))));
                 tables.add(new SecondaryTableModel(entity.table(), keys));
             }
         }
@@ -218,7 +218,7 @@ public final class InheritanceMapping {
             List<AnnotationInfo> joins = new ArrayList<>();
             ClassInfo info = info(chain.get(t));
             info.annotation(JPA + "PrimaryKeyJoinColumn").ifPresent(joins::add);
-            info.annotation(JPA + "PrimaryKeyJoinColumns").ifPresent(a -> joins.addAll(a.annotations(VALUE)));
+            info.annotation(JPA + "PrimaryKeyJoinColumns").ifPresent(a -> joins.addAll(a.annotations(MEMBER_VALUE)));
             if (!joins.isEmpty()) {
                 keys = joinedKeys(chain.get(t), joins, keys);
             }

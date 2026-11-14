@@ -892,8 +892,7 @@ public final class FlushEngine {
         EntityStatements statements = work.type().statements();
         Object[] owner = statements.keyValues(work.type().id(work.entry().instance()));
         Object[] ownerValues = clear ? null : owner;
-        boolean writesIndex = foreign.index() != null
-            && (inserted ? foreign.index().insertable() : foreign.index().updatable());
+        boolean writesIndex = writesIndex(foreign, inserted);
         for (var group : targetTables(statements, elements, foreign.association().targetEntity(), update.table()).entrySet()) {
             var concrete = new io.vidocq.noether.jpa.dialect.sql.Update(group.getKey(), update.assignments(), update.conditions());
             try (PreparedStatement statement = connection.prepareStatement(render(concrete))) {
@@ -911,6 +910,11 @@ public final class FlushEngine {
                 throw failure("write of the collection foreign key of " + foreign.association().name() + " of", work.type(), e);
             }
         }
+    }
+
+    /** Whether a collection key update writes the order or map key column: insertable for a new owner, else updatable. */
+    private static boolean writesIndex(CollectionMapping.ForeignKey foreign, boolean inserted) {
+        return foreign.index() != null && (inserted ? foreign.index().insertable() : foreign.index().updatable());
     }
 
     /**

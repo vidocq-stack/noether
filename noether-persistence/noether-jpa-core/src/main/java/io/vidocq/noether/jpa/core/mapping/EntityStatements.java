@@ -424,23 +424,20 @@ public final class EntityStatements {
         if (whole != null) {
             return referenceColumns(whole, references);
         }
-        switch (model.id()) {
-            case IdModel.Single single -> keys.add(columnOf(model.attributes().indexOf(single.attribute()), -1, columns));
-            case IdModel.Derived(AssociationAttribute relationship) -> {
-                return referenceColumns(model.attributes().indexOf(relationship), references);
-            }
-            case IdModel.Embedded(EmbeddedAttribute embedded) -> {
-                if (!addEmbeddedKeys(keys, model, embedded, columns, references, mapsIds)) {
-                    return null;
-                }
-            }
-            case IdModel.ByIdClass byIdClass -> {
-                if (!addIdClassKeys(keys, model, byIdClass, columns, references)) {
-                    return null;
-                }
-            }
-        }
-        return keys.contains(-1) ? null : keys;
+        return switch (model.id()) {
+            case IdModel.Derived(AssociationAttribute relationship) ->
+                referenceColumns(model.attributes().indexOf(relationship), references);
+            case IdModel.Single single ->
+                complete(keys, keys.add(columnOf(model.attributes().indexOf(single.attribute()), -1, columns)));
+            case IdModel.Embedded(EmbeddedAttribute embedded) ->
+                complete(keys, addEmbeddedKeys(keys, model, embedded, columns, references, mapsIds));
+            case IdModel.ByIdClass byIdClass -> complete(keys, addIdClassKeys(keys, model, byIdClass, columns, references));
+        };
+    }
+
+    /** {@code keys} when each part of the identity has columns ({@code mapped}, no -1), else {@code null}. */
+    private static List<Integer> complete(List<Integer> keys, boolean mapped) {
+        return mapped && !keys.contains(-1) ? keys : null;
     }
 
     /**
@@ -1394,12 +1391,12 @@ public final class EntityStatements {
         };
     }
 
-    /** The statements of table {@code t}; {@code null} for a secondary table no column is mapped to. */
     /** Whether the table {@code t} holds {@code column}: the primary table its key columns too, another table its own. */
     private static boolean inTable(Column column, int t) {
         return t == 0 ? column.id() || column.table() == 0 : !column.id() && column.table() == t;
     }
 
+    /** The statements of table {@code t}; {@code null} for a secondary table no column is mapped to. */
     private static TableStatements table(Table table, int t, List<Column> columns, List<Integer> keys, List<Identifier> keyNames,
             Integer version, Identifier generated) {
         List<Parameter> keyParameters = keys.stream().map(c -> new Parameter(c, false)).toList();

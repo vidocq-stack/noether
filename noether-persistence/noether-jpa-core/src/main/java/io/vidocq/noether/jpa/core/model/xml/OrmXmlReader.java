@@ -119,25 +119,6 @@ final class OrmXmlReader {
         return namespace == null ? "" : namespace;
     }
 
-    /** §12.2: the root is {@code entity-mappings}, in the namespace of the version it declares. */
-    private static void checkRoot(XMLStreamReader r, MappingFile file, int line) {
-        if (!"entity-mappings".equals(r.getLocalName())) {
-            throw error(file, line, "the root element is <" + r.getLocalName() + ">, not <entity-mappings>", null);
-        }
-        String version = r.getAttributeValue(null, "version");
-        String declared = version == null ? "" : version.strip();
-        String expected = switch (declared) {
-            case "1.0", "2.0" -> SUN;
-            case "2.1", "2.2" -> JCP;
-            case "3.0", "3.1", "3.2" -> JAKARTA;
-            default -> throw error(file, line, "unsupported mapping file version '" + declared + "' (1.0 to 3.2)", null);
-        };
-        if (!expected.equals(r.getNamespaceURI())) {
-            throw error(file, line, "the version " + declared + " does not match the namespace " + r.getNamespaceURI()
-                + " (expected " + expected + ")", null);
-        }
-    }
-
     static PersistenceException error(MappingFile file, int line, String message, Throwable cause) {
         String where = "Mapping file " + file.name() + (line > 0 ? ", line " + line : "");
         return new PersistenceException(where + ": " + message, cause);
@@ -156,9 +137,28 @@ final class OrmXmlReader {
             this.file = file;
         }
 
+        /** §12.2: the root is {@code entity-mappings}, in the namespace of the version it declares. */
+        private void checkRoot(int line) {
+            if (!"entity-mappings".equals(reader.getLocalName())) {
+                throw error(file, line, "the root element is <" + reader.getLocalName() + ">, not <entity-mappings>", null);
+            }
+            String version = reader.getAttributeValue(null, "version");
+            String declared = version == null ? "" : version.strip();
+            String expected = switch (declared) {
+                case "1.0", "2.0" -> SUN;
+                case "2.1", "2.2" -> JCP;
+                case "3.0", "3.1", "3.2" -> JAKARTA;
+                default -> throw error(file, line, "unsupported mapping file version '" + declared + "' (1.0 to 3.2)", null);
+            };
+            if (!expected.equals(reader.getNamespaceURI())) {
+                throw error(file, line, "the version " + declared + " does not match the namespace "
+                    + reader.getNamespaceURI() + " (expected " + expected + ")", null);
+            }
+        }
+
         void startElement(int line) {
             if (validation == null) {
-                checkRoot(reader, file, line);
+                checkRoot(line);
                 validation = new Validation(file, reader);
                 validation.start();
             }
