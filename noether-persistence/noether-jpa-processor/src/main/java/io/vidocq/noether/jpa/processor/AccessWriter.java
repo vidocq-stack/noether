@@ -209,9 +209,9 @@ final class AccessWriter {
      * The source of the access of {@code type}.
      *
      * @param className the simple name of the generated class
-     * @param record whether {@code type} is a record, built through its canonical constructor
+     * @param isRecord whether {@code type} is a record, built through its canonical constructor
      */
-    String write(TypeElement type, String className, List<Member> members, boolean record, List<Callback> callbacks)
+    String write(TypeElement type, String className, List<Member> members, boolean isRecord, List<Callback> callbacks)
             throws Unsupported {
         String pkg = packageOf(type);
         String self = qualified(type);
@@ -221,58 +221,91 @@ final class AccessWriter {
         boolean readOnly = type.getKind() == ElementKind.ENUM; // its enumerated value is read, never written (§11.1.18)
         List<Slot> slots = new ArrayList<>();
         for (Member member : members) {
-            slots.add(slot(type, member, pkg, record, readOnly));
+            slots.add(slot(type, member, pkg, isRecord, readOnly));
         }
         List<String> listeners = new ArrayList<>();
         List<CallbackSlot> callbackSlots = new ArrayList<>();
         for (Callback callback : callbacks) {
             callbackSlots.add(callbackSlot(type, callback, pkg, listeners));
         }
-        StringBuilder listenerFields = new StringBuilder();
+        boolean notWritten = isRecord || readOnly;
+        String methods = creation(type, self, slots, isRecord, readOnly) + callbackMethod(self, callbackSlots)
+            + accessors(self, slots, notWritten);
+        return CLASS.formatted(self, pkg.isEmpty() ? "" : "package " + pkg + ";\n\n", className,
+            handles(type, slots, notWritten, callbackSlots), attributes(slots), methods, callbackDescriptors(callbacks),
+            listenerFields(listeners));
+    }
+
+    /** One static instance per listener class (§3.6.1: a listener class has a public no-arg constructor). */
+    private static String listenerFields(List<String> listeners) {
+        StringBuilder fields = new StringBuilder();
         for (int k = 0; k < listeners.size(); k++) {
-            // §3.6.1: a listener class has a public no-arg constructor; one instance per access
-            listenerFields.append("    private static final ").append(listeners.get(k)).append(" LISTENER_").append(k).append(" = new ")
-                .append(listeners.get(k)).append("();\n");
+            fields.append("    private static final ").append(listeners.get(k)).append(" LISTENER_").append(k)
+                .append(" = new ").append(listeners.get(k)).append("();\n");
         }
         if (!listeners.isEmpty()) {
-            listenerFields.append('\n');
+            fields.append('\n');
         }
-        StringBuilder callbackDescriptors = new StringBuilder();
+        return fields.toString();
+    }
+
+    /** The descriptors of the callbacks, as string literals. */
+    private static String callbackDescriptors(List<Callback> callbacks) {
+        StringBuilder descriptors = new StringBuilder();
         for (Callback callback : callbacks) {
-            callbackDescriptors.append(callbackDescriptors.isEmpty() ? "" : ", ").append('"').append(callback.descriptor()).append('"');
+            descriptors.append(descriptors.isEmpty() ? "" : ", ").append('"').append(callback.descriptor()).append('"');
         }
+        return descriptors.toString();
+    }
+
+    /** The attributes, as string literals {@code name:ACCESS}. */
+    private static String attributes(List<Slot> slots) {
         StringBuilder attributes = new StringBuilder();
         for (int i = 0; i < slots.size(); i++) {
             Member member = slots.get(i).member();
-            attributes.append(i == 0 ? "" : ", ").append('"').append(member.name()).append(':').append(member.access()).append('"');
+            attributes.append(i == 0 ? "" : ", ").append('"').append(member.name()).append(':').append(member.access())
+                .append('"');
         }
-        StringBuilder methods = new StringBuilder();
-        if (record) {
-            methods.append(construct(self, slots));
-        } else if (!readOnly) {
-            methods.append(instantiate(type, self));
+        return attributes.toString();
+    }
+
+    /** How the access builds an instance: a record through its canonical constructor; an enum is never built. */
+    private String creation(TypeElement type, String self, List<Slot> slots, boolean isRecord, boolean readOnly) {
+        if (isRecord) {
+            return construct(self, slots);
         }
-        if (!callbackSlots.isEmpty()) {
-            StringBuilder cases = new StringBuilder();
-            for (int i = 0; i < callbackSlots.size(); i++) {
-                CallbackSlot slot = callbackSlots.get(i);
-                cases.append("                case ").append(i).append(" -> ")
-                    .append(slot.call() != null ? slot.call() : "CALLBACK_" + i + ".invokeExact(instance)").append(";\n");
-            }
-            methods.append(CALLBACK.formatted(self, cases));
+        return readOnly ? "" : instantiate(type, self);
+    }
+
+    /** The method that invokes the callbacks, if any. */
+    private static String callbackMethod(String self, List<CallbackSlot> callbackSlots) {
+        if (callbackSlots.isEmpty()) {
+            return "";
         }
+        StringBuilder cases = new StringBuilder();
+        for (int i = 0; i < callbackSlots.size(); i++) {
+            CallbackSlot slot = callbackSlots.get(i);
+            cases.append("                case ").append(i).append(" -> ")
+                .append(slot.call() != null ? slot.call() : "CALLBACK_" + i + ".invokeExact(instance)").append(";\n");
+        }
+        return CALLBACK.formatted(self, cases);
+    }
+
+    /** The methods that read the attributes, and those that write them unless the instance is never written. */
+    private String accessors(String self, List<Slot> slots, boolean notWritten) {
         if (slots.isEmpty()) {
-            methods.append(NO_ATTRIBUTE); // a converter: instantiated, never read nor written
-        } else {
-            methods.append(GET.formatted(self, lines(slots, (slot, i) -> "                case " + i + " -> " + value(slot, i) + ";")));
-            methods.append(READ.formatted(self, lines(slots, (slot, i) -> "            state[" + i + "] = " + value(slot, i) + ";")));
+            return NO_ATTRIBUTE; // a converter: instantiated, never read nor written
         }
-        if (!record && !readOnly && !slots.isEmpty()) {
-            methods.append(SET.formatted(self, lines(slots, (slot, i) -> "                case " + i + " -> " + assignment(slot, i, "value") + ";")));
-            methods.append(WRITE.formatted(self, lines(slots, (slot, i) -> "            " + assignment(slot, i, "state[" + i + "]") + ";")));
+        StringBuilder methods = new StringBuilder()
+            .append(GET.formatted(self, lines(slots, (slot, i) -> "                case " + i + " -> " + value(slot, i) + ";")))
+            .append(READ.formatted(self, lines(slots, (slot, i) -> "            state[" + i + "] = " + value(slot, i) + ";")));
+        if (!notWritten) {
+            methods.append(SET.formatted(self,
+                    lines(slots, (slot, i) -> "                case " + i + " -> " + assignment(slot, i, "value") + ";")))
+                .append(WRITE.formatted(self,
+                    lines(slots, (slot, i) -> "            " + assignment(slot, i, "state[" + i + "]") + ";")));
         }
-        return CLASS.formatted(self, pkg.isEmpty() ? "" : "package " + pkg + ";\n\n", className,
-            handles(type, slots, record || readOnly, callbackSlots), attributes, methods, callbackDescriptors, listenerFields);
+        return methods.toString();
     }
 
     /** One line per slot, each ended by a new line. */
@@ -295,7 +328,7 @@ final class AccessWriter {
         return "entity." + slot.setter() + "((" + slot.type() + ") " + value + ")";
     }
 
-    private Slot slot(TypeElement type, Member member, String pkg, boolean record, boolean readOnly) throws Unsupported {
+    private Slot slot(TypeElement type, Member member, String pkg, boolean isRecord, boolean readOnly) throws Unsupported {
         ClassInfo owner = member.owner();
         String ownerPackage = owner.name().contains(".") ? owner.name().substring(0, owner.name().lastIndexOf('.')) : "";
         boolean samePackage = ownerPackage.equals(pkg);
@@ -307,7 +340,7 @@ final class AccessWriter {
             throw new Unsupported("the class " + owner.name() + " cannot be read");
         }
         boolean sameModule = elements.getModuleOf(ownerElement).equals(elements.getModuleOf(type));
-        if (record) {
+        if (isRecord) {
             // record components: their accessor is public, and the record cannot be written
             return new Slot(member, typeName, true, true, member.name(), null, depth, typeLiteral, null);
         }
@@ -433,7 +466,6 @@ final class AccessWriter {
         return self + ".class" + ".getSuperclass()".repeat(depth);
     }
 
-    /** The method handles of the members the generated class cannot reach directly, and their static initialiser. */
     /**
      * The handles of the members the generated class cannot name, and of a private constructor.
      *
@@ -443,12 +475,31 @@ final class AccessWriter {
     private String handles(TypeElement type, List<Slot> slots, boolean notBuilt, List<CallbackSlot> callbacks) {
         boolean constructor = !notBuilt && privateConstructor(type);
         // a record slot is read and never written through its public accessor: it never needs a handle
-        boolean any = slots.stream().anyMatch(s -> !s.directGet() || !s.directSet()) || constructor
+        boolean any = slots.stream().anyMatch(AccessWriter::throughHandle) || constructor
             || callbacks.stream().anyMatch(c -> c.handle() != null);
         if (!any) {
             return "";
         }
         String self = qualified(type);
+        StringBuilder body = new StringBuilder(lookups(self, slots, constructor, callbacks)).append(slotHandles(self, slots));
+        if (constructor) {
+            body.append("            NEW = in0.findConstructor(").append(self).append(".class, java.lang.invoke.MethodType.methodType(void.class))")
+                .append(".asType(java.lang.invoke.MethodType.methodType(java.lang.Object.class));\n");
+        }
+        for (int i = 0; i < callbacks.size(); i++) {
+            if (callbacks.get(i).handle() != null) {
+                body.append("            CALLBACK_").append(i).append(" = ").append(callbacks.get(i).handle()).append(";\n");
+            }
+        }
+        return STATIC.formatted(handleFields(slots, constructor, callbacks), body);
+    }
+
+    private static boolean throughHandle(Slot slot) {
+        return !slot.directGet() || !slot.directSet();
+    }
+
+    /** The static fields that hold the handles. */
+    private static String handleFields(List<Slot> slots, boolean constructor, List<CallbackSlot> callbacks) {
         StringBuilder fields = new StringBuilder();
         for (int i = 0; i < slots.size(); i++) {
             Slot slot = slots.get(i);
@@ -467,54 +518,56 @@ final class AccessWriter {
                 fields.append("    private static final java.lang.invoke.MethodHandle CALLBACK_").append(i).append(";\n");
             }
         }
-        StringBuilder body = new StringBuilder();
+        return fields.toString();
+    }
+
+    /** One private lookup per class of the hierarchy a handle is found in, by depth below the managed class. */
+    private static String lookups(String self, List<Slot> slots, boolean constructor, List<CallbackSlot> callbacks) {
         SortedSet<Integer> depths = new TreeSet<>();
-        for (Slot slot : slots) {
-            if (!slot.directGet() || !slot.directSet()) {
-                depths.add(slot.depth());
-            }
-        }
+        slots.stream().filter(AccessWriter::throughHandle).forEach(slot -> depths.add(slot.depth()));
         if (constructor) {
             depths.add(0);
         }
         callbacks.stream().filter(c -> c.handle() != null && c.depth() >= 0).forEach(c -> depths.add(c.depth()));
+        StringBuilder body = new StringBuilder();
         for (int depth : depths) {
             body.append("            java.lang.invoke.MethodHandles.Lookup in").append(depth)
                 .append(" = java.lang.invoke.MethodHandles.privateLookupIn(").append(classOf(self, depth)).append(", own);\n");
         }
+        return body.toString();
+    }
+
+    /** The handles of the slots the generated class cannot read or write directly. */
+    private static String slotHandles(String self, List<Slot> slots) {
+        StringBuilder body = new StringBuilder();
         for (int i = 0; i < slots.size(); i++) {
             Slot slot = slots.get(i);
-            if (slot.directGet() && slot.directSet()) {
-                continue;
-            }
-            String owner = classOf(self, slot.depth());
-            String lookup = "in" + slot.depth();
-            String typeClass = slot.typeLiteral();
-            boolean field = slot.member().access() == AccessKind.FIELD;
             if (!slot.directGet()) {
-                body.append("            GET_").append(i).append(" = ").append(lookup).append(field
-                    ? ".findGetter(" + owner + ", \"" + slot.getter() + "\", " + typeClass + ")"
-                    : ".findVirtual(" + owner + ", \"" + slot.getter() + "\", java.lang.invoke.MethodType.methodType(" + typeClass + "))")
-                    .append(".asType(getter);\n");
+                body.append(getterHandle(self, slot, i));
             }
             if (!slot.directSet()) {
-                body.append("            SET_").append(i).append(" = ").append(lookup).append(field
-                    ? ".findSetter(" + owner + ", \"" + slot.setter() + "\", " + typeClass + ")"
-                    : ".findVirtual(" + owner + ", \"" + slot.setter() + "\", java.lang.invoke.MethodType.methodType("
-                        + slot.setterReturnLiteral() + ", " + typeClass + "))")
-                    .append(".asType(setter);\n");
+                body.append(setterHandle(self, slot, i));
             }
         }
-        if (constructor) {
-            body.append("            NEW = in0.findConstructor(").append(self).append(".class, java.lang.invoke.MethodType.methodType(void.class))")
-                .append(".asType(java.lang.invoke.MethodType.methodType(java.lang.Object.class));\n");
-        }
-        for (int i = 0; i < callbacks.size(); i++) {
-            if (callbacks.get(i).handle() != null) {
-                body.append("            CALLBACK_").append(i).append(" = ").append(callbacks.get(i).handle()).append(";\n");
-            }
-        }
-        return STATIC.formatted(fields, body);
+        return body.toString();
+    }
+
+    private static String getterHandle(String self, Slot slot, int i) {
+        String owner = classOf(self, slot.depth());
+        String find = slot.member().access() == AccessKind.FIELD
+            ? ".findGetter(" + owner + ", \"" + slot.getter() + "\", " + slot.typeLiteral() + ")"
+            : ".findVirtual(" + owner + ", \"" + slot.getter() + "\", java.lang.invoke.MethodType.methodType("
+                + slot.typeLiteral() + "))";
+        return "            GET_" + i + " = in" + slot.depth() + find + ".asType(getter);\n";
+    }
+
+    private static String setterHandle(String self, Slot slot, int i) {
+        String owner = classOf(self, slot.depth());
+        String find = slot.member().access() == AccessKind.FIELD
+            ? ".findSetter(" + owner + ", \"" + slot.setter() + "\", " + slot.typeLiteral() + ")"
+            : ".findVirtual(" + owner + ", \"" + slot.setter() + "\", java.lang.invoke.MethodType.methodType("
+                + slot.setterReturnLiteral() + ", " + slot.typeLiteral() + "))";
+        return "            SET_" + i + " = in" + slot.depth() + find + ".asType(setter);\n";
     }
 
     private String instantiate(TypeElement type, String self) {

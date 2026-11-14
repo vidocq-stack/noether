@@ -64,7 +64,8 @@ class ConvertersAndEnumsTest {
         assertThat(trim.attributes()).isEmpty();
         assertThat(trim.instantiate()).isExactlyInstanceOf(trim.type());
         assertThat(codes.source("codes/Trim$$NoetherAccess.java")).contains("new codes.Trim()");
-        assertThatThrownBy(() -> trim.get(new Object(), 0)).isInstanceOf(IndexOutOfBoundsException.class);
+        Object converter = trim.instantiate();
+        assertThatThrownBy(() -> trim.get(converter, 0)).isInstanceOf(IndexOutOfBoundsException.class);
 
         ManagedAccess quiet = accesses.get("codes.Quiet");
         assertThat(quiet.instantiate()).isExactlyInstanceOf(quiet.type()); // its constructor is private: a handle

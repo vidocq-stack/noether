@@ -63,6 +63,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
+import java.util.function.UnaryOperator;
 
 /**
  * The {@link ValueBinder}s of the basic attributes of one persistence unit (§2.8 and the 3.2 additions, §3.9
@@ -455,7 +456,7 @@ public final class ValueBinders {
     }
 
     private ValueBinder byEnumeratedValue(Class<?> type, String field, Class<?> valueType) {
-        Function<Object, Object> enumeratedValue = enumeratedValue(type, field, valueType);
+        UnaryOperator<Object> enumeratedValue = enumeratedValue(type, field, valueType);
         Map<Object, Object> valueOf = new HashMap<>();
         Map<Object, Object> constantOf = new HashMap<>();
         for (Object constant : type.getEnumConstants()) {
@@ -469,7 +470,7 @@ public final class ValueBinders {
     }
 
     /** How the enumerated value of a constant is read: by the generated access of its enum, else by a handle. */
-    private Function<Object, Object> enumeratedValue(Class<?> type, String field, Class<?> valueType) {
+    private UnaryOperator<Object> enumeratedValue(Class<?> type, String field, Class<?> valueType) {
         Optional<ManagedAccess> access = generated.find(type, List.of(field + ":" + AccessKind.FIELD));
         if (access.isPresent()) {
             ManagedAccess enumeration = access.get();
