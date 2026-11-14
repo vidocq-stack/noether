@@ -100,16 +100,23 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
             open = List.copyOf(OPEN_FACTORIES);
         }
         for (EntityManagerFactoryImpl factory : open) {
-            Optional<MappedEntity> type = factory.isOpen() ? factory.mapping.entity(entity.getClass()) : Optional.empty();
-            if (type.isEmpty()) continue;
-            if (attributeName == null) return new UnitUtil(factory.mapping).isLoaded(entity)
-                ? jakarta.persistence.spi.LoadState.LOADED : jakarta.persistence.spi.LoadState.NOT_LOADED;
-            int index = UnitUtil.index(type.get(), attributeName);
-            if (index < 0) continue;
-            return new UnitUtil(factory.mapping).isLoaded(entity, attributeName)
-                ? jakarta.persistence.spi.LoadState.LOADED : jakarta.persistence.spi.LoadState.NOT_LOADED;
+            Optional<jakarta.persistence.spi.LoadState> state = factory.loadStateOf(entity, attributeName);
+            if (state.isPresent()) return state.get();
         }
         return jakarta.persistence.spi.LoadState.UNKNOWN;
+    }
+
+    /** {@link #loadState} as this factory knows it: empty when it is closed, or maps neither the entity nor the attribute. */
+    private Optional<jakarta.persistence.spi.LoadState> loadStateOf(Object entity, String attributeName) {
+        Optional<MappedEntity> type = isOpen() ? mapping.entity(entity.getClass()) : Optional.empty();
+        if (type.isEmpty()) return Optional.empty();
+        if (attributeName == null) return Optional.of(loadState(new UnitUtil(mapping).isLoaded(entity)));
+        if (UnitUtil.index(type.get(), attributeName) < 0) return Optional.empty();
+        return Optional.of(loadState(new UnitUtil(mapping).isLoaded(entity, attributeName)));
+    }
+
+    private static jakarta.persistence.spi.LoadState loadState(boolean loaded) {
+        return loaded ? jakarta.persistence.spi.LoadState.LOADED : jakarta.persistence.spi.LoadState.NOT_LOADED;
     }
 
     public EntityManagerFactoryImpl(UnitSettings settings, ConnectionSource connections, ConnectionSource allocations,

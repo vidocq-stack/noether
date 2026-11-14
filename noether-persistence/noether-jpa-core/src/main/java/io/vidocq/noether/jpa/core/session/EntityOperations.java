@@ -24,6 +24,7 @@ import io.vidocq.noether.jpa.core.context.ManagedEntity;
 import io.vidocq.noether.jpa.core.context.PersistenceContext;
 import io.vidocq.noether.jpa.core.generation.IdGenerators;
 import io.vidocq.noether.jpa.core.mapping.CollectionMapping;
+import io.vidocq.noether.jpa.core.mapping.ElementCollectionMapping;
 import io.vidocq.noether.jpa.core.mapping.IndexMapping;
 import io.vidocq.noether.jpa.core.mapping.LazyCollection;
 import io.vidocq.noether.jpa.core.mapping.MappedEntity;
@@ -31,6 +32,7 @@ import io.vidocq.noether.jpa.core.mapping.MappedUnit;
 import io.vidocq.noether.jpa.core.mapping.StatePolicy;
 import io.vidocq.noether.jpa.core.model.AssociationAttribute;
 import io.vidocq.noether.jpa.core.model.AttributeModel;
+import io.vidocq.noether.jpa.core.model.BasicAttribute;
 import io.vidocq.noether.jpa.core.model.CollectionIndex;
 import io.vidocq.noether.jpa.core.model.ElementCollectionAttribute;
 import io.vidocq.noether.jpa.core.model.EmbeddableModel;
@@ -171,35 +173,11 @@ final class EntityOperations {
         MappedEntity type = type(entity);
         Optional<ManagedEntity> known = context.entry(entity);
         if (known.isPresent()) {
-            if (known.get().status() == ManagedEntity.Status.REMOVED) {
-                throw new IllegalArgumentException("The instance of " + type.model().entityName() + " is removed (§3.2.7.1)");
-            }
-            merged.put(entity, entity);
-            cascadeMerge(entity, entity, type, merged);
-            return entity;
+            return mergeManaged(entity, known.get(), type, merged);
         }
-        Object id = type.id(entity);
-        Object managed = null;
-        if (id != null) {
-            Optional<ManagedEntity> sameIdentity = context.find(new EntityKey(type.root(), id));
-            if (sameIdentity.isPresent()) {
-                if (sameIdentity.get().status() == ManagedEntity.Status.REMOVED) {
-                    throw new IllegalArgumentException("The instance of " + type.model().entityName() + " " + id + " is removed");
-                }
-                managed = sameIdentity.get().instance();
-            } else {
-                managed = connections.on(connection -> factory.loader(connection).load(type, id, connection, context));
-            }
-        }
+        Object managed = managedOfIdentity(type, entity);
         if (managed == null) {
-            // a new instance: a new managed copy (§3.2.7.1)
-            managed = type.access().instantiate();
-            copy(type, entity, managed);
-            type.callback(PRE_PERSIST, managed); // §3.6.3: the managed copy is the instance persisted
-            factory.validator().validate(PRE_PERSIST_EVENT, managed);
-            generateId(type, managed);
-            type.deriveId(managed);
-            context.persist(managed, type);
+            managed = persistedCopy(type, entity);
         } else {
             checkVersion(type, entity, managed);
             copy(type, entity, managed);
@@ -210,6 +188,47 @@ final class EntityOperations {
             type.deriveId(managed);
             context.identify(context.entry(managed).orElseThrow(), type.id(managed));
         }
+        return managed;
+    }
+
+    /** §3.2.7.1: a managed instance merges into itself, through its cascades; a removed one cannot be merged. */
+    private Object mergeManaged(Object entity, ManagedEntity entry, MappedEntity type, Map<Object, Object> merged) {
+        if (entry.status() == ManagedEntity.Status.REMOVED) {
+            throw new IllegalArgumentException("The instance of " + type.model().entityName() + " is removed (§3.2.7.1)");
+        }
+        merged.put(entity, entity);
+        cascadeMerge(entity, entity, type, merged);
+        return entity;
+    }
+
+    /**
+     * The managed instance of the identity of the detached {@code entity}: the persistence context's, else loaded;
+     * {@code null} for a new instance, without an identifier or a row.
+     */
+    private Object managedOfIdentity(MappedEntity type, Object entity) {
+        Object id = type.id(entity);
+        if (id == null) {
+            return null;
+        }
+        Optional<ManagedEntity> sameIdentity = context.find(new EntityKey(type.root(), id));
+        if (sameIdentity.isEmpty()) {
+            return connections.on(connection -> factory.loader(connection).load(type, id, connection, context));
+        }
+        if (sameIdentity.get().status() == ManagedEntity.Status.REMOVED) {
+            throw new IllegalArgumentException("The instance of " + type.model().entityName() + " " + id + " is removed");
+        }
+        return sameIdentity.get().instance();
+    }
+
+    /** A new instance merged: a new managed copy (§3.2.7.1), persisted. */
+    private Object persistedCopy(MappedEntity type, Object entity) {
+        Object managed = type.access().instantiate();
+        copy(type, entity, managed);
+        type.callback(PRE_PERSIST, managed); // §3.6.3: the managed copy is the instance persisted
+        factory.validator().validate(PRE_PERSIST_EVENT, managed);
+        generateId(type, managed);
+        type.deriveId(managed);
+        context.persist(managed, type);
         return managed;
     }
 
@@ -227,47 +246,62 @@ final class EntityOperations {
     }
 
     /** The relationships of {@code managed} cascading MERGE point to the merged targets of {@code entity}'s. */
-    @SuppressWarnings("unchecked")
     private void cascadeMerge(Object entity, Object managed, MappedEntity type, Map<Object, Object> merged) {
         List<AttributeModel> attributes = type.model().attributes();
         for (int i = 0; i < attributes.size(); i++) {
             if (attributes.get(i) instanceof AssociationAttribute association && association.cascades(CascadeType.MERGE)) {
-                Object value = type.access().get(entity, i);
-                if (LazyCollection.unloaded(value) || io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(value)) {
-                    continue; // §3.2.7.1: not loaded, nothing of it was changed to merge
-                }
-                if (value instanceof Collection<?> collection) {
-                    Collection<Object> elements = mapped(association, collection, target -> merge(target, merged));
-                    if (managed != entity) {
-                        type.access().set(managed, i, elements);
-                    } else if (!sameElements(collection, elements)) {
-                        replace(collection, elements); // a managed instance keeps its collection, with the managed elements
-                    }
-                } else if (value instanceof Map<?, ?> map) {
-                    Map<Object, Object> entries = mappedMap(association, map, key -> managedKey(association, key),
-                        target -> merge(target, merged));
-                    if (managed != entity) {
-                        type.access().set(managed, i, entries);
-                    } else {
-                        replace(map, entries); // a managed instance keeps its map, with the managed keys and values
-                    }
-                } else if (value != null) {
-                    type.access().set(managed, i, merge(value, merged));
-                }
+                mergeRelationship(entity, managed, type, i, association, merged);
             }
         }
-        for (var elements : type.statements().elementCollections()) {
-            Object value = type.access().get(managed, elements.attribute());
-            if (value == null || LazyCollection.unloaded(value) || !elements.hasReferences()) continue;
-            Object mapped = elements.mapReferences(value, (association, target) ->
-                association.cascades(CascadeType.MERGE) ? merge(target, merged) : managedReference(target));
-            if (managed == entity && value instanceof Map<?, ?> map) {
-                replace(map, (Map<Object, Object>) mapped);
-            } else if (managed == entity && value instanceof Collection<?> collection) {
-                replace(collection, (Collection<Object>) mapped);
-            } else {
-                type.access().set(managed, elements.attribute(), mapped);
+        for (ElementCollectionMapping elements : type.statements().elementCollections()) {
+            mergeElementReferences(entity, managed, type, elements, merged);
+        }
+    }
+
+    /** The relationship {@code attribute} of {@code managed}, cascading MERGE, points to the merged targets of {@code entity}'s. */
+    private void mergeRelationship(Object entity, Object managed, MappedEntity type, int attribute,
+            AssociationAttribute association, Map<Object, Object> merged) {
+        Object value = type.access().get(entity, attribute);
+        if (LazyCollection.unloaded(value) || io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(value)) {
+            return; // §3.2.7.1: not loaded, nothing of it was changed to merge
+        }
+        if (value instanceof Collection<?> collection) {
+            Collection<Object> elements = mapped(association, collection, target -> merge(target, merged));
+            if (managed != entity) {
+                type.access().set(managed, attribute, elements);
+            } else if (!sameElements(collection, elements)) {
+                replace(collection, elements); // a managed instance keeps its collection, with the managed elements
             }
+        } else if (value instanceof Map<?, ?> map) {
+            Map<Object, Object> entries = mappedMap(association, map, key -> managedKey(association, key),
+                target -> merge(target, merged));
+            if (managed != entity) {
+                type.access().set(managed, attribute, entries);
+            } else {
+                replace(map, entries); // a managed instance keeps its map, with the managed keys and values
+            }
+        } else if (value != null) {
+            type.access().set(managed, attribute, merge(value, merged));
+        }
+    }
+
+    /**
+     * The entities an element collection of {@code managed} references: the merged targets where the reference cascades
+     * MERGE, else their managed instances.
+     */
+    @SuppressWarnings("unchecked")
+    private void mergeElementReferences(Object entity, Object managed, MappedEntity type, ElementCollectionMapping elements,
+            Map<Object, Object> merged) {
+        Object value = type.access().get(managed, elements.attribute());
+        if (value == null || LazyCollection.unloaded(value) || !elements.hasReferences()) return;
+        Object mapped = elements.mapReferences(value, (association, target) ->
+            association.cascades(CascadeType.MERGE) ? merge(target, merged) : managedReference(target));
+        if (managed == entity && value instanceof Map<?, ?> map) {
+            replace(map, (Map<Object, Object>) mapped);
+        } else if (managed == entity && value instanceof Collection<?> collection) {
+            replace(collection, (Collection<Object>) mapped);
+        } else {
+            type.access().set(managed, elements.attribute(), mapped);
         }
     }
 
@@ -285,44 +319,61 @@ final class EntityOperations {
             if (state[i] == null) {
                 continue;
             }
-            if (LazyCollection.unloaded(state[i]) || io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(state[i])) {
-                // §3.2.7.1: a LAZY collection that was not loaded is not merged, the managed instance keeps its own
-                state[i] = type.access().get(to, i);
-                continue;
-            }
-            if (attributes.get(i) instanceof EmbeddedAttribute embedded) {
-                state[i] = copy(embedded.embeddable(), state[i]);
-            } else if (attributes.get(i) instanceof ElementCollectionAttribute elements) {
-                // values, not instances: a collection of its own, embeddables copied
-                UnaryOperator<Object> value = v -> v != null && elements.element() instanceof EmbeddedAttribute embedded
-                    ? copy(embedded.embeddable(), v) : v;
-                if (state[i] instanceof Collection<?> values) {
-                    Collection<Object> copy = CollectionMapping.newCollection(elements.javaType());
-                    values.forEach(v -> copy.add(value.apply(v)));
-                    state[i] = copy;
-                } else if (state[i] instanceof Map<?, ?> map) {
-                    Map<Object, Object> copy = IndexMapping.newMap(elements.javaType());
-                    map.forEach((k, v) -> copy.put(elements.index()
-                        instanceof CollectionIndex.ByEmbedded(EmbeddedAttribute key)
-                            ? copy(key.embeddable(), k) : k, value.apply(v)));
-                    state[i] = copy;
-                }
-            } else if (attributes.get(i) instanceof AssociationAttribute association) {
-                if (association.singleValued()) {
-                    if (!association.cascades(CascadeType.MERGE)) {
-                        state[i] = managedReference(state[i]);
-                    }
-                } else if (state[i] instanceof Collection<?> collection) {
-                    // a collection of its own: the managed instances of its elements, or the merged ones (cascadeMerge)
-                    state[i] = mapped(association, collection,
-                        association.cascades(CascadeType.MERGE) ? element -> element : this::managedReference);
-                } else if (state[i] instanceof Map<?, ?> map) {
-                    state[i] = mappedMap(association, map, key -> managedKey(association, key),
-                        association.cascades(CascadeType.MERGE) ? element -> element : this::managedReference);
-                }
-            }
+            // §3.2.7.1: a LAZY collection that was not loaded is not merged, the managed instance keeps its own
+            state[i] = LazyCollection.unloaded(state[i]) || io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(state[i])
+                ? type.access().get(to, i)
+                : copied(attributes.get(i), state[i]);
         }
         type.access().write(to, state);
+    }
+
+    /** The loaded, non-null {@code value} of {@code attribute} as {@link #copy} sets it on the managed instance. */
+    private Object copied(AttributeModel attribute, Object value) {
+        return switch (attribute) {
+            case EmbeddedAttribute embedded -> copy(embedded.embeddable(), value);
+            case ElementCollectionAttribute elements -> copiedElements(elements, value);
+            case AssociationAttribute association -> managedTargets(association, value);
+            case BasicAttribute _ -> value;
+        };
+    }
+
+    /** Values, not instances: an element collection of its own, its embeddables copied. */
+    private Object copiedElements(ElementCollectionAttribute elements, Object value) {
+        UnaryOperator<Object> element = v -> v != null && elements.element() instanceof EmbeddedAttribute embedded
+            ? copy(embedded.embeddable(), v) : v;
+        if (value instanceof Collection<?> values) {
+            Collection<Object> copy = CollectionMapping.newCollection(elements.javaType());
+            values.forEach(v -> copy.add(element.apply(v)));
+            return copy;
+        }
+        if (value instanceof Map<?, ?> map) {
+            Map<Object, Object> copy = IndexMapping.newMap(elements.javaType());
+            map.forEach((k, v) -> copy.put(elements.index()
+                instanceof CollectionIndex.ByEmbedded(EmbeddedAttribute key)
+                    ? copy(key.embeddable(), k) : k, element.apply(v)));
+            return copy;
+        }
+        return value;
+    }
+
+    /**
+     * The targets of a relationship: a single-valued one that does not cascade merge replaced by the managed instance of
+     * its identity; a collection of its own, of the managed instances of its elements, or of the merged ones (set by
+     * {@link #cascadeMerge}).
+     */
+    private Object managedTargets(AssociationAttribute association, Object value) {
+        boolean cascades = association.cascades(CascadeType.MERGE);
+        if (association.singleValued()) {
+            return cascades ? value : managedReference(value);
+        }
+        UnaryOperator<Object> elements = cascades ? element -> element : this::managedReference;
+        if (value instanceof Collection<?> collection) {
+            return mapped(association, collection, elements);
+        }
+        if (value instanceof Map<?, ?> map) {
+            return mappedMap(association, map, key -> managedKey(association, key), elements);
+        }
+        return value;
     }
 
     /** A new collection of the declared type of {@code association}, of the elements of {@code collection} mapped. */
@@ -641,23 +692,29 @@ final class EntityOperations {
         for (int i = 0; i < attributes.size(); i++) {
             if (attributes.get(i) instanceof AssociationAttribute association && association.cascades(operation)) {
                 Object value = type.access().get(entity, i);
-                if (operation != CascadeType.REMOVE && LazyCollection.unloaded(value)) {
-                    // its elements were not loaded: none of them is new, nor managed through it (§3.2.2, §3.2.5, §3.2.7)
-                    continue;
+                // an unloaded collection: its elements were not loaded, none of them is new, nor managed through it
+                // (§3.2.2, §3.2.5, §3.2.7)
+                if (operation == CascadeType.REMOVE || !LazyCollection.unloaded(value)) {
+                    targets(value, apply);
                 }
-                targets(value, apply);
             }
         }
-        for (var elements : type.statements().elementCollections()) {
-            if (elements.columns().stream().noneMatch(c -> c.foreignKey() != null
-                    && elements.association(c).cascades(operation))) continue;
-            Object value = type.access().get(entity, elements.attribute());
-            if (!elements.hasReferences() || value == null) continue;
-            if (LazyCollection.unloaded(value) && operation != CascadeType.REMOVE && operation != CascadeType.REFRESH) continue;
-            elements.references(value, (association, target) -> {
-                if (association.cascades(operation)) apply.accept(target);
-            });
+        for (ElementCollectionMapping elements : type.statements().elementCollections()) {
+            cascadeElementReferences(entity, type, elements, operation, apply);
         }
+    }
+
+    /** Applies {@code operation} to the entities an element collection of {@code entity} references, where it cascades. */
+    private static void cascadeElementReferences(Object entity, MappedEntity type, ElementCollectionMapping elements,
+            CascadeType operation, Consumer<Object> apply) {
+        if (elements.columns().stream().noneMatch(c -> c.foreignKey() != null
+                && elements.association(c).cascades(operation))) return;
+        Object value = type.access().get(entity, elements.attribute());
+        if (!elements.hasReferences() || value == null) return;
+        if (LazyCollection.unloaded(value) && operation != CascadeType.REMOVE && operation != CascadeType.REFRESH) return;
+        elements.references(value, (association, target) -> {
+            if (association.cascades(operation)) apply.accept(target);
+        });
     }
 
     /** The instances a relationship value holds: itself, the elements of a collection, the values of a map. */

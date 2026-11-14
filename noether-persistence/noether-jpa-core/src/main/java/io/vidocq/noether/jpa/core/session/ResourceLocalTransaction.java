@@ -92,31 +92,11 @@ final class ResourceLocalTransaction implements SessionTransaction {
         lock.lock();
         try {
             if (!rollbackOnly) {
-                try {
-                    listener.beforeCommit(activeConnection());
-                } catch (IllegalStateException e) {
-                    throw e; // no active transaction
-                } catch (RuntimeException e) {
-                    Connection current = takeConnection();
-                    try {
-                        current.rollback();
-                    } catch (SQLException rollbackFailure) {
-                        e.addSuppressed(rollbackFailure);
-                    }
-                    listener.afterRollback();
-                    throw end(current, new RollbackException("The flush before the commit failed: " + e.getMessage(), e));
-                }
+                flushBeforeCommit();
             }
             Connection current = takeConnection();
             if (rollbackOnly) {
-                listener.afterRollback();
-                try {
-                    current.rollback();
-                } catch (SQLException e) {
-                    throw end(current, new RollbackException("The transaction was marked for rollback, and the rollback failed", e));
-                }
-                restoreAutoCommit(current);
-                throw end(current, new RollbackException("The transaction was marked for rollback only"));
+                throw rollBackMarked(current);
             }
             try {
                 current.commit();
@@ -130,25 +110,63 @@ final class ResourceLocalTransaction implements SessionTransaction {
                 throw end(current, new RollbackException("The commit failed: " + e.getMessage(), e));
             }
             restoreAutoCommit(current);
-            RuntimeException releaseFailure = null;
-            try {
-                end(current, null);
-            } catch (RuntimeException failure) {
-                releaseFailure = failure;
-            }
-            try {
-                listener.afterCommit();
-            } catch (RuntimeException completionFailure) {
-                if (releaseFailure == null) {
-                    throw completionFailure;
-                }
-                releaseFailure.addSuppressed(completionFailure);
-            }
-            if (releaseFailure != null) {
-                throw releaseFailure;
-            }
+            completeCommit(current);
         } finally {
             lock.unlock();
+        }
+    }
+
+    /** The listener's flush before the commit; when it fails, the transaction is rolled back and ended. */
+    private void flushBeforeCommit() {
+        try {
+            listener.beforeCommit(activeConnection());
+        } catch (IllegalStateException e) {
+            throw e; // no active transaction
+        } catch (RuntimeException e) {
+            Connection current = takeConnection();
+            try {
+                current.rollback();
+            } catch (SQLException rollbackFailure) {
+                e.addSuppressed(rollbackFailure);
+            }
+            listener.afterRollback();
+            throw end(current, new RollbackException("The flush before the commit failed: " + e.getMessage(), e));
+        }
+    }
+
+    /** Rolls back and ends a transaction marked for rollback only; the failure its commit throws. */
+    private RollbackException rollBackMarked(Connection current) {
+        listener.afterRollback();
+        try {
+            current.rollback();
+        } catch (SQLException e) {
+            return end(current, new RollbackException("The transaction was marked for rollback, and the rollback failed", e));
+        }
+        restoreAutoCommit(current);
+        return end(current, new RollbackException("The transaction was marked for rollback only"));
+    }
+
+    /**
+     * Releases the connection of a committed transaction, then tells the listener; a failure of the release wins, the
+     * listener's is added to it.
+     */
+    private void completeCommit(Connection current) {
+        RuntimeException releaseFailure = null;
+        try {
+            end(current, null);
+        } catch (RuntimeException failure) {
+            releaseFailure = failure;
+        }
+        try {
+            listener.afterCommit();
+        } catch (RuntimeException completionFailure) {
+            if (releaseFailure == null) {
+                throw completionFailure;
+            }
+            releaseFailure.addSuppressed(completionFailure);
+        }
+        if (releaseFailure != null) {
+            throw releaseFailure;
         }
     }
 

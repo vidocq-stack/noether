@@ -223,9 +223,10 @@ public final class ValueBinders {
         };
     }
 
-    /** The shared instance of a converter class. */
-    public AttributeConverter<?, ?> converter(Class<?> converterClass) {
-        return converters.computeIfAbsent(converterClass, c -> (AttributeConverter<?, ?>) generated.find(c, List.of())
+    /** The shared instance of a converter class, applied to the untyped values of an attribute and of its column. */
+    @SuppressWarnings("unchecked")
+    public AttributeConverter<Object, Object> converter(Class<?> converterClass) {
+        return (AttributeConverter<Object, Object>) converters.computeIfAbsent(converterClass, c -> (AttributeConverter<?, ?>) generated.find(c, List.of())
             .map(ManagedAccess::instantiate).orElseGet(() -> Handles.newInstance(c)));
     }
 
@@ -247,10 +248,16 @@ public final class ValueBinders {
     }
 
     private static ValueBinder standard(Class<?> type) {
-        boolean primitive = type.isPrimitive();
-        if (type == String.class) {
-            return new Simple(Types.VARCHAR, (s, i, v) -> s.setString(i, (String) v), ResultSet::getString);
+        ValueBinder binder = primitive(type);
+        if (binder == null) {
+            binder = textOrNumber(type);
         }
+        return binder != null ? binder : temporal(type);
+    }
+
+    /** The primitive numbers and booleans, and their wrappers; {@code null} for another type. */
+    private static ValueBinder primitive(Class<?> type) {
+        boolean primitive = type.isPrimitive();
         if (type == int.class || type == Integer.class) {
             return new Simple(Types.INTEGER, (s, i, v) -> s.setInt(i, (Integer) v),
                 (r, c) -> nullable(r, r.getInt(c), primitive));
@@ -279,23 +286,25 @@ public final class ValueBinders {
             return new Simple(Types.REAL, (s, i, v) -> s.setFloat(i, (Float) v),
                 (r, c) -> nullable(r, r.getFloat(c), primitive));
         }
+        return null;
+    }
+
+    /** Characters, strings, big numbers and byte arrays; {@code null} for another type. */
+    private static ValueBinder textOrNumber(Class<?> type) {
+        if (type == String.class) {
+            return new Simple(Types.VARCHAR, (s, i, v) -> s.setString(i, (String) v), ResultSet::getString);
+        }
         if (type == char.class || type == Character.class) {
-            return new Simple(Types.CHAR, (s, i, v) -> s.setString(i, String.valueOf((char) (Character) v)), (r, c) -> {
-                String value = r.getString(c);
-                if (value == null || value.isEmpty()) {
-                    return primitive ? '\0' : null;
-                }
-                return value.charAt(0);
-            });
+            boolean primitive = type.isPrimitive();
+            return new Simple(Types.CHAR, (s, i, v) -> s.setString(i, String.valueOf((char) (Character) v)),
+                (r, c) -> character(r.getString(c), primitive));
         }
         if (type == BigDecimal.class) {
             return new Simple(Types.NUMERIC, (s, i, v) -> s.setBigDecimal(i, (BigDecimal) v), ResultSet::getBigDecimal);
         }
         if (type == BigInteger.class) {
-            return new Simple(Types.NUMERIC, (s, i, v) -> s.setBigDecimal(i, new BigDecimal((BigInteger) v)), (r, c) -> {
-                BigDecimal value = r.getBigDecimal(c);
-                return value == null ? null : value.toBigIntegerExact();
-            });
+            return new Simple(Types.NUMERIC, (s, i, v) -> s.setBigDecimal(i, new BigDecimal((BigInteger) v)),
+                (r, c) -> bigInteger(r.getBigDecimal(c)));
         }
         if (type == byte[].class) {
             return new Simple(Types.VARBINARY, (s, i, v) -> s.setBytes(i, (byte[]) v), ResultSet::getBytes);
@@ -304,18 +313,34 @@ public final class ValueBinders {
             return new Simple(Types.VARBINARY, (s, i, v) -> s.setBytes(i, unboxed((Byte[]) v)), (r, c) -> boxed(r.getBytes(c)));
         }
         if (type == char[].class) {
-            return new Simple(Types.VARCHAR, (s, i, v) -> s.setString(i, new String((char[]) v)), (r, c) -> {
-                String value = r.getString(c);
-                return value == null ? null : value.toCharArray();
-            });
+            return new Simple(Types.VARCHAR, (s, i, v) -> s.setString(i, new String((char[]) v)),
+                (r, c) -> characters(r.getString(c)));
         }
         if (type == Character[].class) {
-            return new Simple(Types.VARCHAR, (s, i, v) -> s.setString(i, unboxed((Character[]) v)), (r, c) -> {
-                String value = r.getString(c);
-                return value == null ? null : value.chars().mapToObj(ch -> (char) ch).toArray(Character[]::new);
-            });
+            return new Simple(Types.VARCHAR, (s, i, v) -> s.setString(i, unboxed((Character[]) v)),
+                (r, c) -> boxedCharacters(r.getString(c)));
         }
-        return temporal(type);
+        return null;
+    }
+
+    /** A character column read back: its first character; an empty or {@code NULL} one is {@code '\0'} for a primitive. */
+    private static Object character(String value, boolean primitive) {
+        if (value == null || value.isEmpty()) {
+            return primitive ? '\0' : null;
+        }
+        return value.charAt(0);
+    }
+
+    private static BigInteger bigInteger(BigDecimal value) {
+        return value == null ? null : value.toBigIntegerExact();
+    }
+
+    private static char[] characters(String value) {
+        return value == null ? null : value.toCharArray();
+    }
+
+    private static Character[] boxedCharacters(String value) {
+        return value == null ? null : value.chars().mapToObj(ch -> (char) ch).toArray(Character[]::new);
     }
 
     private static ValueBinder temporal(Class<?> type) {
@@ -339,16 +364,11 @@ public final class ValueBinders {
         }
         if (type == Instant.class) {
             // not a JDBC 4.2 type: a timestamp, read back in the same time zone as it was written
-            return new Simple(Types.TIMESTAMP, (s, i, v) -> s.setTimestamp(i, Timestamp.from((Instant) v)), (r, c) -> {
-                Timestamp value = r.getTimestamp(c);
-                return value == null ? null : value.toInstant();
-            });
+            return new Simple(Types.TIMESTAMP, (s, i, v) -> s.setTimestamp(i, Timestamp.from((Instant) v)),
+                (r, c) -> instant(r.getTimestamp(c)));
         }
         if (type == Year.class) {
-            return new Simple(Types.INTEGER, (s, i, v) -> s.setInt(i, ((Year) v).getValue()), (r, c) -> {
-                int value = r.getInt(c);
-                return r.wasNull() ? null : Year.of(value);
-            });
+            return new Simple(Types.INTEGER, (s, i, v) -> s.setInt(i, ((Year) v).getValue()), ValueBinders::year);
         }
         if (type == java.sql.Date.class) {
             return new Simple(Types.DATE, (s, i, v) -> s.setDate(i, (java.sql.Date) v), ResultSet::getDate);
@@ -366,6 +386,15 @@ public final class ValueBinders {
             return legacyTemporal(Calendar.class, TemporalType.TIMESTAMP);
         }
         return null;
+    }
+
+    private static Instant instant(Timestamp value) {
+        return value == null ? null : value.toInstant();
+    }
+
+    private static Year year(ResultSet results, int column) throws SQLException {
+        int value = results.getInt(column);
+        return results.wasNull() ? null : Year.of(value);
     }
 
     private static ValueBinder object(int sqlType, Class<?> type) {

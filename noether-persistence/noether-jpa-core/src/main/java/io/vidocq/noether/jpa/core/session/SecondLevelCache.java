@@ -129,78 +129,85 @@ final class SecondLevelCache implements Cache {
         }
         EntityKey key = new EntityKey(requested.root(), id);
         Graph graph = entries.get(key);
-        if (graph == null || !matches(requested, graph)) {
-            return Optional.empty();
-        }
-        // A cached graph must not leave an EAGER edge pointing at an existing unloaded reference.
-        // Fall back before creating any nodes; the ordinary loader hydrates that same managed instance.
-        if (graph.nodes().keySet().stream().anyMatch(node -> context.find(node)
-                .map(managed -> io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(managed.instance())).orElse(false))) {
+        if (graph == null || !matches(requested, graph) || reachesUnloadedReference(graph, context)) {
             return Optional.empty();
         }
         try {
-            Map<EntityKey, Object> instances = new LinkedHashMap<>();
-            Map<EntityKey, MappedEntity> types = new LinkedHashMap<>();
-            Set<EntityKey> created = new LinkedHashSet<>();
-            for (Map.Entry<EntityKey, Node> entry : graph.nodes().entrySet()) {
-                MappedEntity type = mapping.entity(entry.getValue().type()).orElseThrow();
-                Optional<ManagedEntity> known = context.find(entry.getKey())
-                    .filter(managed -> managed.status() == ManagedEntity.Status.MANAGED);
-                Object instance = known.map(ManagedEntity::instance).orElseGet(type.access()::instantiate);
-                instances.put(entry.getKey(), instance);
-                types.put(entry.getKey(), type);
-                if (known.isEmpty()) {
-                    created.add(entry.getKey());
-                }
-            }
-            // the collections last: a sorted one compares elements whose state is restored
-            for (boolean collections : new boolean[] {false, true}) {
-                for (Map.Entry<EntityKey, Node> entry : graph.nodes().entrySet()) {
-                    if (!created.contains(entry.getKey())) {
-                        continue;
-                    }
-                    MappedEntity type = types.get(entry.getKey());
-                    Object instance = instances.get(entry.getKey());
-                    List<AttributeModel> attributes = type.model().attributes();
-                    for (int i = 0; i < attributes.size(); i++) {
-                        Object encoded = entry.getValue().attributes().get(i);
-                        if (collections != (encoded instanceof CollectionState || encoded instanceof Unloaded)) {
-                            continue;
-                        }
-                        Object value = encoded instanceof Unloaded
-                            ? LazyCollection.of(attributes.get(i).javaType(), instance, i, attributes.get(i).name(),
-                                context.lazyLoader())
-                            : decode(attributes.get(i), encoded, instances);
-                        if (encoded instanceof Unloaded && value == null) {
-                            throw new UnsupportedState();
-                        }
-                        type.access().set(instance, i, value);
-                    }
-                }
-            }
-            for (Map.Entry<EntityKey, Node> entry : graph.nodes().entrySet()) {
-                if (!created.contains(entry.getKey())) {
-                    continue;
-                }
-                MappedEntity type = types.get(entry.getKey());
-                Object instance = instances.get(entry.getKey());
-                Object[] state = new Object[type.model().attributes().size()];
-                type.access().read(instance, state);
-                context.loaded(instance, type, entry.getKey().id(), type.state().snapshot(state));
-            }
-            for (Map.Entry<EntityKey, Node> entry : graph.nodes().entrySet()) {
-                if (created.contains(entry.getKey())) {
-                    MappedEntity type = types.get(entry.getKey());
-                    Object instance = instances.get(entry.getKey());
-                    context.postLoad(() -> type.callback("PostLoad", instance));
-                }
-            }
-            Object result = instances.get(graph.root());
+            Object result = restoreGraph(graph, context);
             return result != null && requested.model().javaType().isInstance(result) ? Optional.of(result) : Optional.empty();
         } catch (UnsupportedState unsupported) {
             entries.remove(key, graph);
             LOG.log(System.Logger.Level.DEBUG, "Discarding unsupported cached state for " + key, unsupported);
             return Optional.empty();
+        }
+    }
+
+    /**
+     * Whether a node of {@code graph} is managed as an unloaded reference: a cached graph must not leave an EAGER edge
+     * pointing at it. The restore falls back before creating any nodes; the ordinary loader hydrates that same managed
+     * instance.
+     */
+    private static boolean reachesUnloadedReference(Graph graph, PersistenceContext context) {
+        return graph.nodes().keySet().stream().anyMatch(node -> context.find(node)
+            .map(managed -> io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(managed.instance())).orElse(false));
+    }
+
+    /**
+     * Restores the nodes of {@code graph} that {@code context} does not manage yet, registers them as loaded and
+     * schedules their {@code PostLoad} callbacks; the instance of its root.
+     */
+    private Object restoreGraph(Graph graph, PersistenceContext context) {
+        Map<EntityKey, Object> instances = new LinkedHashMap<>();
+        Map<EntityKey, MappedEntity> types = new LinkedHashMap<>();
+        Set<EntityKey> created = new LinkedHashSet<>();
+        for (Map.Entry<EntityKey, Node> entry : graph.nodes().entrySet()) {
+            MappedEntity type = mapping.entity(entry.getValue().type()).orElseThrow();
+            Optional<ManagedEntity> known = context.find(entry.getKey())
+                .filter(managed -> managed.status() == ManagedEntity.Status.MANAGED);
+            instances.put(entry.getKey(), known.map(ManagedEntity::instance).orElseGet(type.access()::instantiate));
+            types.put(entry.getKey(), type);
+            if (known.isEmpty()) {
+                created.add(entry.getKey());
+            }
+        }
+        // the collections last: a sorted one compares elements whose state is restored
+        for (boolean collections : new boolean[] {false, true}) {
+            for (EntityKey node : created) {
+                restoreAttributes(types.get(node), instances.get(node), graph.nodes().get(node), collections, instances,
+                    context);
+            }
+        }
+        for (EntityKey node : created) {
+            MappedEntity type = types.get(node);
+            Object instance = instances.get(node);
+            Object[] state = new Object[type.model().attributes().size()];
+            type.access().read(instance, state);
+            context.loaded(instance, type, node.id(), type.state().snapshot(state));
+        }
+        for (EntityKey node : created) {
+            MappedEntity type = types.get(node);
+            Object instance = instances.get(node);
+            context.postLoad(() -> type.callback("PostLoad", instance));
+        }
+        return instances.get(graph.root());
+    }
+
+    /** Sets the attributes of the restored {@code instance} of {@code node}: its collections, or its other attributes. */
+    private void restoreAttributes(MappedEntity type, Object instance, Node node, boolean collections,
+            Map<EntityKey, Object> instances, PersistenceContext context) {
+        List<AttributeModel> attributes = type.model().attributes();
+        for (int i = 0; i < attributes.size(); i++) {
+            Object encoded = node.attributes().get(i);
+            if (collections != (encoded instanceof CollectionState || encoded instanceof Unloaded)) {
+                continue;
+            }
+            Object value = encoded instanceof Unloaded
+                ? LazyCollection.of(attributes.get(i).javaType(), instance, i, attributes.get(i).name(), context.lazyLoader())
+                : decode(attributes.get(i), encoded, instances);
+            if (encoded instanceof Unloaded && value == null) {
+                throw new UnsupportedState();
+            }
+            type.access().set(instance, i, value);
         }
     }
 

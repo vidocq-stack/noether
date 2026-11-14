@@ -363,25 +363,34 @@ public final class StatePolicy {
             @SuppressWarnings("unchecked")
             public boolean same(Object snapshot, Object current) {
                 List<Object> before = snapshot == null ? List.of() : new ArrayList<>((List<Object>) snapshot);
-                List<Object> now = CollectionMapping.elements(current);
-                if (before.size() != now.size()) {
-                    return false;
-                }
-                for (Object e : now) {
-                    int match = -1;
-                    for (int i = 0; i < before.size() && match < 0; i++) {
-                        if (element.same(before.get(i), e)) {
-                            match = i;
-                        }
-                    }
-                    if (match < 0) {
-                        return false;
-                    }
-                    before.remove(match);
-                }
-                return true;
+                return sameInAnyOrder(element, before, CollectionMapping.elements(current));
             }
         };
+    }
+
+    /** Whether {@code now} holds the elements of {@code before}, each matched once, in any order; empties {@code before}. */
+    private static boolean sameInAnyOrder(Copier element, List<Object> before, List<Object> now) {
+        if (before.size() != now.size()) {
+            return false;
+        }
+        for (Object e : now) {
+            int match = indexOfSame(element, before, e);
+            if (match < 0) {
+                return false;
+            }
+            before.remove(match);
+        }
+        return true;
+    }
+
+    /** The position of the first of {@code snapshots} the same as {@code value}; {@code -1} if none. */
+    private static int indexOfSame(Copier element, List<Object> snapshots, Object value) {
+        for (int i = 0; i < snapshots.size(); i++) {
+            if (element.same(snapshots.get(i), value)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**
@@ -428,40 +437,58 @@ public final class StatePolicy {
                     return true;
                 }
                 if (!map) {
-                    for (int i = 0; i < now.size(); i++) {
-                        if (!element.same(before.get(i), now.get(i))) {
-                            return true;
-                        }
-                    }
-                    return false;
+                    return positionsChanged(element, before, now);
                 }
                 List<Object> keys = CollectionMapping.keys(snapshot);
                 if (key == IMMUTABLE) {
-                    @SuppressWarnings("unchecked")
-                    Map<Object, Object> currentMap = (Map<Object, Object>) current;
-                    for (int i = 0; i < keys.size(); i++) {
-                        if (!currentMap.containsKey(keys.get(i)) || !element.same(before.get(i), currentMap.get(keys.get(i)))) {
-                            return true;
-                        }
-                    }
-                    return false;
+                    return entriesChanged(element, keys, before, current);
                 }
-                List<Object> currentKeys = current == null ? List.of() : CollectionMapping.keys(current);
-                boolean[] matched = new boolean[currentKeys.size()];
-                for (int i = 0; i < keys.size(); i++) {
-                    boolean found = false;
-                    for (int j = 0; j < currentKeys.size(); j++) {
-                        if (!matched[j] && key.same(keys.get(i), currentKeys.get(j)) && element.same(before.get(i), now.get(j))) {
-                            matched[j] = true;
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (!found) return true;
-                }
-                return false;
+                return copiedKeysChanged(key, element, keys, before, current, now);
             }
         };
+    }
+
+    /** Whether an element of an ordered list is not the same as the snapshot at its position. */
+    private static boolean positionsChanged(Copier element, List<Object> before, List<Object> now) {
+        for (int i = 0; i < now.size(); i++) {
+            if (!element.same(before.get(i), now.get(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether a map with immutable keys lost one of the {@code keys} of its snapshot, or changed its value. */
+    private static boolean entriesChanged(Copier element, List<Object> keys, List<Object> before, Object current) {
+        @SuppressWarnings("unchecked")
+        Map<Object, Object> currentMap = (Map<Object, Object>) current;
+        for (int i = 0; i < keys.size(); i++) {
+            if (!currentMap.containsKey(keys.get(i)) || !element.same(before.get(i), currentMap.get(keys.get(i)))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether a map whose keys are kept as snapshots (embeddable keys) has an entry of its snapshot that no current entry
+     * matches, each current entry matching once.
+     */
+    private static boolean copiedKeysChanged(Copier key, Copier element, List<Object> keys, List<Object> before, Object current,
+            List<Object> now) {
+        List<Object> currentKeys = current == null ? List.of() : CollectionMapping.keys(current);
+        boolean[] matched = new boolean[currentKeys.size()];
+        for (int i = 0; i < keys.size(); i++) {
+            boolean found = false;
+            for (int j = 0; j < currentKeys.size() && !found; j++) {
+                if (!matched[j] && key.same(keys.get(i), currentKeys.get(j)) && element.same(before.get(i), now.get(j))) {
+                    matched[j] = true;
+                    found = true;
+                }
+            }
+            if (!found) return true;
+        }
+        return false;
     }
 
     private static Copier byType(Class<?> type) {

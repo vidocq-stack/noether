@@ -20,6 +20,7 @@
 package io.vidocq.noether.jpa.core.flush;
 
 import io.vidocq.noether.jpa.core.model.AssociationAttribute;
+import io.vidocq.noether.jpa.core.model.JoinColumnModel;
 import io.vidocq.noether.jpa.core.context.ManagedEntity;
 import io.vidocq.noether.jpa.core.context.PersistenceContext;
 import io.vidocq.noether.jpa.core.jdbc.type.ValueBinder;
@@ -474,16 +475,21 @@ public final class FlushEngine {
                 }
             }
         } catch (SQLException e) {
-            if (dialect.isDuplicateKey(e)) {
-                throw new EntityExistsException("An instance of " + type.model().entityName() + " with the same identifier "
-                    + "already exists in the database: " + e.getMessage(), e);
-            }
-            throw failure("insert", type, e);
+            throw insertFailure(type, e);
         }
         for (Work work : group) {
             context.inserted(work.entry(), type.id(work.entry().instance()), type.state().snapshot(work.state()));
             type.callback("PostPersist", work.entry().instance());
         }
+    }
+
+    /** The failure of an insert: an {@link EntityExistsException} when the identifier is in the database already (§3.2.2). */
+    private RuntimeException insertFailure(MappedEntity type, SQLException e) {
+        if (dialect.isDuplicateKey(e)) {
+            return new EntityExistsException("An instance of " + type.model().entityName() + " with the same identifier "
+                + "already exists in the database: " + e.getMessage(), e);
+        }
+        return failure("insert", type, e);
     }
 
     /** The primary rows of {@code group}, one statement each: the database generates their identifier, read back. */
@@ -544,7 +550,7 @@ public final class FlushEngine {
         for (int t = 0; t < statements.tables().size(); t++) {
             var table = statements.tables().get(t);
             List<Identifier> columns = new ArrayList<>(table.insert().columns());
-            List<io.vidocq.noether.jpa.core.jdbc.type.ValueBinder> binders = new ArrayList<>();
+            List<ValueBinder> binders = new ArrayList<>();
             List<Object> parameters = new ArrayList<>();
             for (var parameter : table.insertParameters()) {
                 binders.add(statements.columns().get(parameter.column()).binder());
@@ -552,53 +558,70 @@ public final class FlushEngine {
             }
             for (CollectionKeyWrite write : writes) {
                 var foreign = write.mapping();
-                if (!write.owner().type().statements().targetTable(work.entry().instance(),
-                        foreign.association().targetEntity(), foreign.table()).equals(table.insert().table())) continue;
-                boolean deferred = pending.contains(write.owner().entry().instance())
-                    && foreign.joins().stream().allMatch(j -> j.nullable());
-                Object[] owner = write.owner().type().statements().keyValues(
-                    write.owner().type().id(write.owner().entry().instance()));
-                for (int k = 0; k < foreign.joins().size(); k++) {
-                    if (deferred || !foreign.joins().get(k).insertable() || columns.contains(foreign.ownerColumns().get(k))) continue;
-                    columns.add(foreign.ownerColumns().get(k));
-                    binders.add(foreign.ownerBinders().get(k));
-                    parameters.add(owner[k]);
-                }
-                if (foreign.index() != null && foreign.index().insertable()) {
-                    Object[] index = foreign.index().values(write.index(), write.owner().type().statements());
-                    for (int k = 0; k < index.length; k++) {
-                        if (columns.contains(foreign.index().columns().get(k))) continue;
-                        columns.add(foreign.index().columns().get(k));
-                        binders.add(foreign.index().binders().get(k));
-                        parameters.add(index[k]);
-                    }
+                if (write.owner().type().statements().targetTable(work.entry().instance(),
+                        foreign.association().targetEntity(), foreign.table()).equals(table.insert().table())) {
+                    addCollectionKey(write, pending, columns, binders, parameters);
                 }
             }
             Insert insert = new Insert(table.insert().table(), columns, table.insert().generatedKey());
-            try (PreparedStatement statement = insert.generatedKey() == null
-                    ? connection.prepareStatement(render(insert))
-                    : connection.prepareStatement(render(insert), sql(type).generatedKey())) {
-                for (int p = 0; p < parameters.size(); p++) binders.get(p).bind(dialect, statement, p + 1, parameters.get(p));
-                statement.executeUpdate();
-                if (insert.generatedKey() != null) {
-                    try (ResultSet keys = statement.getGeneratedKeys()) {
-                        if (!keys.next()) throw new PersistenceException("No generated identifier for " + type.model().entityName());
-                        var idColumn = statements.keyColumns().getFirst();
-                        Object id = idColumn.binder().read(keys, 1);
-                        type.access().set(work.entry().instance(), type.idAttributes()[0], id);
-                        work.state()[type.idAttributes()[0]] = id;
-                        values = statements.values(work.state());
-                    }
-                }
-            } catch (SQLException e) {
-                if (dialect.isDuplicateKey(e)) {
-                    throw new EntityExistsException("An instance of " + type.model().entityName() + " with the same identifier "
-                        + "already exists in the database: " + e.getMessage(), e);
-                }
-                throw failure("insert", type, e);
+            if (insertRow(work, insert, binders, parameters, connection)) {
+                values = statements.values(work.state());
             }
         }
         pending.remove(work.entry().instance());
+    }
+
+    /**
+     * Adds to the insert of a member of the foreign-key collection of {@code write} the owner key columns — unless the
+     * owner's row comes later and they can wait as {@code NULL} — and the index columns it writes, each column once.
+     */
+    private static void addCollectionKey(CollectionKeyWrite write, Set<Object> pending, List<Identifier> columns,
+            List<ValueBinder> binders, List<Object> parameters) {
+        var foreign = write.mapping();
+        boolean deferred = pending.contains(write.owner().entry().instance())
+            && foreign.joins().stream().allMatch(JoinColumnModel::nullable);
+        Object[] owner = write.owner().type().statements().keyValues(
+            write.owner().type().id(write.owner().entry().instance()));
+        for (int k = 0; k < foreign.joins().size(); k++) {
+            if (deferred || !foreign.joins().get(k).insertable() || columns.contains(foreign.ownerColumns().get(k))) continue;
+            columns.add(foreign.ownerColumns().get(k));
+            binders.add(foreign.ownerBinders().get(k));
+            parameters.add(owner[k]);
+        }
+        if (foreign.index() != null && foreign.index().insertable()) {
+            Object[] index = foreign.index().values(write.index(), write.owner().type().statements());
+            for (int k = 0; k < index.length; k++) {
+                if (columns.contains(foreign.index().columns().get(k))) continue;
+                columns.add(foreign.index().columns().get(k));
+                binders.add(foreign.index().binders().get(k));
+                parameters.add(index[k]);
+            }
+        }
+    }
+
+    /** Inserts a row of {@code work}; whether the database generated its identifier, now set on the instance and state. */
+    private boolean insertRow(Work work, Insert insert, List<ValueBinder> binders, List<Object> parameters,
+            Connection connection) {
+        MappedEntity type = work.type();
+        try (PreparedStatement statement = insert.generatedKey() == null
+                ? connection.prepareStatement(render(insert))
+                : connection.prepareStatement(render(insert), sql(type).generatedKey())) {
+            for (int p = 0; p < parameters.size(); p++) binders.get(p).bind(dialect, statement, p + 1, parameters.get(p));
+            statement.executeUpdate();
+            if (insert.generatedKey() == null) {
+                return false;
+            }
+            try (ResultSet keys = statement.getGeneratedKeys()) {
+                if (!keys.next()) throw new PersistenceException("No generated identifier for " + type.model().entityName());
+                var idColumn = type.statements().keyColumns().getFirst();
+                Object id = idColumn.binder().read(keys, 1);
+                type.access().set(work.entry().instance(), type.idAttributes()[0], id);
+                work.state()[type.idAttributes()[0]] = id;
+                return true;
+            }
+        } catch (SQLException e) {
+            throw insertFailure(type, e);
+        }
     }
 
     /** The column values of the row of {@code work}, foreign keys to rows not inserted yet left {@code NULL}. */
@@ -680,46 +703,55 @@ public final class FlushEngine {
      * inserted, those lost deleted ({@code snapshot} {@code null}: a new owner, every element is inserted).
      */
     private void writeJoinRows(Work work, Object[] snapshot, Connection connection) {
-        MappedEntity type = work.type();
-        EntityStatements statements = type.statements();
-        for (CollectionMapping mapping : statements.collections()) {
-            if (!(mapping instanceof CollectionMapping.JoinTable table)) {
-                continue;
-            }
-            if (table.association().singleValued()) {
-                writeToOneTable(work, snapshot, table, connection);
-                continue;
-            }
-            Object[] owner = statements.keyValues(type.id(work.entry().instance()));
-            Object current = work.state()[table.attribute()];
-            try {
-                if (snapshot != null && !type.state().collectionChanged(table.attribute(), snapshot[table.attribute()], current)) {
-                    continue; // unchanged, an unloaded LAZY collection among them
+        for (CollectionMapping mapping : work.type().statements().collections()) {
+            if (mapping instanceof CollectionMapping.JoinTable table) {
+                if (table.association().singleValued()) {
+                    writeToOneTable(work, snapshot, table, connection);
+                } else {
+                    writeJoinTable(work, snapshot, table, connection);
                 }
-                List<Object> before = CollectionMapping.elements(
-                    snapshot == null ? null : StatePolicy.snapshotValue(snapshot[table.attribute()]));
-                Set<Object> unique = identitySet();
-                boolean repeated = before.stream().anyMatch(element -> !unique.add(element));
-                if (table.indexed() || repeated) {
-                    // A target-key delete cannot remove just one occurrence of a duplicate bag row.
-                    if (snapshot != null) {
-                        try (PreparedStatement delete = connection.prepareStatement(render(table.deleteOwner()))) {
-                            bindOwner(delete, table.ownerBinders(), owner);
-                            delete.executeUpdate();
-                        }
-                    }
-                    joinRows(render(table.insert()), table, owner, CollectionMapping.elements(current),
-                        table.indexed() ? CollectionMapping.keys(current) : null,
-                        statements, connection);
-                    continue;
-                }
-                List<Object> now = CollectionMapping.elements(current);
-                joinRows(render(table.deleteRow()), table, owner, minus(before, now), null, statements, connection);
-                joinRows(render(table.insert()), table, owner, minus(now, before), null, statements, connection);
-            } catch (SQLException e) {
-                throw failure("write of the join table of " + table.association().name() + " of", type, e);
             }
         }
+    }
+
+    /** {@link #writeJoinRows} for the collection of {@code table}: its rows gained and lost, or all of them again. */
+    private void writeJoinTable(Work work, Object[] snapshot, CollectionMapping.JoinTable table, Connection connection) {
+        MappedEntity type = work.type();
+        EntityStatements statements = type.statements();
+        Object[] owner = statements.keyValues(type.id(work.entry().instance()));
+        Object current = work.state()[table.attribute()];
+        try {
+            if (snapshot != null && !type.state().collectionChanged(table.attribute(), snapshot[table.attribute()], current)) {
+                return; // unchanged, an unloaded LAZY collection among them
+            }
+            List<Object> before = CollectionMapping.elements(
+                snapshot == null ? null : StatePolicy.snapshotValue(snapshot[table.attribute()]));
+            Set<Object> unique = identitySet();
+            boolean repeated = before.stream().anyMatch(element -> !unique.add(element));
+            if (table.indexed() || repeated) {
+                // A target-key delete cannot remove just one occurrence of a duplicate bag row.
+                rewriteJoinRows(table, owner, snapshot != null, current, statements, connection);
+                return;
+            }
+            List<Object> now = CollectionMapping.elements(current);
+            joinRows(render(table.deleteRow()), table, owner, minus(before, now), null, statements, connection);
+            joinRows(render(table.insert()), table, owner, minus(now, before), null, statements, connection);
+        } catch (SQLException e) {
+            throw failure("write of the join table of " + table.association().name() + " of", type, e);
+        }
+    }
+
+    /** Writes every join row of {@code owner} again: deletes those it had ({@code existing}), inserts the current ones. */
+    private void rewriteJoinRows(CollectionMapping.JoinTable table, Object[] owner, boolean existing, Object current,
+            EntityStatements statements, Connection connection) throws SQLException {
+        if (existing) {
+            try (PreparedStatement delete = connection.prepareStatement(render(table.deleteOwner()))) {
+                bindOwner(delete, table.ownerBinders(), owner);
+                delete.executeUpdate();
+            }
+        }
+        joinRows(render(table.insert()), table, owner, CollectionMapping.elements(current),
+            table.indexed() ? CollectionMapping.keys(current) : null, statements, connection);
     }
 
     private void writeToOneTable(Work work, Object[] snapshot, CollectionMapping.JoinTable table, Connection connection) {
@@ -732,49 +764,68 @@ public final class FlushEngine {
         if (current != null && target == null) throw new PersistenceException("The relationship " + table.association().name()
             + " references an entity without an identifier");
         try {
-            if (snapshot != null) {
-                if (current == null && table.targetJoins().stream().allMatch(j -> j.updatable())) {
-                    try (PreparedStatement statement = connection.prepareStatement(render(table.deleteOwner()))) {
-                        bindOwner(statement, table.ownerBinders(), owner);
-                        statement.executeUpdate();
-                    }
-                    return;
-                }
-                List<Identifier> assignments = new ArrayList<>();
-                for (int k = 0; k < table.targetColumns().size(); k++) {
-                    if (table.targetJoins().get(k).updatable()) assignments.add(table.targetColumns().get(k));
-                }
-                if (assignments.isEmpty()) return;
-                var update = new io.vidocq.noether.jpa.dialect.sql.Update(table.table(), assignments, table.ownerColumns());
-                try (PreparedStatement statement = connection.prepareStatement(render(update))) {
-                    int parameter = 1;
-                    for (int k = 0; k < table.targetColumns().size(); k++) {
-                        if (table.targetJoins().get(k).updatable()) {
-                            table.targetBinders().get(k).bind(dialect, statement, parameter++, target == null ? null : target[k]);
-                        }
-                    }
-                    for (int k = 0; k < owner.length; k++) table.ownerBinders().get(k).bind(dialect, statement, parameter++, owner[k]);
-                    if (statement.executeUpdate() != 0 || current == null) return;
-                }
+            if (snapshot != null && updatedToOneRow(table, owner, target, current == null, connection)) {
+                return;
             }
-            List<Identifier> columns = new ArrayList<>();
-            List<io.vidocq.noether.jpa.core.jdbc.type.ValueBinder> binders = new ArrayList<>();
-            List<Object> values = new ArrayList<>();
-            for (int k = 0; k < owner.length; k++) {
-                if (!table.ownerJoins().get(k).insertable()) continue;
-                columns.add(table.ownerColumns().get(k)); binders.add(table.ownerBinders().get(k)); values.add(owner[k]);
-            }
-            for (int k = 0; k < target.length; k++) {
-                if (!(snapshot == null ? table.targetJoins().get(k).insertable() : table.targetJoins().get(k).updatable())) continue;
-                columns.add(table.targetColumns().get(k)); binders.add(table.targetBinders().get(k)); values.add(target[k]);
-            }
-            if (columns.isEmpty()) return;
-            try (PreparedStatement statement = connection.prepareStatement(render(new Insert(table.table(), columns, null)))) {
-                for (int p = 0; p < values.size(); p++) binders.get(p).bind(dialect, statement, p + 1, values.get(p));
-                statement.executeUpdate();
-            }
+            insertToOneRow(table, owner, target, snapshot == null, connection);
         } catch (SQLException e) {
             throw failure("write of the join table of " + table.association().name() + " of", work.type(), e);
+        }
+    }
+
+    /**
+     * Changes the join row a to-one relationship had: deletes it when the relationship is {@code cleared} and every
+     * target column is updatable, else updates the updatable target columns. Whether that is all: {@code false} when no
+     * row was there to update, and the new target needs a row of its own.
+     */
+    private boolean updatedToOneRow(CollectionMapping.JoinTable table, Object[] owner, Object[] target, boolean cleared,
+            Connection connection) throws SQLException {
+        if (cleared && table.targetJoins().stream().allMatch(JoinColumnModel::updatable)) {
+            try (PreparedStatement statement = connection.prepareStatement(render(table.deleteOwner()))) {
+                bindOwner(statement, table.ownerBinders(), owner);
+                statement.executeUpdate();
+            }
+            return true;
+        }
+        List<Identifier> assignments = new ArrayList<>();
+        for (int k = 0; k < table.targetColumns().size(); k++) {
+            if (table.targetJoins().get(k).updatable()) assignments.add(table.targetColumns().get(k));
+        }
+        if (assignments.isEmpty()) return true;
+        var update = new io.vidocq.noether.jpa.dialect.sql.Update(table.table(), assignments, table.ownerColumns());
+        try (PreparedStatement statement = connection.prepareStatement(render(update))) {
+            int parameter = 1;
+            for (int k = 0; k < table.targetColumns().size(); k++) {
+                if (table.targetJoins().get(k).updatable()) {
+                    table.targetBinders().get(k).bind(dialect, statement, parameter++, target == null ? null : target[k]);
+                }
+            }
+            for (int k = 0; k < owner.length; k++) table.ownerBinders().get(k).bind(dialect, statement, parameter++, owner[k]);
+            return statement.executeUpdate() != 0 || cleared;
+        }
+    }
+
+    /**
+     * Inserts the join row of a to-one relationship: the insertable owner columns, and the target columns insertable for
+     * a new owner ({@code inserted}), else updatable.
+     */
+    private void insertToOneRow(CollectionMapping.JoinTable table, Object[] owner, Object[] target, boolean inserted,
+            Connection connection) throws SQLException {
+        List<Identifier> columns = new ArrayList<>();
+        List<ValueBinder> binders = new ArrayList<>();
+        List<Object> values = new ArrayList<>();
+        for (int k = 0; k < owner.length; k++) {
+            if (!table.ownerJoins().get(k).insertable()) continue;
+            columns.add(table.ownerColumns().get(k)); binders.add(table.ownerBinders().get(k)); values.add(owner[k]);
+        }
+        for (int k = 0; k < target.length; k++) {
+            if (!(inserted ? table.targetJoins().get(k).insertable() : table.targetJoins().get(k).updatable())) continue;
+            columns.add(table.targetColumns().get(k)); binders.add(table.targetBinders().get(k)); values.add(target[k]);
+        }
+        if (columns.isEmpty()) return;
+        try (PreparedStatement statement = connection.prepareStatement(render(new Insert(table.table(), columns, null)))) {
+            for (int p = 0; p < values.size(); p++) binders.get(p).bind(dialect, statement, p + 1, values.get(p));
+            statement.executeUpdate();
         }
     }
 
@@ -795,18 +846,28 @@ public final class FlushEngine {
 
     private void writeCollectionKeys(Work work, Object[] snapshot, Connection connection, Set<Object> removed, boolean clearPhase) {
         for (CollectionMapping mapping : work.type().statements().collections()) {
-            if (!(mapping instanceof CollectionMapping.ForeignKey foreign)) continue;
-            Object current = work.state()[foreign.attribute()];
-            if (snapshot != null && !work.type().state().collectionChanged(foreign.attribute(),
-                    snapshot[foreign.attribute()], current)) continue;
-            List<Object> now = CollectionMapping.elements(current);
-            List<Object> before = CollectionMapping.elements(
-                snapshot == null ? null : StatePolicy.snapshotValue(snapshot[foreign.attribute()]));
-            if (clearPhase) {
-                collectionKeys(work, foreign, minus(before, now).stream().filter(e -> !removed.contains(e)).toList(),
-                    null, false, true, connection);
-                continue;
+            if (mapping instanceof CollectionMapping.ForeignKey foreign) {
+                writeCollectionKeys(work, foreign, snapshot, connection, removed, clearPhase);
             }
+        }
+    }
+
+    /**
+     * {@link #writeCollectionKeys} for the collection of {@code foreign}, if it changed: in the clear phase, the keys of
+     * the members it lost are cleared; else every member gets its key again.
+     */
+    private void writeCollectionKeys(Work work, CollectionMapping.ForeignKey foreign, Object[] snapshot, Connection connection,
+            Set<Object> removed, boolean clearPhase) {
+        Object current = work.state()[foreign.attribute()];
+        if (snapshot != null && !work.type().state().collectionChanged(foreign.attribute(),
+                snapshot[foreign.attribute()], current)) return;
+        List<Object> now = CollectionMapping.elements(current);
+        List<Object> before = CollectionMapping.elements(
+            snapshot == null ? null : StatePolicy.snapshotValue(snapshot[foreign.attribute()]));
+        if (clearPhase) {
+            collectionKeys(work, foreign, minus(before, now).stream().filter(e -> !removed.contains(e)).toList(),
+                null, false, true, connection);
+        } else {
             // Rewrite retained members too: list positions and stored map keys may have changed.
             collectionKeys(work, foreign, now, CollectionMapping.keys(current), snapshot == null, false, connection);
         }
@@ -830,35 +891,58 @@ public final class FlushEngine {
         if (update == null || elements.isEmpty()) return;
         EntityStatements statements = work.type().statements();
         Object[] owner = statements.keyValues(work.type().id(work.entry().instance()));
+        Object[] ownerValues = clear ? null : owner;
+        boolean writesIndex = foreign.index() != null
+            && (inserted ? foreign.index().insertable() : foreign.index().updatable());
         for (var group : targetTables(statements, elements, foreign.association().targetEntity(), update.table()).entrySet()) {
             var concrete = new io.vidocq.noether.jpa.dialect.sql.Update(group.getKey(), update.assignments(), update.conditions());
             try (PreparedStatement statement = connection.prepareStatement(render(concrete))) {
                 for (int e : group.getValue()) {
-                    int parameter = 1;
-                    for (int k = 0; k < foreign.joins().size(); k++) {
-                        var join = foreign.joins().get(k);
-                        if (inserted ? join.insertable() : join.updatable()) {
-                            foreign.ownerBinders().get(k).bind(dialect, statement, parameter++, clear ? null : owner[k]);
-                        }
+                    int parameter = bindCollectionOwner(statement, foreign, inserted, ownerValues);
+                    if (writesIndex) {
+                        parameter = clear ? bindNulls(statement, parameter, foreign.index().binders())
+                            : bindIndex(statement, parameter, foreign.index(), keys.get(e), statements);
                     }
-                    if (foreign.index() != null && (inserted ? foreign.index().insertable() : foreign.index().updatable())) {
-                        if (clear) {
-                            for (var binder : foreign.index().binders()) binder.bind(dialect, statement, parameter++, null);
-                        } else {
-                            parameter = bindIndex(statement, parameter, foreign.index(), keys.get(e), statements);
-                        }
-                    }
-                    Object[] target = statements.targetKey(elements.get(e), foreign.association().targetEntity());
-                    if (target == null) throw new PersistenceException("An element of " + foreign.association().name() + " has no identifier");
-                    for (int k = 0; k < target.length; k++) {
-                        foreign.targetBinders().get(k).bind(dialect, statement, parameter++, target[k]);
-                    }
+                    bindCollectionMember(statement, parameter, foreign, elements.get(e), statements);
                     statement.addBatch();
                 }
                 statement.executeBatch();
             } catch (SQLException e) {
                 throw failure("write of the collection foreign key of " + foreign.association().name() + " of", work.type(), e);
             }
+        }
+    }
+
+    /**
+     * Binds, from parameter 1, the owner key columns a collection key update writes — those insertable for a new owner
+     * ({@code inserted}), else updatable — {@code NULL} when {@code owner} is {@code null}; returns the next parameter index.
+     */
+    private int bindCollectionOwner(PreparedStatement statement, CollectionMapping.ForeignKey foreign, boolean inserted,
+            Object[] owner) throws SQLException {
+        int parameter = 1;
+        for (int k = 0; k < foreign.joins().size(); k++) {
+            var join = foreign.joins().get(k);
+            if (inserted ? join.insertable() : join.updatable()) {
+                foreign.ownerBinders().get(k).bind(dialect, statement, parameter++, owner == null ? null : owner[k]);
+            }
+        }
+        return parameter;
+    }
+
+    /** Binds {@code NULL} with each of {@code binders} from {@code parameter}; returns the next parameter index. */
+    private int bindNulls(PreparedStatement statement, int parameter, List<ValueBinder> binders) throws SQLException {
+        int next = parameter;
+        for (ValueBinder binder : binders) binder.bind(dialect, statement, next++, null);
+        return next;
+    }
+
+    /** Binds the key of the {@code member} whose row a collection key update writes, from {@code parameter}. */
+    private void bindCollectionMember(PreparedStatement statement, int parameter, CollectionMapping.ForeignKey foreign,
+            Object member, EntityStatements statements) throws SQLException {
+        Object[] target = statements.targetKey(member, foreign.association().targetEntity());
+        if (target == null) throw new PersistenceException("An element of " + foreign.association().name() + " has no identifier");
+        for (int k = 0; k < target.length; k++) {
+            foreign.targetBinders().get(k).bind(dialect, statement, parameter + k, target[k]);
         }
     }
 
@@ -928,35 +1012,40 @@ public final class FlushEngine {
             Object current = work.state()[inverse.attribute()];
             boolean write = snapshot == null ? inverse.index().insertable()
                 : inverse.index().updatable() && type.state().collectionChanged(inverse.attribute(), snapshot[inverse.attribute()], current);
-            if (!write) {
-                continue;
+            if (write && writeInverseIndex(type, inverse, current, connection)) {
+                written = true;
             }
-            List<Object> elements = CollectionMapping.elements(current);
-            if (elements.isEmpty()) {
-                continue;
-            }
-            List<Object> keys = CollectionMapping.keys(current);
-            Class<?> target = inverse.association().targetEntity();
-            for (var group : targetTables(type.statements(), elements, target, inverse.indexUpdate().table()).entrySet()) {
-                var update = new io.vidocq.noether.jpa.dialect.sql.Update(group.getKey(),
-                    inverse.indexUpdate().assignments(), inverse.indexUpdate().conditions());
-                try (PreparedStatement statement = connection.prepareStatement(render(update))) {
-                    for (int e : group.getValue()) {
-                        int index = bindIndex(statement, 1, inverse.index(), keys.get(e), type.statements());
-                        Object[] key = type.statements().targetKey(elements.get(e), target);
-                        for (int k = 0; k < key.length; k++) {
-                            inverse.targetBinders().get(k).bind(dialect, statement, index++, key[k]);
-                        }
-                        statement.addBatch();
-                    }
-                    statement.executeBatch();
-                } catch (SQLException e) {
-                    throw failure("write of the index of " + inverse.association().name() + " of", type, e);
-                }
-            }
-            written = true;
         }
         return written;
+    }
+
+    /** Writes the key or position of each element of the inverse collection {@code current}; whether it has any. */
+    private boolean writeInverseIndex(MappedEntity type, CollectionMapping.MappedBy inverse, Object current,
+            Connection connection) {
+        List<Object> elements = CollectionMapping.elements(current);
+        if (elements.isEmpty()) {
+            return false;
+        }
+        List<Object> keys = CollectionMapping.keys(current);
+        Class<?> target = inverse.association().targetEntity();
+        for (var group : targetTables(type.statements(), elements, target, inverse.indexUpdate().table()).entrySet()) {
+            var update = new io.vidocq.noether.jpa.dialect.sql.Update(group.getKey(),
+                inverse.indexUpdate().assignments(), inverse.indexUpdate().conditions());
+            try (PreparedStatement statement = connection.prepareStatement(render(update))) {
+                for (int e : group.getValue()) {
+                    int index = bindIndex(statement, 1, inverse.index(), keys.get(e), type.statements());
+                    Object[] key = type.statements().targetKey(elements.get(e), target);
+                    for (int k = 0; k < key.length; k++) {
+                        inverse.targetBinders().get(k).bind(dialect, statement, index++, key[k]);
+                    }
+                    statement.addBatch();
+                }
+                statement.executeBatch();
+            } catch (SQLException e) {
+                throw failure("write of the index of " + inverse.association().name() + " of", type, e);
+            }
+        }
+        return true;
     }
 
     /** Deletes every join row of the owned collections of a row about to be deleted. */
@@ -992,35 +1081,40 @@ public final class FlushEngine {
         }
         List<Integer> changes = inserted ? List.of() : type.state().changes(work.entry().snapshot(), work.state());
         for (ElementCollectionMapping elements : mappings) {
-            if (!inserted && !changes.contains(elements.attribute())) {
-                continue;
-            }
-            if (!inserted) {
-                deleteElements(work, elements, connection);
-            }
-            List<Object> values = CollectionMapping.elements(work.state()[elements.attribute()]);
-            if (values.isEmpty()) {
-                continue;
-            }
-            Object[] owner = type.statements().keyValues(type.id(work.entry().instance()));
-            try (PreparedStatement statement = connection.prepareStatement(render(elements.insert()))) {
-                List<Object> keys = CollectionMapping.keys(work.state()[elements.attribute()]);
-                for (int v = 0; v < values.size(); v++) {
-                    Object value = values.get(v);
-                    int index = bindOwner(statement, elements.ownerBinders(), owner);
-                    if (elements.index() != null) {
-                        index = bindIndex(statement, index, elements.index(), keys.get(v), type.statements());
-                    }
-                    Object[] columns = elements.values(value, type.statements()::targetKey);
-                    for (int c = 0; c < columns.length; c++) {
-                        elements.columns().get(c).binder().bind(dialect, statement, index++, columns[c]);
-                    }
-                    statement.addBatch();
+            if (inserted || changes.contains(elements.attribute())) {
+                if (!inserted) {
+                    deleteElements(work, elements, connection);
                 }
-                statement.executeBatch();
-            } catch (SQLException e) {
-                throw failure("write of the element collection " + elements.model().name() + " of", type, e);
+                insertElements(work, elements, connection);
             }
+        }
+    }
+
+    /** Inserts the rows of the element collection {@code elements} of the owner of {@code work}, one per element. */
+    private void insertElements(Work work, ElementCollectionMapping elements, Connection connection) {
+        MappedEntity type = work.type();
+        List<Object> values = CollectionMapping.elements(work.state()[elements.attribute()]);
+        if (values.isEmpty()) {
+            return;
+        }
+        Object[] owner = type.statements().keyValues(type.id(work.entry().instance()));
+        try (PreparedStatement statement = connection.prepareStatement(render(elements.insert()))) {
+            List<Object> keys = CollectionMapping.keys(work.state()[elements.attribute()]);
+            for (int v = 0; v < values.size(); v++) {
+                Object value = values.get(v);
+                int index = bindOwner(statement, elements.ownerBinders(), owner);
+                if (elements.index() != null) {
+                    index = bindIndex(statement, index, elements.index(), keys.get(v), type.statements());
+                }
+                Object[] columns = elements.values(value, type.statements()::targetKey);
+                for (int c = 0; c < columns.length; c++) {
+                    elements.columns().get(c).binder().bind(dialect, statement, index++, columns[c]);
+                }
+                statement.addBatch();
+            }
+            statement.executeBatch();
+        } catch (SQLException e) {
+            throw failure("write of the element collection " + elements.model().name() + " of", type, e);
         }
     }
 
@@ -1081,8 +1175,8 @@ public final class FlushEngine {
         EntityStatements statements = type.statements();
         Sql sql = sql(type);
         int version = versionAttribute(type);
-        for (Work work : group) {
-            if (version >= 0) {
+        if (version >= 0) {
+            for (Work work : group) {
                 Object next = nextVersion(type, work.entry().snapshot()[version]);
                 type.access().set(work.entry().instance(), version, next);
                 work.state()[version] = next;
@@ -1109,14 +1203,19 @@ public final class FlushEngine {
             throw failure("update", type, e);
         }
         for (Work work : group) {
-            context.updated(work.entry(), type.state().snapshot(work.state()));
-            type.callback("PostUpdate", work.entry().instance());
-            LockModeType mode = work.entry().lockMode();
-            if (Locks.forcesIncrement(mode)) {
-                // incremented once per transaction: the lock stays, without forcing another version
-                context.lock(work.entry(), mode == LockModeType.PESSIMISTIC_FORCE_INCREMENT ? LockModeType.PESSIMISTIC_WRITE
-                    : LockModeType.OPTIMISTIC);
-            }
+            updated(work, type, context);
+        }
+    }
+
+    /** Records the row of {@code work} as updated, then runs its {@code PostUpdate} callbacks (§3.6.3). */
+    private static void updated(Work work, MappedEntity type, PersistenceContext context) {
+        context.updated(work.entry(), type.state().snapshot(work.state()));
+        type.callback("PostUpdate", work.entry().instance());
+        LockModeType mode = work.entry().lockMode();
+        if (Locks.forcesIncrement(mode)) {
+            // incremented once per transaction: the lock stays, without forcing another version
+            context.lock(work.entry(), mode == LockModeType.PESSIMISTIC_FORCE_INCREMENT ? LockModeType.PESSIMISTIC_WRITE
+                : LockModeType.OPTIMISTIC);
         }
     }
 

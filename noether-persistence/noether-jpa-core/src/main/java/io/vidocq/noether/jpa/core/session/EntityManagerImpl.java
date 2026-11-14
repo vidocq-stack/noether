@@ -292,20 +292,26 @@ final class EntityManagerImpl implements EntityManager {
         List<LazyCollection> replaced = new ArrayList<>();
         for (ManagedEntity entry : context.entries()) {
             Object[] snapshot = entry.snapshot();
-            if (snapshot == null) continue;
-            Object[] state = null;
-            for (Object slot : snapshot) {
-                if (!LazyCollection.unloaded(slot)) continue;
-                if (state == null) state = readState(entry);
-                int attribute = ((LazyCollection) slot).attribute();
-                // the rows of a removed owner are deleted by its key, but the foreign keys of its targets one by one
-                if (entry.status() == ManagedEntity.Status.REMOVED ? entry.type().statements().collection(attribute)
-                        .filter(CollectionMapping.ForeignKey.class::isInstance).isPresent() : state[attribute] != slot) {
-                    replaced.add((LazyCollection) slot);
-                }
+            if (snapshot != null) {
+                addReplacedCollections(entry, snapshot, replaced);
             }
         }
         replaced.forEach(LazyCollection::initialize);
+    }
+
+    /** Adds to {@code replaced} the unloaded collections of the {@code snapshot} of {@code entry} its flush unlinks. */
+    private void addReplacedCollections(ManagedEntity entry, Object[] snapshot, List<LazyCollection> replaced) {
+        Object[] state = null;
+        for (Object slot : snapshot) {
+            if (!LazyCollection.unloaded(slot)) continue;
+            if (state == null) state = readState(entry);
+            int attribute = ((LazyCollection) slot).attribute();
+            // the rows of a removed owner are deleted by its key, but the foreign keys of its targets one by one
+            if (entry.status() == ManagedEntity.Status.REMOVED ? entry.type().statements().collection(attribute)
+                    .filter(CollectionMapping.ForeignKey.class::isInstance).isPresent() : state[attribute] != slot) {
+                replaced.add((LazyCollection) slot);
+            }
+        }
     }
 
     /** Allowed once closed (§7.7). */
@@ -729,14 +735,7 @@ final class EntityManagerImpl implements EntityManager {
                 }
                 cacheInvalidationPending = true;
                 try (PreparedStatement statement = connection.prepareStatement(sql)) {
-                    for (int i = 0; i < parameters.size(); i++) {
-                        Object value = parameters.get(i);
-                        if (value == null) {
-                            statement.setNull(i + 1, Types.NULL);
-                        } else {
-                            statement.setObject(i + 1, value instanceof Enum<?> constant ? constant.name() : value);
-                        }
-                    }
+                    bindNativeParameters(statement, parameters);
                     return statement.executeUpdate();
                 } catch (SQLException e) {
                     throw new PersistenceException("The native update failed: " + e.getMessage(), e);
@@ -744,6 +743,18 @@ final class EntityManagerImpl implements EntityManager {
             });
         } catch (RuntimeException e) {
             throw failed(e);
+        }
+    }
+
+    /** Binds the positional parameters of a native update: an enum by its name, {@code null} as an untyped NULL. */
+    private static void bindNativeParameters(PreparedStatement statement, List<Object> parameters) throws SQLException {
+        for (int i = 0; i < parameters.size(); i++) {
+            Object value = parameters.get(i);
+            if (value == null) {
+                statement.setNull(i + 1, Types.NULL);
+            } else {
+                statement.setObject(i + 1, value instanceof Enum<?> constant ? constant.name() : value);
+            }
         }
     }
 
@@ -1017,32 +1028,39 @@ final class EntityManagerImpl implements EntityManager {
         if (type.isEmpty()) return;
         for (Map.Entry<String, FetchPlan> attribute : plan.attributes().entrySet()) {
             int index = UnitUtil.index(type.get(), attribute.getKey());
-            if (index < 0) continue; // an attribute of another subtype of a graph
-            Object value = type.get().access().get(instance, index);
-            io.vidocq.noether.jpa.core.spi.LazyReference.initialize(value);
-            if (value instanceof LazyCollection lazy && !lazy.initialized()) {
-                Optional<ManagedEntity> entry = lazy.owner() == instance ? context.entry(instance) : Optional.empty();
-                if (entry.isEmpty()) continue;
-                if (connection == null) {
-                    lazy.initialize();
-                } else {
-                    factory.loader(connection).initialize(entry.get(), lazy, connection, context);
+            if (index >= 0) { // else an attribute of another subtype of a graph
+                fetchAttribute(instance, type.get().access().get(instance, index), attribute.getValue(), connection);
+            }
+        }
+    }
+
+    /**
+     * Initializes the {@code value} of an attribute of {@code instance}, a LAZY collection only if {@code instance} owns
+     * it and is managed, then fetches {@code targets} on the instances it holds.
+     */
+    private void fetchAttribute(Object instance, Object value, FetchPlan targets, Connection connection) {
+        io.vidocq.noether.jpa.core.spi.LazyReference.initialize(value);
+        if (value instanceof LazyCollection lazy && !lazy.initialized()) {
+            Optional<ManagedEntity> entry = lazy.owner() == instance ? context.entry(instance) : Optional.empty();
+            if (entry.isEmpty()) return;
+            if (connection == null) {
+                lazy.initialize();
+            } else {
+                factory.loader(connection).initialize(entry.get(), lazy, connection, context);
+            }
+        }
+        if (targets.isEmpty() || LazyCollection.unloaded(value)) return;
+        switch (value) {
+            case Map<?, ?> map -> {
+                for (Map.Entry<?, ?> element : map.entrySet()) {
+                    fetch(element.getKey(), targets, connection);
+                    fetch(element.getValue(), targets, connection);
                 }
             }
-            FetchPlan targets = attribute.getValue();
-            if (targets.isEmpty() || LazyCollection.unloaded(value)) continue;
-            switch (value) {
-                case Map<?, ?> map -> {
-                    for (Map.Entry<?, ?> element : map.entrySet()) {
-                        fetch(element.getKey(), targets, connection);
-                        fetch(element.getValue(), targets, connection);
-                    }
-                }
-                case java.util.Collection<?> elements -> {
-                    for (Object element : elements) fetch(element, targets, connection);
-                }
-                case null, default -> fetch(value, targets, connection);
+            case java.util.Collection<?> elements -> {
+                for (Object element : elements) fetch(element, targets, connection);
             }
+            case null, default -> fetch(value, targets, connection);
         }
     }
 
@@ -1383,12 +1401,9 @@ final class EntityManagerImpl implements EntityManager {
             }
             Map<EntityKey, MappedEntity> fresh = new java.util.LinkedHashMap<>();
             for (var row : rows) {
-                EntityKey key = row.key();
-                if (context.find(key).isPresent()) continue;
-                if (!cacheInvalidationPending && loadRetrieveMode() == CacheRetrieveMode.USE
-                        && loadStoreMode() != CacheStoreMode.REFRESH
-                        && factory.cache().restore(row.type(), row.id(), context).isPresent()) continue;
-                fresh.putIfAbsent(key, row.type());
+                if (!managedOrRestored(row)) {
+                    fresh.putIfAbsent(row.key(), row.type());
+                }
             }
             long generation = factory.cache().generation();
             if (!fresh.isEmpty() && transaction.isActive() && loadStoreMode() != CacheStoreMode.BYPASS) captureCacheGeneration(generation);
@@ -1396,6 +1411,14 @@ final class EntityManagerImpl implements EntityManager {
             for (var item : fresh.entrySet()) {
                 stored(item.getKey(), context.find(item.getKey()).orElseThrow().instance(), generation);
             }
+        }
+
+        /** Whether the instance of {@code row} is managed already, or the shared cache restores it (§3.10). */
+        private boolean managedOrRestored(io.vidocq.noether.jpa.core.flush.EntityLoader.FetchedEntity row) {
+            return context.find(row.key()).isPresent()
+                || !cacheInvalidationPending && loadRetrieveMode() == CacheRetrieveMode.USE
+                    && loadStoreMode() != CacheStoreMode.REFRESH
+                    && factory.cache().restore(row.type(), row.id(), context).isPresent();
         }
 
         /** Records a newly loaded instance for the shared cache, as a find by identifier does (§3.10). */
