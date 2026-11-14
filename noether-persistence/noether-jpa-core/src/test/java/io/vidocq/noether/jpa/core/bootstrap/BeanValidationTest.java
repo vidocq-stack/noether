@@ -13,6 +13,7 @@ import jakarta.persistence.ValidationMode;
 import jakarta.persistence.PersistenceUnitTransactionType;
 import jakarta.validation.Validation;
 import jakarta.validation.ValidatorFactory;
+import java.net.URI;
 import java.net.URL;
 import java.util.Collections;
 import java.util.Enumeration;
@@ -125,7 +126,7 @@ class BeanValidationTest {
     }
 
     private java.net.URLClassLoader isolated(boolean withProvider) throws Exception {
-        URL service = new URL(null, "fixture:validation-provider", new java.net.URLStreamHandler() {
+        URL service = URL.of(URI.create("fixture:validation-provider"), new java.net.URLStreamHandler() {
             @Override
             protected java.net.URLConnection openConnection(URL url) {
                 return new java.net.URLConnection(url) {
