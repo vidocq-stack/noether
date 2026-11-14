@@ -85,6 +85,10 @@ final class AccessWriter {
 
         """;
 
+    /** The start of a case of the switch of a generated method, indented. */
+    private static final String CASE = "                case ";
+    private static final String FIND_VIRTUAL = ".findVirtual(";
+
     private static final String INSTANTIATE = """
 
             @java.lang.Override
@@ -285,7 +289,7 @@ final class AccessWriter {
         StringBuilder cases = new StringBuilder();
         for (int i = 0; i < callbackSlots.size(); i++) {
             CallbackSlot slot = callbackSlots.get(i);
-            cases.append("                case ").append(i).append(" -> ")
+            cases.append(CASE).append(i).append(" -> ")
                 .append(slot.call() != null ? slot.call() : "CALLBACK_" + i + ".invokeExact(instance)").append(";\n");
         }
         return CALLBACK.formatted(self, cases);
@@ -297,11 +301,11 @@ final class AccessWriter {
             return NO_ATTRIBUTE; // a converter: instantiated, never read nor written
         }
         StringBuilder methods = new StringBuilder()
-            .append(GET.formatted(self, lines(slots, (slot, i) -> "                case " + i + " -> " + value(slot, i) + ";")))
+            .append(GET.formatted(self, lines(slots, (slot, i) -> CASE + i + " -> " + value(slot, i) + ";")))
             .append(READ.formatted(self, lines(slots, (slot, i) -> "            state[" + i + "] = " + value(slot, i) + ";")));
         if (!notWritten) {
             methods.append(SET.formatted(self,
-                    lines(slots, (slot, i) -> "                case " + i + " -> " + assignment(slot, i, "value") + ";")))
+                    lines(slots, (slot, i) -> CASE + i + " -> " + assignment(slot, i, "value") + ";")))
                 .append(WRITE.formatted(self,
                     lines(slots, (slot, i) -> "            " + assignment(slot, i, "state[" + i + "]") + ";")));
         }
@@ -387,7 +391,7 @@ final class AccessWriter {
                 throw new Unsupported("the callback " + callback.descriptor() + " belongs to another module");
             }
             int depth = depth(type, owner);
-            return new CallbackSlot(callback, null, "in" + depth + ".findVirtual(" + classOf(qualified(type), depth) + ", \""
+            return new CallbackSlot(callback, null, "in" + depth + FIND_VIRTUAL + classOf(qualified(type), depth) + ", \""
                 + callback.method() + "\", java.lang.invoke.MethodType.methodType(void.class)).asType(invoker)", depth);
         }
         TypeElement listener = infos.element(callback.listener());
@@ -408,7 +412,7 @@ final class AccessWriter {
             throw new Unsupported("the listener method " + callback.descriptor() + " cannot be reached from " + pkg);
         }
         String ownerClass = qualified(ownerElement) + ".class";
-        return new CallbackSlot(callback, null, "java.lang.invoke.MethodHandles.privateLookupIn(" + ownerClass + ", own).findVirtual("
+        return new CallbackSlot(callback, null, "java.lang.invoke.MethodHandles.privateLookupIn(" + ownerClass + ", own)" + FIND_VIRTUAL
             + ownerClass + ", \"" + callback.method() + "\", java.lang.invoke.MethodType.methodType(void.class, "
             + classLiteral(callback.parameter()) + ")).bindTo(" + field + ").asType(invoker)", -1);
     }
@@ -556,7 +560,7 @@ final class AccessWriter {
         String owner = classOf(self, slot.depth());
         String find = slot.member().access() == AccessKind.FIELD
             ? ".findGetter(" + owner + ", \"" + slot.getter() + "\", " + slot.typeLiteral() + ")"
-            : ".findVirtual(" + owner + ", \"" + slot.getter() + "\", java.lang.invoke.MethodType.methodType("
+            : FIND_VIRTUAL + owner + ", \"" + slot.getter() + "\", java.lang.invoke.MethodType.methodType("
                 + slot.typeLiteral() + "))";
         return "            GET_" + i + " = in" + slot.depth() + find + ".asType(getter);\n";
     }
@@ -565,7 +569,7 @@ final class AccessWriter {
         String owner = classOf(self, slot.depth());
         String find = slot.member().access() == AccessKind.FIELD
             ? ".findSetter(" + owner + ", \"" + slot.setter() + "\", " + slot.typeLiteral() + ")"
-            : ".findVirtual(" + owner + ", \"" + slot.setter() + "\", java.lang.invoke.MethodType.methodType("
+            : FIND_VIRTUAL + owner + ", \"" + slot.setter() + "\", java.lang.invoke.MethodType.methodType("
                 + slot.setterReturnLiteral() + ", " + slot.typeLiteral() + "))";
         return "            SET_" + i + " = in" + slot.depth() + find + ".asType(setter);\n";
     }
