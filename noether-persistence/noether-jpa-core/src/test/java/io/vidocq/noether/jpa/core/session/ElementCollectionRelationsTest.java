@@ -307,7 +307,7 @@ class ElementCollectionRelationsTest {
     }
 
     // §2.4.2 and §2.7: an element-row FK may target a simple identity derived through MapsId.
-    @Test void derivedSimpleIdentityTargetIsPreservedInElementCollectionRowsAndQueries() throws Exception {
+    @Test void derivedSimpleIdentityTargetIsPreservedInElementCollectionRowsAndQueries() {
         for (boolean xml : List.of(false, true)) {
             var configuration = configuration(false, MapsIdElementOwner.class, MapsIdElementValue.class,
                 MapsIdElementTarget.class, MapsIdElementParent.class);
@@ -539,36 +539,14 @@ class ElementCollectionRelationsTest {
         }
     }
 
-    // §2.4.2.1 and §2.8: relationship-named IdClass fields use the composite parent key types.
-    @Test void compositeIdClassParentsKeepFlattenedElementKeysAndManagedIdentity() {
+    // §2.4.2.1 and §2.8: relationship-named IdClass fields use the composite parent key types in the element row.
+    @Test void compositeIdClassParentsKeepFlattenedElementKeysInElementRows() {
         for (boolean xml : List.of(false, true)) {
-            var configuration = configuration(false, CompositeLinkOwner.class, CompositeLinkValue.class,
-                CompositeLinkTarget.class, CompositeLinkKey.class, CompositeTarget.class, CompositeKey.class,
-                IdClassTarget.class, IdClassKey.class);
-            if (xml) configuration.mappingFile("orm/element-collection-idclass-composite-parents.xml");
+            var configuration = compositeLinkConfiguration(xml);
             try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
-                var embedded = new CompositeTarget();
-                embedded.id = new CompositeKey(3, 19);
-                var idClass = new IdClassTarget();
-                idClass.region = 7;
-                idClass.serial = 23;
-                var first = new CompositeLinkTarget(embedded, idClass, "first");
-                var second = new CompositeLinkTarget(embedded, idClass, "second");
-                var owner = new CompositeLinkOwner();
-                owner.id = 12L;
-                owner.values.add(new CompositeLinkValue("first", first));
-                owner.values.add(new CompositeLinkValue("duplicate", first));
-                owner.values.add(new CompositeLinkValue("null", null));
-                owner.values.add(new CompositeLinkValue("second", second));
-                transaction(em, () -> {
-                    em.persist(embedded);
-                    em.persist(idClass);
-                    em.persist(first);
-                    em.persist(second);
-                    em.persist(owner);
-                });
-                var firstKey = new CompositeLinkKey(embedded.id, new IdClassKey(7, 23), "first");
-                var secondKey = new CompositeLinkKey(embedded.id, new IdClassKey(7, 23), "second");
+                var persisted = persistCompositeLinks(em);
+                var first = persisted.first();
+                var firstKey = persisted.firstKey();
                 assertThat(factory.getPersistenceUnitUtil().getIdentifier(first)).isEqualTo(firstKey);
                 List<?> rows = em.createNativeQuery(
                     "select element_embedded_region, element_embedded_serial, element_idclass_region,"
@@ -586,9 +564,21 @@ class ElementCollectionRelationsTest {
                 assertThatThrownBy(duplicateInsert::executeUpdate)
                     .isInstanceOf(PersistenceException.class);
                 em.getTransaction().rollback();
+            }
+        }
+    }
+
+    // §2.4.2.1 and §2.8: elements that share composite parents share the managed target in loads and queries.
+    @Test void compositeIdClassParentsKeepManagedIdentityInLoadsAndQueries() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = compositeLinkConfiguration(xml);
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var persisted = persistCompositeLinks(em);
+                var embedded = persisted.embedded();
+                var firstKey = persisted.firstKey();
+                var secondKey = persisted.secondKey();
                 em.clear();
                 factory.getCache().evictAll();
-
                 var found = em.find(CompositeLinkOwner.class, 12L);
                 var managedFirst = em.find(CompositeLinkTarget.class, firstKey);
                 var managedSecond = em.find(CompositeLinkTarget.class, secondKey);
@@ -622,6 +612,23 @@ class ElementCollectionRelationsTest {
                     .getResultList();
                 assertThat(projected.getFirst().target).isSameAs(managedFirst);
                 assertThat(projected.get(2).target).isNull();
+            }
+        }
+    }
+
+    // §2.4.2.1 and §2.8: updates, merges, refreshes and removals keep the composite parent keys.
+    @Test void compositeIdClassParentsElementsSurviveUpdateMergeRefreshAndRemove() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = compositeLinkConfiguration(xml);
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var persisted = persistCompositeLinks(em);
+                var first = persisted.first();
+                var firstKey = persisted.firstKey();
+                var secondKey = persisted.secondKey();
+                em.clear();
+                factory.getCache().evictAll();
+                var found = em.find(CompositeLinkOwner.class, 12L);
+                var managedSecond = em.find(CompositeLinkTarget.class, secondKey);
                 transaction(em, () -> {
                     found.values.remove(1);
                     found.values.getFirst().target = managedSecond;
@@ -648,7 +655,18 @@ class ElementCollectionRelationsTest {
                 assertThat(em.find(CompositeLinkTarget.class, firstKey)).isNotNull();
                 assertThat(em.find(CompositeLinkTarget.class, secondKey)).isNotNull();
                 assertThat(em.createNativeQuery("select count(*) from composite_link_values").getSingleResult()).isEqualTo(0L);
+            }
+        }
+    }
 
+    // §2.4.2.1 and §2.8: an element row whose composite parent key is partially null is rejected when loaded.
+    @Test void compositeIdClassParentsRejectAPartiallyNullElementKey() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = compositeLinkConfiguration(xml);
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var firstKey = persistCompositeLinks(em).firstKey();
+                em.clear();
+                factory.getCache().evictAll();
                 var partial = new CompositeLinkOwner();
                 partial.id = 13L;
                 partial.values.add(new CompositeLinkValue("partial", em.find(CompositeLinkTarget.class, firstKey)));
@@ -664,28 +682,54 @@ class ElementCollectionRelationsTest {
         }
     }
 
-    // §2.4.2.1 and §2.8: distinct MapsId relationships derive separate BASIC embedded key components.
-    @Test void multipleMapsIdComponentsKeepDerivedElementTuplesAndManagedIdentity() {
+    private PersistenceConfiguration compositeLinkConfiguration(boolean xml) {
+        var configuration = configuration(false, CompositeLinkOwner.class, CompositeLinkValue.class,
+            CompositeLinkTarget.class, CompositeLinkKey.class, CompositeTarget.class, CompositeKey.class,
+            IdClassTarget.class, IdClassKey.class);
+        if (xml) configuration.mappingFile("orm/element-collection-idclass-composite-parents.xml");
+        return configuration;
+    }
+
+    /** The embedded parent and first target of the composite IdClass parents scenario, persisted with owner 12. */
+    private record CompositeLinks(CompositeTarget embedded, CompositeLinkTarget first, CompositeLinkKey firstKey,
+            CompositeLinkKey secondKey) {
+    }
+
+    private CompositeLinks persistCompositeLinks(EntityManager em) {
+        var embedded = new CompositeTarget();
+        embedded.id = new CompositeKey(3, 19);
+        var idClass = new IdClassTarget();
+        idClass.region = 7;
+        idClass.serial = 23;
+        var first = new CompositeLinkTarget(embedded, idClass, "first");
+        var second = new CompositeLinkTarget(embedded, idClass, "second");
+        var owner = new CompositeLinkOwner();
+        owner.id = 12L;
+        owner.values.add(new CompositeLinkValue("first", first));
+        owner.values.add(new CompositeLinkValue("duplicate", first));
+        owner.values.add(new CompositeLinkValue("null", null));
+        owner.values.add(new CompositeLinkValue("second", second));
+        transaction(em, () -> {
+            em.persist(embedded);
+            em.persist(idClass);
+            em.persist(first);
+            em.persist(second);
+            em.persist(owner);
+        });
+        return new CompositeLinks(embedded, first, new CompositeLinkKey(embedded.id, new IdClassKey(7, 23), "first"),
+            new CompositeLinkKey(embedded.id, new IdClassKey(7, 23), "second"));
+    }
+
+    // §2.4.2.1 and §2.8: distinct MapsId relationships derive separate BASIC embedded key components in the element row.
+    @Test void multipleMapsIdComponentsKeepDerivedElementTuplesInElementRows() {
         for (boolean xml : List.of(false, true)) {
-            var configuration = configuration(false, MultiMapsOwner.class, MultiMapsValue.class,
-                MultiMapsTarget.class, MultiMapsKey.class, MapsIdElementParent.class);
-            if (xml) configuration.mappingFile("orm/element-collection-multiple-mapsid.xml");
+            var configuration = multipleMapsIdConfiguration(xml);
             try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
-                var source = new MapsIdElementParent("source");
-                var destination = new MapsIdElementParent("destination");
-                var outward = new MultiMapsTarget(source, destination, "route");
-                var inward = new MultiMapsTarget(destination, source, "route");
-                var owner = new MultiMapsOwner();
-                owner.id = 16L;
-                owner.values.add(new MultiMapsValue("first", outward));
-                owner.values.add(new MultiMapsValue("duplicate", outward));
-                owner.values.add(new MultiMapsValue("null", null));
-                owner.values.add(new MultiMapsValue("reverse", inward));
-                transaction(em, () -> {
-                    em.persist(outward);
-                    em.persist(inward);
-                    em.persist(owner);
-                });
+                var persisted = persistMultipleMapsId(em);
+                var source = persisted.source();
+                var destination = persisted.destination();
+                var outward = persisted.outward();
+                var inward = persisted.inward();
                 assertThat(source.id).isPositive().isNotEqualTo(destination.id);
                 var outwardKey = new MultiMapsKey(source.id, destination.id, "route");
                 var inwardKey = new MultiMapsKey(destination.id, source.id, "route");
@@ -707,6 +751,20 @@ class ElementCollectionRelationsTest {
                 assertThatThrownBy(duplicateInsert::executeUpdate)
                     .isInstanceOf(PersistenceException.class);
                 em.getTransaction().rollback();
+            }
+        }
+    }
+
+    // §2.4.2.1 and §2.8: elements that share derived key components share the managed target in loads and queries.
+    @Test void multipleMapsIdComponentsKeepManagedIdentityInLoadsAndQueries() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = multipleMapsIdConfiguration(xml);
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var persisted = persistMultipleMapsId(em);
+                var source = persisted.source();
+                var destination = persisted.destination();
+                var outwardKey = persisted.outwardKey();
+                var inwardKey = persisted.inwardKey();
                 em.clear();
                 factory.getCache().evictAll();
                 var found = em.find(MultiMapsOwner.class, 16L);
@@ -740,6 +798,23 @@ class ElementCollectionRelationsTest {
                     .getResultList();
                 assertThat(projected.getFirst().target).isSameAs(managedOutward);
                 assertThat(projected.get(2).target).isNull();
+            }
+        }
+    }
+
+    // §2.4.2.1 and §2.8: updates, merges, refreshes and removals keep the derived key components.
+    @Test void multipleMapsIdComponentsElementsSurviveUpdateMergeRefreshAndRemove() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = multipleMapsIdConfiguration(xml);
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var persisted = persistMultipleMapsId(em);
+                var outward = persisted.outward();
+                var outwardKey = persisted.outwardKey();
+                var inwardKey = persisted.inwardKey();
+                em.clear();
+                factory.getCache().evictAll();
+                var found = em.find(MultiMapsOwner.class, 16L);
+                var managedInward = em.find(MultiMapsTarget.class, inwardKey);
                 transaction(em, () -> {
                     found.values.remove(1);
                     found.values.getFirst().target = managedInward;
@@ -764,6 +839,18 @@ class ElementCollectionRelationsTest {
                 assertThat(em.find(MultiMapsTarget.class, outwardKey)).isNotNull();
                 assertThat(em.find(MultiMapsTarget.class, inwardKey)).isNotNull();
                 assertThat(em.createNativeQuery("select count(*) from multi_maps_values").getSingleResult()).isEqualTo(0L);
+            }
+        }
+    }
+
+    // §2.4.2.1 and §2.8: an element row whose derived key components are partially null is rejected when loaded.
+    @Test void multipleMapsIdComponentsRejectAPartiallyNullElementKey() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = multipleMapsIdConfiguration(xml);
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var outwardKey = persistMultipleMapsId(em).outwardKey();
+                em.clear();
+                factory.getCache().evictAll();
                 var partial = new MultiMapsOwner();
                 partial.id = 17L;
                 partial.values.add(new MultiMapsValue("partial", em.find(MultiMapsTarget.class, outwardKey)));
@@ -777,6 +864,44 @@ class ElementCollectionRelationsTest {
                     .isInstanceOf(PersistenceException.class).hasMessageContaining("partially null");
             }
         }
+    }
+
+    private PersistenceConfiguration multipleMapsIdConfiguration(boolean xml) {
+        var configuration = configuration(false, MultiMapsOwner.class, MultiMapsValue.class,
+            MultiMapsTarget.class, MultiMapsKey.class, MapsIdElementParent.class);
+        if (xml) configuration.mappingFile("orm/element-collection-multiple-mapsid.xml");
+        return configuration;
+    }
+
+    /** The parents and targets of the multiple MapsId scenario, persisted with their owner 16. */
+    private record MultipleMapsId(MapsIdElementParent source, MapsIdElementParent destination,
+            MultiMapsTarget outward, MultiMapsTarget inward) {
+        MultiMapsKey outwardKey() {
+            return new MultiMapsKey(source.id, destination.id, "route");
+        }
+
+        MultiMapsKey inwardKey() {
+            return new MultiMapsKey(destination.id, source.id, "route");
+        }
+    }
+
+    private MultipleMapsId persistMultipleMapsId(EntityManager em) {
+        var source = new MapsIdElementParent("source");
+        var destination = new MapsIdElementParent("destination");
+        var outward = new MultiMapsTarget(source, destination, "route");
+        var inward = new MultiMapsTarget(destination, source, "route");
+        var owner = new MultiMapsOwner();
+        owner.id = 16L;
+        owner.values.add(new MultiMapsValue("first", outward));
+        owner.values.add(new MultiMapsValue("duplicate", outward));
+        owner.values.add(new MultiMapsValue("null", null));
+        owner.values.add(new MultiMapsValue("reverse", inward));
+        transaction(em, () -> {
+            em.persist(outward);
+            em.persist(inward);
+            em.persist(owner);
+        });
+        return new MultipleMapsId(source, destination, outward, inward);
     }
 
     @Test void multipleMapsIdTargetsKeepSharedCacheIdentity() {
@@ -821,26 +946,16 @@ class ElementCollectionRelationsTest {
             .isInstanceOf(PersistenceException.class).hasMessageContaining("requires an eligible primary-key target");
     }
 
-    // §2.4.2.1 and §2.8: a whole embedded identity may be shared through OneToOne MapsId.
-    @Test void wholeCompositeMapsIdTargetKeepsPhysicalElementKeysAndManagedIdentity() {
+    // §2.4.2.1 and §2.8: a whole embedded identity may be shared through OneToOne MapsId, in the element row.
+    @Test void wholeCompositeMapsIdTargetKeepsPhysicalElementKeysInElementRows() {
         for (boolean xml : List.of(false, true)) {
-            var configuration = configuration(false, SharedCompositeOwner.class, SharedCompositeValue.class,
-                SharedCompositeTarget.class, CompositeTarget.class, CompositeKey.class);
-            if (xml) configuration.mappingFile("orm/element-collection-shared-composite-mapsid.xml");
+            var configuration = sharedCompositeConfiguration(xml);
             try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
-                var firstParent = new CompositeTarget();
-                firstParent.id = new CompositeKey(3, 19);
-                var secondParent = new CompositeTarget();
-                secondParent.id = new CompositeKey(19, 3);
-                var first = new SharedCompositeTarget(firstParent);
-                var second = new SharedCompositeTarget(secondParent);
-                var owner = new SharedCompositeOwner();
-                owner.id = 19L;
-                owner.values.add(new SharedCompositeValue("first", first));
-                owner.values.add(new SharedCompositeValue("duplicate", first));
-                owner.values.add(new SharedCompositeValue("null", null));
-                owner.values.add(new SharedCompositeValue("second", second));
-                transaction(em, () -> { em.persist(first); em.persist(second); em.persist(owner); });
+                var persisted = persistSharedComposites(em);
+                var firstParent = persisted.firstParent();
+                var secondParent = persisted.secondParent();
+                var first = persisted.first();
+                var second = persisted.second();
                 assertThat(first.id).isEqualTo(firstParent.id);
                 assertThat(second.id).isEqualTo(secondParent.id);
                 assertThat(factory.getPersistenceUnitUtil().getIdentifier(first)).isEqualTo(firstParent.id);
@@ -858,6 +973,18 @@ class ElementCollectionRelationsTest {
                 assertThatThrownBy(duplicateInsert::executeUpdate)
                     .isInstanceOf(PersistenceException.class);
                 em.getTransaction().rollback();
+            }
+        }
+    }
+
+    // §2.4.2.1 and §2.8: elements that share a whole embedded identity share the managed target in loads and queries.
+    @Test void wholeCompositeMapsIdTargetKeepsManagedIdentityInLoadsAndQueries() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = sharedCompositeConfiguration(xml);
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var persisted = persistSharedComposites(em);
+                var firstParent = persisted.firstParent();
+                var secondParent = persisted.secondParent();
                 em.clear();
                 factory.getCache().evictAll();
                 var found = em.find(SharedCompositeOwner.class, 19L);
@@ -891,6 +1018,23 @@ class ElementCollectionRelationsTest {
                     .getResultList();
                 assertThat(projected.getFirst().target).isSameAs(managedFirst);
                 assertThat(projected.get(2).target).isNull();
+            }
+        }
+    }
+
+    // §2.4.2.1 and §2.8: updates, merges, refreshes and removals keep the shared whole embedded identity.
+    @Test void wholeCompositeMapsIdTargetElementsSurviveUpdateMergeRefreshAndRemove() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = sharedCompositeConfiguration(xml);
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var persisted = persistSharedComposites(em);
+                var firstParent = persisted.firstParent();
+                var secondParent = persisted.secondParent();
+                var first = persisted.first();
+                em.clear();
+                factory.getCache().evictAll();
+                var found = em.find(SharedCompositeOwner.class, 19L);
+                var managedSecond = em.find(SharedCompositeTarget.class, secondParent.id);
                 transaction(em, () -> {
                     found.values.remove(1);
                     found.values.getFirst().target = managedSecond;
@@ -915,6 +1059,18 @@ class ElementCollectionRelationsTest {
                 assertThat(em.find(SharedCompositeTarget.class, firstParent.id)).isNotNull();
                 assertThat(em.find(SharedCompositeTarget.class, secondParent.id)).isNotNull();
                 assertThat(em.createNativeQuery("select count(*) from shared_composite_values").getSingleResult()).isEqualTo(0L);
+            }
+        }
+    }
+
+    // §2.4.2.1 and §2.8: an element row whose shared whole embedded key is partially null is rejected when loaded.
+    @Test void wholeCompositeMapsIdTargetRejectsAPartiallyNullElementKey() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = sharedCompositeConfiguration(xml);
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var firstParent = persistSharedComposites(em).firstParent();
+                em.clear();
+                factory.getCache().evictAll();
                 var partial = new SharedCompositeOwner();
                 partial.id = 20L;
                 partial.values.add(new SharedCompositeValue("partial", em.find(SharedCompositeTarget.class, firstParent.id)));
@@ -928,6 +1084,35 @@ class ElementCollectionRelationsTest {
                     .isInstanceOf(PersistenceException.class).hasMessageContaining("partially null");
             }
         }
+    }
+
+    private PersistenceConfiguration sharedCompositeConfiguration(boolean xml) {
+        var configuration = configuration(false, SharedCompositeOwner.class, SharedCompositeValue.class,
+            SharedCompositeTarget.class, CompositeTarget.class, CompositeKey.class);
+        if (xml) configuration.mappingFile("orm/element-collection-shared-composite-mapsid.xml");
+        return configuration;
+    }
+
+    /** The parents and targets of the whole composite MapsId scenario, persisted with their owner 19. */
+    private record SharedComposites(CompositeTarget firstParent, CompositeTarget secondParent,
+            SharedCompositeTarget first, SharedCompositeTarget second) {
+    }
+
+    private SharedComposites persistSharedComposites(EntityManager em) {
+        var firstParent = new CompositeTarget();
+        firstParent.id = new CompositeKey(3, 19);
+        var secondParent = new CompositeTarget();
+        secondParent.id = new CompositeKey(19, 3);
+        var first = new SharedCompositeTarget(firstParent);
+        var second = new SharedCompositeTarget(secondParent);
+        var owner = new SharedCompositeOwner();
+        owner.id = 19L;
+        owner.values.add(new SharedCompositeValue("first", first));
+        owner.values.add(new SharedCompositeValue("duplicate", first));
+        owner.values.add(new SharedCompositeValue("null", null));
+        owner.values.add(new SharedCompositeValue("second", second));
+        transaction(em, () -> { em.persist(first); em.persist(second); em.persist(owner); });
+        return new SharedComposites(firstParent, secondParent, first, second);
     }
 
     @Test void wholeCompositeMapsIdTargetsKeepSharedCacheIdentityAndRejectParentReassignment() {
@@ -973,30 +1158,16 @@ class ElementCollectionRelationsTest {
             .isInstanceOf(PersistenceException.class).hasMessageContaining("requires an eligible primary-key target");
     }
 
-    // §2.4.2.1 and §2.8: the dependent EmbeddedId has the same Java type as its parent's IdClass.
-    @Test void wholeMapsIdFromIdClassParentKeepsElementTuplesAndManagedIdentity() {
+    // §2.4.2.1 and §2.8: the dependent EmbeddedId has the same Java type as its parent's IdClass, in the element row.
+    @Test void wholeMapsIdFromIdClassParentKeepsElementTuplesInElementRows() {
         for (boolean xml : List.of(false, true)) {
-            var configuration = configuration(false, SharedIdClassOwner.class, SharedIdClassValue.class,
-                SharedIdClassTarget.class, SharedClassParent.class, IdClassKey.class);
-            if (xml) configuration.mappingFile("orm/element-collection-shared-idclass-parent.xml");
+            var configuration = sharedIdClassConfiguration(xml);
             try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
-                var firstParent = new SharedClassParent();
-                firstParent.region = 3;
-                firstParent.serial = 19;
-                var secondParent = new SharedClassParent();
-                secondParent.region = 19;
-                secondParent.serial = 3;
-                var first = new SharedIdClassTarget(firstParent);
-                var second = new SharedIdClassTarget(secondParent);
-                var firstKey = new IdClassKey(3, 19);
-                var secondKey = new IdClassKey(19, 3);
-                var owner = new SharedIdClassOwner();
-                owner.id = 22L;
-                owner.values.add(new SharedIdClassValue("first", first));
-                owner.values.add(new SharedIdClassValue("duplicate", first));
-                owner.values.add(new SharedIdClassValue("null", null));
-                owner.values.add(new SharedIdClassValue("second", second));
-                transaction(em, () -> { em.persist(first); em.persist(second); em.persist(owner); });
+                var persisted = persistSharedIdClasses(em);
+                var first = persisted.first();
+                var second = persisted.second();
+                var firstKey = persisted.firstKey();
+                var secondKey = persisted.secondKey();
                 assertThat(first.id).isEqualTo(firstKey);
                 assertThat(second.id).isEqualTo(secondKey);
                 assertThat(factory.getPersistenceUnitUtil().getIdentifier(first)).isEqualTo(firstKey);
@@ -1014,6 +1185,18 @@ class ElementCollectionRelationsTest {
                 assertThatThrownBy(duplicateInsert::executeUpdate)
                     .isInstanceOf(PersistenceException.class);
                 em.getTransaction().rollback();
+            }
+        }
+    }
+
+    // §2.4.2.1 and §2.8: elements that share an IdClass-typed identity share the managed target in loads and queries.
+    @Test void wholeMapsIdFromIdClassParentKeepsManagedIdentityInLoadsAndQueries() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = sharedIdClassConfiguration(xml);
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var persisted = persistSharedIdClasses(em);
+                var firstKey = persisted.firstKey();
+                var secondKey = persisted.secondKey();
                 em.clear();
                 factory.getCache().evictAll();
                 var found = em.find(SharedIdClassOwner.class, 22L);
@@ -1047,6 +1230,23 @@ class ElementCollectionRelationsTest {
                     .getResultList();
                 assertThat(projected.getFirst().target).isSameAs(managedFirst);
                 assertThat(projected.get(2).target).isNull();
+            }
+        }
+    }
+
+    // §2.4.2.1 and §2.8: updates, merges, refreshes and removals keep the IdClass-typed identity.
+    @Test void wholeMapsIdFromIdClassParentElementsSurviveUpdateMergeRefreshAndRemove() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = sharedIdClassConfiguration(xml);
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var persisted = persistSharedIdClasses(em);
+                var first = persisted.first();
+                var firstKey = persisted.firstKey();
+                var secondKey = persisted.secondKey();
+                em.clear();
+                factory.getCache().evictAll();
+                var found = em.find(SharedIdClassOwner.class, 22L);
+                var managedSecond = em.find(SharedIdClassTarget.class, secondKey);
                 transaction(em, () -> {
                     found.values.remove(1);
                     found.values.getFirst().target = managedSecond;
@@ -1071,6 +1271,18 @@ class ElementCollectionRelationsTest {
                 assertThat(em.find(SharedIdClassTarget.class, firstKey)).isNotNull();
                 assertThat(em.find(SharedIdClassTarget.class, secondKey)).isNotNull();
                 assertThat(em.createNativeQuery("select count(*) from shared_idclass_values").getSingleResult()).isEqualTo(0L);
+            }
+        }
+    }
+
+    // §2.4.2.1 and §2.8: an element row whose IdClass-typed key is partially null is rejected when loaded.
+    @Test void wholeMapsIdFromIdClassParentRejectsAPartiallyNullElementKey() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = sharedIdClassConfiguration(xml);
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var firstKey = persistSharedIdClasses(em).firstKey();
+                em.clear();
+                factory.getCache().evictAll();
                 var partial = new SharedIdClassOwner();
                 partial.id = 23L;
                 partial.values.add(new SharedIdClassValue("partial", em.find(SharedIdClassTarget.class, firstKey)));
@@ -1084,6 +1296,37 @@ class ElementCollectionRelationsTest {
                     .isInstanceOf(PersistenceException.class).hasMessageContaining("partially null");
             }
         }
+    }
+
+    private PersistenceConfiguration sharedIdClassConfiguration(boolean xml) {
+        var configuration = configuration(false, SharedIdClassOwner.class, SharedIdClassValue.class,
+            SharedIdClassTarget.class, SharedClassParent.class, IdClassKey.class);
+        if (xml) configuration.mappingFile("orm/element-collection-shared-idclass-parent.xml");
+        return configuration;
+    }
+
+    /** The targets of the IdClass-typed whole MapsId scenario, persisted with their owner 22, and their keys. */
+    private record SharedIdClasses(SharedIdClassTarget first, SharedIdClassTarget second, IdClassKey firstKey,
+            IdClassKey secondKey) {
+    }
+
+    private SharedIdClasses persistSharedIdClasses(EntityManager em) {
+        var firstParent = new SharedClassParent();
+        firstParent.region = 3;
+        firstParent.serial = 19;
+        var secondParent = new SharedClassParent();
+        secondParent.region = 19;
+        secondParent.serial = 3;
+        var first = new SharedIdClassTarget(firstParent);
+        var second = new SharedIdClassTarget(secondParent);
+        var owner = new SharedIdClassOwner();
+        owner.id = 22L;
+        owner.values.add(new SharedIdClassValue("first", first));
+        owner.values.add(new SharedIdClassValue("duplicate", first));
+        owner.values.add(new SharedIdClassValue("null", null));
+        owner.values.add(new SharedIdClassValue("second", second));
+        transaction(em, () -> { em.persist(first); em.persist(second); em.persist(owner); });
+        return new SharedIdClasses(first, second, new IdClassKey(3, 19), new IdClassKey(19, 3));
     }
 
     @Test void wholeMapsIdCopiesParentKeyByAttributeRatherThanDeclarationOrder() {
@@ -1153,29 +1396,18 @@ class ElementCollectionRelationsTest {
             .isInstanceOf(PersistenceException.class).hasMessageContaining("identifier types must match");
     }
 
-    // §2.4.2.1 and §2.8: a named embedded component carries the composite parent's identity.
-    @Test void namedCompositeMapsIdKeepsElementTuplesAndManagedIdentity() {
+    // §2.4.2.1 and §2.8: a named embedded component carries the composite parent's identity in the element row.
+    @Test void namedCompositeMapsIdKeepsElementTuplesInElementRows() {
         for (boolean xml : List.of(false, true)) {
             var configuration = namedCompositeConfiguration(xml);
             try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
-                var firstParent = new CompositeTarget();
-                firstParent.id = new CompositeKey(3, 19);
-                var secondParent = new CompositeTarget();
-                secondParent.id = new CompositeKey(19, 3);
-                var first = new NamedCompositeTarget("same", firstParent);
-                var second = new NamedCompositeTarget("same", secondParent);
-                var third = new NamedCompositeTarget("other", firstParent);
-                var firstKey = new NamedCompositeKey("same", new CompositeKey(3, 19));
-                var secondKey = new NamedCompositeKey("same", new CompositeKey(19, 3));
-                var thirdKey = new NamedCompositeKey("other", new CompositeKey(3, 19));
-                var owner = new NamedCompositeOwner();
-                owner.id = 25L;
-                owner.values.add(new NamedCompositeValue("first", first));
-                owner.values.add(new NamedCompositeValue("duplicate", first));
-                owner.values.add(new NamedCompositeValue("null", null));
-                owner.values.add(new NamedCompositeValue("second", second));
-                owner.values.add(new NamedCompositeValue("third", third));
-                transaction(em, () -> { em.persist(first); em.persist(second); em.persist(third); em.persist(owner); });
+                var persisted = persistNamedComposites(em);
+                var first = persisted.first();
+                var second = persisted.second();
+                var third = persisted.third();
+                var firstKey = persisted.firstKey();
+                var secondKey = persisted.secondKey();
+                var thirdKey = persisted.thirdKey();
                 assertThat(first.id).isEqualTo(firstKey);
                 assertThat(second.id).isEqualTo(secondKey);
                 assertThat(third.id).isEqualTo(thirdKey);
@@ -1194,6 +1426,20 @@ class ElementCollectionRelationsTest {
                         + " values (25, 5, 'same', 3, 3)");
                 assertThatThrownBy(duplicateInsert::executeUpdate).isInstanceOf(PersistenceException.class);
                 em.getTransaction().rollback();
+            }
+        }
+    }
+
+    // §2.4.2.1 and §2.8: elements that share a composite parent share its managed instance in loads and queries.
+    @Test void namedCompositeMapsIdKeepsManagedIdentityInLoadsAndQueries() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = namedCompositeConfiguration(xml);
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var persisted = persistNamedComposites(em);
+                var firstParent = persisted.firstParent();
+                var firstKey = persisted.firstKey();
+                var secondKey = persisted.secondKey();
+                var thirdKey = persisted.thirdKey();
                 em.clear();
                 factory.getCache().evictAll();
                 var found = em.find(NamedCompositeOwner.class, 25L);
@@ -1233,6 +1479,24 @@ class ElementCollectionRelationsTest {
                     .getResultList();
                 assertThat(projected.getFirst().target).isSameAs(managedFirst);
                 assertThat(projected.get(2).target).isNull();
+            }
+        }
+    }
+
+    // §2.4.2.1 and §2.8: updates, merges, refreshes and removals keep the composite parent's identity.
+    @Test void namedCompositeMapsIdElementsSurviveUpdateMergeRefreshAndRemove() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = namedCompositeConfiguration(xml);
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var persisted = persistNamedComposites(em);
+                var first = persisted.first();
+                var firstKey = persisted.firstKey();
+                var secondKey = persisted.secondKey();
+                var thirdKey = persisted.thirdKey();
+                em.clear();
+                factory.getCache().evictAll();
+                var found = em.find(NamedCompositeOwner.class, 25L);
+                var managedSecond = em.find(NamedCompositeTarget.class, secondKey);
                 transaction(em, () -> {
                     found.values.remove(1);
                     found.values.getFirst().target = managedSecond;
@@ -1257,6 +1521,18 @@ class ElementCollectionRelationsTest {
                 assertThat(em.find(NamedCompositeTarget.class, firstKey)).isNotNull();
                 assertThat(em.find(NamedCompositeTarget.class, secondKey)).isNotNull();
                 assertThat(em.createNativeQuery("select count(*) from named_composite_values").getSingleResult()).isEqualTo(0L);
+            }
+        }
+    }
+
+    // §2.4.2.1 and §2.8: an element row whose composite parent key is partially null is rejected when loaded.
+    @Test void namedCompositeMapsIdRejectsAPartiallyNullElementKey() {
+        for (boolean xml : List.of(false, true)) {
+            var configuration = namedCompositeConfiguration(xml);
+            try (var factory = configuration.createEntityManagerFactory(); var em = factory.createEntityManager()) {
+                var firstKey = persistNamedComposites(em).firstKey();
+                em.clear();
+                factory.getCache().evictAll();
                 var partial = new NamedCompositeOwner();
                 partial.id = 26L;
                 partial.values.add(new NamedCompositeValue("partial", em.find(NamedCompositeTarget.class, firstKey)));
@@ -1270,6 +1546,34 @@ class ElementCollectionRelationsTest {
                     .isInstanceOf(PersistenceException.class).hasMessageContaining("partially null");
             }
         }
+    }
+
+    /** The targets of the named composite MapsId scenario, persisted with their owner 25, and their keys. */
+    private record NamedComposites(CompositeTarget firstParent, NamedCompositeTarget first, NamedCompositeTarget second,
+            NamedCompositeTarget third, NamedCompositeKey firstKey, NamedCompositeKey secondKey,
+            NamedCompositeKey thirdKey) {
+    }
+
+    private NamedComposites persistNamedComposites(EntityManager em) {
+        var firstParent = new CompositeTarget();
+        firstParent.id = new CompositeKey(3, 19);
+        var secondParent = new CompositeTarget();
+        secondParent.id = new CompositeKey(19, 3);
+        var first = new NamedCompositeTarget("same", firstParent);
+        var second = new NamedCompositeTarget("same", secondParent);
+        var third = new NamedCompositeTarget("other", firstParent);
+        var owner = new NamedCompositeOwner();
+        owner.id = 25L;
+        owner.values.add(new NamedCompositeValue("first", first));
+        owner.values.add(new NamedCompositeValue("duplicate", first));
+        owner.values.add(new NamedCompositeValue("null", null));
+        owner.values.add(new NamedCompositeValue("second", second));
+        owner.values.add(new NamedCompositeValue("third", third));
+        transaction(em, () -> { em.persist(first); em.persist(second); em.persist(third); em.persist(owner); });
+        return new NamedComposites(firstParent, first, second, third,
+            new NamedCompositeKey("same", new CompositeKey(3, 19)),
+            new NamedCompositeKey("same", new CompositeKey(19, 3)),
+            new NamedCompositeKey("other", new CompositeKey(3, 19)));
     }
 
     private PersistenceConfiguration namedCompositeConfiguration(boolean xml) {
@@ -1364,31 +1668,18 @@ class ElementCollectionRelationsTest {
             .hasMessageContaining("requires an eligible primary-key target");
     }
 
-    // §2.4.2.1 and §2.8: the named embedded component uses its parent's IdClass type.
-    @Test void namedIdClassMapsIdKeepsPhysicalTuplesAndManagedIdentity() {
+    // §2.4.2.1 and §2.8: the named embedded component uses its parent's IdClass type in the element row.
+    @Test void namedIdClassMapsIdKeepsPhysicalTuplesInElementRows() {
         for (boolean xml : List.of(false, true)) {
             try (var factory = namedClassCompositeConfiguration(xml).createEntityManagerFactory();
                     var em = factory.createEntityManager()) {
-                var firstParent = new SharedClassParent();
-                firstParent.region = 3;
-                firstParent.serial = 19;
-                var secondParent = new SharedClassParent();
-                secondParent.region = 19;
-                secondParent.serial = 3;
-                var first = new NamedClassCompositeTarget("same", firstParent);
-                var second = new NamedClassCompositeTarget("same", secondParent);
-                var third = new NamedClassCompositeTarget("other", firstParent);
-                var firstKey = new NamedClassCompositeKey("same", new IdClassKey(3, 19));
-                var secondKey = new NamedClassCompositeKey("same", new IdClassKey(19, 3));
-                var thirdKey = new NamedClassCompositeKey("other", new IdClassKey(3, 19));
-                var owner = new NamedClassCompositeOwner();
-                owner.id = 29L;
-                owner.values.add(new NamedClassCompositeValue("first", first));
-                owner.values.add(new NamedClassCompositeValue("duplicate", first));
-                owner.values.add(new NamedClassCompositeValue("null", null));
-                owner.values.add(new NamedClassCompositeValue("second", second));
-                owner.values.add(new NamedClassCompositeValue("third", third));
-                transaction(em, () -> { em.persist(first); em.persist(second); em.persist(third); em.persist(owner); });
+                var persisted = persistNamedClassComposites(em);
+                var first = persisted.first();
+                var second = persisted.second();
+                var third = persisted.third();
+                var firstKey = persisted.firstKey();
+                var secondKey = persisted.secondKey();
+                var thirdKey = persisted.thirdKey();
                 assertThat(first.id).isEqualTo(firstKey);
                 assertThat(second.id).isEqualTo(secondKey);
                 assertThat(third.id).isEqualTo(thirdKey);
@@ -1407,6 +1698,19 @@ class ElementCollectionRelationsTest {
                         + " values (29, 5, 'same', 3, 3)");
                 assertThatThrownBy(duplicateInsert::executeUpdate).isInstanceOf(PersistenceException.class);
                 em.getTransaction().rollback();
+            }
+        }
+    }
+
+    // §2.4.2.1 and §2.8: elements that share an IdClass parent share its managed instance in loads and queries.
+    @Test void namedIdClassMapsIdKeepsManagedIdentityInLoadsAndQueries() {
+        for (boolean xml : List.of(false, true)) {
+            try (var factory = namedClassCompositeConfiguration(xml).createEntityManagerFactory();
+                    var em = factory.createEntityManager()) {
+                var persisted = persistNamedClassComposites(em);
+                var firstKey = persisted.firstKey();
+                var secondKey = persisted.secondKey();
+                var thirdKey = persisted.thirdKey();
                 em.clear();
                 factory.getCache().evictAll();
                 var found = em.find(NamedClassCompositeOwner.class, 29L);
@@ -1447,6 +1751,24 @@ class ElementCollectionRelationsTest {
                     NamedClassCompositeValue.class).getResultList();
                 assertThat(projected.getFirst().target).isSameAs(managedFirst);
                 assertThat(projected.get(2).target).isNull();
+            }
+        }
+    }
+
+    // §2.4.2.1 and §2.8: updates, merges, refreshes and removals keep the IdClass parent's key.
+    @Test void namedIdClassMapsIdElementsSurviveUpdateMergeRefreshAndRemove() {
+        for (boolean xml : List.of(false, true)) {
+            try (var factory = namedClassCompositeConfiguration(xml).createEntityManagerFactory();
+                    var em = factory.createEntityManager()) {
+                var persisted = persistNamedClassComposites(em);
+                var first = persisted.first();
+                var firstKey = persisted.firstKey();
+                var secondKey = persisted.secondKey();
+                var thirdKey = persisted.thirdKey();
+                em.clear();
+                factory.getCache().evictAll();
+                var found = em.find(NamedClassCompositeOwner.class, 29L);
+                var managedSecond = em.find(NamedClassCompositeTarget.class, secondKey);
                 transaction(em, () -> {
                     found.values.remove(1);
                     found.values.getFirst().target = managedSecond;
@@ -1471,6 +1793,18 @@ class ElementCollectionRelationsTest {
                 assertThat(em.find(NamedClassCompositeTarget.class, firstKey)).isNotNull();
                 assertThat(em.find(NamedClassCompositeTarget.class, secondKey)).isNotNull();
                 assertThat(em.createNativeQuery("select count(*) from named_class_values").getSingleResult()).isEqualTo(0L);
+            }
+        }
+    }
+
+    // §2.4.2.1 and §2.8: an element row whose IdClass parent key is partially null is rejected when loaded.
+    @Test void namedIdClassMapsIdRejectsAPartiallyNullElementKey() {
+        for (boolean xml : List.of(false, true)) {
+            try (var factory = namedClassCompositeConfiguration(xml).createEntityManagerFactory();
+                    var em = factory.createEntityManager()) {
+                var firstKey = persistNamedClassComposites(em).firstKey();
+                em.clear();
+                factory.getCache().evictAll();
                 var partial = new NamedClassCompositeOwner();
                 partial.id = 30L;
                 partial.values.add(new NamedClassCompositeValue("partial", em.find(NamedClassCompositeTarget.class, firstKey)));
@@ -1484,6 +1818,36 @@ class ElementCollectionRelationsTest {
                     .isInstanceOf(PersistenceException.class).hasMessageContaining("partially null");
             }
         }
+    }
+
+    /** The targets of the named IdClass MapsId scenario, persisted with their owner 29, and their keys. */
+    private record NamedClassComposites(NamedClassCompositeTarget first, NamedClassCompositeTarget second,
+            NamedClassCompositeTarget third, NamedClassCompositeKey firstKey, NamedClassCompositeKey secondKey,
+            NamedClassCompositeKey thirdKey) {
+    }
+
+    private NamedClassComposites persistNamedClassComposites(EntityManager em) {
+        var firstParent = new SharedClassParent();
+        firstParent.region = 3;
+        firstParent.serial = 19;
+        var secondParent = new SharedClassParent();
+        secondParent.region = 19;
+        secondParent.serial = 3;
+        var first = new NamedClassCompositeTarget("same", firstParent);
+        var second = new NamedClassCompositeTarget("same", secondParent);
+        var third = new NamedClassCompositeTarget("other", firstParent);
+        var owner = new NamedClassCompositeOwner();
+        owner.id = 29L;
+        owner.values.add(new NamedClassCompositeValue("first", first));
+        owner.values.add(new NamedClassCompositeValue("duplicate", first));
+        owner.values.add(new NamedClassCompositeValue("null", null));
+        owner.values.add(new NamedClassCompositeValue("second", second));
+        owner.values.add(new NamedClassCompositeValue("third", third));
+        transaction(em, () -> { em.persist(first); em.persist(second); em.persist(third); em.persist(owner); });
+        return new NamedClassComposites(first, second, third,
+            new NamedClassCompositeKey("same", new IdClassKey(3, 19)),
+            new NamedClassCompositeKey("same", new IdClassKey(19, 3)),
+            new NamedClassCompositeKey("other", new IdClassKey(3, 19)));
     }
 
     private PersistenceConfiguration namedClassCompositeConfiguration(boolean xml) {
@@ -1584,35 +1948,18 @@ class ElementCollectionRelationsTest {
             .isInstanceOf(PersistenceException.class).hasMessageContaining("identifier types must match");
     }
 
-    // §2.4.2.1 and §2.8: each named component carries its own parent's complete key.
-    @Test void multipleCompositeMapsIdKeepsIndependentParentTuplesAndManagedIdentity() {
+    // §2.4.2.1 and §2.8: each named component carries its own parent's complete key in the element row.
+    @Test void multipleCompositeMapsIdKeepsIndependentParentTuplesInElementRows() {
         for (boolean xml : List.of(false, true)) {
             try (var factory = multipleCompositeConfiguration(xml).createEntityManagerFactory();
                     var em = factory.createEntityManager()) {
-                var firstParent = new CompositeTarget();
-                firstParent.id = new CompositeKey(3, 19);
-                var secondParent = new CompositeTarget();
-                secondParent.id = new CompositeKey(19, 3);
-                var firstClassParent = new SharedClassParent();
-                firstClassParent.region = 5;
-                firstClassParent.serial = 23;
-                var secondClassParent = new SharedClassParent();
-                secondClassParent.region = 23;
-                secondClassParent.serial = 5;
-                var first = new MultipleCompositeTarget("same", firstParent, firstClassParent);
-                var second = new MultipleCompositeTarget("same", secondParent, secondClassParent);
-                var third = new MultipleCompositeTarget("other", firstParent, secondClassParent);
-                var firstKey = new MultipleCompositeKey("same", new CompositeKey(3, 19), new IdClassKey(5, 23));
-                var secondKey = new MultipleCompositeKey("same", new CompositeKey(19, 3), new IdClassKey(23, 5));
-                var thirdKey = new MultipleCompositeKey("other", new CompositeKey(3, 19), new IdClassKey(23, 5));
-                var owner = new MultipleCompositeOwner();
-                owner.id = 33L;
-                owner.values.add(new MultipleCompositeValue("first", first));
-                owner.values.add(new MultipleCompositeValue("duplicate", first));
-                owner.values.add(new MultipleCompositeValue("null", null));
-                owner.values.add(new MultipleCompositeValue("second", second));
-                owner.values.add(new MultipleCompositeValue("third", third));
-                transaction(em, () -> { em.persist(first); em.persist(second); em.persist(third); em.persist(owner); });
+                var persisted = persistMultipleComposites(em);
+                var first = persisted.first();
+                var second = persisted.second();
+                var third = persisted.third();
+                var firstKey = persisted.firstKey();
+                var secondKey = persisted.secondKey();
+                var thirdKey = persisted.thirdKey();
                 assertThat(first.id).isEqualTo(firstKey);
                 assertThat(second.id).isEqualTo(secondKey);
                 assertThat(third.id).isEqualTo(thirdKey);
@@ -1633,6 +1980,19 @@ class ElementCollectionRelationsTest {
                 assertThatThrownBy(duplicateInsert::executeUpdate)
                     .isInstanceOf(PersistenceException.class);
                 em.getTransaction().rollback();
+            }
+        }
+    }
+
+    // §2.4.2.1 and §2.8: elements that share a parent share its managed instance in loads and queries.
+    @Test void multipleCompositeMapsIdKeepsManagedIdentityInLoadsAndQueries() {
+        for (boolean xml : List.of(false, true)) {
+            try (var factory = multipleCompositeConfiguration(xml).createEntityManagerFactory();
+                    var em = factory.createEntityManager()) {
+                var persisted = persistMultipleComposites(em);
+                var firstKey = persisted.firstKey();
+                var secondKey = persisted.secondKey();
+                var thirdKey = persisted.thirdKey();
                 em.clear();
                 factory.getCache().evictAll();
                 var found = em.find(MultipleCompositeOwner.class, 33L);
@@ -1675,6 +2035,24 @@ class ElementCollectionRelationsTest {
                     MultipleCompositeValue.class).getResultList();
                 assertThat(projected.getFirst().target).isSameAs(managedFirst);
                 assertThat(projected.get(2).target).isNull();
+            }
+        }
+    }
+
+    // §2.4.2.1 and §2.8: updates, merges, refreshes and removals keep each parent's complete key.
+    @Test void multipleCompositeMapsIdElementsSurviveUpdateMergeRefreshAndRemove() {
+        for (boolean xml : List.of(false, true)) {
+            try (var factory = multipleCompositeConfiguration(xml).createEntityManagerFactory();
+                    var em = factory.createEntityManager()) {
+                var persisted = persistMultipleComposites(em);
+                var first = persisted.first();
+                var firstKey = persisted.firstKey();
+                var secondKey = persisted.secondKey();
+                var thirdKey = persisted.thirdKey();
+                em.clear();
+                factory.getCache().evictAll();
+                var found = em.find(MultipleCompositeOwner.class, 33L);
+                var managedSecond = em.find(MultipleCompositeTarget.class, secondKey);
                 transaction(em, () -> {
                     found.values.remove(1);
                     found.values.getFirst().target = managedSecond;
@@ -1699,6 +2077,18 @@ class ElementCollectionRelationsTest {
                 assertThat(em.find(MultipleCompositeTarget.class, firstKey)).isNotNull();
                 assertThat(em.find(MultipleCompositeTarget.class, secondKey)).isNotNull();
                 assertThat(em.createNativeQuery("select count(*) from multiple_composite_values").getSingleResult()).isEqualTo(0L);
+            }
+        }
+    }
+
+    // §2.4.2.1 and §2.8: an element row whose parent tuple is partially null is rejected when loaded.
+    @Test void multipleCompositeMapsIdRejectsAPartiallyNullElementKey() {
+        for (boolean xml : List.of(false, true)) {
+            try (var factory = multipleCompositeConfiguration(xml).createEntityManagerFactory();
+                    var em = factory.createEntityManager()) {
+                var firstKey = persistMultipleComposites(em).firstKey();
+                em.clear();
+                factory.getCache().evictAll();
                 var partial = new MultipleCompositeOwner();
                 partial.id = 34L;
                 partial.values.add(new MultipleCompositeValue("partial", em.find(MultipleCompositeTarget.class, firstKey)));
@@ -1712,6 +2102,40 @@ class ElementCollectionRelationsTest {
                     .isInstanceOf(PersistenceException.class).hasMessageContaining("partially null");
             }
         }
+    }
+
+    /** The targets of the multiple composite MapsId scenario, persisted with their owner 33, and their keys. */
+    private record MultipleComposites(MultipleCompositeTarget first, MultipleCompositeTarget second,
+            MultipleCompositeTarget third, MultipleCompositeKey firstKey, MultipleCompositeKey secondKey,
+            MultipleCompositeKey thirdKey) {
+    }
+
+    private MultipleComposites persistMultipleComposites(EntityManager em) {
+        var firstParent = new CompositeTarget();
+        firstParent.id = new CompositeKey(3, 19);
+        var secondParent = new CompositeTarget();
+        secondParent.id = new CompositeKey(19, 3);
+        var firstClassParent = new SharedClassParent();
+        firstClassParent.region = 5;
+        firstClassParent.serial = 23;
+        var secondClassParent = new SharedClassParent();
+        secondClassParent.region = 23;
+        secondClassParent.serial = 5;
+        var first = new MultipleCompositeTarget("same", firstParent, firstClassParent);
+        var second = new MultipleCompositeTarget("same", secondParent, secondClassParent);
+        var third = new MultipleCompositeTarget("other", firstParent, secondClassParent);
+        var owner = new MultipleCompositeOwner();
+        owner.id = 33L;
+        owner.values.add(new MultipleCompositeValue("first", first));
+        owner.values.add(new MultipleCompositeValue("duplicate", first));
+        owner.values.add(new MultipleCompositeValue("null", null));
+        owner.values.add(new MultipleCompositeValue("second", second));
+        owner.values.add(new MultipleCompositeValue("third", third));
+        transaction(em, () -> { em.persist(first); em.persist(second); em.persist(third); em.persist(owner); });
+        return new MultipleComposites(first, second, third,
+            new MultipleCompositeKey("same", new CompositeKey(3, 19), new IdClassKey(5, 23)),
+            new MultipleCompositeKey("same", new CompositeKey(19, 3), new IdClassKey(23, 5)),
+            new MultipleCompositeKey("other", new CompositeKey(3, 19), new IdClassKey(23, 5)));
     }
 
     private PersistenceConfiguration multipleCompositeConfiguration(boolean xml) {
@@ -2051,7 +2475,7 @@ class ElementCollectionRelationsTest {
     @Test void schemaEmitsCollectionOwnedBigintForeignKeysAfterTablesAndXmlOverrideNames() {
         for (boolean xml : List.of(false, true)) {
             var ddl = new java.io.StringWriter();
-            try (var factory = configuration(xml)
+            try (var _ = configuration(xml)
                 .property("jakarta.persistence.schema-generation.scripts.action", "create")
                 .property("jakarta.persistence.schema-generation.scripts.create-target", ddl)
                 .createEntityManagerFactory()) {
