@@ -65,8 +65,8 @@ final class EmbeddedPaths {
         List<Path> paths = new ArrayList<>();
         for (int i = 0; i < model.attributes().size(); i++) {
             if (model.attributes().get(i) instanceof EmbeddedAttribute embedded) {
-                flatten(embedded.embeddable(), embedded.name() + ".", embedded.declaringClass(), i, List.of(),
-                    List.of(), embeddables, attributes, paths);
+                flatten(embedded.embeddable(), embedded.name() + ".", embedded.declaringClass(), new Path(i, List.of(), List.of()),
+                    embeddables, attributes, paths);
             }
         }
         if (paths.isEmpty()) return new Plan(model, access);
@@ -95,18 +95,22 @@ final class EmbeddedPaths {
         return new Plan(executable, composed);
     }
 
-    private static void flatten(EmbeddableModel model, String prefix, Class<?> declaring, int root,
-            List<Integer> indexes, List<ManagedAccess> accesses, Function<EmbeddableModel, ManagedAccess> embeddables,
-            List<AttributeModel> attributes, List<Path> paths) {
+    /**
+     * Adds to {@code attributes} the relationships and element collections an embeddable holds, at any depth, and to
+     * {@code paths} the path reaching each of them; {@code at} is the path reaching the embeddable itself.
+     */
+    private static void flatten(EmbeddableModel model, String prefix, Class<?> declaring, Path at,
+            Function<EmbeddableModel, ManagedAccess> embeddables, List<AttributeModel> attributes, List<Path> paths) {
         ManagedAccess access = embeddables.apply(model);
+        int root = at.root();
         for (int i = 0; i < model.attributes().size(); i++) {
             AttributeModel attribute = model.attributes().get(i);
-            List<Integer> nested = new ArrayList<>(indexes);
+            List<Integer> nested = new ArrayList<>(at.indexes());
             nested.add(i);
-            List<ManagedAccess> along = new ArrayList<>(accesses);
+            List<ManagedAccess> along = new ArrayList<>(at.accesses());
             along.add(access);
             if (attribute instanceof EmbeddedAttribute embedded) {
-                flatten(embedded.embeddable(), prefix + embedded.name() + ".", declaring, root, nested, along,
+                flatten(embedded.embeddable(), prefix + embedded.name() + ".", declaring, new Path(root, nested, along),
                     embeddables, attributes, paths);
             } else if (attribute instanceof AssociationAttribute a) {
                 attributes.add(new AssociationAttribute(prefix + a.name(), a.javaType(), a.access(), declaring,

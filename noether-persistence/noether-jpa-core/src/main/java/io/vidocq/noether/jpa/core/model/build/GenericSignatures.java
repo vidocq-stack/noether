@@ -41,9 +41,9 @@ final class GenericSignatures {
     private GenericSignatures() {
     }
 
-    /** The erased type arguments given to {@code interfaceName}, or {@code null} if they cannot be resolved. */
+    /** The erased type arguments given to {@code interfaceName}; empty if they cannot be resolved. */
     static List<Class<?>> typeArguments(String className, String interfaceName, ClassInfos source, ClassLoader loader) {
-        return search(className, interfaceName, Map.of(), source, loader).orElse(null);
+        return search(className, interfaceName, Map.of(), source, loader).orElse(List.of());
     }
 
     /**

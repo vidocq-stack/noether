@@ -252,7 +252,7 @@ public final class EntityModelBuilder {
 
     private ConverterModel converter(ClassInfo info) {
         List<Class<?>> arguments = GenericSignatures.typeArguments(info.name(), JPA + "AttributeConverter", source, loader);
-        if (arguments == null || arguments.size() != 2) {
+        if (arguments.size() != 2) {
             throw new PersistenceException("The converter " + info.name() + " must implement AttributeConverter<X, Y> with "
                 + "actual type arguments");
         }
