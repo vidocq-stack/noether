@@ -40,7 +40,8 @@ import java.util.stream.Stream;
  *       duplicate;</li>
  *   <li>those that <em>override</em> it: its data sources and its properties, which differ between deployments. A
  *       declaration that sets only these overrides the unit of that name when a {@code persistence.xml} declares it,
- *       and declares it otherwise, at its {@linkplain Builder#defaultRoot default root}.</li>
+ *       and declares it otherwise, at its {@linkplain Builder#defaultRoot default root} and with its
+ *       {@linkplain Builder#defaultTransactionType default transaction type}.</li>
  * </ul>
  *
  * <p>A unit with neither a root nor classes manages nothing. One that lists its classes manages those alone, as a
@@ -55,6 +56,7 @@ public final class PersistenceUnitDeclaration {
     private final List<String> packages;
     private final List<String> classes;
     private final PersistenceUnitTransactionType transactionType;
+    private final PersistenceUnitTransactionType defaultTransactionType;
     private final List<String> qualifiers;
     private final String scope;
     private final String jtaDataSource;
@@ -70,6 +72,7 @@ public final class PersistenceUnitDeclaration {
         this.packages = List.copyOf(builder.packages);
         this.classes = List.copyOf(builder.classes);
         this.transactionType = builder.transactionType;
+        this.defaultTransactionType = builder.defaultTransactionType;
         this.qualifiers = List.copyOf(builder.qualifiers);
         this.scope = builder.scope;
         this.jtaDataSource = builder.jtaDataSource;
@@ -130,6 +133,11 @@ public final class PersistenceUnitDeclaration {
         return Optional.ofNullable(transactionType);
     }
 
+    /** The transaction type of the unit when this declaration declares it without setting one. */
+    public Optional<PersistenceUnitTransactionType> defaultTransactionType() {
+        return Optional.ofNullable(defaultTransactionType);
+    }
+
     /** The qualifier annotations of the unit's beans, by their qualified names (§9.4.1). */
     public List<String> qualifiers() {
         return qualifiers;
@@ -178,6 +186,7 @@ public final class PersistenceUnitDeclaration {
         private final List<String> packages = new ArrayList<>();
         private final List<String> classes = new ArrayList<>();
         private PersistenceUnitTransactionType transactionType;
+        private PersistenceUnitTransactionType defaultTransactionType;
         private final List<String> qualifiers = new ArrayList<>();
         private String scope;
         private String jtaDataSource;
@@ -216,6 +225,15 @@ public final class PersistenceUnitDeclaration {
 
         public Builder transactionType(PersistenceUnitTransactionType transactionType) {
             this.transactionType = Objects.requireNonNull(transactionType, "transactionType");
+            return this;
+        }
+
+        /**
+         * The transaction type of the unit if the declaration declares it without a {@link #transactionType}; it
+         * declares nothing, and leaves the type of a {@code persistence.xml} unit alone.
+         */
+        public Builder defaultTransactionType(PersistenceUnitTransactionType transactionType) {
+            this.defaultTransactionType = Objects.requireNonNull(transactionType, "transactionType");
             return this;
         }
 

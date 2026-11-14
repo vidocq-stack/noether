@@ -159,8 +159,10 @@ public final class PersistenceUnits {
     }
 
     /**
-     * The sources of the module layer of Noether (and its parents), then those of the application's class loader, each
-     * once.
+     * The sources of the module layer of Noether (and its parents), those of Noether's own class loader, then those of
+     * the application's, each once. Noether's loader serves a build tool that runs Noether on its own class path and
+     * hands it a loader that lists the resources of the application alone: the sources of the runtime sit next to
+     * Noether there ({@code vidocq:generate}).
      */
     private static List<PersistenceUnitSource> sources(ClassLoader loader) {
         try {
@@ -169,6 +171,8 @@ public final class PersistenceUnits {
             if (layer != null) {
                 ServiceLoader.load(layer, PersistenceUnitSource.class).forEach(source -> once(sources, source));
             }
+            ServiceLoader.load(PersistenceUnitSource.class, PersistenceUnits.class.getClassLoader())
+                .forEach(source -> once(sources, source));
             ServiceLoader.load(PersistenceUnitSource.class, loader).forEach(source -> once(sources, source));
             return List.copyOf(sources.values());
         } catch (ServiceConfigurationError e) {

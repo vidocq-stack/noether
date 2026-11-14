@@ -41,7 +41,8 @@ final class SourceUnits {
     static PersistenceUnitDefinition definition(PersistenceUnitDeclaration declaration, ClassLoader loader) {
         URL root = declaration.root().or(declaration::defaultRoot).orElse(null);
         return new PersistenceUnitDefinition(declaration.name(), null, null,
-            declaration.transactionType().orElse(PersistenceUnitTransactionType.RESOURCE_LOCAL),
+            declaration.transactionType().or(declaration::defaultTransactionType)
+                .orElse(PersistenceUnitTransactionType.RESOURCE_LOCAL),
             declaration.jtaDataSource().orElse(null), declaration.nonJtaDataSource().orElse(null), List.of(), List.of(),
             declaration.classes(), !declaration.classes().isEmpty(), SharedCacheMode.UNSPECIFIED, ValidationMode.AUTO,
             declaration.properties(), root, null, declaration.qualifiers(), declaration.scope().orElse(null), loader,

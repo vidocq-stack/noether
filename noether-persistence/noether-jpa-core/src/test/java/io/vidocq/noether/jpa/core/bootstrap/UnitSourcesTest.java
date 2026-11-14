@@ -134,6 +134,25 @@ class UnitSourcesTest {
     }
 
     @Test
+    void aDefaultTransactionTypeAppliesToTheUnitTheOverrideDeclaresOnly() throws Exception {
+        URL application = directory.resolve("application").toUri().toURL();
+        PersistenceUnitSource source = loader -> List.of(
+            PersistenceUnitDeclaration.builder("ledger", KEYS).defaultRoot(application)
+                .defaultTransactionType(PersistenceUnitTransactionType.JTA).build(),
+            PersistenceUnitDeclaration.builder("archive", "the vidocq.persistence.archive.* keys").defaultRoot(application)
+                .defaultTransactionType(PersistenceUnitTransactionType.JTA).jtaDataSource("notes").build());
+        Path module = moduleWith("<persistence-unit name=\"archive\" transaction-type=\"RESOURCE_LOCAL\"/>");
+
+        try (URLClassLoader loader = loader(module)) {
+            assertThat(PersistenceUnits.find("ledger", loader, List.of(source)).orElseThrow().transactionType())
+                .isEqualTo(PersistenceUnitTransactionType.JTA);
+            PersistenceUnitDefinition archive = PersistenceUnits.find("archive", loader, List.of(source)).orElseThrow();
+            assertThat(archive.transactionType()).isEqualTo(PersistenceUnitTransactionType.RESOURCE_LOCAL);
+            assertThat(archive.jtaDataSourceName()).isEqualTo("notes");
+        }
+    }
+
+    @Test
     void aSourceThatDeclaresAUnitOfAFileAgainIsADuplicate() throws Exception {
         Path module = moduleWith("<persistence-unit name=\"ledger\"/>");
         PersistenceUnitSource source = loader -> List.of(PersistenceUnitDeclaration.builder("ledger", KEYS)
