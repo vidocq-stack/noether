@@ -15,6 +15,7 @@ import jakarta.validation.ValidationException;
 import jakarta.validation.Validator;
 import jakarta.validation.ValidatorFactory;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import jakarta.validation.groups.Default;
 import java.util.List;
 import java.util.Set;
@@ -675,5 +676,42 @@ class ValidatorEngineTest {
         List<Path.Node> nodes = new java.util.ArrayList<>();
         violation.getPropertyPath().forEach(nodes::add);
         return nodes;
+    }
+
+    // ---- composed constraints ------------------------------------------------------------------------
+
+    @NotNull
+    @Size(min = 2)
+    @jakarta.validation.Constraint(validatedBy = {})
+    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+    public @interface Code {
+        String message() default "not a code";
+        Class<?>[] groups() default {};
+        Class<? extends jakarta.validation.Payload>[] payload() default {};
+    }
+
+    @NotNull
+    @Size(min = 2)
+    @jakarta.validation.ReportAsSingleViolation
+    @jakarta.validation.Constraint(validatedBy = {})
+    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+    public @interface SingleCode {
+        String message() default "not a single code";
+        Class<?>[] groups() default {};
+        Class<? extends jakarta.validation.Payload>[] payload() default {};
+    }
+
+    public static class Coded {
+        @Code
+        public String code = "x";
+        @SingleCode
+        public String single = "x";
+    }
+
+    @Test
+    void aComposedConstraintReportsItsFailingComposingConstraintsUnlessReportedAsOne() { // 3.3
+        assertThat(validator.validate(new Coded()))
+            .extracting(v -> v.getPropertyPath() + ":" + v.getConstraintDescriptor().getAnnotation().annotationType().getSimpleName())
+            .containsExactlyInAnyOrder("code:Size", "single:SingleCode");
     }
 }
