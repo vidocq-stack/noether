@@ -4,6 +4,7 @@ import io.vidocq.noether.jpa.core.spi.PersistenceDescriptors;
 import io.vidocq.noether.jpa.core.spi.PersistenceDescriptors.UnitInjection;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.Dependent;
+import jakarta.enterprise.event.Startup;
 import jakarta.enterprise.inject.Default;
 import jakarta.enterprise.inject.build.compatible.spi.*;
 import jakarta.enterprise.lang.model.AnnotationInfo;
@@ -127,6 +128,11 @@ public final class NoetherPersistenceExtension implements BuildCompatibleExtensi
             .withParam("propertyNames", definition.properties.keySet().toArray(String[]::new))
             .withParam("propertyValues", definition.properties.values().toArray(String[]::new))
             .createWith(PersistenceContextCreator.class).disposeWith(PersistenceContextDisposer.class));
+        if (!declared.isEmpty()) { // Vauban's annotation processor reads no persistence.xml: nothing to compare then
+            components.addObserver(Startup.class).priority(UnitsStartCheck.PRIORITY)
+                .withParam(UnitsStartCheck.UNITS, declared.stream().map(UnitsStartCheck::describe).toArray(String[]::new))
+                .observeWith(UnitsStartCheck.class);
+        }
     }
 
     /**

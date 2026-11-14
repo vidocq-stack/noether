@@ -58,8 +58,10 @@ The properties of a unit come from its `<properties>`, overridden by the map pas
 
 A runtime can declare units from its own configuration, beside the `persistence.xml` files: it implements
 `io.vidocq.noether.jpa.core.spi.PersistenceUnitSource` and provides it, with `provides ... with ...` in its
-`module-info.java` or a `META-INF/services` entry on the class path. Noether reads no key of any runtime. It asks
-every source wherever it looks for units, in the provider and in `noether-jpa-cdi`. The Vidocq runtime declares the
+`module-info.java` or a `META-INF/services` entry on the class path. Noether finds the sources in its own module
+layer, in its own class loader (a build tool that runs Noether on its class path, as `vidocq:generate` does), then
+through the application's class loader. Noether reads no key of any runtime. It asks every source wherever it looks
+for units, in the provider and in `noether-jpa-cdi`. The Vidocq runtime declares the
 units of its `vidocq.persistence."<unit>".*` keys this way (Vidocq/vidocq#551).
 
 A source returns one `PersistenceUnitDeclaration` per unit. Its attributes fall in two groups:
@@ -70,7 +72,8 @@ A source returns one `PersistenceUnitDeclaration` per unit. Its attributes fall 
   with the duplicate `PersistenceException`, which names the file and the source.
 * Those that override it: its JTA and non-JTA data sources and its properties, which differ between deployments. A
   declaration that sets only these overrides the unit of that name that a `persistence.xml` declares, its properties
-  winning over the file's. When no file declares the unit, the declaration declares it, at its default root.
+  winning over the file's. When no file declares the unit, the declaration declares it, at its default root and
+  with its default transaction type, which declare nothing themselves.
 
 A declaration made _when alone_ is a runtime's default unit: it is declared only when the application declares no
 other unit and its root holds an entity, an embeddable, a mapped superclass or a converter.
@@ -424,6 +427,11 @@ scope (`<scope>`, §8.2.1.6). Jakarta EE 11 Platform §13.12 then makes the unit
   - With `scanClasspath()`, Vauban replays what the build recorded. `vauban:generate` with `freezeExtensions`, the
     build step `vidocq:generate` runs too, reads `persistence.xml`; the annotation processor alone cannot, and these
     beans are then missing, while `@PersistenceContext` and `@PersistenceUnit` still work.
+* **The start checks the units.** The extension hands the units it saw over to an observer of `Startup`, which
+  compares them with the units of the start. A unit declared or gone since the beans were built, or a transaction
+  type, qualifier or scope that changed, fails the start with a `DeploymentException` that names each difference and
+  asks for a rebuild: a unit source that reads its configuration again at start cannot change the frozen beans. A
+  build that saw no unit, as Vauban's annotation processor that reads no `persistence.xml`, checks nothing.
 
 On Vauban, these beans need a `0.4.0-SNAPSHOT` built on 2026-11-13 or later, which holds Vidocq/vauban#286: it keeps
 the scope an extension gives a bean, and unwraps the exceptions of an interface-typed normal-scoped bean (Vauban's
