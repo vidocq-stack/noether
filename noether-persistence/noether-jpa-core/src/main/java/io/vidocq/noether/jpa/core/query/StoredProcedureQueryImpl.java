@@ -57,6 +57,21 @@ import java.util.Set;
  */
 public final class StoredProcedureQueryImpl extends NativeQuery implements StoredProcedureQuery {
 
+    /** The JDBC type of a parameter by its Java type; an enum is bound by name, any other type as an object. */
+    private static final Map<Class<?>, Integer> JDBC_TYPES = Map.ofEntries(
+        Map.entry(String.class, Types.VARCHAR), Map.entry(Character.class, Types.VARCHAR), Map.entry(char.class, Types.VARCHAR),
+        Map.entry(Integer.class, Types.INTEGER), Map.entry(int.class, Types.INTEGER),
+        Map.entry(Long.class, Types.BIGINT), Map.entry(long.class, Types.BIGINT),
+        Map.entry(Short.class, Types.SMALLINT), Map.entry(short.class, Types.SMALLINT),
+        Map.entry(Byte.class, Types.TINYINT), Map.entry(byte.class, Types.TINYINT),
+        Map.entry(Boolean.class, Types.BOOLEAN), Map.entry(boolean.class, Types.BOOLEAN),
+        Map.entry(Float.class, Types.REAL), Map.entry(float.class, Types.REAL),
+        Map.entry(Double.class, Types.DOUBLE), Map.entry(double.class, Types.DOUBLE),
+        Map.entry(java.math.BigDecimal.class, Types.DECIMAL), Map.entry(java.math.BigInteger.class, Types.NUMERIC),
+        Map.entry(java.sql.Date.class, Types.DATE), Map.entry(java.sql.Time.class, Types.TIME),
+        Map.entry(java.sql.Timestamp.class, Types.TIMESTAMP), Map.entry(Date.class, Types.TIMESTAMP),
+        Map.entry(Calendar.class, Types.TIMESTAMP));
+
     private final String procedureName;
     private final List<Identifier> routineName;
     private final List<Class<?>> resultClasses;
@@ -210,15 +225,7 @@ public final class StoredProcedureQueryImpl extends NativeQuery implements Store
             .map(parameter -> parameter.callParameter)
             .toList()));
         try (CallableStatement statement = connection.prepareCall(sql)) {
-            for (ProcedureParameter parameter : called) {
-                int position = parameter.position;
-                if (parameter.mode != ParameterMode.IN) {
-                    statement.registerOutParameter(position, jdbcType(parameter.type, parameter.mode));
-                }
-                if (parameter.mode == ParameterMode.IN || parameter.mode == ParameterMode.INOUT) {
-                    bind(statement, position, values.get(parameter), jdbcType(parameter.type, parameter.mode));
-                }
-            }
+            bindParameters(statement, called);
             if (getTimeout() != null) {
                 statement.setQueryTimeout(Math.max(1, (getTimeout() + 999) / 1000));
             }
@@ -242,18 +249,7 @@ public final class StoredProcedureQueryImpl extends NativeQuery implements Store
                     }
                 }
             } else {
-                while (true) {
-                    if (hasResults) {
-                        try (ResultSet rows = statement.getResultSet()) {
-                            read.add(new ProcedureResult(true, readRows(rows, resultOrdinal++), -1));
-                        }
-                    } else {
-                        int count = statement.getUpdateCount();
-                        if (count == -1) break;
-                        read.add(new ProcedureResult(false, List.of(), count));
-                    }
-                    hasResults = statement.getMoreResults(CallableStatement.CLOSE_CURRENT_RESULT);
-                }
+                readResults(statement, hasResults, read);
             }
             for (ProcedureParameter parameter : called) {
                 if (parameter.mode != ParameterMode.IN && !out.containsKey(parameter)) {
@@ -264,6 +260,38 @@ public final class StoredProcedureQueryImpl extends NativeQuery implements Store
             throw new PersistenceException("The stored procedure " + procedureName + " failed: " + e.getMessage(), e);
         }
         return new Execution(read, out);
+    }
+
+    /** Registers the output parameters of the call and binds its input ones. */
+    private void bindParameters(CallableStatement statement, List<ProcedureParameter> called) throws SQLException {
+        for (ProcedureParameter parameter : called) {
+            int position = parameter.position;
+            if (parameter.mode != ParameterMode.IN) {
+                statement.registerOutParameter(position, jdbcType(parameter.type, parameter.mode));
+            }
+            if (parameter.mode == ParameterMode.IN || parameter.mode == ParameterMode.INOUT) {
+                bind(statement, position, values.get(parameter), jdbcType(parameter.type, parameter.mode));
+            }
+        }
+    }
+
+    /** Reads the results of the call in their order, result sets and update counts, until there is none left. */
+    private void readResults(CallableStatement statement, boolean hasResults, List<ProcedureResult> read)
+            throws SQLException {
+        int resultOrdinal = 0;
+        boolean resultSet = hasResults;
+        while (true) {
+            if (resultSet) {
+                try (ResultSet rows = statement.getResultSet()) {
+                    read.add(new ProcedureResult(true, readRows(rows, resultOrdinal++), -1));
+                }
+            } else {
+                int count = statement.getUpdateCount();
+                if (count == -1) break;
+                read.add(new ProcedureResult(false, List.of(), count));
+            }
+            resultSet = statement.getMoreResults(Statement.CLOSE_CURRENT_RESULT);
+        }
     }
 
     private List<Object> readRows(ResultSet rows, int ordinal) throws SQLException {
@@ -304,21 +332,9 @@ public final class StoredProcedureQueryImpl extends NativeQuery implements Store
 
     private static int jdbcType(Class<?> type, ParameterMode mode) {
         if (mode == ParameterMode.REF_CURSOR) return Types.REF_CURSOR;
-        if (type == String.class || type == Character.class || type == char.class) return Types.VARCHAR;
-        if (type == Integer.class || type == int.class) return Types.INTEGER;
-        if (type == Long.class || type == long.class) return Types.BIGINT;
-        if (type == Short.class || type == short.class) return Types.SMALLINT;
-        if (type == Byte.class || type == byte.class) return Types.TINYINT;
-        if (type == Boolean.class || type == boolean.class) return Types.BOOLEAN;
-        if (type == Float.class || type == float.class) return Types.REAL;
-        if (type == Double.class || type == double.class) return Types.DOUBLE;
-        if (type == java.math.BigDecimal.class) return Types.DECIMAL;
-        if (type == java.math.BigInteger.class) return Types.NUMERIC;
-        if (type == java.sql.Date.class) return Types.DATE;
-        if (type == java.sql.Time.class) return Types.TIME;
-        if (type == java.sql.Timestamp.class || type == Date.class || type == Calendar.class) return Types.TIMESTAMP;
-        if (type.isEnum()) return Types.VARCHAR;
-        return Types.JAVA_OBJECT;
+        Integer known = JDBC_TYPES.get(type);
+        if (known != null) return known;
+        return type.isEnum() ? Types.VARCHAR : Types.JAVA_OBJECT;
     }
 
     private static void bind(CallableStatement statement, int position, Binding binding, int jdbcType) throws SQLException {

@@ -47,15 +47,26 @@ final class CriteriaQueries {
             return ast(false);
         }
         Ast.Select ast(boolean existence) {
-            Selection<?> selected = selection;
-            if (selected == null && existence) selected = new CriteriaExpressions.Node<>(Integer.class, new Ast.Literal(1));
-            if (selected == null) {
-                if (roots.size() != 1 || !type.isAssignableFrom(roots.iterator().next().type))
-                    throw new IllegalArgumentException("Query needs a selection");
-                selected = roots.iterator().next();
-            }
+            Selection<?> selected = selected(existence);
             List<Selection<?>> items = selected.isCompoundSelection() && (type == Tuple.class || type == Object[].class
                 || type == Object.class) ? selected.getCompoundSelectionItems() : List.of(selected);
+            List<Ast.Range> ranges = ranges();
+            return new Ast.Select(distinct,items.stream().map(State::item).toList(),
+                ranges,
+                restriction == null ? null : CriteriaExpressions.ast(restriction),
+                groups.stream().map(CriteriaExpressions::ast).toList(), having == null ? null : CriteriaExpressions.ast(having),
+                orders.stream().map(o -> ((CriteriaExpressions.Ordering) o).ast()).toList());
+        }
+        /** The selection; else a constant for an existence subquery; else the single root the result type accepts. */
+        private Selection<?> selected(boolean existence) {
+            if (selection != null) return selection;
+            if (existence) return new CriteriaExpressions.Node<>(Integer.class, new Ast.Literal(1));
+            if (roots.size() != 1 || !type.isAssignableFrom(roots.iterator().next().type))
+                throw new IllegalArgumentException("Query needs a selection");
+            return roots.iterator().next();
+        }
+        /** The uncorrelated roots, then a range per join of each correlated root or join. */
+        private List<Ast.Range> ranges() {
             List<Ast.Range> ranges=new ArrayList<>();
             roots.stream().filter(r -> !r.isCorrelated()).map(CriteriaFrom.RootNode::range).forEach(ranges::add);
             List<CriteriaFrom.FromNode<?,?>> correlated=new ArrayList<>(correlatedNodes);
@@ -64,17 +75,16 @@ final class CriteriaQueries {
                 for (var join:root.joins) ranges.add(new Ast.Range(null,root.append(join.attribute.getName()),
                     join.variable,join.astJoins()));
             }
-            return new Ast.Select(distinct,items.stream().map(s -> {
-                Ast.Expr expression = CriteriaExpressions.node(s).ast();
-                if (Collection.class.isAssignableFrom(s.getJavaType()) || Map.class.isAssignableFrom(s.getJavaType())) {
-                    expression = new Ast.CollectionElements((Ast.Path) expression);
-                }
-                return new Ast.Item(expression,s.getAlias());
-            }).toList(),
-                ranges,
-                restriction == null ? null : CriteriaExpressions.ast(restriction),
-                groups.stream().map(CriteriaExpressions::ast).toList(), having == null ? null : CriteriaExpressions.ast(having),
-                orders.stream().map(o -> ((CriteriaExpressions.Ordering) o).ast()).toList());
+            return ranges;
+        }
+        /** A select item; a collection- or map-valued path selects its elements. */
+        private static Ast.Item item(Selection<?> item) {
+            Ast.Expr expression = CriteriaExpressions.node(item).ast();
+            Class<?> javaType = item.getJavaType();
+            if (Collection.class.isAssignableFrom(javaType) || Map.class.isAssignableFrom(javaType)) {
+                expression = new Ast.CollectionElements((Ast.Path) expression);
+            }
+            return new Ast.Item(expression,item.getAlias());
         }
     }
     static class Query<T> implements CriteriaQuery<T>, Statement {

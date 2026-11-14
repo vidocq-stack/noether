@@ -7,6 +7,7 @@ package io.vidocq.noether.jpa.core.model.build;
 import io.vidocq.noether.jpa.core.model.*;
 import io.vidocq.noether.jpa.core.model.source.ClassFileSource;
 import io.vidocq.noether.jpa.core.model.source.ClassInfos;
+import io.vidocq.noether.jpa.core.model.source.FieldInfo;
 import jakarta.persistence.PersistenceException;
 import jakarta.persistence.metamodel.*;
 import java.lang.invoke.MethodHandles;
@@ -86,11 +87,20 @@ public final class RuntimeMetamodel implements Metamodel {
         }
         var info = source.read(name).orElseThrow();
         for (var field : info.fields()) {
-            if (!field.isStatic()) continue;
-            Object value = field.name().equals("class_") ? type : type.attributes.get(field.name());
-            if (value == null) continue;
-            Class<?> fieldType = Types.load(field.type(), loader);
-            if (!fieldType.isInstance(value)) continue;
+            Object value = field.isStatic() ? canonicalValue(type, field.name()) : null;
+            if (value != null) populate(canonical, field, value);
+        }
+    }
+
+    /** The value of the canonical metamodel field {@code fieldName} of {@code type}: the type itself or an attribute. */
+    private static Object canonicalValue(Managed<?> type, String fieldName) {
+        return fieldName.equals("class_") ? type : type.attributes.get(fieldName);
+    }
+
+    /** Sets the static field {@code field} of the canonical metamodel class to {@code value}, when its type accepts it. */
+    private void populate(Class<?> canonical, FieldInfo field, Object value) {
+        Class<?> fieldType = Types.load(field.type(), loader);
+        if (fieldType.isInstance(value)) {
             try {
                 MethodHandles.Lookup lookup=MethodHandles.publicLookup();
                 if (!canonical.getModule().isExported(canonical.getPackageName())
@@ -98,7 +108,8 @@ public final class RuntimeMetamodel implements Metamodel {
                     lookup=MethodHandles.privateLookupIn(canonical,MethodHandles.lookup());
                 lookup.findStaticSetter(canonical, field.name(), fieldType).invoke(value);
             } catch (Throwable failure) {
-                throw new PersistenceException("Cannot populate canonical metamodel " + name + "." + field.name(), failure);
+                throw new PersistenceException("Cannot populate canonical metamodel " + canonical.getName() + "."
+                    + field.name(), failure);
             }
         }
     }

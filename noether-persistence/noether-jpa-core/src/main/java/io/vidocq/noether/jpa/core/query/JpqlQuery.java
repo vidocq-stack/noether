@@ -115,24 +115,37 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
             io.vidocq.noether.jpa.core.mapping.MappedUnit unit) {
         if (io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(instance)) return true;
         for (var node : graph.attributes().entrySet()) {
-            int attribute = -1;
-            for (int i = 0; i < type.model().attributes().size(); i++) {
-                if (type.model().attributes().get(i).name().equals(node.getKey())) { attribute = i; break; }
-            }
-            if (attribute < 0) continue;
-            Object value = type.access().get(instance, attribute);
-            if (io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(value)) return true;
-            var model = type.model().attributes().get(attribute);
-            if (value != null && model instanceof io.vidocq.noether.jpa.core.model.AssociationAttribute association) {
-                MappedEntity target = unit.entity(association.targetEntity()).orElseThrow();
-                if (value instanceof Map<?, ?> map) {
-                    for (Object element : map.values()) if (element != null && unloadedGraph(target, element, node.getValue(), unit)) return true;
-                } else if (value instanceof Collection<?> collection) {
-                    for (Object element : collection) if (element != null && unloadedGraph(target, element, node.getValue(), unit)) return true;
-                } else if (unloadedGraph(target, value, node.getValue(), unit)) return true;
-            }
+            int attribute = attributeIndex(type, node.getKey());
+            if (attribute >= 0 && unloadedAttribute(type, instance, attribute, node.getValue(), unit)) return true;
         }
         return false;
+    }
+
+    /** The index of the attribute {@code name} of {@code type}, {@code -1} if it has none. */
+    private static int attributeIndex(MappedEntity type, String name) {
+        var attributes = type.model().attributes();
+        for (int i = 0; i < attributes.size(); i++) {
+            if (attributes.get(i).name().equals(name)) return i;
+        }
+        return -1;
+    }
+
+    /** Whether the attribute of {@code instance}, or an entity it references, is not loaded as far as {@code graph} goes. */
+    private static boolean unloadedAttribute(MappedEntity type, Object instance, int attribute, FetchPlan graph,
+            io.vidocq.noether.jpa.core.mapping.MappedUnit unit) {
+        Object value = type.access().get(instance, attribute);
+        if (io.vidocq.noether.jpa.core.mapping.LazyCollection.unloaded(value)) return true;
+        if (value == null || !(type.model().attributes().get(attribute)
+                instanceof io.vidocq.noether.jpa.core.model.AssociationAttribute association)) {
+            return false;
+        }
+        MappedEntity target = unit.entity(association.targetEntity()).orElseThrow();
+        Collection<?> elements = switch (value) {
+            case Map<?, ?> map -> map.values();
+            case Collection<?> collection -> collection;
+            default -> List.of(value);
+        };
+        return elements.stream().anyMatch(element -> element != null && unloadedGraph(target, element, graph, unit));
     }
 
     /** Reads every branch before the loader registers identities, resolves relationships or dispatches callbacks. */
@@ -425,25 +438,34 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         var model = runtime.mapping().model().entity(update.entity()).orElseThrow();
         var owner = runtime.mapping().entity(model.javaType()).orElseThrow();
         for (var assignment : update.assignments()) {
-            String name = assignment.path().segments().getLast();
-            int index = -1;
-            for (int i = 0; i < owner.model().attributes().size(); i++) {
-                if (owner.model().attributes().get(i).name().equals(name)) index = i;
-            }
-            var reference = owner.statements().reference(index).orElse(null);
-            if (reference == null || !reference.businessKey()) continue;
-            Object target = switch (assignment.value()) {
-                case Ast.Parameter parameter -> values.get(key(parameter));
-                case Ast.Literal literal -> literal.value();
-                default -> throw new IllegalArgumentException("Business-key SET requires an entity parameter/literal or NULL");
-            };
-            if (target == null) continue;
-            var type = runtime.mapping().entity(reference.target()).orElseThrow();
-            Object id = type.id(target);
-            if (id == null || !storedBusinessTarget(type, id, connection)) {
-                throw new PersistenceException("Business-key association SET references an unknown target identity");
+            var reference = businessKeyReference(owner, assignment.path().segments().getLast());
+            Object target = reference == null ? null : assignedValue(assignment.value());
+            if (target != null) {
+                var type = runtime.mapping().entity(reference.target()).orElseThrow();
+                Object id = type.id(target);
+                if (id == null || !storedBusinessTarget(type, id, connection)) {
+                    throw new PersistenceException("Business-key association SET references an unknown target identity");
+                }
             }
         }
+    }
+
+    /** The business-key reference of the attribute {@code name} of {@code owner}; {@code null} for any other attribute. */
+    private static EntityStatements.Reference businessKeyReference(MappedEntity owner, String name) {
+        int index = -1;
+        for (int i = 0; i < owner.model().attributes().size(); i++) {
+            if (owner.model().attributes().get(i).name().equals(name)) index = i;
+        }
+        return owner.statements().reference(index).filter(EntityStatements.Reference::businessKey).orElse(null);
+    }
+
+    /** The entity a business-key SET assigns: the value of its parameter, or its literal ({@code NULL}). */
+    private Object assignedValue(Ast.Expr value) {
+        return switch (value) {
+            case Ast.Parameter parameter -> values.get(key(parameter));
+            case Ast.Literal(var literal) -> literal;
+            default -> throw new IllegalArgumentException("Business-key SET requires an entity parameter/literal or NULL");
+        };
     }
 
     private boolean storedBusinessTarget(MappedEntity type, Object id, Connection connection) {
@@ -467,23 +489,30 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     private int executeMutations(Compiled compiled, Connection connection, Dialect dialect) {
         List<Object> captured = execute(compiled, null, List.of(), connection);
         for (Compiled.Mutation mutation : compiled.mutations()) {
-            try (PreparedStatement statement = connection.prepareStatement(dialect.render(mutation.sql()))) {
+            try (PreparedStatement update = connection.prepareStatement(dialect.render(mutation.sql()))) {
                 if (getTimeout() != null) {
-                    statement.setQueryTimeout(Math.max(1, (getTimeout() + 999) / 1000));
+                    update.setQueryTimeout(Math.max(1, (getTimeout() + 999) / 1000));
                 }
                 for (Object item : captured) {
                     Object[] row = compiled.items().size() == 1 ? new Object[] {item} : (Object[]) item;
-                    if (mutation.required().stream().anyMatch(i -> row[i] == null)) continue;
-                    for (int i = 0; i < mutation.values().size(); i++) {
-                        mutation.binders().get(i).bind(dialect, statement, i + 1, row[mutation.values().get(i)]);
+                    if (mutation.required().stream().noneMatch(i -> row[i] == null)) {
+                        bindMutation(mutation, row, update, dialect);
+                        update.executeUpdate();
                     }
-                    statement.executeUpdate();
                 }
             } catch (SQLException e) {
                 throw new PersistenceException("The joined bulk statement failed: " + e.getMessage() + " — " + jpql, e);
             }
         }
         return captured.size();
+    }
+
+    /** Binds to {@code update} the values of the captured {@code row} that {@code mutation} reads. */
+    private static void bindMutation(Compiled.Mutation mutation, Object[] row, PreparedStatement update, Dialect dialect)
+            throws SQLException {
+        for (int i = 0; i < mutation.values().size(); i++) {
+            mutation.binders().get(i).bind(dialect, update, i + 1, row[mutation.values().get(i)]);
+        }
     }
 
     /**
@@ -495,36 +524,49 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         if (!(statement instanceof Ast.Select select)) {
             return new FetchPlan[0];
         }
-        Map<String, FetchPlan> variables = new HashMap<>();
-        for (Ast.Range range : select.from()) {
-            if (range.entity() == null) continue;
-            variables.put(key(range.variable()), new FetchPlan());
-            for (Ast.Join join : range.joins()) {
-                List<String> segments = join.path().segments();
-                FetchPlan plan = join.fetch() && segments.size() > 1 ? variables.get(key(segments.getFirst())) : null;
-                if (plan == null) continue; // not a fetch join, or from a variable that is not fetched
-                for (String attribute : segments.subList(1, segments.size())) {
-                    plan = plan.attribute(attribute);
-                }
-                if (join.variable() != null) variables.put(key(join.variable()), plan);
-            }
-        }
+        Map<String, FetchPlan> variables = fetchJoinPlans(select);
         Object graph = getHints().containsKey(FETCH_GRAPH) ? getHints().get(FETCH_GRAPH) : getHints().get(LOAD_GRAPH);
         FetchPlan graphPlan = graph == null ? null : runtime.plan(graph);
         FetchPlan[] plans = new FetchPlan[select.items().size()];
         for (int i = 0; i < plans.length; i++) {
-            if (!(select.items().get(i).expression() instanceof Ast.Path path) || path.segments().size() != 1
-                    || path.treatEntity() != null) continue;
-            String variable = key(path.segments().getFirst());
-            boolean root = select.from().stream().anyMatch(r -> r.entity() != null && key(r.variable()).equals(variable));
-            FetchPlan plan = root ? variables.get(variable) : null;
-            if (plan == null) continue;
-            if (graphPlan != null) {
+            FetchPlan plan = rootPlan(select, select.items().get(i).expression(), variables);
+            if (plan != null && graphPlan != null) {
                 plan = merged(plan, graphPlan);
             }
-            plans[i] = plan.isEmpty() ? null : plan;
+            plans[i] = plan == null || plan.isEmpty() ? null : plan;
         }
         return plans;
+    }
+
+    /** What the fetch joins initialize, by entity variable of {@code select}, chained through the variables of fetch joins. */
+    private static Map<String, FetchPlan> fetchJoinPlans(Ast.Select select) {
+        Map<String, FetchPlan> variables = new HashMap<>();
+        for (Ast.Range range : select.from()) {
+            if (range.entity() != null) {
+                variables.put(key(range.variable()), new FetchPlan());
+                range.joins().forEach(join -> fetchJoin(join, variables));
+            }
+        }
+        return variables;
+    }
+
+    /** Adds what {@code join} fetches to the plan of the variable it starts from; not a fetch join adds nothing. */
+    private static void fetchJoin(Ast.Join join, Map<String, FetchPlan> variables) {
+        List<String> segments = join.path().segments();
+        FetchPlan plan = join.fetch() && segments.size() > 1 ? variables.get(key(segments.getFirst())) : null;
+        if (plan == null) return; // not a fetch join, or from a variable that is not fetched
+        for (String attribute : segments.subList(1, segments.size())) {
+            plan = plan.attribute(attribute);
+        }
+        if (join.variable() != null) variables.put(key(join.variable()), plan);
+    }
+
+    /** The plan of a select item that is an entity variable of the {@code FROM} clause; {@code null} for another item. */
+    private static FetchPlan rootPlan(Ast.Select select, Ast.Expr item, Map<String, FetchPlan> variables) {
+        if (!(item instanceof Ast.Path path) || path.segments().size() != 1 || path.treatEntity() != null) return null;
+        String variable = key(path.segments().getFirst());
+        boolean root = select.from().stream().anyMatch(r -> r.entity() != null && key(r.variable()).equals(variable));
+        return root ? variables.get(variable) : null;
     }
 
     private static final String FETCH_GRAPH = "jakarta.persistence.fetchgraph";

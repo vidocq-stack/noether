@@ -109,27 +109,32 @@ public class NativeQuery extends AbstractQuery implements Query {
         StringBuilder jdbc = new StringBuilder(sqlString.length());
         int plain = 0;
         char quote = 0;
-        for (int i = 0; i < sqlString.length(); i++) {
+        int i = 0;
+        while (i < sqlString.length()) {
             char c = sqlString.charAt(i);
-            if (quote != 0) {
-                quote = c == quote ? 0 : quote;
-                jdbc.append(c);
-            } else if (c == '\'' || c == '"') {
-                quote = c;
-                jdbc.append(c);
-            } else if (c == '?') {
+            if (quote == 0 && c == '?') {
                 int end = i + 1;
                 while (end < sqlString.length() && Character.isDigit(sqlString.charAt(end))) {
                     end++;
                 }
                 order.add(end > i + 1 ? Integer.parseInt(sqlString.substring(i + 1, end)) : ++plain);
                 jdbc.append('?');
-                i = end - 1;
+                i = end;
             } else {
+                quote = quoteAfter(quote, c);
                 jdbc.append(c);
+                i++;
             }
         }
         return jdbc.toString();
+    }
+
+    /** The quote open after {@code c}: the one {@code c} opens, none once {@code c} closes the open one. */
+    private static char quoteAfter(char quote, char c) {
+        if (quote != 0) {
+            return c == quote ? 0 : quote;
+        }
+        return c == '\'' || c == '"' ? c : 0;
     }
 
     /** The SQL as the application wrote it. */
@@ -397,39 +402,28 @@ public class NativeQuery extends AbstractQuery implements Query {
         if (value == null || type == null || type == Object.class || type.isInstance(value)) {
             return value;
         }
-        if (value instanceof Number number) {
-            if (type == String.class) {
-                return number.toString();
-            }
-            if (type == Integer.class || type == int.class) {
-                return number.intValue();
-            }
-            if (type == Long.class || type == long.class) {
-                return number.longValue();
-            }
-            if (type == Short.class || type == short.class) {
-                return number.shortValue();
-            }
-            if (type == Byte.class || type == byte.class) {
-                return number.byteValue();
-            }
-            if (type == Float.class || type == float.class) {
-                return number.floatValue();
-            }
-            if (type == Double.class || type == double.class) {
-                return number.doubleValue();
-            }
-            if (type == BigDecimal.class) {
-                return new BigDecimal(number.toString());
-            }
-            if (type == BigInteger.class) {
-                return new BigDecimal(number.toString()).toBigInteger();
-            }
+        Object number = value instanceof Number n ? convertNumber(n, type) : null;
+        if (number != null) {
+            return number;
         }
         if (type == String.class) {
             return value.toString();
         }
         throw new PersistenceException("The native result " + value.getClass().getName() + " cannot be converted to " + type.getName());
+    }
+
+    /** {@code number} as a value of the numeric {@code type}, {@code null} when {@code type} is not numeric. */
+    private static Object convertNumber(Number number, Class<?> type) {
+        Class<?> boxed = primitiveBox(type);
+        if (boxed == Integer.class) return number.intValue();
+        if (boxed == Long.class) return number.longValue();
+        if (boxed == Short.class) return number.shortValue();
+        if (boxed == Byte.class) return number.byteValue();
+        if (boxed == Float.class) return number.floatValue();
+        if (boxed == Double.class) return number.doubleValue();
+        if (boxed == BigDecimal.class) return new BigDecimal(number.toString());
+        if (boxed == BigInteger.class) return new BigDecimal(number.toString()).toBigInteger();
+        return null;
     }
 
     // ---- parameters: positional only; named parameters are not defined for native queries (§3.11.17) ------------

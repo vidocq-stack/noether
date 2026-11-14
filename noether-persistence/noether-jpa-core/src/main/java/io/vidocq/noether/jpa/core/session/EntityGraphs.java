@@ -16,6 +16,8 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /** §3.8 metadata and immutable named snapshots. Eager loading satisfies either fetch or load semantics. */
 final class EntityGraphs {
+    private static final String ATTRIBUTE_NODES="attributeNodes";
+    private static final String KEY_SUBGRAPH="keySubgraph";
     private final Metamodel model;
     private final Map<String,Root<?>> named = new ConcurrentHashMap<>();
     EntityGraphs(Metamodel model,ClassInfos source,ClassLoader loader) {
@@ -25,40 +27,46 @@ final class EntityGraphs {
             List<AnnotationInfo> declarations=new ArrayList<>();
             info.annotation("jakarta.persistence.NamedEntityGraph").ifPresent(declarations::add);
             info.annotation("jakarta.persistence.NamedEntityGraphs").ifPresent(a -> declarations.addAll(a.annotations("value")));
-            for (var declaration:declarations) {
-                String name=declaration.string("name");
-                if (name==null || name.isEmpty()) name=entity.getName();
-                var graph=create(entity.getJavaType());
-                if (declaration.bool("includeAllAttributes")) entity.getAttributes().forEach(a -> graph.addAttributeNode(a.getName()));
-                Map<String,AnnotationInfo> subgraphs=new LinkedHashMap<>();
-                declaration.annotations("subgraphs").forEach(a -> subgraphs.put(a.string("name"),a));
-                populate(graph,declaration.annotations("attributeNodes"),subgraphs,loader,new HashSet<>());
-                for (var subclass:declaration.annotations("subclassSubgraphs")) {
-                    Class<?> type=Types.load(subclass.type("type"),loader);
-                    populate(graph.treated(type),subclass.annotations("attributeNodes"),subgraphs,loader,new HashSet<>());
-                }
-                if (named.putIfAbsent(name,graph.copy(name,false))!=null) throw new PersistenceException("Duplicate named entity graph " + name);
-            }
+            for (var declaration:declarations) register(entity,declaration,loader);
         }
+    }
+    /** Registers the named entity graph a {@code @NamedEntityGraph} of {@code entity} declares. */
+    private void register(EntityType<?> entity,AnnotationInfo declaration,ClassLoader loader) {
+        String name=declaration.string("name");
+        if (name==null || name.isEmpty()) name=entity.getName();
+        var graph=create(entity.getJavaType());
+        if (declaration.bool("includeAllAttributes")) entity.getAttributes().forEach(a -> graph.addAttributeNode(a.getName()));
+        Map<String,AnnotationInfo> subgraphs=new LinkedHashMap<>();
+        declaration.annotations("subgraphs").forEach(a -> subgraphs.put(a.string("name"),a));
+        populate(graph,declaration.annotations(ATTRIBUTE_NODES),subgraphs,loader,new HashSet<>());
+        for (var subclass:declaration.annotations("subclassSubgraphs")) {
+            Class<?> type=Types.load(subclass.type("type"),loader);
+            populate(graph.treated(type),subclass.annotations(ATTRIBUTE_NODES),subgraphs,loader,new HashSet<>());
+        }
+        if (named.putIfAbsent(name,graph.copy(name,false))!=null) throw new PersistenceException("Duplicate named entity graph " + name);
     }
     private void populate(Base<?> graph,List<AnnotationInfo> nodes,Map<String,AnnotationInfo> declarations,
             ClassLoader loader,Set<String> active) {
         for (var a:nodes) {
             String name=a.string("value"); graph.addAttributeNode(name);
-            for (String member:List.of("subgraph","keySubgraph")) {
+            for (String member:List.of("subgraph",KEY_SUBGRAPH)) {
                 String reference=a.string(member);
-                if (reference==null || reference.isEmpty()) continue;
-                AnnotationInfo sub=declarations.get(reference);
-                if (sub==null || !active.add(reference)) throw new PersistenceException("Invalid named subgraph " + reference);
-                Class<?> declared=Types.load(sub.type("type"),loader);
-                var node=graph.node(name);
-                Class<?> target=member.equals("keySubgraph")?node.keyType():node.valueType();
-                if (declared==void.class) declared=target;
-                Base<?> child=node.subgraph(declared,member.equals("keySubgraph"));
-                populate(child,sub.annotations("attributeNodes"),declarations,loader,active);
-                active.remove(reference);
+                if (reference!=null && !reference.isEmpty()) {
+                    populateSubgraph(graph.node(name),member.equals(KEY_SUBGRAPH),declarations.get(reference),reference,
+                        declarations,loader,active);
+                }
             }
         }
+    }
+    /** Populates the (key) subgraph {@code sub}, named {@code reference}, of {@code node}; a cycle is refused. */
+    private void populateSubgraph(Node<?> node,boolean key,AnnotationInfo sub,String reference,
+            Map<String,AnnotationInfo> declarations,ClassLoader loader,Set<String> active) {
+        if (sub==null || !active.add(reference)) throw new PersistenceException("Invalid named subgraph " + reference);
+        Class<?> declared=Types.load(sub.type("type"),loader);
+        if (declared==void.class) declared=key?node.keyType():node.valueType();
+        Base<?> child=node.subgraph(declared,key);
+        populate(child,sub.annotations(ATTRIBUTE_NODES),declarations,loader,active);
+        active.remove(reference);
     }
     <T> Root<T> create(Class<T> type) { model.entity(type); return new Root<>(model,type,null,true); }
     EntityGraph<?> get(String name) {

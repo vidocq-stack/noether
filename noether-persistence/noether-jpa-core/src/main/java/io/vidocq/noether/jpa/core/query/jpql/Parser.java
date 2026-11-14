@@ -428,32 +428,12 @@ public final class Parser {
 
     private Expr primary() {
         Token token = peek();
-        switch (token.kind()) {
-            case STRING, NUMBER -> {
-                advance();
-                return new Ast.Literal(token.value());
-            }
-            case NAMED_PARAMETER -> {
-                advance();
-                return new Ast.Parameter((String) token.value(), 0);
-            }
-            case POSITIONAL_PARAMETER -> {
-                advance();
-                return new Ast.Parameter(null, (Integer) token.value());
-            }
-            case END -> throw error("an expression");
-            default -> {
-            }
+        Expr literal = literalOrParameter(token);
+        if (literal != null) {
+            return literal;
         }
         if (accept("(")) {
-            if (peek().is("SELECT")) {
-                Ast.Query subquery = query();
-                expect(")");
-                return new Ast.Subquery(subquery);
-            }
-            Expr inner = condition();
-            expect(")");
-            return inner;
+            return parenthesized();
         }
         if (accept("{")) {
             return escape();
@@ -462,88 +442,150 @@ public final class Parser {
             throw error("an expression");
         }
         String word = token.text().toUpperCase(Locale.ROOT);
-        if (word.equals("TREAT") && peek(1).is("(")) {
+        if (word.equals(TREAT_KEYWORD) && peek(1).is("(")) {
             return treatedPath();
         }
-        switch (word) {
-            case "TRUE", "FALSE" -> {
-                advance();
-                return new Ast.Literal(word.equals("TRUE"));
-            }
-            case "NULL" -> {
-                advance();
-                return new Ast.Literal(null);
-            }
-            case "CASE" -> {
-                advance();
-                return caseExpression();
-            }
-            case "NEW" -> {
-                advance();
-                return constructor();
-            }
-            case "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP" -> {
-                if (!peek(1).is("(")) {
-                    advance();
-                    return new Ast.Function(word, List.of());
-                }
-            }
-            case "LOCAL" -> { // 3.1: LOCAL DATE, LOCAL TIME, LOCAL DATETIME
-                Token kind = peek(1);
-                if (kind.is("DATE") || kind.is("TIME") || kind.is("DATETIME")) {
-                    advance();
-                    advance();
-                    return new Ast.Function("LOCAL_" + kind.text().toUpperCase(Locale.ROOT), List.of());
-                }
-            }
-            default -> {
-            }
+        Expr keyword = keywordExpression(word);
+        if (keyword != null) {
+            return keyword;
         }
         if (peek(1).is("(")) {
             advance();
             advance();
-            if (word.equals("TRIM")) {
-                return trim();
-            }
-            if (word.equals("CAST")) {
-                Expr expression = expression();
-                expect("AS");
-                Token type = advance();
-                if (type.kind() != Kind.NAME) {
-                    throw error("a CAST target type");
-                }
-                Ast.CastType castType;
-                try {
-                    castType = Ast.CastType.valueOf(type.text().toUpperCase(Locale.ROOT));
-                } catch (IllegalArgumentException e) {
-                    throw new IllegalArgumentException("Unknown CAST target type " + type.text() + ": " + query, e);
-                }
-                expect(")");
-                return new Ast.Cast(expression, castType);
-            }
-            if (word.equals("EXTRACT")) {
-                String field = name("a date or time field").toUpperCase(Locale.ROOT);
-                expect("FROM");
-                Expr from = expression();
-                expect(")");
-                return new Ast.Function("EXTRACT", List.of(new Ast.Literal(field), from));
-            }
-            if (AGGREGATES.contains(word)) {
-                boolean distinct = accept("DISTINCT");
-                Expr argument = word.equals("COUNT") && accept("*") ? null : expression();
-                expect(")");
-                return new Ast.Aggregate(word, distinct, argument);
-            }
-            List<Expr> arguments = new ArrayList<>();
-            if (!accept(")")) {
-                do {
-                    arguments.add(condition());
-                } while (accept(","));
-                expect(")");
-            }
-            return new Ast.Function(word, arguments);
+            return functionCall(word);
         }
         return path();
+    }
+
+    /** The literal or parameter {@code token} is, consumed; {@code null} when it is neither. */
+    private Expr literalOrParameter(Token token) {
+        return switch (token.kind()) {
+            case STRING, NUMBER -> {
+                advance();
+                yield new Ast.Literal(token.value());
+            }
+            case NAMED_PARAMETER -> {
+                advance();
+                yield new Ast.Parameter((String) token.value(), 0);
+            }
+            case POSITIONAL_PARAMETER -> {
+                advance();
+                yield new Ast.Parameter(null, (Integer) token.value());
+            }
+            case END -> throw error("an expression");
+            default -> null;
+        };
+    }
+
+    /** After an opening parenthesis: a subquery, or a parenthesized condition. */
+    private Expr parenthesized() {
+        if (peek().is(SELECT_KEYWORD)) {
+            Ast.Query subquery = query();
+            expect(")");
+            return new Ast.Subquery(subquery);
+        }
+        Expr inner = condition();
+        expect(")");
+        return inner;
+    }
+
+    /** The expression the keyword {@code word} starts, consumed; {@code null} when {@code word} starts none. */
+    private Expr keywordExpression(String word) {
+        return switch (word) {
+            case "TRUE", "FALSE" -> {
+                advance();
+                yield new Ast.Literal(word.equals("TRUE"));
+            }
+            case "NULL" -> {
+                advance();
+                yield new Ast.Literal(null);
+            }
+            case "CASE" -> {
+                advance();
+                yield caseExpression();
+            }
+            case "NEW" -> {
+                advance();
+                yield constructor();
+            }
+            case "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP" -> peek(1).is("(") ? null : currentDateTime(word);
+            case "LOCAL" -> localDateTime();
+            default -> null;
+        };
+    }
+
+    /** {@code CURRENT_DATE}, {@code CURRENT_TIME} or {@code CURRENT_TIMESTAMP}, without parentheses. */
+    private Expr currentDateTime(String word) {
+        advance();
+        return new Ast.Function(word, List.of());
+    }
+
+    /** 3.1: {@code LOCAL DATE}, {@code LOCAL TIME}, {@code LOCAL DATETIME}; {@code null} for another LOCAL. */
+    private Expr localDateTime() {
+        Token kind = peek(1);
+        if (!kind.is("DATE") && !kind.is("TIME") && !kind.is("DATETIME")) {
+            return null;
+        }
+        advance();
+        advance();
+        return new Ast.Function("LOCAL_" + kind.text().toUpperCase(Locale.ROOT), List.of());
+    }
+
+    /** The call of the function {@code word}, after its opening parenthesis. */
+    private Expr functionCall(String word) {
+        return switch (word) {
+            case "TRIM" -> trim();
+            case "CAST" -> cast();
+            case "EXTRACT" -> extract();
+            default -> AGGREGATES.contains(word) ? aggregate(word) : function(word);
+        };
+    }
+
+    /** {@code CAST(expression AS type)}, after its opening parenthesis. */
+    private Expr cast() {
+        Expr expression = expression();
+        expect("AS");
+        Token type = advance();
+        if (type.kind() != Kind.NAME) {
+            throw error("a CAST target type");
+        }
+        Ast.CastType castType;
+        try {
+            castType = Ast.CastType.valueOf(type.text().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Unknown CAST target type " + type.text() + ": " + query, e);
+        }
+        expect(")");
+        return new Ast.Cast(expression, castType);
+    }
+
+    /** {@code EXTRACT(field FROM expression)}, after its opening parenthesis. */
+    private Expr extract() {
+        String field = name("a date or time field").toUpperCase(Locale.ROOT);
+        expect("FROM");
+        Expr from = expression();
+        expect(")");
+        return new Ast.Function("EXTRACT", List.of(new Ast.Literal(field), from));
+    }
+
+    /** An aggregate ({@code COUNT(*)}, {@code SUM([DISTINCT] expression)}, …), after its opening parenthesis. */
+    private Expr aggregate(String word) {
+        boolean distinct = accept(DISTINCT_KEYWORD);
+        Expr argument = word.equals("COUNT") && accept("*") ? null : expression();
+        expect(")");
+        return new Ast.Aggregate(word, distinct, argument);
+    }
+
+    /** Any other function call: its arguments, after its opening parenthesis. */
+    private Expr function(String word) {
+        List<Expr> arguments = new ArrayList<>();
+        if (!accept(")")) {
+            do {
+                arguments.add(condition());
+            } while (accept(","));
+            expect(")");
+        }
+        return new Ast.Function(word, arguments);
     }
 
     /** {@code TRIM([[LEADING|TRAILING|BOTH] [character] FROM] string)}: TRIM(specification, character or null, string). */

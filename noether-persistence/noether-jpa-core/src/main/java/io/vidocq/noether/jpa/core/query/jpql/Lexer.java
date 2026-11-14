@@ -45,69 +45,95 @@ final class Lexer {
 
     static List<Token> tokens(String query) {
         List<Token> tokens = new ArrayList<>();
-        int i = 0;
+        int i = skipWhitespace(query, 0);
+        while (i < query.length()) {
+            i = skipWhitespace(query, token(query, i, tokens));
+        }
+        tokens.add(new Token(Kind.END, "", null, i));
+        return tokens;
+    }
+
+    private static int skipWhitespace(String query, int start) {
+        int i = start;
+        while (i < query.length() && Character.isWhitespace(query.charAt(i))) {
+            i++;
+        }
+        return i;
+    }
+
+    /** Adds the token that starts at {@code start} to {@code tokens}; gives the index that follows it. */
+    private static int token(String query, int start, List<Token> tokens) {
+        char c = query.charAt(start);
+        if (Character.isJavaIdentifierStart(c)) {
+            int end = identifierEnd(query, start);
+            tokens.add(new Token(Kind.NAME, query.substring(start, end), null, start));
+            return end;
+        }
+        if (c == '\'') {
+            return string(query, start, tokens);
+        }
+        if (Character.isDigit(c) || c == '.' && start + 1 < query.length() && Character.isDigit(query.charAt(start + 1))) {
+            return number(query, start, tokens);
+        }
+        if (c == ':' && start + 1 < query.length() && Character.isJavaIdentifierStart(query.charAt(start + 1))) {
+            int end = identifierEnd(query, start + 1);
+            tokens.add(new Token(Kind.NAMED_PARAMETER, query.substring(start, end), query.substring(start + 1, end), start));
+            return end;
+        }
+        if (c == '?') {
+            return positionalParameter(query, start, tokens);
+        }
+        String symbol = symbol(query, start);
+        if (symbol == null) {
+            throw new IllegalArgumentException("Unexpected character '" + c + "' at " + start + ": " + query);
+        }
+        tokens.add(new Token(Kind.SYMBOL, symbol, null, start));
+        return start + symbol.length();
+    }
+
+    private static int identifierEnd(String query, int start) {
+        int i = start;
+        while (i < query.length() && Character.isJavaIdentifierPart(query.charAt(i))) {
+            i++;
+        }
+        return i;
+    }
+
+    /** A string literal (§4.6.1), from its opening quote; gives the index after its closing quote. */
+    private static int string(String query, int start, List<Token> tokens) {
+        StringBuilder value = new StringBuilder();
+        int i = start + 1;
         while (true) {
-            while (i < query.length() && Character.isWhitespace(query.charAt(i))) {
-                i++;
+            if (i >= query.length()) {
+                throw new IllegalArgumentException("The string literal at " + start + " is not closed: " + query);
             }
-            if (i == query.length()) {
-                tokens.add(new Token(Kind.END, "", null, i));
-                return tokens;
-            }
-            char c = query.charAt(i);
-            int start = i;
-            if (Character.isJavaIdentifierStart(c)) {
-                while (i < query.length() && Character.isJavaIdentifierPart(query.charAt(i))) {
+            char s = query.charAt(i++);
+            if (s == '\'') {
+                if (i < query.length() && query.charAt(i) == '\'') {
+                    value.append('\''); // §4.6.1: a quote within a string is doubled
                     i++;
+                } else {
+                    break;
                 }
-                tokens.add(new Token(Kind.NAME, query.substring(start, i), null, start));
-            } else if (c == '\'') {
-                StringBuilder value = new StringBuilder();
-                i++;
-                while (true) {
-                    if (i >= query.length()) {
-                        throw new IllegalArgumentException("The string literal at " + start + " is not closed: " + query);
-                    }
-                    char s = query.charAt(i++);
-                    if (s == '\'') {
-                        if (i < query.length() && query.charAt(i) == '\'') {
-                            value.append('\''); // §4.6.1: a quote within a string is doubled
-                            i++;
-                        } else {
-                            break;
-                        }
-                    } else {
-                        value.append(s);
-                    }
-                }
-                tokens.add(new Token(Kind.STRING, query.substring(start, i), value.toString(), start));
-            } else if (Character.isDigit(c) || c == '.' && i + 1 < query.length() && Character.isDigit(query.charAt(i + 1))) {
-                i = number(query, i, tokens);
-            } else if (c == ':' && i + 1 < query.length() && Character.isJavaIdentifierStart(query.charAt(i + 1))) {
-                i++;
-                while (i < query.length() && Character.isJavaIdentifierPart(query.charAt(i))) {
-                    i++;
-                }
-                tokens.add(new Token(Kind.NAMED_PARAMETER, query.substring(start, i), query.substring(start + 1, i), start));
-            } else if (c == '?') {
-                i++;
-                while (i < query.length() && Character.isDigit(query.charAt(i))) {
-                    i++;
-                }
-                if (i == start + 1) {
-                    throw new IllegalArgumentException("A positional parameter needs its position (?1) at " + start + ": " + query);
-                }
-                tokens.add(new Token(Kind.POSITIONAL_PARAMETER, query.substring(start, i), Integer.parseInt(query.substring(start + 1, i)),
-                    start));
             } else {
-                String symbol = symbol(query, i);
-                if (symbol == null) {
-                    throw new IllegalArgumentException("Unexpected character '" + c + "' at " + start + ": " + query);
-                }
-                i += symbol.length();
-                tokens.add(new Token(Kind.SYMBOL, symbol, null, start));
+                value.append(s);
             }
         }
+        tokens.add(new Token(Kind.STRING, query.substring(start, i), value.toString(), start));
+        return i;
+    }
+
+    private static int positionalParameter(String query, int start, List<Token> tokens) {
+        int end = start + 1;
+        while (end < query.length() && Character.isDigit(query.charAt(end))) {
+            end++;
+        }
+        if (end == start + 1) {
+            throw new IllegalArgumentException("A positional parameter needs its position (?1) at " + start + ": " + query);
+        }
+        tokens.add(new Token(Kind.POSITIONAL_PARAMETER, query.substring(start, end), Integer.parseInt(query.substring(start + 1, end)),
+            start));
+        return end;
     }
 
     private static String symbol(String query, int i) {
@@ -124,30 +150,21 @@ final class Lexer {
      * suffix {@code L}; a decimal or an exponent is a {@code Double}, a {@code Float} with {@code F}, a
      * {@code BigDecimal} with {@code BD}; {@code BI} makes a {@code BigInteger}.
      */
-    private static int number(String query, int i, List<Token> tokens) {
-        int start = i;
+    private static int number(String query, int start, List<Token> tokens) {
+        int i = start;
         boolean decimal = false;
         while (i < query.length() && (Character.isDigit(query.charAt(i)) || query.charAt(i) == '.')) {
             decimal |= query.charAt(i) == '.';
             i++;
         }
-        if (i < query.length() && (query.charAt(i) == 'e' || query.charAt(i) == 'E')) {
-            decimal = true;
-            i++;
-            if (i < query.length() && (query.charAt(i) == '+' || query.charAt(i) == '-')) {
-                i++;
-            }
-            while (i < query.length() && Character.isDigit(query.charAt(i))) {
-                i++;
-            }
-        }
-        String digits = query.substring(start, i);
-        String suffix = "";
-        int end = i;
+        int exponentEnd = exponentEnd(query, i);
+        decimal |= exponentEnd > i;
+        String digits = query.substring(start, exponentEnd);
+        int end = exponentEnd;
         while (end < query.length() && Character.isLetter(query.charAt(end))) {
             end++;
         }
-        suffix = query.substring(i, end).toUpperCase(java.util.Locale.ROOT);
+        String suffix = query.substring(exponentEnd, end).toUpperCase(java.util.Locale.ROOT);
         Object value = switch (suffix) {
             case "L" -> Long.parseLong(digits);
             case "F" -> Float.parseFloat(digits);
@@ -158,6 +175,21 @@ final class Lexer {
             default -> throw new IllegalArgumentException("Unknown numeric suffix '" + suffix + "' at " + start + ": " + query);
         };
         tokens.add(new Token(Kind.NUMBER, query.substring(start, end), value, start));
+        return end;
+    }
+
+    /** The end of the exponent ({@code e}, an optional sign, digits) that starts at {@code start}, if any. */
+    private static int exponentEnd(String query, int start) {
+        if (start >= query.length() || query.charAt(start) != 'e' && query.charAt(start) != 'E') {
+            return start;
+        }
+        int end = start + 1;
+        if (end < query.length() && (query.charAt(end) == '+' || query.charAt(end) == '-')) {
+            end++;
+        }
+        while (end < query.length() && Character.isDigit(query.charAt(end))) {
+            end++;
+        }
         return end;
     }
 
