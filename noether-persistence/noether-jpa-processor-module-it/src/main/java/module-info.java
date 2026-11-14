@@ -27,4 +27,7 @@ module io.vidocq.noether.jpa.processorit {
 
     provides io.vidocq.noether.jpa.core.spi.ManagedAccessProvider
         with io.vidocq.noether.jpa.processorit.closed._NoetherJpaAccess;
+    // a unit declared by a runtime's source rather than a persistence.xml (Vidocq/vidocq#551)
+    provides io.vidocq.noether.jpa.core.spi.PersistenceUnitSource
+        with io.vidocq.noether.jpa.processorit.ConfiguredUnits;
 }

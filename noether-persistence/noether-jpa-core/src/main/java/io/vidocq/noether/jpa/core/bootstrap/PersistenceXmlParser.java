@@ -194,7 +194,8 @@ public final class PersistenceXmlParser {
             }
         }
         return new PersistenceUnitDefinition(name, description, provider, transactionType, jta, nonJta, mappingFiles, jarFiles,
-            classes, excludeUnlisted, cacheMode, validationMode, properties, rootUrl, version, qualifiers, scope, classLoader);
+            classes, excludeUnlisted, cacheMode, validationMode, properties, rootUrl, version, qualifiers, scope, classLoader,
+            List.of());
     }
 
     private static String text(XMLStreamReader r) throws XMLStreamException {

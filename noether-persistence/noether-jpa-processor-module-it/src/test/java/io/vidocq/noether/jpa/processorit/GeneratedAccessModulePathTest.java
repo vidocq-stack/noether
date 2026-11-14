@@ -28,11 +28,25 @@ import io.vidocq.noether.jpa.processorit.closed.Portfolio;
 import io.vidocq.noether.jpa.processorit.closed.Profile;
 import io.vidocq.noether.jpa.processorit.closed.Balance;
 import jakarta.persistence.EntityManagerFactory;
+import jakarta.persistence.Persistence;
 import jakarta.persistence.PersistenceConfiguration;
 import org.junit.jupiter.api.Test;
 
 /** Compiled with noether-jpa-processor, an application needs no opens: the generated accesses are handed over. */
 class GeneratedAccessModulePathTest {
+
+    @Test
+    void aUnitThatASourceOfTheApplicationDeclaresIsFoundByName() { // Vidocq/vidocq#551
+        try (EntityManagerFactory factory = Persistence.createEntityManagerFactory("processor-from-source");
+             var em = factory.createEntityManager()) {
+            em.getTransaction().begin();
+            em.persist(new Ledger(551));
+            em.getTransaction().commit();
+            em.clear();
+
+            assertThat(em.find(Ledger.class, 551L)).isNotNull();
+        }
+    }
 
     @Test
     void secondaryBusinessKeyUsesGeneratedPropertyAccessInAClosedModule() { // §11.1.26, §11.1.47

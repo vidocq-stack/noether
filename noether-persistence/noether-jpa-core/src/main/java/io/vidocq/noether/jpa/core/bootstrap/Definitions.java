@@ -42,7 +42,7 @@ public final class Definitions {
         return new PersistenceUnitDefinition(configuration.name(), null, configuration.provider(), type,
             configuration.jtaDataSource(), configuration.nonJtaDataSource(), configuration.mappingFiles(), List.of(),
             configuration.managedClasses().stream().map(Class::getName).toList(), true, configuration.sharedCacheMode(),
-            configuration.validationMode(), configuration.properties(), null, null, List.of(), null, loader);
+            configuration.validationMode(), configuration.properties(), null, null, List.of(), null, loader, List.of());
     }
 
     @SuppressWarnings("deprecation")
@@ -58,7 +58,7 @@ public final class Definitions {
             info.excludeUnlistedClasses(), info.getSharedCacheMode(), info.getValidationMode(), properties,
             info.getPersistenceUnitRootUrl(), info.getPersistenceXMLSchemaVersion(),
             info.getQualifierAnnotationNames() == null ? List.of() : info.getQualifierAnnotationNames(),
-            info.getScopeAnnotationName(), info.getClassLoader());
+            info.getScopeAnnotationName(), info.getClassLoader(), List.of());
     }
 
     /** The data sources a container passes as objects, as properties the caller's map may still override. */

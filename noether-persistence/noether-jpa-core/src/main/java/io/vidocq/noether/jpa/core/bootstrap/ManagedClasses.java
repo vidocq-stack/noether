@@ -54,18 +54,27 @@ public final class ManagedClasses {
     private ManagedClasses() {
     }
 
-    /** The names of the managed classes of {@code unit}, the listed ones first, without duplicates. */
+    /**
+     * The names of the managed classes of {@code unit}, the listed ones first, without duplicates. The classes found in
+     * the root and the jar files are kept to the unit's packages and their sub-packages, when it names some.
+     */
     public static List<String> of(PersistenceUnitDefinition unit) {
         Set<String> classes = new LinkedHashSet<>(unit.managedClassNames());
         if (!unit.excludeUnlistedClasses()) {
+            Set<String> found = new LinkedHashSet<>();
             if (unit.rootUrl() != null) {
-                scan(unit.rootUrl(), classes);
+                scan(unit.rootUrl(), found);
             }
             for (URL jarFile : unit.jarFileUrls()) {
-                scan(jarFile, classes);
+                scan(jarFile, found);
             }
+            found.stream().filter(name -> inPackages(name, unit.managedPackages())).forEach(classes::add);
         }
         return List.copyOf(classes);
+    }
+
+    private static boolean inPackages(String className, List<String> packages) {
+        return packages.isEmpty() || packages.stream().anyMatch(pkg -> className.startsWith(pkg + "."));
     }
 
     private static void scan(URL location, Set<String> into) {

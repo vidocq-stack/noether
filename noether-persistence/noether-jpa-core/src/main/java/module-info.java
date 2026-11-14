@@ -38,6 +38,8 @@ module io.vidocq.noether.jpa.core {
     // decision D7: the pool of a jakarta.persistence.jdbc.* unit, when the application has one (noether-jpa-pool-mansart)
     uses io.vidocq.noether.jpa.core.spi.ConnectionPoolFactory;
     uses io.vidocq.noether.jpa.core.spi.ManagedAccessProvider;
+    // the units a runtime declares from its own configuration, beside the persistence.xml files (Vidocq/vidocq#551)
+    uses io.vidocq.noether.jpa.core.spi.PersistenceUnitSource;
     uses io.vidocq.noether.jpa.core.spi.TransactionIntegrationProvider;
     uses io.vidocq.noether.jpa.dialect.DialectFactory;
     uses jakarta.validation.spi.ValidationProvider;

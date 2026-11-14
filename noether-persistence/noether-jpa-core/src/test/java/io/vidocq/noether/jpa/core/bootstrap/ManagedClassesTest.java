@@ -52,7 +52,7 @@ class ManagedClassesTest {
     private static PersistenceUnitDefinition unit(List<String> classes, boolean excludeUnlisted, URL root, List<URL> jarFiles) {
         return new PersistenceUnitDefinition("unit", null, null, PersistenceUnitTransactionType.RESOURCE_LOCAL, null, null,
             List.of(), jarFiles, classes, excludeUnlisted, SharedCacheMode.UNSPECIFIED, ValidationMode.AUTO, Map.of(), root,
-            "3.2", List.of(), null, ManagedClassesTest.class.getClassLoader());
+            "3.2", List.of(), null, ManagedClassesTest.class.getClassLoader(), List.of());
     }
 
     /** The directory the test classes were compiled to. */
@@ -92,6 +92,31 @@ class ManagedClassesTest {
         assertThat(classes.getFirst()).isEqualTo(Level.class.getName());
         assertThat(classes).contains(Customer.class.getName(), Audited.class.getName(), Geo.class.getName(),
             MoneyConverter.class.getName()).doesNotContain(ManagedClassesTest.class.getName()).doesNotHaveDuplicates();
+    }
+
+    @Test
+    void aUnitRestrictedToAPackageManagesTheClassesOfItsSubPackagesToo() throws Exception {
+        String fixtures = Customer.class.getPackageName();
+        assertThat(ManagedClasses.of(restricted(List.of())))
+            .anyMatch(name -> !name.startsWith(fixtures + "."));
+
+        assertThat(ManagedClasses.of(restricted(List.of(fixtures))))
+            .contains(Customer.class.getName(), fixtures + ".did.Badge", fixtures + ".rel.Club")
+            .allMatch(name -> name.startsWith(fixtures + "."));
+    }
+
+    @Test
+    void aPackageRestrictionMatchesWholePackageNames() throws Exception {
+        String fixtures = Customer.class.getPackageName();
+        assertThat(ManagedClasses.of(restricted(List.of(fixtures + ".did", fixtures.substring(0, fixtures.length() - 1)))))
+            .contains(fixtures + ".did.Badge")
+            .allMatch(name -> name.startsWith(fixtures + ".did."));
+    }
+
+    private static PersistenceUnitDefinition restricted(List<String> packages) throws Exception {
+        return new PersistenceUnitDefinition("unit", null, null, PersistenceUnitTransactionType.RESOURCE_LOCAL, null, null,
+            List.of(), List.of(), List.of(), false, SharedCacheMode.UNSPECIFIED, ValidationMode.AUTO, Map.of(),
+            testClassesRoot(), null, List.of(), null, ManagedClassesTest.class.getClassLoader(), packages);
     }
 
     @Test

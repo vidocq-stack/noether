@@ -217,6 +217,6 @@ class BeanValidationTest {
         return UnitSettings.of(new PersistenceUnitDefinition("validation-test", null, null,
             PersistenceUnitTransactionType.RESOURCE_LOCAL, null, null, List.of(), List.of(), List.of(), true,
             SharedCacheMode.NONE, mode, properties, null, null, List.of(), null,
-            BeanValidationTest.class.getClassLoader()), Map.of(), Map.of());
+            BeanValidationTest.class.getClassLoader(), List.of()), Map.of(), Map.of());
     }
 }

@@ -19,6 +19,8 @@
  */
 package io.vidocq.noether.jpa.core.bootstrap;
 
+import io.vidocq.noether.jpa.core.spi.PersistenceUnitDeclaration;
+import io.vidocq.noether.jpa.core.spi.PersistenceUnitSource;
 import jakarta.persistence.PersistenceException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -31,10 +33,15 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.ServiceConfigurationError;
+import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-/** Finds the persistence units declared by the {@code META-INF/persistence.xml} files of a class loader (§8.2, §9.2). */
+/**
+ * Finds the persistence units declared by the {@code META-INF/persistence.xml} files of a class loader (§8.2, §9.2), and
+ * those that the {@link PersistenceUnitSource}s of a runtime declare or override.
+ */
 public final class PersistenceUnits {
 
     private static final String RESOURCE = "META-INF/persistence.xml";
@@ -58,7 +65,12 @@ public final class PersistenceUnits {
      * @throws PersistenceException if several units have that name, in one file or in several
      */
     public static Optional<PersistenceUnitDefinition> find(String name, ClassLoader loader) {
-        List<Declared> named = declared(loader).stream().filter(declared -> declared.unit().name().equals(name)).toList();
+        return find(name, loader, sources(loader));
+    }
+
+    static Optional<PersistenceUnitDefinition> find(String name, ClassLoader loader, List<PersistenceUnitSource> sources) {
+        List<Declared> named = declared(loader, sources).stream()
+            .filter(declared -> declared.unit().name().equals(name)).toList();
         if (named.size() > 1) {
             throw duplicate(name, named);
         }
@@ -72,7 +84,11 @@ public final class PersistenceUnits {
      * @throws PersistenceException if two units have the same name
      */
     public static List<String> names(ClassLoader loader) {
-        return all(loader).stream().map(PersistenceUnitDefinition::name).toList();
+        return names(loader, sources(loader));
+    }
+
+    static List<String> names(ClassLoader loader, List<PersistenceUnitSource> sources) {
+        return all(loader, sources).stream().map(PersistenceUnitDefinition::name).toList();
     }
 
     /**
@@ -82,7 +98,11 @@ public final class PersistenceUnits {
      * @throws PersistenceException if two units have the same name, in one file or in several
      */
     public static List<PersistenceUnitDefinition> all(ClassLoader loader) {
-        List<Declared> units = declared(loader);
+        return all(loader, sources(loader));
+    }
+
+    static List<PersistenceUnitDefinition> all(ClassLoader loader, List<PersistenceUnitSource> sources) {
+        List<Declared> units = declared(loader, sources);
         Map<String, List<Declared>> byName = units.stream()
             .collect(Collectors.groupingBy(declared -> declared.unit().name(), LinkedHashMap::new, Collectors.toList()));
         for (Map.Entry<String, List<Declared>> unit : byName.entrySet()) {
@@ -93,11 +113,74 @@ public final class PersistenceUnits {
         return units.stream().map(Declared::unit).toList();
     }
 
-    /** A unit and the {@code persistence.xml} that declares it. */
-    private record Declared(PersistenceUnitDefinition unit, URL file) {
+    /** A unit and what declares it: a {@code persistence.xml}, or a source as it names itself. */
+    private record Declared(PersistenceUnitDefinition unit, String origin, boolean bySource) {
     }
 
-    private static List<Declared> declared(ClassLoader loader) {
+    /**
+     * The units of the files, then those the sources declare. A declaration that only overrides applies to the unit of
+     * its name, or declares it when there is none; a unit declared when alone joins only an application with no unit.
+     */
+    private static List<Declared> declared(ClassLoader loader, List<PersistenceUnitSource> sources) {
+        List<Declared> units = files(loader);
+        List<PersistenceUnitDeclaration> declarations = sources.stream()
+            .flatMap(source -> source.units(loader).stream()).toList();
+        declarations.stream().filter(declaration -> declaration.declares() && !declaration.whenAlone())
+            .forEach(declaration -> units.add(bySource(declaration, loader)));
+        declarations.stream().filter(declaration -> !declaration.declares())
+            .forEach(declaration -> override(units, declaration, loader));
+        if (units.isEmpty()) {
+            declarations.stream().filter(PersistenceUnitDeclaration::whenAlone)
+                .map(declaration -> bySource(declaration, loader))
+                .filter(declared -> !ManagedClasses.of(declared.unit()).isEmpty())
+                .forEach(units::add);
+        }
+        return units;
+    }
+
+    private static Declared bySource(PersistenceUnitDeclaration declaration, ClassLoader loader) {
+        return new Declared(SourceUnits.definition(declaration, loader), declaration.origin(), true);
+    }
+
+    /** Overrides the data sources and properties of the units of that name, or declares the unit if there is none. */
+    private static void override(List<Declared> units, PersistenceUnitDeclaration declaration, ClassLoader loader) {
+        boolean found = false;
+        for (int i = 0; i < units.size(); i++) {
+            Declared declared = units.get(i);
+            if (declared.unit().name().equals(declaration.name())) {
+                PersistenceUnitDefinition overridden = SourceUnits.overridden(declared.unit(), declaration);
+                units.set(i, new Declared(overridden, declared.origin(), declared.bySource()));
+                found = true;
+            }
+        }
+        if (!found) {
+            units.add(bySource(declaration, loader));
+        }
+    }
+
+    /**
+     * The sources of the module layer of Noether (and its parents), then those of the application's class loader, each
+     * once.
+     */
+    private static List<PersistenceUnitSource> sources(ClassLoader loader) {
+        try {
+            Map<String, PersistenceUnitSource> sources = new LinkedHashMap<>();
+            ModuleLayer layer = PersistenceUnits.class.getModule().getLayer();
+            if (layer != null) {
+                ServiceLoader.load(layer, PersistenceUnitSource.class).forEach(source -> once(sources, source));
+            }
+            ServiceLoader.load(PersistenceUnitSource.class, loader).forEach(source -> once(sources, source));
+            return List.copyOf(sources.values());
+        } catch (ServiceConfigurationError e) {
+            throw new PersistenceException("A persistence unit source cannot be loaded: " + e.getMessage(), e);
+        }
+    }
+
+    private static void once(Map<String, PersistenceUnitSource> sources, PersistenceUnitSource source) {
+        sources.putIfAbsent(source.getClass().getName(), source);
+    }
+
+    private static List<Declared> files(ClassLoader loader) {
         try {
             List<Declared> units = new ArrayList<>();
             Set<String> read = new HashSet<>();
@@ -107,7 +190,7 @@ public final class PersistenceUnits {
                 if (read.add(file.toExternalForm())) {
                     try (InputStream in = open(file)) {
                         for (PersistenceUnitDefinition unit : PersistenceXmlParser.parse(in, PersistenceXmlParser.rootOf(file), loader)) {
-                            units.add(new Declared(unit, file));
+                            units.add(new Declared(unit, file.toExternalForm(), false));
                         }
                     }
                 }
@@ -120,8 +203,13 @@ public final class PersistenceUnits {
 
     /** BUG-20261113-06: the first unit of a name used to win silently, whatever the others said. */
     private static PersistenceException duplicate(String name, List<Declared> declarations) {
-        String files = declarations.stream().map(declared -> declared.file().toExternalForm()).collect(Collectors.joining(", "));
-        return new PersistenceException("Persistence unit " + name + " is declared " + declarations.size() + " times, in "
-            + files + ": a persistence unit name must be unique among the persistence.xml files of the application");
+        String origins = declarations.stream().map(Declared::origin).collect(Collectors.joining(", "));
+        String message = "Persistence unit " + name + " is declared " + declarations.size() + " times, in " + origins
+            + ": a persistence unit name must be unique among the persistence.xml files of the application and the units"
+            + " its runtime declares";
+        boolean byFile = declarations.stream().anyMatch(declared -> !declared.bySource());
+        boolean bySource = declarations.stream().anyMatch(Declared::bySource);
+        return new PersistenceException(byFile && bySource ? message + "; a unit source may only override the data sources"
+            + " and the properties of a unit that a persistence.xml declares" : message);
     }
 }

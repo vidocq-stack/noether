@@ -53,6 +53,33 @@ of each unit and exclude the others:
 The properties of a unit come from its `<properties>`, overridden by the map passed to
 `Persistence.createEntityManagerFactory(name, map)`.
 
+[#unit-sources]
+=== Units declared by a runtime
+
+A runtime can declare units from its own configuration, beside the `persistence.xml` files: it implements
+`io.vidocq.noether.jpa.core.spi.PersistenceUnitSource` and provides it, with `provides ... with ...` in its
+`module-info.java` or a `META-INF/services` entry on the class path. Noether reads no key of any runtime. It asks
+every source wherever it looks for units, in the provider and in `noether-jpa-cdi`. The Vidocq runtime declares the
+units of its `vidocq.persistence."<unit>".*` keys this way (Vidocq/vidocq#551).
+
+A source returns one `PersistenceUnitDeclaration` per unit. Its attributes fall in two groups:
+
+* Those that declare the unit, what a `persistence.xml` would say: its root, the packages of that root it is restricted
+  to (with their sub-packages), the classes it lists (then those alone, as with `<exclude-unlisted-classes>`), its
+  transaction type, qualifiers and scope. A unit of the same name in a `persistence.xml` or in another source fails
+  with the duplicate `PersistenceException`, which names the file and the source.
+* Those that override it: its JTA and non-JTA data sources and its properties, which differ between deployments. A
+  declaration that sets only these overrides the unit of that name that a `persistence.xml` declares, its properties
+  winning over the file's. When no file declares the unit, the declaration declares it, at its default root.
+
+A declaration made _when alone_ is a runtime's default unit: it is declared only when the application declares no
+other unit and its root holds an entity, an embeddable, a mapped superclass or a converter.
+
+What a declaration leaves out takes the default of a `persistence.xml`: `RESOURCE_LOCAL`, an unspecified shared
+cache mode, validation mode `AUTO`, `META-INF/orm.xml` when the root has one. A source is asked each time the units
+are looked for: at build when a container freezes its beans (`vidocq:generate`), and at start when the provider
+creates a factory. The runtime keeps the two consistent.
+
 [#connections]
 == Connections
 
@@ -311,7 +338,8 @@ between tests).
 == With CDI
 
 `noether-jpa-cdi` is a CDI 4.1 build compatible extension, so it needs no API of a particular container. It is
-tested on Vauban, on Quarkus ArC and in the Vidocq runtime. It injects the units of `persistence.xml`:
+tested on Vauban, on Quarkus ArC and in the Vidocq runtime. It injects the units of `persistence.xml`, and those of
+the xref:#unit-sources[unit sources]:
 
 [source,java]
 ----
@@ -349,7 +377,7 @@ the build recorded.
 
 Jakarta Persistence 3.2 lets a unit of `persistence.xml` name CDI qualifiers (`<qualifier>`, §8.2.1.5) and a CDI
 scope (`<scope>`, §8.2.1.6). Jakarta EE 11 Platform §13.12 then makes the unit injectable with `@Inject`.
-`noether-jpa-cdi` adds these beans for every unit of `persistence.xml`:
+`noether-jpa-cdi` adds these beans for every unit of `persistence.xml` or of a unit source:
 
 [source,xml]
 ----
@@ -385,7 +413,8 @@ scope (`<scope>`, §8.2.1.6). Jakarta EE 11 Platform §13.12 then makes the unit
   duplicate bean name. Give the data source another name, then name it in `<jta-data-source>`.
 * **Errors.** A `<qualifier>` or `<scope>` that the deployment cannot load, or that is not a qualifier or a scope,
   fails the deployment with a `DefinitionException` that names the unit.
-* **When the extension runs.** The beans come from the `persistence.xml` files the extension reads when it runs.
+* **When the extension runs.** The beans come from the `persistence.xml` files and the unit sources the extension
+  reads when it runs.
   - Vidocq runs it at build: `vidocq:generate` reads every `persistence.xml` of the application, and the start loads
     what the extension did (Vidocq/vauban#288), under `vidocq:dev` too. The start runs it instead on a test class
     path, after an IDE build that did not run `vidocq:generate`, or when the build could not complete it: two units of

@@ -38,6 +38,8 @@ import java.util.Map;
  * @param rootUrl the root of the persistence unit (the jar or directory holding {@code META-INF/persistence.xml}),
  *        or {@code null} for a unit defined in code
  * @param schemaVersion the {@code persistence.xml} version, or {@code null} for a unit defined in code
+ * @param managedPackages the packages of the root and of the jar files the scan is restricted to, with their
+ *        sub-packages, as a {@code PersistenceUnitSource} declares them; empty for every class
  */
 public record PersistenceUnitDefinition(
         String name,
@@ -57,13 +59,15 @@ public record PersistenceUnitDefinition(
         String schemaVersion,
         List<String> qualifierAnnotationNames,
         String scopeAnnotationName,
-        ClassLoader classLoader) {
+        ClassLoader classLoader,
+        List<String> managedPackages) {
 
     public PersistenceUnitDefinition {
         mappingFileNames = List.copyOf(mappingFileNames);
         jarFileUrls = List.copyOf(jarFileUrls);
         managedClassNames = List.copyOf(managedClassNames);
         qualifierAnnotationNames = List.copyOf(qualifierAnnotationNames);
+        managedPackages = List.copyOf(managedPackages);
         properties = Collections.unmodifiableMap(new LinkedHashMap<>(properties));
     }
 }
