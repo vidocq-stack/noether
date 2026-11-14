@@ -109,7 +109,7 @@ class IdClassesTest {
             .containsKeys("keys.SeatKey", "keys.GateKey", "keys.BenchKey", "keys.StandKey");
     }
 
-    private static Compilation compiled(Path out) throws Exception {
+    private static Compilation compiled(Path out) {
         Compilation keys = Compilation.onClassPath(out, KEYS);
         assertThat(keys.success()).as("%s", keys.diagnostics()).isTrue();
         assertThat(keys.messages(Diagnostic.Kind.WARNING)).isEmpty();

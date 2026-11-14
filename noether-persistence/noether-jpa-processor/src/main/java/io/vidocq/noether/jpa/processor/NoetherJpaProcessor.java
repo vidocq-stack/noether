@@ -213,27 +213,36 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
             deferred.add(type.getQualifiedName().toString());
             return;
         }
-        Set<Element> from = new LinkedHashSet<>();
         List<ClassInfo> hierarchy = planner.hierarchy(info);
-        for (int i = 0; i < hierarchy.size(); i++) {
-            ClassInfo declaring = hierarchy.get(i);
-            TypeElement element = infos.element(declaring.name());
-            if (element != null) {
-                from.add(element);
-                if (fromSource(element)) {
-                    Set<String> owners = hierarchy.subList(0, i + 1).stream().map(ClassInfo::name)
-                        .collect(java.util.stream.Collectors.toSet());
-                    metamodelWriter.plan(element, members.stream().filter(m -> owners.contains(m.owner().name())).toList(),
-                        i == 0 ? null : infos.element(hierarchy.get(i - 1).name()).getQualifiedName().toString());
-                }
-            }
-        }
+        Set<Element> from = metamodels(hierarchy, members);
         if (access(type, ACCESS, members, false, from, planner.callbacks(info))) {
             for (Member member : members) {
                 embedded(type, member, from);
             }
             idClass(type, hierarchy, members, from);
         }
+    }
+
+    /**
+     * Plans the canonical metamodel of each class of the hierarchy compiled here, with the members it declares or
+     * inherits; returns the classes of the hierarchy, the origins of the entity's access.
+     */
+    private Set<Element> metamodels(List<ClassInfo> hierarchy, List<Member> members) {
+        Set<Element> from = new LinkedHashSet<>();
+        for (int i = 0; i < hierarchy.size(); i++) {
+            TypeElement element = infos.element(hierarchy.get(i).name());
+            if (element == null) {
+                continue;
+            }
+            from.add(element);
+            if (fromSource(element)) {
+                Set<String> owners = hierarchy.subList(0, i + 1).stream().map(ClassInfo::name)
+                    .collect(java.util.stream.Collectors.toSet());
+                metamodelWriter.plan(element, members.stream().filter(m -> owners.contains(m.owner().name())).toList(),
+                    i == 0 ? null : infos.element(hierarchy.get(i - 1).name()).getQualifiedName().toString());
+            }
+        }
+        return from;
     }
 
     /**
@@ -250,14 +259,14 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
         if (type == null || !elements.getModuleOf(type).equals(elements.getModuleOf(entity)) || !fromSource(type)) {
             return; // compiled elsewhere: its package is not ours to add classes to
         }
-        boolean record = AccessWriter.isRecord(type);
+        boolean isRecord = AccessWriter.isRecord(type);
         List<Member> parts = members.stream().filter(m -> m.element().isAnnotated(ID)).toList();
         Set<Element> from = new LinkedHashSet<>(entityOrigins);
         from.add(type);
         idClasses.of(infos.read(type), parts)
-            .filter(keys -> !record || keys.stream().map(Member::name).toList().equals(type.getRecordComponents().stream()
+            .filter(keys -> !isRecord || keys.stream().map(Member::name).toList().equals(type.getRecordComponents().stream()
                 .map(component -> component.getSimpleName().toString()).toList()))
-            .ifPresent(keys -> access(type, ID_ACCESS, keys, record, from, List.of()));
+            .ifPresent(keys -> access(type, ID_ACCESS, keys, isRecord, from, List.of()));
     }
 
     /** The binary name of the class a descriptor such as {@code Lp/Outer$Inner;} names. */

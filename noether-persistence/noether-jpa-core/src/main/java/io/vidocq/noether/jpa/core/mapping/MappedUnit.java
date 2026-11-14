@@ -271,10 +271,8 @@ public final class MappedUnit {
         Map<Class<?>, MappedEntity> mapped = new IdentityHashMap<>();
         for (EntityModel entity : model.entities()) {
             EmbeddedPaths.Plan plan = plans.get(entity.javaType());
-            ManagedAccess embeddedId = entity.id() instanceof IdModel.Embedded embedded
-                ? embeddables.get(embedded.attribute().embeddable()) : null;
-            ManagedAccess idClass = entity.id() instanceof IdModel.ByIdClass byIdClass
-                ? idClassAccess(byIdClass, loader, generated) : null;
+            ManagedAccess embeddedId = embeddedIdAccess(entity, embeddables);
+            ManagedAccess idClass = idClassAccess(entity, loader, generated);
             StatePolicy state = StatePolicy.of(plan.model().attributes(), embeddables::get, valueBinders);
             mapped.put(entity.javaType(), new MappedEntity(plan.model(), plan.access(), root(model, entity), embeddedId,
                 idClass, state, m -> EntityStatements.of(m, MappedEntity.idIndexes(m), binders::get, embeddables::get,
@@ -284,20 +282,8 @@ public final class MappedUnit {
                 ranks.get(entity.javaType()), c -> mapped.get(entityClass(c))));
         }
         for (EntityModel entity : model.entities()) {
-            MappedEntity executable = mapped.get(entity.javaType());
-            if (plans.get(entity.javaType()).model() == entity) continue;
-            for (CollectionMapping collection : executable.statements().collections()) {
-                if (collection.attribute() >= entity.attributes().size() && collection instanceof CollectionMapping.Unsupported unsupported) {
-                    throw new PersistenceException("Embedded relationship " + unsupported.association().name()
-                        + " of " + entity.javaType().getName() + " is not executable: " + unsupported.feature());
-                }
-            }
-            for (int i = entity.attributes().size(); i < executable.model().attributes().size(); i++) {
-                AttributeModel attribute = executable.model().attributes().get(i);
-                if (attribute instanceof ElementCollectionAttribute && executable.statements().elementCollection(i).isEmpty()) {
-                    throw new PersistenceException("Embedded element collection " + attribute.name() + " of "
-                        + entity.javaType().getName() + " has no executable collection-table mapping");
-                }
+            if (plans.get(entity.javaType()).model() != entity) {
+                checkEmbeddedPaths(entity, mapped.get(entity.javaType()));
             }
         }
         return new MappedUnit(model, entities, embeddables, binders, mapped, loader, source, inheritance);
@@ -579,6 +565,36 @@ public final class MappedUnit {
             }
         }
         return ranks;
+    }
+
+    /**
+     * Checks that the relationships and element collections an entity's embeddables hold, which its executable model
+     * adds after its own attributes, can be executed.
+     */
+    private static void checkEmbeddedPaths(EntityModel entity, MappedEntity executable) {
+        for (CollectionMapping collection : executable.statements().collections()) {
+            if (collection.attribute() >= entity.attributes().size() && collection instanceof CollectionMapping.Unsupported unsupported) {
+                throw new PersistenceException("Embedded relationship " + unsupported.association().name()
+                    + " of " + entity.javaType().getName() + " is not executable: " + unsupported.feature());
+            }
+        }
+        for (int i = entity.attributes().size(); i < executable.model().attributes().size(); i++) {
+            AttributeModel attribute = executable.model().attributes().get(i);
+            if (attribute instanceof ElementCollectionAttribute && executable.statements().elementCollection(i).isEmpty()) {
+                throw new PersistenceException("Embedded element collection " + attribute.name() + " of "
+                    + entity.javaType().getName() + " has no executable collection-table mapping");
+            }
+        }
+    }
+
+    /** The access of the {@code @EmbeddedId} of {@code entity}, or {@code null} for another identifier. */
+    private static ManagedAccess embeddedIdAccess(EntityModel entity, Map<EmbeddableModel, ManagedAccess> embeddables) {
+        return entity.id() instanceof IdModel.Embedded embedded ? embeddables.get(embedded.attribute().embeddable()) : null;
+    }
+
+    /** The access of the {@code @IdClass} of {@code entity}, or {@code null} for another identifier. */
+    private static ManagedAccess idClassAccess(EntityModel entity, ClassLoader loader, Generated generated) {
+        return entity.id() instanceof IdModel.ByIdClass byIdClass ? idClassAccess(byIdClass, loader, generated) : null;
     }
 
     /**
