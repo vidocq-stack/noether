@@ -589,7 +589,8 @@ public final class MappedUnit {
 
     /** The access of the {@code @EmbeddedId} of {@code entity}, or {@code null} for another identifier. */
     private static ManagedAccess embeddedIdAccess(EntityModel entity, Map<EmbeddableModel, ManagedAccess> embeddables) {
-        return entity.id() instanceof IdModel.Embedded embedded ? embeddables.get(embedded.attribute().embeddable()) : null;
+        return entity.id() instanceof IdModel.Embedded(EmbeddedAttribute attribute)
+            ? embeddables.get(attribute.embeddable()) : null;
     }
 
     /** The access of the {@code @IdClass} of {@code entity}, or {@code null} for another identifier. */
