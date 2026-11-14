@@ -305,8 +305,8 @@ public final class EntityStatements {
                 case EmbeddedAttribute _ when id && mapsIds.containsKey("") -> {
                     // the whole identifier is the parent's key
                 }
-                case EmbeddedAttribute embedded -> flatten(embedded, embedded.embeddable(), "", i, new int[0], new ManagedAccess[0], id,
-                    lookups.binders(), lookups.embeddables(), tableNames, parts.columns(), id ? mapsIds.keySet() : Set.of(), delimited);
+                case EmbeddedAttribute embedded ->
+                    flatten(embedded, i, id, id ? mapsIds.keySet() : Set.of(), tableNames, parts.columns(), lookups);
                 case AssociationAttribute association when association.singleValued() && association.owning()
                         && association.joinTable() != null && !id && association.mapsId() == null ->
                     parts.collections().add(collection(declaring(model, inheritance, association.declaringClass()), association, i,
@@ -897,7 +897,6 @@ public final class EntityStatements {
     private static Indexing index(String name, CollectionIndex index, EntityModel target, String relationship, Lookups lookups) {
         Function<Class<?>, EntityModel> models = lookups.models();
         Function<BasicAttribute, ValueBinder> binders = lookups.binders();
-        Function<EmbeddableModel, ManagedAccess> embeddables = lookups.embeddables();
         Function<Class<?>, InheritanceMapping> inheritances = lookups.inheritances();
         boolean delimited = lookups.delimited();
         return switch (index) {
@@ -924,8 +923,7 @@ public final class EntityStatements {
                         + " contains a relationship whose collection-table mapping is not supported");
                 }
                 List<Column> columns = new ArrayList<>();
-                flatten(key, key.embeddable(), "", 0, new int[0], new ManagedAccess[0], false,
-                    binders, embeddables, List.of(""), columns, Set.of(), delimited);
+                flatten(key, 0, false, Set.of(), List.of(""), columns, lookups);
                 yield new Indexing(new IndexMapping(index, -1, null, columns.stream().map(Column::name).toList(),
                     columns.stream().map(Column::binder).toList(), columns.stream().allMatch(Column::insertable),
                     columns.stream().allMatch(Column::updatable), columns), null);
@@ -1013,8 +1011,7 @@ public final class EntityStatements {
             case BasicAttribute basic -> columns.add(new Column(Identifier.of(basic.column().name(), delimited), binders.apply(basic), 0, new int[0],
                 new ManagedAccess[0], false, false, basic.column().insertable(), basic.column().updatable(), 0, null));
             case EmbeddedAttribute embedded -> {
-                flatten(embedded, embedded.embeddable(), "", 0, new int[0], new ManagedAccess[0], false,
-                    binders, lookups.embeddables(), List.of(tableName), columns, Set.of(), delimited);
+                flatten(embedded, 0, false, Set.of(), List.of(tableName), columns, lookups);
                 elementReferences(embedded.embeddable(), new int[0], new ManagedAccess[0], columns, lookups, elements.name());
                 columns.sort((left, right) -> java.util.Arrays.compare(left.path(), right.path()));
             }
@@ -1467,18 +1464,26 @@ public final class EntityStatements {
         return -1;
     }
 
-    static void flatten(EmbeddedAttribute owner, EmbeddableModel embeddable, String prefix, int attribute, int[] path,
-            ManagedAccess[] accesses, boolean id, Function<BasicAttribute, ValueBinder> binders,
-            Function<EmbeddableModel, ManagedAccess> embeddableAccess, List<String> tableNames, List<Column> columns) {
-        flatten(owner, embeddable, prefix, attribute, path, accesses, id, binders, embeddableAccess, tableNames, columns, Set.of(), false);
+    /** What the columns of an embedded attribute carry, and where they go. */
+    private record Flattening(EmbeddedAttribute owner, int attribute, boolean id, List<String> tableNames, List<Column> columns,
+            Lookups lookups) {}
+
+    /**
+     * Adds to {@code columns} the columns of the embedded attribute {@code owner}, the {@code attribute}-th of its
+     * entity, its overrides applied.
+     *
+     * @param skipped the components, of the top embeddable, that have no columns: an {@code @MapsId} maps them
+     */
+    private static void flatten(EmbeddedAttribute owner, int attribute, boolean id, Set<String> skipped, List<String> tableNames,
+            List<Column> columns, Lookups lookups) {
+        flatten(new Flattening(owner, attribute, id, tableNames, columns, lookups), owner.embeddable(), "", new int[0],
+            new ManagedAccess[0], skipped);
     }
 
-    /** @param skipped the components, of the top embeddable, that have no columns: an {@code @MapsId} maps them */
-    private static void flatten(EmbeddedAttribute owner, EmbeddableModel embeddable, String prefix, int attribute, int[] path,
-            ManagedAccess[] accesses, boolean id, Function<BasicAttribute, ValueBinder> binders,
-            Function<EmbeddableModel, ManagedAccess> embeddableAccess, List<String> tableNames, List<Column> columns,
-            Set<String> skipped, boolean delimited) {
-        ManagedAccess access = embeddableAccess.apply(embeddable);
+    private static void flatten(Flattening flattening, EmbeddableModel embeddable, String prefix, int[] path,
+            ManagedAccess[] accesses, Set<String> skipped) {
+        boolean delimited = flattening.lookups().delimited();
+        ManagedAccess access = flattening.lookups().embeddables().apply(embeddable);
         List<AttributeModel> attributes = embeddable.attributes();
         for (int i = 0; i < attributes.size(); i++) {
             if (skipped.contains(attributes.get(i).name())) {
@@ -1490,12 +1495,13 @@ public final class EntityStatements {
             along[accesses.length] = access;
             switch (attributes.get(i)) {
                 case BasicAttribute basic -> {
-                    ColumnModel column = owner.column(prefix + basic.name()).orElse(basic.column());
-                    columns.add(new Column(Identifier.of(column.name(), delimited), binders.apply(basic), attribute, nested, along, id, false,
-                        column.insertable(), column.updatable(), tableIndex(column.table(), tableNames), null));
+                    ColumnModel column = flattening.owner().column(prefix + basic.name()).orElse(basic.column());
+                    flattening.columns().add(new Column(Identifier.of(column.name(), delimited),
+                        flattening.lookups().binders().apply(basic), flattening.attribute(), nested, along, flattening.id(), false,
+                        column.insertable(), column.updatable(), tableIndex(column.table(), flattening.tableNames()), null));
                 }
-                case EmbeddedAttribute inner -> flatten(owner, inner.embeddable(), prefix + inner.name() + ".", attribute, nested,
-                    along, id, binders, embeddableAccess, tableNames, columns, Set.of(), delimited);
+                case EmbeddedAttribute inner ->
+                    flatten(flattening, inner.embeddable(), prefix + inner.name() + ".", nested, along, Set.of());
                 default -> {
                     // Embedded relationships and collections have their own lowered executable state slots.
                 }

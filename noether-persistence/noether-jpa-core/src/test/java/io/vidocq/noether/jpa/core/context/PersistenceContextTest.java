@@ -247,4 +247,44 @@ class PersistenceContextTest {
         assertThat(context.contains(new Twin(13))).isFalse();
         assertThat(context.contains(twin)).isTrue();
     }
+
+    @Test
+    void postLoadCallbacksRunOnceTheOutermostLoadReturns() { // §3.6.3
+        List<String> calls = new ArrayList<>();
+        String result = context.loading(() -> {
+            context.postLoad(() -> calls.add("outer"));
+            context.loading(() -> {
+                context.postLoad(() -> calls.add("inner"));
+                return null;
+            });
+            calls.add("loaded");
+            return "done";
+        });
+        assertThat(result).isEqualTo("done");
+        assertThat(calls).containsExactly("loaded", "outer", "inner");
+    }
+
+    @Test
+    void aFailedLoadDiscardsTheCallbacksItDeferred() {
+        List<String> calls = new ArrayList<>();
+        java.util.function.Supplier<Object> failing = () -> {
+            context.postLoad(() -> calls.add("discarded"));
+            throw new IllegalStateException("the row is gone");
+        };
+        assertThatThrownBy(() -> context.loading(failing)).isInstanceOf(IllegalStateException.class);
+        context.postLoad(() -> calls.add("outside a load"));
+        assertThat(calls).containsExactly("outside a load");
+    }
+
+    @Test
+    void anErrorInALoadAlsoDiscardsTheCallbacksItDeferred() {
+        List<String> calls = new ArrayList<>();
+        java.util.function.Supplier<Object> failing = () -> {
+            context.postLoad(() -> calls.add("discarded"));
+            throw new AssertionError("the load broke");
+        };
+        assertThatThrownBy(() -> context.loading(failing)).isInstanceOf(AssertionError.class);
+        context.postLoad(() -> calls.add("outside a load"));
+        assertThat(calls).containsExactly("outside a load");
+    }
 }

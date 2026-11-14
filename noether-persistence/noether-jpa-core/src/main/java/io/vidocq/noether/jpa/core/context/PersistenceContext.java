@@ -220,12 +220,13 @@ public final class PersistenceContext {
      */
     public <T> T loading(java.util.function.Supplier<T> load) {
         T result;
+        boolean loaded = false;
         loads++;
         try {
             result = load.get();
-        } catch (RuntimeException | Error failure) {
-            if (--loads == 0) postLoads = new ArrayList<>();
-            throw failure;
+            loaded = true;
+        } finally {
+            if (!loaded && --loads == 0) postLoads = new ArrayList<>(); // a failed load: its callbacks are discarded
         }
         if (--loads == 0) {
             while (!postLoads.isEmpty()) {
