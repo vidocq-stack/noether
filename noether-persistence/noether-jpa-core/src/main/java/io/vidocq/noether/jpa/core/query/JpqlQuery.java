@@ -24,7 +24,6 @@ import io.vidocq.noether.jpa.core.mapping.EntityStatements;
 import io.vidocq.noether.jpa.core.flush.EntityLoader;
 import io.vidocq.noether.jpa.core.query.jpql.Ast;
 import io.vidocq.noether.jpa.core.query.jpql.Parser;
-import io.vidocq.noether.jpa.core.session.NotYet;
 import io.vidocq.noether.jpa.dialect.Dialect;
 import io.vidocq.noether.jpa.dialect.sql.Select;
 import jakarta.persistence.CacheRetrieveMode;
@@ -300,11 +299,18 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
                 continue;
             }
             Object key = key(slot.parameter());
-            Class<?> type = slot.entity() != null ? slot.entity().model().javaType()
-                : slot.parameterType() != null ? slot.parameterType() : slot.type();
+            Class<?> type = comparedType(slot);
             Class<?> parameterType = type == null ? Object.class : boxed(type);
             parameters.putIfAbsent(key, declared(slot.parameter(), parameterType));
         }
+    }
+
+    /** The Java type a parameter is compared with: its entity, its declared type, else the type of its slot. */
+    private static Class<?> comparedType(Compiled.Slot slot) {
+        if (slot.entity() != null) {
+            return slot.entity().model().javaType();
+        }
+        return slot.parameterType() != null ? slot.parameterType() : slot.type();
     }
 
     /** The query as the application wrote it. */
@@ -332,7 +338,7 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     static Class<?> resultType(String jpql, io.vidocq.noether.jpa.core.mapping.MappedUnit unit) {
         try {
             return Parser.parse(jpql) instanceof Ast.Query query ? Translator.translate(query, unit, null, null, null).resultType() : null;
-        } catch (RuntimeException e) {
+        } catch (RuntimeException _) {
             return null;
         }
     }
@@ -447,10 +453,10 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         // Keep the assigned target present until the association mutation commits.
         Select select = new Select(mapping.select().table(), names, names).locked(Select.Lock.SHARED, false);
         Dialect dialect = runtime.dialect(connection);
-        try (PreparedStatement statement = connection.prepareStatement(dialect.render(select))) {
-            Object[] values = mapping.keyValues(id);
-            for (int i = 0; i < values.length; i++) keys.get(i).binder().bind(dialect, statement, i + 1, values[i]);
-            try (ResultSet rows = statement.executeQuery()) {
+        try (PreparedStatement lookup = connection.prepareStatement(dialect.render(select))) {
+            Object[] keyValues = mapping.keyValues(id);
+            for (int i = 0; i < keyValues.length; i++) keys.get(i).binder().bind(dialect, lookup, i + 1, keyValues[i]);
+            try (ResultSet rows = lookup.executeQuery()) {
                 return rows.next();
             }
         } catch (SQLException e) {
@@ -700,18 +706,18 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
     private void readRows(Compiled compiled, Dialect.Rendered rendered, Dialect dialect, Connection connection,
             List<Object> rows, List<EntityLoader.FetchedEntity> entities, List<EntityLoader.FetchedElement> collectionRows) {
         boolean pessimistic = io.vidocq.noether.jpa.core.flush.Locks.pessimistic(lockMode);
-        try (PreparedStatement statement = connection.prepareStatement(rendered.sql())) {
+        try (PreparedStatement query = connection.prepareStatement(rendered.sql())) {
             if (pessimistic) {
                 io.vidocq.noether.jpa.core.flush.Locks.timeout(dialect, lockTimeout, connection);
             }
             List<io.vidocq.noether.jpa.dialect.sql.Expression.Parameter> bound = rendered.parameters();
             for (int i = 0; i < bound.size(); i++) {
-                bind(dialect, statement, i + 1, (Compiled.Slot) bound.get(i).slot());
+                bind(dialect, query, i + 1, (Compiled.Slot) bound.get(i).slot());
             }
             if (getTimeout() != null) {
-                statement.setQueryTimeout(Math.max(1, (getTimeout() + 999) / 1000));
+                query.setQueryTimeout(Math.max(1, (getTimeout() + 999) / 1000));
             }
-            try (ResultSet results = statement.executeQuery()) {
+            try (ResultSet results = query.executeQuery()) {
                 readResults(compiled, results, rows, entities, collectionRows);
             }
         } catch (SQLException e) {
@@ -914,10 +920,10 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         return switch (item) {
             case Compiled.EntityItem _ -> true;
             case Compiled.ConstructorItem constructor -> constructor.arguments().stream().anyMatch(JpqlQuery::entityItem);
-            case Compiled.MapEntryItem entry -> entityItem(entry.key()) || entityItem(entry.value());
+            case Compiled.MapEntryItem(var key, var value) -> entityItem(key) || entityItem(value);
             case Compiled.EmbeddedItem embedded -> embedded.parts().stream().anyMatch(part -> switch (part) {
                 case Compiled.EntityEmbedded _ -> true;
-                case Compiled.NestedEmbedded nested -> entityItem(nested.item());
+                case Compiled.NestedEmbedded(var nested) -> entityItem(nested);
                 case Compiled.ScalarEmbedded _ -> false;
             });
             default -> false;
@@ -931,15 +937,15 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
                 if (followOn && entity != null) runtime.lockResult(entity, lockMode, lockTimeout, connection);
                 yield entity;
             }
-            case Built built -> {
-                Object[] arguments = new Object[built.arguments().length];
-                for (int i = 0; i < arguments.length; i++) {
-                    arguments[i] = resolve(built.arguments()[i], connection, followOn);
+            case Built(var type, var arguments) -> {
+                Object[] resolved = new Object[arguments.length];
+                for (int i = 0; i < resolved.length; i++) {
+                    resolved[i] = resolve(arguments[i], connection, followOn);
                 }
-                yield construct(built.type(), arguments);
+                yield construct(type, resolved);
             }
-            case EntryBuilt entry -> new java.util.AbstractMap.SimpleImmutableEntry<>(resolve(entry.key(), connection, followOn),
-                resolve(entry.value(), connection, followOn));
+            case EntryBuilt(var key, var value) -> new java.util.AbstractMap.SimpleImmutableEntry<>(resolve(key, connection, followOn),
+                resolve(value, connection, followOn));
             case EmbeddedBuilt embedded -> embedded(embedded, connection);
             case Object[] row -> {
                 Object[] resolved = new Object[row.length];
@@ -956,15 +962,15 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         return switch (item) {
             case Compiled.EntityItem(var type, var keyBinders) -> readKey(type, keyBinders, results, column);
             case Compiled.ValueItem(var binder, var type) -> readValue(binder, type, results, column);
-            case Compiled.ConstructorItem constructor -> {
-                Object[] arguments = new Object[constructor.arguments().size()];
-                for (int i = 0; i < arguments.length; i++) {
-                    arguments[i] = read(constructor.arguments().get(i), results, column);
+            case Compiled.ConstructorItem(var type, var arguments) -> {
+                Object[] readArguments = new Object[arguments.size()];
+                for (int i = 0; i < readArguments.length; i++) {
+                    readArguments[i] = read(arguments.get(i), results, column);
                 }
-                yield new Built(constructor.type(), arguments);
+                yield new Built(type, readArguments);
             }
-            case Compiled.MapEntryItem entry ->
-                new EntryBuilt(read(entry.key(), results, column), read(entry.value(), results, column));
+            case Compiled.MapEntryItem(var key, var value) ->
+                new EntryBuilt(read(key, results, column), read(value, results, column));
             case Compiled.EmbeddedItem embedded -> {
                 Object[] components = new Object[embedded.parts().size()];
                 for (int i = 0; i < components.length; i++) {
@@ -1360,9 +1366,10 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         switch (hintName) {
             case QUERY_TIMEOUT, CACHE_RETRIEVE_MODE, CACHE_STORE_MODE -> standardHint(hintName, value);
             case "jakarta.persistence.lock.timeout" -> lockTimeout = milliseconds(hintName, value);
-            case "jakarta.persistence.fetchgraph", "jakarta.persistence.loadgraph" ->
+            case FETCH_GRAPH, LOAD_GRAPH ->
                 runtime.validateGraph(value, resultClass != null && runtime.mapping().entity(resultClass).isPresent() ? resultClass : null);
             default -> {
+                // any other hint is only kept, below
             }
         }
         hint(hintName, value);

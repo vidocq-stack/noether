@@ -62,10 +62,17 @@ public final class RuntimeMetamodel implements Metamodel {
             } else if (attribute instanceof ElementCollectionAttribute collection && collection.element() != null) {
                 collectEmbeddables(List.of(collection.element()));
             }
-            CollectionIndex index = attribute instanceof ElementCollectionAttribute c ? c.index()
-                : attribute instanceof AssociationAttribute a ? a.index() : null;
-            if (index instanceof CollectionIndex.ByEmbedded key) collectEmbeddables(List.of(key.key()));
+            if (indexOf(attribute) instanceof CollectionIndex.ByEmbedded(var key)) collectEmbeddables(List.of(key));
         }
+    }
+
+    /** The map key or order column of a collection attribute, {@code null} for any other attribute. */
+    private static CollectionIndex indexOf(AttributeModel attribute) {
+        return switch (attribute) {
+            case ElementCollectionAttribute collection -> collection.index();
+            case AssociationAttribute association -> association.index();
+            default -> null;
+        };
     }
 
     /** §6.2.1.1: public static canonical fields need exports, not private entity-package opens. */
@@ -74,7 +81,7 @@ public final class RuntimeMetamodel implements Metamodel {
         Class<?> canonical;
         try {
             canonical = Class.forName(name, true, loader);
-        } catch (ClassNotFoundException absent) {
+        } catch (ClassNotFoundException _) {
             return;
         }
         var info = source.read(name).orElseThrow();
@@ -192,10 +199,10 @@ public final class RuntimeMetamodel implements Metamodel {
         @Override public Set<Attribute<X, ?>> getDeclaredAttributes() { return attributes(true, a -> true); }
         @Override public Attribute<? super X, ?> getAttribute(String n) { return attribute(n, false, Attribute.class, null, null); }
         @Override public Attribute<X, ?> getDeclaredAttribute(String n) { return attribute(n, true, Attribute.class, null, null); }
-        @Override public Set<SingularAttribute<? super X, ?>> getSingularAttributes() { return attributes(false, a -> a instanceof SingularAttribute); }
-        @Override public Set<SingularAttribute<X, ?>> getDeclaredSingularAttributes() { return attributes(true, a -> a instanceof SingularAttribute); }
-        @Override public Set<PluralAttribute<? super X, ?, ?>> getPluralAttributes() { return attributes(false, a -> a instanceof PluralAttribute); }
-        @Override public Set<PluralAttribute<X, ?, ?>> getDeclaredPluralAttributes() { return attributes(true, a -> a instanceof PluralAttribute); }
+        @Override public Set<SingularAttribute<? super X, ?>> getSingularAttributes() { return attributes(false, SingularAttribute.class::isInstance); }
+        @Override public Set<SingularAttribute<X, ?>> getDeclaredSingularAttributes() { return attributes(true, SingularAttribute.class::isInstance); }
+        @Override public Set<PluralAttribute<? super X, ?, ?>> getPluralAttributes() { return attributes(false, PluralAttribute.class::isInstance); }
+        @Override public Set<PluralAttribute<X, ?, ?>> getDeclaredPluralAttributes() { return attributes(true, PluralAttribute.class::isInstance); }
         @Override public SingularAttribute<? super X, ?> getSingularAttribute(String n) { return attribute(n, false, SingularAttribute.class, null, null); }
         @Override public SingularAttribute<X, ?> getDeclaredSingularAttribute(String n) { return attribute(n, true, SingularAttribute.class, null, null); }
         @Override public <Y> SingularAttribute<? super X, Y> getSingularAttribute(String n, Class<Y> t) { return attribute(n, false, SingularAttribute.class, t, null); }
@@ -227,8 +234,8 @@ public final class RuntimeMetamodel implements Metamodel {
         boolean isId(String name) {
             return switch (id) {
                 case IdModel.Single s -> s.attribute().name().equals(name);
-                case IdModel.Embedded e -> e.attribute().name().equals(name);
-                case IdModel.Derived d -> d.relationship().name().equals(name);
+                case IdModel.Embedded(var attribute) -> attribute.name().equals(name);
+                case IdModel.Derived(var relationship) -> relationship.name().equals(name);
                 case IdModel.ByIdClass c -> c.attributes().stream().anyMatch(a -> a.name().equals(name));
             };
         }
@@ -297,8 +304,8 @@ public final class RuntimeMetamodel implements Metamodel {
         @Override public PersistentAttributeType getPersistentAttributeType() {
             return switch (model) {
                 case AssociationAttribute a -> PersistentAttributeType.valueOf(a.kind().name());
-                case EmbeddedAttribute e -> PersistentAttributeType.EMBEDDED;
-                case ElementCollectionAttribute e -> PersistentAttributeType.ELEMENT_COLLECTION;
+                case EmbeddedAttribute _ -> PersistentAttributeType.EMBEDDED;
+                case ElementCollectionAttribute _ -> PersistentAttributeType.ELEMENT_COLLECTION;
                 default -> PersistentAttributeType.BASIC;
             };
         }
@@ -325,8 +332,12 @@ public final class RuntimeMetamodel implements Metamodel {
         @Override public boolean isId() { return owner instanceof Identifiable<?> i && i.isId(model.name()); }
         @Override public boolean isVersion() { return model instanceof BasicAttribute b && b.version(); }
         @Override public boolean isOptional() {
-            return !isId() && (model instanceof BasicAttribute b ? b.optional()
-                : model instanceof AssociationAttribute a ? a.optional() : true);
+            if (isId()) return false;
+            return switch (model) {
+                case BasicAttribute basic -> basic.optional();
+                case AssociationAttribute association -> association.optional();
+                default -> true;
+            };
         }
         @Override public Type<Y> getType() { return type(getJavaType()); }
         @Override public BindableType getBindableType() { return BindableType.SINGULAR_ATTRIBUTE; }
@@ -364,15 +375,15 @@ public final class RuntimeMetamodel implements Metamodel {
             super(owner, model);
             CollectionIndex index = model instanceof AssociationAttribute a ? a.index() : ((ElementCollectionAttribute) model).index();
             Class<?> keyType = switch (index) {
-                case CollectionIndex.ByColumn c -> c.key().javaType();
-                case CollectionIndex.ByEmbedded e -> e.key().javaType();
+                case CollectionIndex.ByColumn(var column) -> column.javaType();
+                case CollectionIndex.ByEmbedded(var embedded) -> embedded.javaType();
                 case CollectionIndex.ByEntity e -> e.entity();
-                case CollectionIndex.ByAttribute a -> {
+                case CollectionIndex.ByAttribute(var attributeName) -> {
                     var target = managed.get(element);
-                    if (a.name().isEmpty() && target instanceof Identifiable<?> i) {
+                    if (attributeName.isEmpty() && target instanceof Identifiable<?> i) {
                         yield i.models.stream().filter(m -> i.isId(m.name())).findFirst().orElseThrow().javaType();
                     }
-                    yield target.models.stream().filter(m -> m.name().equals(a.name())).findFirst().orElseThrow().javaType();
+                    yield target.models.stream().filter(m -> m.name().equals(attributeName)).findFirst().orElseThrow().javaType();
                 }
                 default -> {
                     var info = source.read(model.declaringClass().getName()).orElseThrow();

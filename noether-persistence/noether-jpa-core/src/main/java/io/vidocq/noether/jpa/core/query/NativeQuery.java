@@ -20,7 +20,6 @@
 package io.vidocq.noether.jpa.core.query;
 
 import io.vidocq.noether.jpa.core.mapping.MappedEntity;
-import io.vidocq.noether.jpa.core.mapping.MappedUnit;
 import io.vidocq.noether.jpa.core.model.SqlResultSetMappingModel;
 import io.vidocq.noether.jpa.dialect.sql.Identifier;
 import jakarta.persistence.CacheRetrieveMode;
@@ -93,10 +92,10 @@ public class NativeQuery extends AbstractQuery implements Query {
 
     public NativeQuery(String sqlString, FlushModeType flushMode, Executor executor, QueryRuntime runtime, Class<?> resultClass,
             String resultSetMapping, java.util.function.BooleanSupplier open) {
-        super(flushMode, open, runtime.defaults());
         if (sqlString == null || sqlString.isBlank()) {
             throw new IllegalArgumentException("A native query needs SQL");
         }
+        super(flushMode, open, runtime.defaults());
         this.sqlString = sqlString;
         this.sql = translate(sqlString);
         this.executor = executor;
@@ -221,8 +220,6 @@ public class NativeQuery extends AbstractQuery implements Query {
                 statement.setQueryTimeout(Math.max(1, (getTimeout() + 999) / 1000));
             }
             try (ResultSet results = statement.executeQuery()) {
-                ResultSetMetaData metadata = results.getMetaData();
-                int columns = metadata.getColumnCount();
                 int first = getFirstResult();
                 int max = getMaxResults();
                 int skipped = 0;
@@ -269,18 +266,18 @@ public class NativeQuery extends AbstractQuery implements Query {
         if (mapping.results().isEmpty()) {
             throw new PersistenceException("The SQL result-set mapping " + mapping.name() + " has no result items");
         }
-        Object[] values = new Object[mapping.results().size()];
-        for (int i = 0; i < values.length; i++) {
+        Object[] items = new Object[mapping.results().size()];
+        for (int i = 0; i < items.length; i++) {
             SqlResultSetMappingModel.Result result = mapping.results().get(i);
-            values[i] = switch (result) {
-                case SqlResultSetMappingModel.EntityResult entity ->
-                    entityResult(row, metadata, entity.entityClass(), entity.fields(), entity.discriminatorColumn());
+            items[i] = switch (result) {
+                case SqlResultSetMappingModel.EntityResult(var entityClass, var fields, var discriminatorColumn) ->
+                    entityResult(row, metadata, entityClass, fields, discriminatorColumn);
                 case SqlResultSetMappingModel.ConstructorResult constructor -> constructorResult(row, metadata, constructor);
-                case SqlResultSetMappingModel.ColumnResult column ->
-                    convert(row.getObject(columnIndex(metadata, column.column())), column.type());
+                case SqlResultSetMappingModel.ColumnResult(var column, var type) ->
+                    convert(row.getObject(columnIndex(metadata, column)), type);
             };
         }
-        return values.length == 1 ? values[0] : values;
+        return items.length == 1 ? items[0] : items;
     }
 
     private Object constructorResult(ResultSet row, ResultSetMetaData metadata,
@@ -290,7 +287,7 @@ public class NativeQuery extends AbstractQuery implements Query {
         for (int i = 0; i < arguments.length; i++) {
             SqlResultSetMappingModel.ColumnResult column = result.columns().get(i);
             Object value = row.getObject(columnIndex(metadata, column.column()));
-            Class<?> type = column.type() == null ? value == null ? Object.class : value.getClass() : column.type();
+            Class<?> type = column.type() != null ? column.type() : runtimeType(value);
             arguments[i] = convert(value, type);
             types[i] = primitiveBox(type);
         }
@@ -318,6 +315,10 @@ public class NativeQuery extends AbstractQuery implements Query {
             arguments[i] = convert(arguments[i], parameters[i]);
         }
         return true;
+    }
+
+    private static Class<?> runtimeType(Object value) {
+        return value == null ? Object.class : value.getClass();
     }
 
     private static Class<?> primitiveBox(Class<?> type) {
@@ -473,13 +474,13 @@ public class NativeQuery extends AbstractQuery implements Query {
     @Override
     public Query setParameter(String name, Calendar value, TemporalType temporalType) {
         checkOpen();
-        return setParameter(name, (Object) value);
+        return setParameter(name, value);
     }
 
     @Override
     public Query setParameter(String name, Date value, TemporalType temporalType) {
         checkOpen();
-        return setParameter(name, (Object) value);
+        return setParameter(name, value);
     }
 
     @Override
@@ -545,8 +546,7 @@ public class NativeQuery extends AbstractQuery implements Query {
 
     @Override
     public Object getParameterValue(String name) {
-        checkOpen();
-        throw new IllegalArgumentException("A native query has positional parameters only, not :" + name);
+        return getParameter(name); // refuses the name, as a native query has positional parameters only
     }
 
     @Override

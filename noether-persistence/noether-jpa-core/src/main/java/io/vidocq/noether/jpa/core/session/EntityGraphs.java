@@ -96,7 +96,7 @@ final class EntityGraphs {
         FetchPlan plan = new FetchPlan();
         if (value instanceof Base<?> graph) {
             into(graph, plan);
-            if (graph instanceof Root<?> root) root.treated.values().forEach(sub -> into(sub, plan));
+            if (graph instanceof Root<?> root) root.treatedGraphs.values().forEach(sub -> into(sub, plan));
         }
         return plan;
     }
@@ -107,7 +107,7 @@ final class EntityGraphs {
             node.keys.values().forEach(sub -> into(sub, attribute));
         });
     }
-    static abstract class Base<T> implements Graph<T> {
+    abstract static class Base<T> implements Graph<T> {
         final Metamodel model;
         final Class<T> type;
         final boolean mutable;
@@ -148,7 +148,8 @@ final class EntityGraphs {
             Node<?> node=node(name);
             if (elements && !(node.attribute instanceof PluralAttribute)) throw new IllegalArgumentException("Not a plural attribute");
             Class<?> target=key?node.keyType():node.valueType();
-            return (Subgraph<X>) node.subgraph(requested==null?target:requested,key);
+            Class<?> graphType=requested==null?target:requested;
+            return (Subgraph<X>) node.subgraph(graphType,key);
         }
         @Override public <X> Subgraph<X> addSubgraph(String n) { return sub(n,null,false,false); }
         @Override public <X> Subgraph<X> addSubgraph(String n,Class<X> t) { return sub(n,t,false,false); }
@@ -168,30 +169,29 @@ final class EntityGraphs {
         void copyInto(Base<?> copy) {
             nodes.forEach((name,node) -> {
                 var target=new Node<>(copy,node.attribute); copy.nodes.put(name,target);
-                node.subgraphs.forEach((type,g) -> target.subgraphs.put(type,g.copy(copy.mutable)));
-                node.keys.forEach((type,g) -> target.keys.put(type,g.copy(copy.mutable)));
+                node.subgraphs.forEach((subtype,g) -> target.subgraphs.put(subtype,g.copy(copy.mutable)));
+                node.keys.forEach((subtype,g) -> target.keys.put(subtype,g.copy(copy.mutable)));
             });
         }
     }
     static final class Root<T> extends Base<T> implements EntityGraph<T> {
         final String name;
-        final Map<Class<?>,Sub<?>> treated=new LinkedHashMap<>();
+        final Map<Class<?>,Sub<?>> treatedGraphs=new LinkedHashMap<>();
         Root(Metamodel model,Class<T> type,String name,boolean mutable) { super(model,type,mutable); this.name=name; }
         @Override public String getName() { return name; }
         Root<T> copy(String name,boolean mutable) {
             var copy=new Root<>(model,type,name,mutable); copyInto(copy);
-            treated.forEach((type,graph) -> copy.treated.put(type,graph.copy(mutable))); return copy;
+            treatedGraphs.forEach((subtype,graph) -> copy.treatedGraphs.put(subtype,graph.copy(mutable))); return copy;
         }
-        Sub<?> treated(Class<?> subtype) {
+        @SuppressWarnings("unchecked") // Each treated subgraph is stored under its own subtype class token.
+        <S> Sub<S> treated(Class<S> subtype) {
             writable();
             if (!type.isAssignableFrom(subtype)) throw new IllegalArgumentException("Not an entity subtype");
             model.entity(subtype);
-            return treated.computeIfAbsent(subtype,t -> new Sub<>(model,t,mutable));
+            return (Sub<S>) treatedGraphs.computeIfAbsent(subtype,t -> new Sub<>(model,t,mutable));
         }
-        @SuppressWarnings("unchecked") // Subtype class token validates the graph's exact typed root.
-        @Override public <S extends T> Subgraph<S> addTreatedSubgraph(Class<S> subtype) { return (Subgraph<S>) treated(subtype); }
-        @SuppressWarnings("unchecked") // Deprecated unbounded API is validated by the same root-subtype check.
-        @Override public <X> Subgraph<? extends X> addSubclassSubgraph(Class<? extends X> subtype) { return (Subgraph<? extends X>) treated(subtype); }
+        @Override public <S extends T> Subgraph<S> addTreatedSubgraph(Class<S> subtype) { return treated(subtype); }
+        @Override public <X> Subgraph<? extends X> addSubclassSubgraph(Class<? extends X> subtype) { return treated(subtype); }
     }
     static final class Sub<T> extends Base<T> implements Subgraph<T> {
         Sub(Metamodel model,Class<T> type,boolean mutable) { super(model,type,mutable); }
@@ -210,12 +210,13 @@ final class EntityGraphs {
             if (!(attribute instanceof MapAttribute<?,?,?> m)) throw new IllegalArgumentException("Not a map attribute");
             return m.getKeyJavaType();
         }
-        Sub<?> subgraph(Class<?> requested,boolean key) {
+        @SuppressWarnings("unchecked") // Each subgraph is stored under its own class token.
+        <S> Sub<S> subgraph(Class<S> requested,boolean key) {
             owner.writable();
             Class<?> expected=key?keyType():valueType();
             if (!expected.isAssignableFrom(requested)) throw new IllegalArgumentException("Not a graph target subtype");
             owner.model.managedType(requested);
-            return (key?keys:subgraphs).computeIfAbsent(requested,t -> new Sub<>(owner.model,t,owner.mutable));
+            return (Sub<S>) (key?keys:subgraphs).computeIfAbsent(requested,t -> new Sub<>(owner.model,t,owner.mutable));
         }
         @SuppressWarnings("rawtypes") // AttributeNode's Jakarta API itself declares raw Class and Subgraph keys/values.
         @Override public Map<Class,Subgraph> getSubgraphs() { return new LinkedHashMap<>(subgraphs); }

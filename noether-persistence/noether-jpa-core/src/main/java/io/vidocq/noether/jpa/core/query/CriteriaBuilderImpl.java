@@ -16,16 +16,24 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /** Chapter 6 frontend. All operations lower to the chapter 4 query AST and its existing translator. */
 public final class CriteriaBuilderImpl implements CriteriaBuilder {
+    private static final String CONCAT_FUNCTION="CONCAT";
+    private static final String SUBSTRING_FUNCTION="SUBSTRING";
+    private static final String LOCATE_FUNCTION="LOCATE";
+    private static final String REPLACE_FUNCTION="REPLACE";
+    private static final String COALESCE_FUNCTION="COALESCE";
     final Metamodel metamodel;
     private final AtomicInteger parameterIds = new AtomicInteger();
     public CriteriaBuilderImpl(Metamodel metamodel) { this.metamodel=metamodel; }
     public static <T> jakarta.persistence.TypedQuery<T> query(CriteriaQuery<T> criteria,
             jakarta.persistence.FlushModeType mode,QueryRuntime runtime) {
         var query=(CriteriaQueries.Query<T>) criteria;
-        var selection=query.getSelection();
-        List<Selection<?>> elements=selection==null?List.of():selection.isCompoundSelection()
-            ?selection.getCompoundSelectionItems():List.of(selection);
-        return new JpqlQuery<>(query.statement(),query.getResultType(),mode,runtime,query.getParameters(),elements);
+        return new JpqlQuery<>(query.statement(),query.getResultType(),mode,runtime,query.getParameters(),
+            elements(query.getSelection()));
+    }
+    /** The items of a selection: those of a compound selection, the selection alone, or none. */
+    private static List<Selection<?>> elements(Selection<?> selection) {
+        if (selection==null) return List.of();
+        return selection.isCompoundSelection()?selection.getCompoundSelectionItems():List.of(selection);
     }
     @SuppressWarnings("unchecked") // The set-select wrapper stores its own exact result Class<T>.
     public static <T> jakarta.persistence.TypedQuery<T> query(CriteriaSelect<T> criteria,
@@ -85,7 +93,7 @@ public final class CriteriaBuilderImpl implements CriteriaBuilder {
             Ast.Expr result=new Ast.Literal(and);
             for (Expression<Boolean> e:copy) result=new Ast.Binary(result,and?Ast.Op.AND:Ast.Op.OR,ast(e));
             return result;
-        },copy.stream().map(CriteriaExpressions::node).toList(),and?Predicate.BooleanOperator.AND:Predicate.BooleanOperator.OR,copy,false);
+        },copy.stream().<Node<?>>map(CriteriaExpressions::node).toList(),and?Predicate.BooleanOperator.AND:Predicate.BooleanOperator.OR,copy,false);
     }
     Predicate and(Expression<Boolean> e) { return e instanceof Predicate p?p:junction(true,List.of(e)); }
     @Override public Predicate and(Expression<Boolean> a,Expression<Boolean> b) { return junction(true,List.of(a,b)); }
@@ -95,8 +103,8 @@ public final class CriteriaBuilderImpl implements CriteriaBuilder {
     @Override public Predicate or(Predicate... p) { return or(Arrays.asList(p)); }
     @Override public Predicate or(List<Predicate> p) { return junction(false,new ArrayList<>(p)); }
     @Override public Predicate not(Expression<Boolean> e) { return and(e).not(); }
-    @Override public Predicate conjunction() { return and(new Predicate[0]); }
-    @Override public Predicate disjunction() { return or(new Predicate[0]); }
+    @Override public Predicate conjunction() { return and(); }
+    @Override public Predicate disjunction() { return or(); }
     @Override public Predicate isTrue(Expression<Boolean> e) { return equal(e,true); }
     @Override public Predicate isFalse(Expression<Boolean> e) { return equal(e,false); }
     @Override public Predicate isNull(Expression<?> e) { return e.isNull(); }
@@ -198,14 +206,14 @@ public final class CriteriaBuilderImpl implements CriteriaBuilder {
     @Override public Predicate notLike(Expression<String> a,Expression<String> b,char e) { return like(a,b,e,true); }
     @Override public Predicate notLike(Expression<String> a,String b,Expression<Character> e) { return like(a,b,e,true); }
     @Override public Predicate notLike(Expression<String> a,String b,char e) { return like(a,b,e,true); }
-    @Override public Expression<String> concat(List<Expression<String>> e) { return function("CONCAT",String.class,e.toArray()); }
-    @Override public Expression<String> concat(Expression<String> a,Expression<String> b) { return function("CONCAT",String.class,a,b); }
-    @Override public Expression<String> concat(Expression<String> a,String b) { return function("CONCAT",String.class,a,b); }
-    @Override public Expression<String> concat(String a,Expression<String> b) { return function("CONCAT",String.class,a,b); }
-    @Override public Expression<String> substring(Expression<String> a,Expression<Integer> start) { return function("SUBSTRING",String.class,a,start); }
-    @Override public Expression<String> substring(Expression<String> a,int start) { return function("SUBSTRING",String.class,a,start); }
-    @Override public Expression<String> substring(Expression<String> a,Expression<Integer> start,Expression<Integer> len) { return function("SUBSTRING",String.class,a,start,len); }
-    @Override public Expression<String> substring(Expression<String> a,int start,int len) { return function("SUBSTRING",String.class,a,start,len); }
+    @Override public Expression<String> concat(List<Expression<String>> e) { return function(CONCAT_FUNCTION,String.class,e.toArray()); }
+    @Override public Expression<String> concat(Expression<String> a,Expression<String> b) { return function(CONCAT_FUNCTION,String.class,a,b); }
+    @Override public Expression<String> concat(Expression<String> a,String b) { return function(CONCAT_FUNCTION,String.class,a,b); }
+    @Override public Expression<String> concat(String a,Expression<String> b) { return function(CONCAT_FUNCTION,String.class,a,b); }
+    @Override public Expression<String> substring(Expression<String> a,Expression<Integer> start) { return function(SUBSTRING_FUNCTION,String.class,a,start); }
+    @Override public Expression<String> substring(Expression<String> a,int start) { return function(SUBSTRING_FUNCTION,String.class,a,start); }
+    @Override public Expression<String> substring(Expression<String> a,Expression<Integer> start,Expression<Integer> len) { return function(SUBSTRING_FUNCTION,String.class,a,start,len); }
+    @Override public Expression<String> substring(Expression<String> a,int start,int len) { return function(SUBSTRING_FUNCTION,String.class,a,start,len); }
     @Override public Expression<String> trim(Expression<String> e) { return trim(Trimspec.BOTH,' ',e); }
     @Override public Expression<String> trim(Trimspec spec,Expression<String> e) { return trim(spec,' ',e); }
     @Override public Expression<String> trim(Expression<Character> c,Expression<String> e) { return trim(Trimspec.BOTH,c,e); }
@@ -215,14 +223,14 @@ public final class CriteriaBuilderImpl implements CriteriaBuilder {
     @Override public Expression<String> lower(Expression<String> e) { return function("LOWER",String.class,e); }
     @Override public Expression<String> upper(Expression<String> e) { return function("UPPER",String.class,e); }
     @Override public Expression<Integer> length(Expression<String> e) { return function("LENGTH",Integer.class,e); }
-    @Override public Expression<Integer> locate(Expression<String> a,Expression<String> b) { return function("LOCATE",Integer.class,b,a); }
-    @Override public Expression<Integer> locate(Expression<String> a,String b) { return function("LOCATE",Integer.class,b,a); }
-    @Override public Expression<Integer> locate(Expression<String> a,Expression<String> b,Expression<Integer> start) { return function("LOCATE",Integer.class,b,a,start); }
-    @Override public Expression<Integer> locate(Expression<String> a,String b,int start) { return function("LOCATE",Integer.class,b,a,start); }
-    @Override public Expression<String> replace(Expression<String> a,Expression<String> b,Expression<String> c) { return function("REPLACE",String.class,a,b,c); }
-    @Override public Expression<String> replace(Expression<String> a,String b,Expression<String> c) { return function("REPLACE",String.class,a,b,c); }
-    @Override public Expression<String> replace(Expression<String> a,Expression<String> b,String c) { return function("REPLACE",String.class,a,b,c); }
-    @Override public Expression<String> replace(Expression<String> a,String b,String c) { return function("REPLACE",String.class,a,b,c); }
+    @Override public Expression<Integer> locate(Expression<String> a,Expression<String> b) { return function(LOCATE_FUNCTION,Integer.class,b,a); }
+    @Override public Expression<Integer> locate(Expression<String> a,String b) { return function(LOCATE_FUNCTION,Integer.class,b,a); }
+    @Override public Expression<Integer> locate(Expression<String> a,Expression<String> b,Expression<Integer> start) { return function(LOCATE_FUNCTION,Integer.class,b,a,start); }
+    @Override public Expression<Integer> locate(Expression<String> a,String b,int start) { return function(LOCATE_FUNCTION,Integer.class,b,a,start); }
+    @Override public Expression<String> replace(Expression<String> a,Expression<String> b,Expression<String> c) { return function(REPLACE_FUNCTION,String.class,a,b,c); }
+    @Override public Expression<String> replace(Expression<String> a,String b,Expression<String> c) { return function(REPLACE_FUNCTION,String.class,a,b,c); }
+    @Override public Expression<String> replace(Expression<String> a,Expression<String> b,String c) { return function(REPLACE_FUNCTION,String.class,a,b,c); }
+    @Override public Expression<String> replace(Expression<String> a,String b,String c) { return function(REPLACE_FUNCTION,String.class,a,b,c); }
     @Override public Expression<String> left(Expression<String> a,int n) { return function("LEFT",String.class,a,n); }
     @Override public Expression<String> left(Expression<String> a,Expression<Integer> n) { return function("LEFT",String.class,a,n); }
     @Override public Expression<String> right(Expression<String> a,int n) { return function("RIGHT",String.class,a,n); }
@@ -246,8 +254,8 @@ public final class CriteriaBuilderImpl implements CriteriaBuilder {
         return function("EXTRACT",(Class<N>) result,name,value);
     }
     @Override public <T> In<T> in(Expression<? extends T> value) { return new InNode<>(value); }
-    @Override public <Y> Expression<Y> coalesce(Expression<? extends Y> a,Expression<? extends Y> b) { return function("COALESCE",type(a),a,b); }
-    @Override public <Y> Expression<Y> coalesce(Expression<? extends Y> a,Y b) { return function("COALESCE",type(a),a,b); }
+    @Override public <Y> Expression<Y> coalesce(Expression<? extends Y> a,Expression<? extends Y> b) { return function(COALESCE_FUNCTION,type(a),a,b); }
+    @Override public <Y> Expression<Y> coalesce(Expression<? extends Y> a,Y b) { return function(COALESCE_FUNCTION,type(a),a,b); }
     @Override public <Y> Expression<Y> nullif(Expression<Y> a,Expression<?> b) { return function("NULLIF",type(a),a,b); }
     @Override public <Y> Expression<Y> nullif(Expression<Y> a,Y b) { return function("NULLIF",type(a),a,b); }
     @Override public <T> Coalesce<T> coalesce() { return new CoalesceNode<>(); }
@@ -269,7 +277,7 @@ public final class CriteriaBuilderImpl implements CriteriaBuilder {
         @SuppressWarnings("unchecked") // Empty coalesce has no type until an operand is supplied.
         CoalesceNode() { super((Class<T>) Object.class,new Ast.Literal(null)); }
         @Override public Class<? extends T> getJavaType() { return resultType(values); }
-        @Override Ast.Expr ast() { return new Ast.Function("COALESCE",values.stream().map(CriteriaExpressions::ast).toList()); }
+        @Override Ast.Expr ast() { return new Ast.Function(COALESCE_FUNCTION,values.stream().map(CriteriaExpressions::ast).toList()); }
         @Override public Coalesce<T> value(T v) { values.add(v); return this; }
         @Override public Coalesce<T> value(Expression<? extends T> v) { values.add(v); return this; }
         @Override void parameters(Set<ParameterExpression<?>> p) { values.forEach(v -> { if (v instanceof Node<?> n) n.parameters(p); }); }
@@ -337,16 +345,15 @@ public final class CriteriaBuilderImpl implements CriteriaBuilder {
         var original=(CriteriaExpressions.PathNode<?>) path;
         if (!original.getJavaType().isAssignableFrom(type)) throw new IllegalArgumentException("Not a subtype");
         metamodel.entity(type);
-        CriteriaExpressions.PathNode<?> copy;
-        if (original instanceof CriteriaFrom.RootNode<?> root) {
-            copy = new CriteriaFrom.RootNode<>(metamodel.entity(type), root.state, root.variable);
-        } else if (original instanceof CriteriaFrom.JoinNode<?,?> join) {
-            var joined = join.correlatedCopy(join.state);
-            joined.correlation = null;
-            copy = joined;
-        } else {
-            copy = original.copy();
-        }
+        CriteriaExpressions.PathNode<?> copy = switch (original) {
+            case CriteriaFrom.RootNode<?> root -> new CriteriaFrom.RootNode<>(metamodel.entity(type), root.state, root.variable);
+            case CriteriaFrom.JoinNode<?,?> join -> {
+                var joined = join.correlatedCopy(join.state);
+                joined.correlation = null;
+                yield joined;
+            }
+            default -> original.copy();
+        };
         copy.treatType = type;
         if (original instanceof CriteriaFrom.FromNode<?,?> from && copy instanceof CriteriaFrom.FromNode<?,?> view)
             from.treatedViews.add(view);
@@ -365,8 +372,10 @@ public final class CriteriaBuilderImpl implements CriteriaBuilder {
     }
     @SuppressWarnings("unchecked") // Set operations preserve the first operand's declared result type.
     private <T> CriteriaSelect<T> set(CriteriaSelect<?> a,CriteriaSelect<?> b,Ast.SetOperator op,boolean all) {
-        Ast.Query left=(Ast.Query) ((CriteriaQueries.Statement) a).statement(), right=(Ast.Query) ((CriteriaQueries.Statement) b).statement();
-        var operands=new ArrayList<Ast.Select>(); var operations=new ArrayList<Ast.SetOperation>();
+        Ast.Query left=(Ast.Query) ((CriteriaQueries.Statement) a).statement();
+        Ast.Query right=(Ast.Query) ((CriteriaQueries.Statement) b).statement();
+        var operands=new ArrayList<Ast.Select>();
+        var operations=new ArrayList<Ast.SetOperation>();
         if (left instanceof Ast.SetQuery s) { operands.addAll(s.operands()); operations.addAll(s.operations()); } else operands.add((Ast.Select) left);
         operations.add(new Ast.SetOperation(op,all));
         if (right instanceof Ast.SetQuery s) { operands.addAll(s.operands()); operations.addAll(s.operations()); } else operands.add((Ast.Select) right);
@@ -374,8 +383,7 @@ public final class CriteriaBuilderImpl implements CriteriaBuilder {
         Set<ParameterExpression<?>> parameters=new LinkedHashSet<>(a instanceof CriteriaQuery<?> q?q.getParameters():((SetSelect<?>) a).parameters);
         parameters.addAll(b instanceof CriteriaQuery<?> q?q.getParameters():((SetSelect<?>) b).parameters);
         Selection<?> selection=a instanceof CriteriaQuery<?> q?q.getSelection():null;
-        List<Selection<?>> elements=selection==null?a instanceof SetSelect<?> s?s.elements:List.of()
-            :selection.isCompoundSelection()?selection.getCompoundSelectionItems():List.of(selection);
+        List<Selection<?>> elements=selection==null && a instanceof SetSelect<?> s?s.elements:elements(selection);
         return new SetSelect<>(new Ast.SetQuery(operands,operations,List.of()),(Class<T>) type,Set.copyOf(parameters),List.copyOf(elements));
     }
     @Override public <T> CriteriaSelect<T> union(CriteriaSelect<? extends T> a,CriteriaSelect<? extends T> b) { return set(a,b,Ast.SetOperator.UNION,false); }

@@ -150,13 +150,20 @@ public final class NamedQueries {
     public <R> Map<String, TypedQueryReference<R>> references(Class<R> resultType) {
         Map<String, TypedQueryReference<R>> references = new LinkedHashMap<>();
         for (Definition definition : byName.values()) {
-            Class<?> type = definition.resultClass() != null ? definition.resultClass() : definition.nativeQuery() ? null
-                : JpqlQuery.resultType(definition.query(), unit);
+            Class<?> type = declaredResultType(definition);
             type = type == null ? Object.class : MethodType.methodType(type).wrap().returnType();
             if (resultType == Object.class || resultType.isAssignableFrom(type)) {
                 references.put(definition.name(), new Reference<>(definition.name(), (Class<? extends R>) type, definition.hints()));
             }
         }
         return references;
+    }
+
+    /** The result type a named query declares or selects, or {@code null} when it cannot be told (native). */
+    private Class<?> declaredResultType(Definition definition) {
+        if (definition.resultClass() != null) {
+            return definition.resultClass();
+        }
+        return definition.nativeQuery() ? null : JpqlQuery.resultType(definition.query(), unit);
     }
 }

@@ -39,9 +39,14 @@ final class CriteriaFrom {
             treatedViews.forEach(view -> result.addAll(view.astJoins()));
             return result;
         }
-        void parameters(Set<ParameterExpression<?>> result) {
+        @Override void parameters(Set<ParameterExpression<?>> result) {
             super.parameters(result);
-            joins.forEach(j -> { if (j.on != null) CriteriaExpressions.node(j.on).parameters(result); j.parameters(result); });
+            joins.forEach(j -> {
+                if (j.on != null) {
+                    CriteriaExpressions.node(j.on).parameters(result);
+                }
+                j.parameters(result);
+            });
             fetches.forEach(j -> j.parameters(result));
             treatedViews.forEach(view -> view.parameters(result));
         }
@@ -50,13 +55,9 @@ final class CriteriaFrom {
             if (type==JoinType.RIGHT) throw new UnsupportedOperationException("RIGHT joins are not portable (§6.3.18)");
             if (!fetch) validate(a);
             Class<?> target = a instanceof PluralAttribute<?,?,?> p ? p.getBindableJavaType() : a.getJavaType();
-            String variable = state.variable();
-            JoinNode<X,?> joined;
-            if (a instanceof MapAttribute<?,?,?> m) joined = new MapNode<>(this, m, type, variable);
-            else if (a instanceof ListAttribute<?,?> l) joined = new ListNode<>(this, l, type, variable);
-            else if (a instanceof SetAttribute<?,?> s) joined = new SetNode<>(this, s, type, variable);
-            else if (a instanceof CollectionAttribute<?,?> c) joined = new CollectionNode<>(this, c, type, variable);
-            else joined = new JoinNode<>(this, a, (Class<Y>) target, (Bindable<Y>) a, type, variable);
+            String joinVariable = state.variable();
+            JoinNode<X,?> joined = joinOf(this, a, type, joinVariable,
+                () -> new JoinNode<>(this, a, (Class<Y>) target, (Bindable<Y>) a, type, joinVariable));
             (fetch ? fetches : joins).add(joined);
             return (JoinNode<X,Y>) joined;
         }
@@ -106,6 +107,17 @@ final class CriteriaFrom {
         @SuppressWarnings("unchecked") // String-based fetch bounds are caller-supplied; the attribute is validated at creation.
         @Override public <A,Y> Fetch<A,Y> fetch(String n,JoinType t) { return (Fetch<A,Y>) create(attribute(n),t,true); }
     }
+    /** The join of the collection kind of {@code attribute}: a map, list, set or collection join, else {@code singular}. */
+    static <Z> JoinNode<Z,?> joinOf(FromNode<?,Z> owner, Attribute<?,?> attribute, JoinType type, String variable,
+            Supplier<JoinNode<Z,?>> singular) {
+        return switch (attribute) {
+            case MapAttribute<?,?,?> map -> new MapNode<>(owner, map, type, variable);
+            case ListAttribute<?,?> list -> new ListNode<>(owner, list, type, variable);
+            case SetAttribute<?,?> set -> new SetNode<>(owner, set, type, variable);
+            case CollectionAttribute<?,?> collection -> new CollectionNode<>(owner, collection, type, variable);
+            case null, default -> singular.get();
+        };
+    }
     static final class RootNode<X> extends FromNode<X,X> implements Root<X> {
         final EntityType<X> entity;
         RootNode(EntityType<X> entity, CriteriaQueries.State<?> state, String variable) {
@@ -137,13 +149,9 @@ final class CriteriaFrom {
         }
         @SuppressWarnings("unchecked") // A correlated copy preserves this node's exact model, owner and join kind.
         JoinNode<Z,X> correlatedCopy(CriteriaQueries.State<?> state) {
-            FromNode<?,Z> parent=state==this.state?from:new FromNode<Object,Z>(from.type,from.model,state,from.variable,from.parent);
-            JoinNode<Z,?> copy;
-            if (attribute instanceof MapAttribute<?,?,?> m) copy=new MapNode<>(parent,m,joinType,variable);
-            else if (attribute instanceof ListAttribute<?,?> l) copy=new ListNode<>(parent,l,joinType,variable);
-            else if (attribute instanceof SetAttribute<?,?> s) copy=new SetNode<>(parent,s,joinType,variable);
-            else if (attribute instanceof CollectionAttribute<?,?> c) copy=new CollectionNode<>(parent,c,joinType,variable);
-            else copy=new JoinNode<>(parent,attribute,type,model,joinType,variable);
+            FromNode<?,Z> parent=state==this.state?from:new FromNode<>(from.type,from.model,state,from.variable,from.parent);
+            JoinNode<Z,?> copy=joinOf(parent,attribute,joinType,variable,
+                () -> new JoinNode<>(parent,attribute,type,model,joinType,variable));
             ((JoinNode<Z,X>) copy).correlation=this;
             return (JoinNode<Z,X>) copy;
         }

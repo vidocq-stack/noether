@@ -34,11 +34,22 @@ import java.util.Set;
  */
 public final class Parser {
 
+    /** Keywords the parser reads in several places. */
+    private static final String SELECT_KEYWORD = "SELECT";
+    private static final String WHERE_KEYWORD = "WHERE";
+    private static final String BETWEEN_KEYWORD = "BETWEEN";
+    private static final String MEMBER_KEYWORD = "MEMBER";
+    private static final String DISTINCT_KEYWORD = "DISTINCT";
+    private static final String DELETE_KEYWORD = "DELETE";
+    private static final String UPDATE_KEYWORD = "UPDATE";
+    private static final String TREAT_KEYWORD = "TREAT";
+
     /** The reserved identifiers that cannot be variables (§4.4.1), as far as the parser needs to tell them. */
-    private static final Set<String> RESERVED = Set.of("SELECT", "FROM", "WHERE", "GROUP", "BY", "HAVING", "ORDER", "ASC", "DESC",
-        "AS", "JOIN", "LEFT", "INNER", "OUTER", "FETCH", "ON", "AND", "OR", "NOT", "BETWEEN", "LIKE", "IN", "IS", "NULL", "EMPTY",
-        "MEMBER", "OF", "ESCAPE", "DISTINCT", "EXISTS", "ALL", "ANY", "SOME", "UNION", "INTERSECT", "EXCEPT", "NULLS", "CASE",
-        "WHEN", "THEN", "ELSE", "END", "NEW", "OBJECT", "TRUE", "FALSE", "UPDATE", "DELETE", "SET");
+    private static final Set<String> RESERVED = Set.of(SELECT_KEYWORD, "FROM", WHERE_KEYWORD, "GROUP", "BY", "HAVING",
+        "ORDER", "ASC", "DESC", "AS", "JOIN", "LEFT", "INNER", "OUTER", "FETCH", "ON", "AND", "OR", "NOT", BETWEEN_KEYWORD,
+        "LIKE", "IN", "IS", "NULL", "EMPTY", MEMBER_KEYWORD, "OF", "ESCAPE", DISTINCT_KEYWORD, "EXISTS", "ALL", "ANY", "SOME",
+        "UNION", "INTERSECT", "EXCEPT", "NULLS", "CASE", "WHEN", "THEN", "ELSE", "END", "NEW", "OBJECT", "TRUE", "FALSE",
+        UPDATE_KEYWORD, DELETE_KEYWORD, "SET");
 
     private static final Set<String> AGGREGATES = Set.of("COUNT", "SUM", "AVG", "MIN", "MAX");
 
@@ -58,9 +69,9 @@ public final class Parser {
         }
         Parser parser = new Parser(query);
         Ast.Statement statement;
-        if (parser.peek().is("UPDATE")) {
+        if (parser.peek().is(UPDATE_KEYWORD)) {
             statement = parser.update();
-        } else if (parser.peek().is("DELETE")) {
+        } else if (parser.peek().is(DELETE_KEYWORD)) {
             statement = parser.delete();
         } else {
             statement = parser.query();
@@ -71,7 +82,7 @@ public final class Parser {
 
     /** {@code UPDATE entity [[AS] variable] SET path = value, … [WHERE condition]} (§4.10). */
     private Ast.Update update() {
-        expect("UPDATE");
+        expect(UPDATE_KEYWORD);
         String entity = entityName();
         String variable = peek().is("SET") ? null : alias();
         expect("SET");
@@ -81,17 +92,17 @@ public final class Parser {
             expect("=");
             assignments.add(new Ast.Assignment(path, expression()));
         } while (accept(","));
-        Expr where = accept("WHERE") ? condition() : null;
+        Expr where = accept(WHERE_KEYWORD) ? condition() : null;
         return new Ast.Update(entity, variable == null ? Ast.IMPLICIT_VARIABLE : variable, assignments, where);
     }
 
     /** {@code DELETE FROM entity [[AS] variable] [WHERE condition]} (§4.10). */
     private Ast.Delete delete() {
-        expect("DELETE");
+        expect(DELETE_KEYWORD);
         expect("FROM");
         String entity = entityName();
         String variable = alias();
-        Expr where = accept("WHERE") ? condition() : null;
+        Expr where = accept(WHERE_KEYWORD) ? condition() : null;
         return new Ast.Delete(entity, variable == null ? Ast.IMPLICIT_VARIABLE : variable, where);
     }
 
@@ -113,7 +124,7 @@ public final class Parser {
             Ast.SetOperator operator = Ast.SetOperator.valueOf(advance().text().toUpperCase(Locale.ROOT));
             boolean all = accept("ALL");
             if (!all) {
-                accept("DISTINCT");
+                accept(DISTINCT_KEYWORD);
             }
             operations.add(new Ast.SetOperation(operator, all));
             operands.add(selectCore());
@@ -127,8 +138,8 @@ public final class Parser {
     }
 
     private Ast.Select selectCore() {
-        expect("SELECT");
-        boolean distinct = accept("DISTINCT");
+        expect(SELECT_KEYWORD);
+        boolean distinct = accept(DISTINCT_KEYWORD);
         List<Ast.Item> items = new ArrayList<>();
         do {
             items.add(item());
@@ -138,7 +149,7 @@ public final class Parser {
         do {
             from.add(range());
         } while (accept(","));
-        Expr where = accept("WHERE") ? condition() : null;
+        Expr where = accept(WHERE_KEYWORD) ? condition() : null;
         List<Expr> groupBy = new ArrayList<>();
         if (accept("GROUP")) {
             expect("BY");
@@ -162,10 +173,11 @@ public final class Parser {
                 }
                 Boolean nullsFirst = null;
                 if (accept("NULLS")) {
-                    nullsFirst = accept("FIRST");
-                    if (!nullsFirst) {
+                    boolean first = accept("FIRST");
+                    if (!first) {
                         expect("LAST");
                     }
+                    nullsFirst = first;
                 }
                 orderBy.add(new Ast.OrderItem(key, descending, nullsFirst));
             } while (accept(","));
@@ -273,11 +285,11 @@ public final class Parser {
             return new Ast.Exists(subquery(), false);
         }
         Expr left = expression();
-        boolean negated = peek().is("NOT") && (peek(1).is("BETWEEN") || peek(1).is("LIKE") || peek(1).is("IN") || peek(1).is("MEMBER"));
+        boolean negated = peek().is("NOT") && (peek(1).is(BETWEEN_KEYWORD) || peek(1).is("LIKE") || peek(1).is("IN") || peek(1).is(MEMBER_KEYWORD));
         if (negated) {
             advance();
         }
-        if (accept("BETWEEN")) {
+        if (accept(BETWEEN_KEYWORD)) {
             Expr low = expression();
             expect("AND");
             return new Ast.Between(left, low, expression(), negated);
@@ -290,7 +302,7 @@ public final class Parser {
         if (accept("IN")) {
             return in(left, negated);
         }
-        if (accept("MEMBER")) {
+        if (accept(MEMBER_KEYWORD)) {
             accept("OF");
             return new Ast.MemberOf(left, path(), negated);
         }
@@ -323,7 +335,7 @@ public final class Parser {
             return new Ast.In(left, List.of(primary()), negated);
         }
         expect("(");
-        if (peek().is("SELECT")) {
+        if (peek().is(SELECT_KEYWORD)) {
             Ast.Query subquery = query();
             expect(")");
             return new Ast.In(left, List.of(new Ast.Subquery(subquery)), negated);
@@ -610,7 +622,7 @@ public final class Parser {
     }
 
     private Ast.Path path() {
-        if (peek().is("TREAT") && peek(1).is("(")) {
+        if (peek().is(TREAT_KEYWORD) && peek(1).is("(")) {
             return treatedPath();
         }
         List<String> segments = new ArrayList<>();
@@ -623,7 +635,7 @@ public final class Parser {
     }
 
     private Ast.Path treatedPath() {
-        expect("TREAT");
+        expect(TREAT_KEYWORD);
         expect("(");
         Ast.Path treated = path();
         expect("AS");

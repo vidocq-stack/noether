@@ -145,8 +145,8 @@ record Compiled(Statement sql, List<Item> items, Class<?> resultType, List<Slot>
         @Override
         public int width() {
             return parts.stream().mapToInt(part -> switch (part) {
-                case NestedEmbedded nested -> nested.item().width();
-                case EntityEmbedded entity -> entity.keyBinders().size();
+                case NestedEmbedded(var item) -> item.width();
+                case EntityEmbedded(_, var keyBinders) -> keyBinders.size();
                 case ScalarEmbedded _ -> 1;
             }).sum();
         }

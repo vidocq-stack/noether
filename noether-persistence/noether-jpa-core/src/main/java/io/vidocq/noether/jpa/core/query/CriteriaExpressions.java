@@ -20,8 +20,8 @@ final class CriteriaExpressions {
         if (value instanceof Expression<?>) throw new IllegalArgumentException("Criteria expression belongs to another provider");
         return new Ast.Literal(value);
     }
-    static Node<?> node(Selection<?> value) {
-        if (!(value instanceof Node<?> n)) throw new IllegalArgumentException("Selection belongs to another provider");
+    static <T> Node<T> node(Selection<T> value) {
+        if (!(value instanceof Node<T> n)) throw new IllegalArgumentException("Selection belongs to another provider");
         return n;
     }
 
@@ -58,7 +58,7 @@ final class CriteriaExpressions {
             copy.forEach(v -> { if (v instanceof Node<?> n) nodes.add(n); });
             return new Pred(() -> new Ast.In(ast(), copy.stream().map(CriteriaExpressions::ast).toList(), false), nodes);
         }
-        @Override public Predicate in(Expression<Collection<?>> values) { return in(new Object[]{values}); }
+        @Override public Predicate in(Expression<Collection<?>> values) { return in(List.of(values)); }
         @Override public <X> Expression<X> as(Class<X> result) { return new Node<>(result, this::ast, List.of(this)); }
         @Override public <X> Expression<X> cast(Class<X> result) {
             Ast.CastType cast = Ast.CastType.valueOf(result.getSimpleName().toUpperCase(Locale.ROOT));
@@ -88,7 +88,7 @@ final class CriteriaExpressions {
         @Override public boolean isNegated() { return negated; }
         @Override public List<Expression<Boolean>> getExpressions() { return new ArrayList<>(operands); }
         @Override public Predicate not() {
-            return new Pred(() -> new Ast.Not(ast()), List.of(this), operator, operands, !negated);
+            return new Pred(() -> new Ast.Not(this.ast()), List.of(this), operator, operands, !negated);
         }
     }
     static final class Param<T> extends Node<T> implements ParameterExpression<T> {
@@ -106,7 +106,7 @@ final class CriteriaExpressions {
         final List<Selection<?>> items;
         Compound(Class<T> type, List<Selection<?>> selections) {
             super(type, () -> new Ast.Constructor(type.getName(), selections.stream().map(s -> node(s).ast()).toList()),
-                selections.stream().map(CriteriaExpressions::node).toList());
+                selections.stream().<Node<?>>map(CriteriaExpressions::node).toList());
             items = List.copyOf(selections);
             Set<String> aliases = new HashSet<>();
             for (Selection<?> s : items) {
@@ -125,7 +125,12 @@ final class CriteriaExpressions {
         Ordering(Expression<?> expression, boolean ascending, Nulls nulls) {
             this.expression = expression; this.ascending = ascending; this.nulls = nulls;
         }
-        @Override public Order reverse() { return new Ordering(expression, !ascending, nulls == Nulls.FIRST ? Nulls.LAST : nulls == Nulls.LAST ? Nulls.FIRST : nulls); }
+        @Override public Order reverse() { return new Ordering(expression, !ascending, reversed(nulls)); }
+        /** The null precedence of the reversed order: first and last swap, none stays none. */
+        private static Nulls reversed(Nulls nulls) {
+            if (nulls == Nulls.FIRST) return Nulls.LAST;
+            return nulls == Nulls.LAST ? Nulls.FIRST : nulls;
+        }
         @Override public boolean isAscending() { return ascending; }
         @Override public Expression<?> getExpression() { return expression; }
         @Override public Nulls getNullPrecedence() { return nulls; }
@@ -160,13 +165,13 @@ final class CriteriaExpressions {
         }
         Ast.Expr append(String name) {
             Ast.Expr expression=ast();
-            if (expression instanceof Ast.MapKeyPath key) {
-                var attributes=new ArrayList<>(key.attributes()); attributes.add(name);
-                return new Ast.MapKeyPath(key.variable(),attributes);
+            if (expression instanceof Ast.MapKeyPath(var variable, var attributes)) {
+                var appended=new ArrayList<>(attributes); appended.add(name);
+                return new Ast.MapKeyPath(variable,appended);
             }
-            if (!(expression instanceof Ast.Path p)) throw new IllegalStateException("Not a navigable path");
-            var segments = new ArrayList<>(p.segments()); segments.add(name);
-            return new Ast.Path(segments, p.treatEntity(), p.treatAt());
+            if (!(expression instanceof Ast.Path(var segments, var treatEntity, var treatAt))) throw new IllegalStateException("Not a navigable path");
+            var appended = new ArrayList<>(segments); appended.add(name);
+            return new Ast.Path(appended, treatEntity, treatAt);
         }
         @SuppressWarnings("unchecked") // Attribute type and owner are validated using the managed model before construction.
         private <Y> PathNode<Y> path(String name) {
@@ -180,10 +185,9 @@ final class CriteriaExpressions {
         }
         @SuppressWarnings("unchecked") // A treated path narrows its navigable managed type without mutating the original.
         private Class<X> navigationType() { return (Class<X>) getJavaType(); }
-        @SuppressWarnings("unchecked") // A plural attribute's exact Java type is retained by the collection expression.
         @Override public <E,C extends Collection<E>> Expression<C> get(PluralAttribute<? super X,C,E> a) {
             validate(a); attribute(a.getName());
-            return new Node<>((Class<C>) a.getJavaType(), () -> append(a.getName()), List.of(this));
+            return new Node<>(a.getJavaType(), () -> append(a.getName()), List.of(this));
         }
         @SuppressWarnings("unchecked") // A map attribute represents exactly the map-typed expression requested by this API.
         @Override public <K,V,M extends Map<K,V>> Expression<M> get(MapAttribute<? super X,K,V> a) {
