@@ -25,6 +25,8 @@ import io.vidocq.noether.jpa.core.model.EntityModel;
 import io.vidocq.noether.jpa.core.spi.ManagedAccess;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
+import java.util.function.Function;
 
 /** The accesses Noether generates at bootstrap, and the descriptor that tells whether an access fits a model. */
 public final class Accesses {
@@ -48,19 +50,24 @@ public final class Accesses {
     }
 
     /**
-     * The access of a record whose components come in another order than {@code attributes}, the order its owner
+     * The access of a record whose components may come in another order than {@code attributes}, the order its owner
      * lists them in (a record {@code @IdClass}, §2.4.1): it lists {@code attributes} and builds the record from them.
+     * The access in component order is the one noether-jpa-processor generated when there is one (BUG-20261114-06),
+     * else a start-time hidden class.
      *
      * @param components the names of the components, in the order of the canonical constructor
+     * @param generated the access generated for the record that lists these attributes, by {@link #descriptor}
      */
-    public static ManagedAccess ofRecord(Class<?> type, List<AttributeModel> attributes, List<String> components) {
+    public static ManagedAccess ofRecord(Class<?> type, List<AttributeModel> attributes, List<String> components,
+            Function<List<String>, Optional<ManagedAccess>> generated) {
         List<String> names = attributes.stream().map(AttributeModel::name).toList();
         if (names.equals(components) || !new HashSet<>(names).equals(new HashSet<>(components))) {
-            return of(type, true, attributes);
+            return generated.apply(descriptor(attributes)).orElseGet(() -> of(type, true, attributes));
         }
         int[] component = names.stream().mapToInt(components::indexOf).toArray();
         List<AttributeModel> ordered = components.stream().map(name -> attributes.get(names.indexOf(name))).toList();
-        return new ReorderedAccess(of(type, true, ordered), descriptor(attributes), component);
+        ManagedAccess inOrder = generated.apply(descriptor(ordered)).orElseGet(() -> of(type, true, ordered));
+        return new ReorderedAccess(inOrder, descriptor(attributes), component);
     }
 
     /** The attributes as {@link ManagedAccess#attributes()} lists them: {@code name:FIELD} or {@code name:PROPERTY}. */

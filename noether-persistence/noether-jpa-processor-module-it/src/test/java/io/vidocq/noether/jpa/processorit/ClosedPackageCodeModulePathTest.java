@@ -24,6 +24,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.vidocq.noether.jpa.core.spi.ManagedAccess;
 import io.vidocq.noether.jpa.processorit.closed.Account;
 import io.vidocq.noether.jpa.processorit.closed.Badge;
+import io.vidocq.noether.jpa.processorit.closed.Booth;
+import io.vidocq.noether.jpa.processorit.closed.BoothKey;
 import io.vidocq.noether.jpa.processorit.closed.Note;
 import io.vidocq.noether.jpa.processorit.closed.Seat;
 import io.vidocq.noether.jpa.processorit.closed.SeatKey;
@@ -74,6 +76,16 @@ class ClosedPackageCodeModulePathTest {
         try (var factory = factory("processor-id-class", Seat.class)) {
             factory.runInTransaction(em -> em.persist(new Seat("B", 7, "Ada")));
             factory.runInTransaction(em -> assertThat(em.find(Seat.class, new SeatKey("B", 7)).holder()).isEqualTo("Ada"));
+        }
+    }
+
+    @Test
+    void aRecordIdClassWhoseComponentsComeInAnotherOrderFindsTheEntity() { // §2.4.1, BUG-20261114-06
+        try (var factory = factory("processor-record-id-class", Booth.class)) {
+            Booth booth = new Booth("C", 3, "Ada");
+            factory.runInTransaction(em -> em.persist(booth));
+            assertThat(factory.getPersistenceUnitUtil().getIdentifier(booth)).isEqualTo(new BoothKey(3, "C"));
+            factory.runInTransaction(em -> assertThat(em.find(Booth.class, new BoothKey(3, "C")).holder()).isEqualTo("Ada"));
         }
     }
 

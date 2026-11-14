@@ -1770,6 +1770,8 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
   - 2026-11-14: fixed. Left to the bootstrap, as before: a relationship part without a field of its name
     (§2.4.1.3 example 5a), a field whose type is not the identifier attribute's, a record whose components do not
     follow the identifier attributes (`IdClassesTest`).
+  - 2026-11-14: the record whose components do not follow the identifier attributes is served by the processor
+    since BUG-20261114-06.
 
 ## BUG-20261114-04 — A constructor expression cannot build a result class of a closed package
 
@@ -1806,3 +1808,27 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     bootstrap); reproduced red.
   - 2026-11-14: fixed; also covers components of other types in another order, which failed the bootstrap
     (`RecordIdClassTest.aRecordKeyWhoseComponentsHaveOtherTypesBuildsTheIdentifier`).
+
+## BUG-20261114-06 — A record id class of a closed package whose components follow another order fails at bootstrap
+
+- **Date**: 2026-11-14
+- **Status**: FIXED on `fix/idclass-codegen`: the processor generates the access of such a record with the identifier
+  attributes in component order, and `Accesses.ofRecord` puts that access under the `ReorderedAccess` of
+  BUG-20261114-05 instead of a start-time hidden class.
+- **Affected module**: `noether-jpa-processor` (`NoetherJpaProcessor.idClass`), `noether-jpa-core`
+  (`MappedUnit.idClassAccess`, `Accesses.ofRecord`)
+- **Symptom**: same setting as BUG-20261114-03, with `@Id String aisle; @Id int place;` and
+  `@IdClass(BoothKey.class)`, where `record BoothKey(int place, String aisle)` is in the entity's package: the factory
+  fails with `Noether cannot access the class ….BoothKey: compile it with noether-jpa-processor and declare the access
+  it generates`, caused by `IllegalAccessException: module … does not open … to module io.vidocq.noether.jpa.core`.
+  The message asks for what the application already does.
+- **Minimal reproduction**:
+  `ClosedPackageCodeModulePathTest.aRecordIdClassWhoseComponentsComeInAnotherOrderFindsTheEntity`.
+- **Hypothesised cause**: the processor writes no access for a record whose components do not follow the identifier
+  attributes (BUG-20261114-03 left it to the bootstrap), and the bootstrap builds the in-order access of
+  BUG-20261114-05 as a start-time hidden class, which needs the package opened.
+- **Investigations**:
+  - 2026-11-14: found while rebasing BUG-20261114-03 onto the fix of BUG-20261114-05; reproduced red (the IT above,
+    and `IdClassesTest.theAccessOfARecordIdClassWhoseComponentsComeInAnotherOrderListsThemInComponentOrder`).
+  - 2026-11-14: fixed. A record whose components do not name the identifier attributes (an id class §2.4.1 does
+    not allow) is still left to the bootstrap, as before.

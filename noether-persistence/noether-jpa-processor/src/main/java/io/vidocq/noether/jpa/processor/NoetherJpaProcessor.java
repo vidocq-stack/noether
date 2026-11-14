@@ -248,8 +248,9 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
     /**
      * The access of the id class of an entity (§2.4.1), which the bootstrap builds to read and to make its
      * identifiers: an id class of a package that is neither exported nor opened then needs no {@code opens}
-     * (BUG-20261114-03). The nearest {@code @IdClass} of the hierarchy applies, as at bootstrap. A record whose
-     * components do not follow the identifier attributes is left to the bootstrap, which builds it in their order.
+     * (BUG-20261114-03). The nearest {@code @IdClass} of the hierarchy applies, as at bootstrap. The access of a record
+     * lists the identifier attributes in the order of its components, which its canonical constructor takes: the
+     * bootstrap reorders them to the entity's (BUG-20261114-06).
      */
     private void idClass(TypeElement entity, List<ClassInfo> hierarchy, List<Member> members, Set<Element> entityOrigins) {
         TypeElement type = hierarchy.stream().map(c -> c.annotation(ID_CLASS)).flatMap(Optional::stream)
@@ -264,9 +265,20 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
         Set<Element> from = new LinkedHashSet<>(entityOrigins);
         from.add(type);
         idClasses.of(infos.read(type), parts)
-            .filter(keys -> !isRecord || keys.stream().map(Member::name).toList().equals(type.getRecordComponents().stream()
-                .map(component -> component.getSimpleName().toString()).toList()))
+            .flatMap(keys -> isRecord ? inComponentOrder(keys, type) : Optional.of(keys))
             .ifPresent(keys -> access(type, ID_ACCESS, keys, isRecord, from, List.of()));
+    }
+
+    /** The keys of a record id class in the order of its components; empty when the components name other keys. */
+    private static Optional<List<Member>> inComponentOrder(List<Member> keys, TypeElement record) {
+        Map<String, Member> byName = new LinkedHashMap<>();
+        keys.forEach(key -> byName.put(key.name(), key));
+        List<String> components = record.getRecordComponents().stream()
+            .map(component -> component.getSimpleName().toString()).toList();
+        if (components.size() != keys.size() || !byName.keySet().equals(new HashSet<>(components))) {
+            return Optional.empty();
+        }
+        return Optional.of(components.stream().map(byName::get).toList());
     }
 
     /** The binary name of the class a descriptor such as {@code Lp/Outer$Inner;} names. */

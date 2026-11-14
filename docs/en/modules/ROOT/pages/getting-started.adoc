@@ -345,8 +345,8 @@ Next to `Book.class`, `target/classes/com/acme/library` holds what `noether-jpa-
 
 | `EditionKey$$NoetherIdAccess`
 | For an id class (`@IdClass`), the access makes, reads and writes it: one attribute per identifier attribute of
-  the entity, by field when the id class declares a field of that name, else by property. A record whose components
-  do not follow the identifier attributes is left to the factory start.
+  the entity, by field when the id class declares a field of that name, else by property. A record lists them in the
+  order of its components, and the factory start reorders them to the entity's.
 
 | `Book_`
 | The canonical metamodel of Jakarta Persistence (§6.2.1.1), for type-safe Criteria queries: `Book_.title`,

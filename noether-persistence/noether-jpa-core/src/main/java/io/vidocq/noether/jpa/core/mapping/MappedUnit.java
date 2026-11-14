@@ -604,8 +604,9 @@ public final class MappedUnit {
      * relationship of a derived identity has the type the id class declares (the parent's key, §2.4.1.1).
      * {@code null} when a relationship part has no field of its name: the id class is then the parent's, the
      * relationship the whole identifier (§2.4.1.3 example 5a). The access noether-jpa-processor generated for these
-     * attributes comes first: the package of the id class then needs no {@code opens} (BUG-20261114-03). Without
-     * it, a record is built from these attributes whatever the order of its components (BUG-20261114-05).
+     * attributes comes first: the package of the id class then needs no {@code opens} (BUG-20261114-03). A record is
+     * built from these attributes whatever the order of its components (BUG-20261114-05), through the access the
+     * processor generated in component order when there is one (BUG-20261114-06).
      */
     private static ManagedAccess idClassAccess(IdModel.ByIdClass id, ClassLoader loader, Generated generated) {
         ClassFileSource source = new ClassFileSource(loader);
@@ -626,20 +627,15 @@ public final class MappedUnit {
                 owner != null ? owner : id.idClass(), ColumnModel.defaultFor(part.name()), true, FetchType.EAGER, false,
                 new ValueConversion.None(), false));
         }
-        return generated.code(id.idClass(), Accesses.descriptor(attributes))
-            .orElseGet(() -> bootstrapIdClassAccess(id.idClass(), attributes, source));
-    }
-
-    /** The start-time access of an id class the processor left out, a record built in its components' order. */
-    private static ManagedAccess bootstrapIdClassAccess(Class<?> idClass, List<AttributeModel> attributes,
-            ClassFileSource source) {
+        Class<?> idClass = id.idClass();
         if (idClass.isRecord()) {
             // the canonical constructor takes the components in their order, which the class file keeps for its fields
             List<String> components = source.read(idClass.getName()).orElseThrow().fields().stream()
                 .filter(field -> !field.isStatic()).map(FieldInfo::name).toList();
-            return Accesses.ofRecord(idClass, attributes, components);
+            return Accesses.ofRecord(idClass, attributes, components, descriptor -> generated.code(idClass, descriptor));
         }
-        return Accesses.of(idClass, false, attributes);
+        return generated.code(idClass, Accesses.descriptor(attributes))
+            .orElseGet(() -> Accesses.of(idClass, false, attributes));
     }
 
     /** The class of {@code type}'s hierarchy that declares the field {@code name}, or {@code null}. */

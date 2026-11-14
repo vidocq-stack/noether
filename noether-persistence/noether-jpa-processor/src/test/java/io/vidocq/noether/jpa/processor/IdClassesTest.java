@@ -73,11 +73,17 @@ class IdClassesTest {
         assertThat(bench.get(key, 1)).isEqualTo(2);
     }
 
+    /** The bootstrap reorders the identifier attributes onto this access (BUG-20261114-06). */
     @Test
-    void aRecordIdClassWhoseComponentsComeInAnotherOrderIsLeftToTheBootstrap(@TempDir Path out) throws Exception {
+    void theAccessOfARecordIdClassWhoseComponentsComeInAnotherOrderListsThemInComponentOrder(@TempDir Path out)
+            throws Exception {
         Compilation keys = compiled(out);
+        ManagedAccess booth = Compilation.accesses("keys", keys.classes()).get("keys.BoothKey");
 
-        assertThat(Compilation.accesses("keys", keys.classes())).doesNotContainKey("keys.BoothKey");
+        assertThat(booth.attributes()).containsExactly("row:FIELD", "aisle:FIELD");
+        Object key = booth.construct(2, "C");
+        assertThat(booth.get(key, 0)).isEqualTo(2);
+        assertThat(booth.get(key, 1)).isEqualTo("C");
     }
 
     @Test
