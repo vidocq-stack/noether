@@ -20,7 +20,6 @@ import jakarta.persistence.Id;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.JoinColumn;
-import jakarta.persistence.JoinColumns;
 import jakarta.persistence.JoinTable;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
@@ -121,10 +120,8 @@ class BusinessKeyToOneTest {
         public static class Item {
             @Id public long id;
             @OneToOne(cascade = CascadeType.ALL, orphanRemoval = true)
-            @JoinColumns({
-                @JoinColumn(name = "part_revision", referencedColumnName = "revision"),
-                @JoinColumn(name = "part_business_code", referencedColumnName = "part_code")
-            })
+            @JoinColumn(name = "part_revision", referencedColumnName = "revision")
+            @JoinColumn(name = "part_business_code", referencedColumnName = "part_code")
             public Part part;
             public Item() {}
             Item(long id, Part part) { this.id = id; this.part = part; }
@@ -567,21 +564,21 @@ class BusinessKeyToOneTest {
         @Entity
         public static class MixedOwner {
             @Id public long id;
-            @ManyToOne @JoinColumns({@JoinColumn(referencedColumnName = "id"), @JoinColumn(referencedColumnName = "code")})
+            @ManyToOne @JoinColumn(referencedColumnName = "id") @JoinColumn(referencedColumnName = "code")
             public Customer target;
             public MixedOwner() {}
         }
         @Entity
         public static class DuplicateOwner {
             @Id public long id;
-            @ManyToOne @JoinColumns({@JoinColumn(referencedColumnName = "code"), @JoinColumn(referencedColumnName = "code")})
+            @ManyToOne @JoinColumn(referencedColumnName = "code") @JoinColumn(referencedColumnName = "code")
             public Customer target;
             public DuplicateOwner() {}
         }
         @Entity
         public static class UnnamedOwner {
             @Id public long id;
-            @ManyToOne @JoinColumns({@JoinColumn(referencedColumnName = "code"), @JoinColumn})
+            @ManyToOne @JoinColumn(referencedColumnName = "code") @JoinColumn
             public Customer target;
             public UnnamedOwner() {}
         }
@@ -589,8 +586,10 @@ class BusinessKeyToOneTest {
         @Entity
         public static class NonUniformOwner {
             @Id public long id;
-            @ManyToOne @JoinColumns({@JoinColumn(referencedColumnName = "code", nullable = false),
-                @JoinColumn(referencedColumnName = "code")}) public Customer target;
+            @ManyToOne
+            @JoinColumn(referencedColumnName = "code", nullable = false)
+            @JoinColumn(referencedColumnName = "code")
+            public Customer target;
             public NonUniformOwner() {}
         }
         @Entity

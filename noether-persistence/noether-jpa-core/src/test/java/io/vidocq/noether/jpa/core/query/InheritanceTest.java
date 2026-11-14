@@ -793,8 +793,8 @@ class InheritanceTest {
         protected PairBase() {}
     }
     @Entity(name = "PairLeaf")
-    @PrimaryKeyJoinColumns({@PrimaryKeyJoinColumn(name = "k2", referencedColumnName = "rightId"),
-        @PrimaryKeyJoinColumn(name = "k1", referencedColumnName = "leftId")})
+    @PrimaryKeyJoinColumn(name = "k2", referencedColumnName = "rightId")
+    @PrimaryKeyJoinColumn(name = "k1", referencedColumnName = "leftId")
     public static class PairLeaf extends PairBase {
         public String valueText;
         public PairLeaf() {}

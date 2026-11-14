@@ -24,14 +24,11 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrimaryKeyJoinColumn;
 import jakarta.persistence.SecondaryTable;
-import jakarta.persistence.SecondaryTables;
 
 /** A secondary table joined by its own key column, and one joined by the default (the primary key column). */
 @Entity
-@SecondaryTables({
-    @SecondaryTable(name = "GADGET_DETAILS", pkJoinColumns = @PrimaryKeyJoinColumn(name = "GADGET_ID")),
-    @SecondaryTable(name = "GADGET_NOTES")
-})
+@SecondaryTable(name = "GADGET_DETAILS", pkJoinColumns = @PrimaryKeyJoinColumn(name = "GADGET_ID"))
+@SecondaryTable(name = "GADGET_NOTES")
 public class Gadget {
     @Id
     private long id;

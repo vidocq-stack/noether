@@ -29,10 +29,8 @@ public class Shop {
     private int id;
     @Embedded
     private Addr address;
-    @AttributeOverrides({
-        @AttributeOverride(name = "street", column = @Column(name = "BILL_STREET")),
-        @AttributeOverride(name = "geo.lat", column = @Column(name = "BILL_LAT"))
-    })
+    @AttributeOverride(name = "street", column = @Column(name = "BILL_STREET"))
+    @AttributeOverride(name = "geo.lat", column = @Column(name = "BILL_LAT"))
     private Addr billing;
     /** Embedded because its type is an embeddable. */
     private Geo location;

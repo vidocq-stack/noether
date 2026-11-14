@@ -457,8 +457,9 @@ class AssociationTablesTest {
             inverseJoinColumns = { @JoinColumn(name = "target_number", referencedColumnName = "number"),
                 @JoinColumn(name = "target_code", referencedColumnName = "code") })
         public CompositeTarget target;
-        @OneToMany @JoinColumns({ @JoinColumn(name = "parent_number", referencedColumnName = "number"),
-            @JoinColumn(name = "parent_code", referencedColumnName = "code") })
+        @OneToMany
+        @JoinColumn(name = "parent_number", referencedColumnName = "number")
+        @JoinColumn(name = "parent_code", referencedColumnName = "code")
         public List<CompositeTarget> children = new ArrayList<>();
         public CompositeOwner() {}
     }

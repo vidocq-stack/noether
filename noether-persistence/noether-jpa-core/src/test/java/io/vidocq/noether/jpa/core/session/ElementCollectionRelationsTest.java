@@ -2692,15 +2692,13 @@ class ElementCollectionRelationsTest {
     }
     @Embeddable public static class CompositeValue {
         public String label;
-        @ManyToOne @JoinColumns({
-            @JoinColumn(name = "target_serial", referencedColumnName = "serial"),
-            @JoinColumn(name = "target_region", referencedColumnName = "region")
-        })
+        @ManyToOne
+        @JoinColumn(name = "target_serial", referencedColumnName = "serial")
+        @JoinColumn(name = "target_region", referencedColumnName = "region")
         public CompositeTarget target;
-        @OneToOne @JoinColumns({
-            @JoinColumn(name = "one_target_serial", referencedColumnName = "serial"),
-            @JoinColumn(name = "one_target_region", referencedColumnName = "region")
-        })
+        @OneToOne
+        @JoinColumn(name = "one_target_serial", referencedColumnName = "serial")
+        @JoinColumn(name = "one_target_region", referencedColumnName = "region")
         public CompositeTarget oneTarget;
     }
     @Entity public static class CompositeTarget { @EmbeddedId public CompositeKey id; }
@@ -2763,10 +2761,9 @@ class ElementCollectionRelationsTest {
         public List<DerivedCompositeValue> values;
     }
     @Embeddable public static class DerivedCompositeValue {
-        @ManyToOne @JoinColumns({
-            @JoinColumn(name = "derived_parent_fk", referencedColumnName = "parent_fk"),
-            @JoinColumn(name = "derived_code", referencedColumnName = "code")
-        })
+        @ManyToOne
+        @JoinColumn(name = "derived_parent_fk", referencedColumnName = "parent_fk")
+        @JoinColumn(name = "derived_code", referencedColumnName = "code")
         public DerivedCompositeTarget target;
     }
     @Entity(name = "DerivedCompositeTarget") public static class DerivedCompositeTarget {
@@ -2792,10 +2789,9 @@ class ElementCollectionRelationsTest {
         public List<IdClassDerivedValue> values;
     }
     @Embeddable public static class IdClassDerivedValue {
-        @ManyToOne @JoinColumns({
-            @JoinColumn(name = "derived_parent_fk", referencedColumnName = "parent_fk"),
-            @JoinColumn(name = "derived_code", referencedColumnName = "code")
-        })
+        @ManyToOne
+        @JoinColumn(name = "derived_parent_fk", referencedColumnName = "parent_fk")
+        @JoinColumn(name = "derived_code", referencedColumnName = "code")
         public IdClassDerivedTarget target;
     }
     @Entity(name = "IdClassDerivedTarget") @IdClass(IdClassDerivedKey.class)
@@ -2823,11 +2819,10 @@ class ElementCollectionRelationsTest {
     }
     @Embeddable public static class MultiParentValue {
         public String label;
-        @ManyToOne @JoinColumns({
-            @JoinColumn(name = "element_destination", referencedColumnName = "destination_fk"),
-            @JoinColumn(name = "element_code", referencedColumnName = "route_code"),
-            @JoinColumn(name = "element_source", referencedColumnName = "source_fk")
-        })
+        @ManyToOne
+        @JoinColumn(name = "element_destination", referencedColumnName = "destination_fk")
+        @JoinColumn(name = "element_code", referencedColumnName = "route_code")
+        @JoinColumn(name = "element_source", referencedColumnName = "source_fk")
         public MultiParentTarget target;
         public MultiParentValue() {}
         MultiParentValue(String label, MultiParentTarget target) { this.label = label; this.target = target; }
@@ -2869,10 +2864,9 @@ class ElementCollectionRelationsTest {
     }
     @Entity(name = "NamedCompositeTarget") public static class NamedCompositeTarget {
         @EmbeddedId public NamedCompositeKey id;
-        @MapsId("parentKey") @ManyToOne(cascade = CascadeType.PERSIST) @JoinColumns({
-            @JoinColumn(name = "named_serial_fk", referencedColumnName = "serial"),
-            @JoinColumn(name = "named_region_fk", referencedColumnName = "region")
-        })
+        @MapsId("parentKey") @ManyToOne(cascade = CascadeType.PERSIST)
+        @JoinColumn(name = "named_serial_fk", referencedColumnName = "serial")
+        @JoinColumn(name = "named_region_fk", referencedColumnName = "region")
         public CompositeTarget parent;
         public NamedCompositeTarget() {}
         NamedCompositeTarget(String code, CompositeTarget parent) {
@@ -2889,11 +2883,10 @@ class ElementCollectionRelationsTest {
     }
     @Embeddable public static class NamedCompositeValue {
         public String label;
-        @ManyToOne @JoinColumns({
-            @JoinColumn(name = "element_serial", referencedColumnName = "named_serial_fk"),
-            @JoinColumn(name = "element_code", referencedColumnName = "code"),
-            @JoinColumn(name = "element_region", referencedColumnName = "named_region_fk")
-        })
+        @ManyToOne
+        @JoinColumn(name = "element_serial", referencedColumnName = "named_serial_fk")
+        @JoinColumn(name = "element_code", referencedColumnName = "code")
+        @JoinColumn(name = "element_region", referencedColumnName = "named_region_fk")
         public NamedCompositeTarget target;
         public NamedCompositeValue() {}
         NamedCompositeValue(String label, NamedCompositeTarget target) { this.label = label; this.target = target; }
@@ -2926,10 +2919,9 @@ class ElementCollectionRelationsTest {
     }
     @Entity(name = "NamedClassCompositeTarget") public static class NamedClassCompositeTarget {
         @EmbeddedId public NamedClassCompositeKey id;
-        @MapsId("parentKey") @ManyToOne(cascade = CascadeType.PERSIST) @JoinColumns({
-            @JoinColumn(name = "named_class_region_fk", referencedColumnName = "region"),
-            @JoinColumn(name = "named_class_serial_fk", referencedColumnName = "serial")
-        })
+        @MapsId("parentKey") @ManyToOne(cascade = CascadeType.PERSIST)
+        @JoinColumn(name = "named_class_region_fk", referencedColumnName = "region")
+        @JoinColumn(name = "named_class_serial_fk", referencedColumnName = "serial")
         public SharedClassParent parent;
         public NamedClassCompositeTarget() {}
         NamedClassCompositeTarget(String code, SharedClassParent parent) {
@@ -2939,11 +2931,10 @@ class ElementCollectionRelationsTest {
     }
     @Embeddable public static class NamedClassCompositeValue {
         public String label;
-        @ManyToOne @JoinColumns({
-            @JoinColumn(name = "element_serial", referencedColumnName = "named_class_serial_fk"),
-            @JoinColumn(name = "element_code", referencedColumnName = "code"),
-            @JoinColumn(name = "element_region", referencedColumnName = "named_class_region_fk")
-        })
+        @ManyToOne
+        @JoinColumn(name = "element_serial", referencedColumnName = "named_class_serial_fk")
+        @JoinColumn(name = "element_code", referencedColumnName = "code")
+        @JoinColumn(name = "element_region", referencedColumnName = "named_class_region_fk")
         public NamedClassCompositeTarget target;
         public NamedClassCompositeValue() {}
         NamedClassCompositeValue(String label, NamedClassCompositeTarget target) { this.label = label; this.target = target; }
@@ -2991,15 +2982,13 @@ class ElementCollectionRelationsTest {
     }
     @Entity(name = "MultipleCompositeTarget") public static class MultipleCompositeTarget {
         @EmbeddedId public MultipleCompositeKey id;
-        @MapsId("second") @ManyToOne(cascade = CascadeType.PERSIST) @JoinColumns({
-            @JoinColumn(name = "second_region_fk", referencedColumnName = "region"),
-            @JoinColumn(name = "second_serial_fk", referencedColumnName = "serial")
-        })
+        @MapsId("second") @ManyToOne(cascade = CascadeType.PERSIST)
+        @JoinColumn(name = "second_region_fk", referencedColumnName = "region")
+        @JoinColumn(name = "second_serial_fk", referencedColumnName = "serial")
         public SharedClassParent second;
-        @MapsId("first") @ManyToOne(cascade = CascadeType.PERSIST) @JoinColumns({
-            @JoinColumn(name = "first_serial_fk", referencedColumnName = "serial"),
-            @JoinColumn(name = "first_region_fk", referencedColumnName = "region")
-        })
+        @MapsId("first") @ManyToOne(cascade = CascadeType.PERSIST)
+        @JoinColumn(name = "first_serial_fk", referencedColumnName = "serial")
+        @JoinColumn(name = "first_region_fk", referencedColumnName = "region")
         public CompositeTarget first;
         public MultipleCompositeTarget() {}
         MultipleCompositeTarget(String code, CompositeTarget first, SharedClassParent second) {
@@ -3010,13 +2999,12 @@ class ElementCollectionRelationsTest {
     }
     @Embeddable public static class MultipleCompositeValue {
         public String label;
-        @ManyToOne @JoinColumns({
-            @JoinColumn(name = "element_second_region", referencedColumnName = "second_region_fk"),
-            @JoinColumn(name = "element_first_serial", referencedColumnName = "first_serial_fk"),
-            @JoinColumn(name = "element_code", referencedColumnName = "code"),
-            @JoinColumn(name = "element_second_serial", referencedColumnName = "second_serial_fk"),
-            @JoinColumn(name = "element_first_region", referencedColumnName = "first_region_fk")
-        })
+        @ManyToOne
+        @JoinColumn(name = "element_second_region", referencedColumnName = "second_region_fk")
+        @JoinColumn(name = "element_first_serial", referencedColumnName = "first_serial_fk")
+        @JoinColumn(name = "element_code", referencedColumnName = "code")
+        @JoinColumn(name = "element_second_serial", referencedColumnName = "second_serial_fk")
+        @JoinColumn(name = "element_first_region", referencedColumnName = "first_region_fk")
         public MultipleCompositeTarget target;
         public MultipleCompositeValue() {}
         MultipleCompositeValue(String label, MultipleCompositeTarget target) { this.label = label; this.target = target; }
@@ -3066,10 +3054,9 @@ class ElementCollectionRelationsTest {
     }
     @Embeddable public static class SharedIdClassValue {
         public String label;
-        @ManyToOne @JoinColumns({
-            @JoinColumn(name = "element_serial", referencedColumnName = "class_serial_fk"),
-            @JoinColumn(name = "element_region", referencedColumnName = "class_region_fk")
-        })
+        @ManyToOne
+        @JoinColumn(name = "element_serial", referencedColumnName = "class_serial_fk")
+        @JoinColumn(name = "element_region", referencedColumnName = "class_region_fk")
         public SharedIdClassTarget target;
         public SharedIdClassValue() {}
         SharedIdClassValue(String label, SharedIdClassTarget target) { this.label = label; this.target = target; }
@@ -3085,10 +3072,9 @@ class ElementCollectionRelationsTest {
     }
     @Entity(name = "SharedIdClassTarget") public static class SharedIdClassTarget {
         @EmbeddedId public IdClassKey id;
-        @MapsId @OneToOne(cascade = CascadeType.PERSIST) @JoinColumns({
-            @JoinColumn(name = "class_serial_fk", referencedColumnName = "serial"),
-            @JoinColumn(name = "class_region_fk", referencedColumnName = "region")
-        })
+        @MapsId @OneToOne(cascade = CascadeType.PERSIST)
+        @JoinColumn(name = "class_serial_fk", referencedColumnName = "serial")
+        @JoinColumn(name = "class_region_fk", referencedColumnName = "region")
         public SharedClassParent parent;
         public SharedIdClassTarget() {}
         SharedIdClassTarget(SharedClassParent parent) { this.parent = parent; }
@@ -3102,20 +3088,18 @@ class ElementCollectionRelationsTest {
     }
     @Embeddable public static class SharedCompositeValue {
         public String label;
-        @ManyToOne @JoinColumns({
-            @JoinColumn(name = "element_serial", referencedColumnName = "shared_serial_fk"),
-            @JoinColumn(name = "element_region", referencedColumnName = "shared_region_fk")
-        })
+        @ManyToOne
+        @JoinColumn(name = "element_serial", referencedColumnName = "shared_serial_fk")
+        @JoinColumn(name = "element_region", referencedColumnName = "shared_region_fk")
         public SharedCompositeTarget target;
         public SharedCompositeValue() {}
         SharedCompositeValue(String label, SharedCompositeTarget target) { this.label = label; this.target = target; }
     }
     @Entity(name = "SharedCompositeTarget") public static class SharedCompositeTarget {
         @EmbeddedId public CompositeKey id;
-        @MapsId @OneToOne(cascade = CascadeType.PERSIST) @JoinColumns({
-            @JoinColumn(name = "shared_serial_fk", referencedColumnName = "serial"),
-            @JoinColumn(name = "shared_region_fk", referencedColumnName = "region")
-        })
+        @MapsId @OneToOne(cascade = CascadeType.PERSIST)
+        @JoinColumn(name = "shared_serial_fk", referencedColumnName = "serial")
+        @JoinColumn(name = "shared_region_fk", referencedColumnName = "region")
         public CompositeTarget parent;
         public SharedCompositeTarget() {}
         SharedCompositeTarget(CompositeTarget parent) { this.parent = parent; }
@@ -3130,11 +3114,10 @@ class ElementCollectionRelationsTest {
     }
     @Embeddable public static class MultiMapsValue {
         public String label;
-        @ManyToOne @JoinColumns({
-            @JoinColumn(name = "element_destination", referencedColumnName = "destination_fk"),
-            @JoinColumn(name = "element_code", referencedColumnName = "route_code"),
-            @JoinColumn(name = "element_source", referencedColumnName = "source_fk")
-        })
+        @ManyToOne
+        @JoinColumn(name = "element_destination", referencedColumnName = "destination_fk")
+        @JoinColumn(name = "element_code", referencedColumnName = "route_code")
+        @JoinColumn(name = "element_source", referencedColumnName = "source_fk")
         public MultiMapsTarget target;
         public MultiMapsValue() {}
         MultiMapsValue(String label, MultiMapsTarget target) { this.label = label; this.target = target; }
@@ -3173,28 +3156,25 @@ class ElementCollectionRelationsTest {
     }
     @Embeddable public static class CompositeLinkValue {
         public String label;
-        @ManyToOne @JoinColumns({
-            @JoinColumn(name = "element_idclass_serial", referencedColumnName = "idclass_serial_fk"),
-            @JoinColumn(name = "element_embedded_serial", referencedColumnName = "embedded_serial_fk"),
-            @JoinColumn(name = "element_code", referencedColumnName = "link_code"),
-            @JoinColumn(name = "element_embedded_region", referencedColumnName = "embedded_region_fk"),
-            @JoinColumn(name = "element_idclass_region", referencedColumnName = "idclass_region_fk")
-        })
+        @ManyToOne
+        @JoinColumn(name = "element_idclass_serial", referencedColumnName = "idclass_serial_fk")
+        @JoinColumn(name = "element_embedded_serial", referencedColumnName = "embedded_serial_fk")
+        @JoinColumn(name = "element_code", referencedColumnName = "link_code")
+        @JoinColumn(name = "element_embedded_region", referencedColumnName = "embedded_region_fk")
+        @JoinColumn(name = "element_idclass_region", referencedColumnName = "idclass_region_fk")
         public CompositeLinkTarget target;
         public CompositeLinkValue() {}
         CompositeLinkValue(String label, CompositeLinkTarget target) { this.label = label; this.target = target; }
     }
     @Entity(name = "CompositeLinkTarget") @IdClass(CompositeLinkKey.class)
     public static class CompositeLinkTarget {
-        @Id @ManyToOne @JoinColumns({
-            @JoinColumn(name = "embedded_serial_fk", referencedColumnName = "serial"),
-            @JoinColumn(name = "embedded_region_fk", referencedColumnName = "region")
-        })
+        @Id @ManyToOne
+        @JoinColumn(name = "embedded_serial_fk", referencedColumnName = "serial")
+        @JoinColumn(name = "embedded_region_fk", referencedColumnName = "region")
         public CompositeTarget embedded;
-        @Id @ManyToOne @JoinColumns({
-            @JoinColumn(name = "idclass_serial_fk", referencedColumnName = "serial"),
-            @JoinColumn(name = "idclass_region_fk", referencedColumnName = "region")
-        })
+        @Id @ManyToOne
+        @JoinColumn(name = "idclass_serial_fk", referencedColumnName = "serial")
+        @JoinColumn(name = "idclass_region_fk", referencedColumnName = "region")
         public IdClassTarget idClass;
         @Id @Column(name = "link_code") public String code;
         public CompositeLinkTarget() {}

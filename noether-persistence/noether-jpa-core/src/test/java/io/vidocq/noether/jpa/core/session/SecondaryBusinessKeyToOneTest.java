@@ -15,14 +15,12 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.IdClass;
 import jakarta.persistence.JoinColumn;
-import jakarta.persistence.JoinColumns;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.PersistenceConfiguration;
 import jakarta.persistence.PersistenceException;
 import jakarta.persistence.PrimaryKeyJoinColumn;
 import jakarta.persistence.SecondaryTable;
-import jakarta.persistence.SecondaryTables;
 import jakarta.persistence.SharedCacheMode;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
@@ -317,8 +315,10 @@ class SecondaryBusinessKeyToOneTest {
     }
     @Entity public static class MultipleOwner {
         @Id public long id;
-        @ManyToOne @JoinColumns({@JoinColumn(name = "a", referencedColumnName = "business_code"),
-            @JoinColumn(name = "b", referencedColumnName = "label")}) public Customer target;
+        @ManyToOne
+        @JoinColumn(name = "a", referencedColumnName = "business_code")
+        @JoinColumn(name = "b", referencedColumnName = "label")
+        public Customer target;
         public MultipleOwner() {}
     }
     @Entity public static class PrimaryReference {
@@ -381,10 +381,8 @@ class SecondaryBusinessKeyToOneTest {
     public static class Item {
         @Id public long id;
         @ManyToOne(cascade = CascadeType.PERSIST, fetch = FetchType.LAZY)
-        @JoinColumns({
-            @JoinColumn(name = "part_revision", referencedColumnName = "revision"),
-            @JoinColumn(name = "part_code", referencedColumnName = "part_code")
-        })
+        @JoinColumn(name = "part_revision", referencedColumnName = "revision")
+        @JoinColumn(name = "part_code", referencedColumnName = "part_code")
         public Part part;
         public Item() {}
         Item(long id, Part part) { this.id = id; this.part = part; }
@@ -395,10 +393,8 @@ class SecondaryBusinessKeyToOneTest {
     public static class PartBadge {
         @Id public long id;
         @OneToOne(cascade = CascadeType.PERSIST)
-        @JoinColumns({
-            @JoinColumn(name = "part_code", referencedColumnName = "part_code"),
-            @JoinColumn(name = "part_revision", referencedColumnName = "revision")
-        })
+        @JoinColumn(name = "part_code", referencedColumnName = "part_code")
+        @JoinColumn(name = "part_revision", referencedColumnName = "revision")
         public Part part;
         public PartBadge() {}
     }
@@ -603,8 +599,8 @@ class SecondaryBusinessKeyToOneTest {
     @Entity public static class ConvertedTupleOwner {
         @Id public long id;
         @ManyToOne(cascade = CascadeType.PERSIST)
-        @JoinColumns({@JoinColumn(name = "converted_revision", referencedColumnName = "revision"),
-            @JoinColumn(name = "converted_code", referencedColumnName = "code")})
+        @JoinColumn(name = "converted_revision", referencedColumnName = "revision")
+        @JoinColumn(name = "converted_code", referencedColumnName = "code")
         public Converted target;
         public ConvertedTupleOwner() {}
     }
@@ -635,7 +631,7 @@ class SecondaryBusinessKeyToOneTest {
     }
 
     @Entity
-    @SecondaryTables({@SecondaryTable(name = "sb_split_first"), @SecondaryTable(name = "sb_split_second")})
+    @SecondaryTable(name = "sb_split_first") @SecondaryTable(name = "sb_split_second")
     public static class SplitTarget {
         @Id public long id;
         @Column(table = "sb_split_first", unique = true, nullable = false, updatable = false) public String code;
@@ -644,15 +640,17 @@ class SecondaryBusinessKeyToOneTest {
     }
     @Entity public static class SplitOwner {
         @Id public long id;
-        @ManyToOne @JoinColumns({@JoinColumn(name = "split_code", referencedColumnName = "code"),
-            @JoinColumn(name = "split_revision", referencedColumnName = "revision")})
+        @ManyToOne
+        @JoinColumn(name = "split_code", referencedColumnName = "code")
+        @JoinColumn(name = "split_revision", referencedColumnName = "revision")
         public SplitTarget target;
         public SplitOwner() {}
     }
     @Entity public static class ReversedSplitOwner {
         @Id public long id;
-        @ManyToOne @JoinColumns({@JoinColumn(name = "split_revision", referencedColumnName = "revision"),
-            @JoinColumn(name = "split_code", referencedColumnName = "code")})
+        @ManyToOne
+        @JoinColumn(name = "split_revision", referencedColumnName = "revision")
+        @JoinColumn(name = "split_code", referencedColumnName = "code")
         public SplitTarget target;
         public ReversedSplitOwner() {}
     }
@@ -665,15 +663,17 @@ class SecondaryBusinessKeyToOneTest {
     }
     @Entity public static class MixedTableOwner {
         @Id public long id;
-        @ManyToOne @JoinColumns({@JoinColumn(name = "mixed_code", referencedColumnName = "code"),
-            @JoinColumn(name = "mixed_revision", referencedColumnName = "revision")})
+        @ManyToOne
+        @JoinColumn(name = "mixed_code", referencedColumnName = "code")
+        @JoinColumn(name = "mixed_revision", referencedColumnName = "revision")
         public MixedTableTarget target;
         public MixedTableOwner() {}
     }
     @Entity public static class ReversedMixedTableOwner {
         @Id public long id;
-        @ManyToOne @JoinColumns({@JoinColumn(name = "mixed_revision", referencedColumnName = "revision"),
-            @JoinColumn(name = "mixed_code", referencedColumnName = "code")})
+        @ManyToOne
+        @JoinColumn(name = "mixed_revision", referencedColumnName = "revision")
+        @JoinColumn(name = "mixed_code", referencedColumnName = "code")
         public MixedTableTarget target;
         public ReversedMixedTableOwner() {}
     }
