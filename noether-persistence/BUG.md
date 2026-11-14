@@ -1756,7 +1756,9 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
 ## BUG-20261114-03 — An @IdClass of a closed package fails at bootstrap: the processor never serves id classes
 
 - **Date**: 2026-11-14
-- **Status**: OPEN
+- **Status**: FIXED on `fix/idclass-codegen`: the processor generates `<IdClass>$$NoetherIdAccess`, listing the
+  attributes the bootstrap lists (field when the id class declares one of that name, else property), and
+  `MappedUnit.idClassAccess` takes it before `Accesses.of`.
 - **Affected module**: `noether-jpa-core` (`MappedUnit.idClassAccess`), `noether-jpa-processor`
 - **Symptom**: same setting as BUG-20261114-01, with an entity whose `@IdClass` is in its own package: `Noether cannot
   access the class ….SeatKey`, caused by the same `IllegalAccessException`.
@@ -1765,6 +1767,9 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
   generated access is looked up for an id class, and the processor writes none.
 - **Investigations**:
   - 2026-11-14: reproduced red with BUG-20261114-01.
+  - 2026-11-14: fixed. Left to the bootstrap, as before: a relationship part without a field of its name
+    (§2.4.1.3 example 5a), a field whose type is not the identifier attribute's, a record whose components do not
+    follow the identifier attributes (`IdClassesTest`).
 
 ## BUG-20261114-04 — A constructor expression cannot build a result class of a closed package
 

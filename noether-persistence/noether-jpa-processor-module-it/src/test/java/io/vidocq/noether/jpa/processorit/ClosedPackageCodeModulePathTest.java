@@ -25,6 +25,8 @@ import io.vidocq.noether.jpa.core.spi.ManagedAccess;
 import io.vidocq.noether.jpa.processorit.closed.Account;
 import io.vidocq.noether.jpa.processorit.closed.Badge;
 import io.vidocq.noether.jpa.processorit.closed.Note;
+import io.vidocq.noether.jpa.processorit.closed.Seat;
+import io.vidocq.noether.jpa.processorit.closed.SeatKey;
 import io.vidocq.noether.jpa.processorit.closed.Tier;
 import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.PersistenceConfiguration;
@@ -33,7 +35,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Compiled with noether-jpa-processor, the code a unit runs of a package that is neither exported nor opened, beyond
- * its entities: a converter, an enum mapped by its {@code @EnumeratedValue} field.
+ * its entities: a converter, an enum mapped by its {@code @EnumeratedValue} field, an id class.
  */
 class ClosedPackageCodeModulePathTest {
 
@@ -64,6 +66,14 @@ class ClosedPackageCodeModulePathTest {
                     .isEqualTo(3);
                 assertThat(em.find(Badge.class, 1L).tier()).isEqualTo(Tier.GOLD);
             });
+        }
+    }
+
+    @Test
+    void anIdClassOfTheClosedPackageFindsTheEntity() { // §2.4.1
+        try (var factory = factory("processor-id-class", Seat.class)) {
+            factory.runInTransaction(em -> em.persist(new Seat("B", 7, "Ada")));
+            factory.runInTransaction(em -> assertThat(em.find(Seat.class, new SeatKey("B", 7)).holder()).isEqualTo("Ada"));
         }
     }
 

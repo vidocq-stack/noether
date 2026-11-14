@@ -35,6 +35,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.Filer;
@@ -80,9 +81,13 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
     private static final String EMBEDDABLE = "jakarta.persistence.Embeddable";
     private static final String CONVERTER = "jakarta.persistence.Converter";
     private static final String ENUMERATED_VALUE = "jakarta.persistence.EnumeratedValue";
+    private static final String ID_CLASS = "jakarta.persistence.IdClass";
+    private static final String ID = "jakarta.persistence.Id";
     private static final String ACCESS = "$$NoetherAccess";
+    private static final String ID_ACCESS = "$$NoetherIdAccess";
     private static final String SERVICES = "META-INF/services/" + SPI;
-    private static final List<String> SUFFIXES = List.of("$$NoetherAccess", "$$NoetherFieldAccess", "$$NoetherPropertyAccess");
+    private static final List<String> SUFFIXES =
+        List.of(ACCESS, "$$NoetherFieldAccess", "$$NoetherPropertyAccess", ID_ACCESS);
 
     /** The source of a provider, filled with formatted(): package line, class name, SPI, kept accesses, instances. */
     private static final String PROVIDER_SOURCE = """
@@ -109,6 +114,7 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
     private Messager messager;
     private ElementInfos infos;
     private AccessPlanner planner;
+    private IdClassMembers idClasses;
     private AccessWriter writer;
     private MetamodelWriter metamodelWriter;
 
@@ -135,6 +141,7 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
         messager = processingEnv.getMessager();
         infos = new ElementInfos(elements, processingEnv.getTypeUtils());
         planner = new AccessPlanner(infos);
+        idClasses = new IdClassMembers(infos);
         writer = new AccessWriter(elements, infos);
         metamodelWriter = new MetamodelWriter(processingEnv);
     }
@@ -221,11 +228,41 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
                 }
             }
         }
-        if (access(type, "$$NoetherAccess", members, false, from, planner.callbacks(info))) {
+        if (access(type, ACCESS, members, false, from, planner.callbacks(info))) {
             for (Member member : members) {
                 embedded(type, member, from);
             }
+            idClass(type, hierarchy, members, from);
         }
+    }
+
+    /**
+     * The access of the id class of an entity (§2.4.1), which the bootstrap builds to read and to make its
+     * identifiers: an id class of a package that is neither exported nor opened then needs no {@code opens}
+     * (BUG-20261114-03). The nearest {@code @IdClass} of the hierarchy applies, as at bootstrap. A record whose
+     * components do not follow the identifier attributes is left to the bootstrap, which builds it in their order.
+     */
+    private void idClass(TypeElement entity, List<ClassInfo> hierarchy, List<Member> members, Set<Element> entityOrigins) {
+        TypeElement type = hierarchy.stream().map(c -> c.annotation(ID_CLASS)).flatMap(Optional::stream)
+            .reduce((first, second) -> second)
+            .map(idClass -> infos.element(binaryName(idClass.type("value").descriptorString())))
+            .orElse(null);
+        if (type == null || !elements.getModuleOf(type).equals(elements.getModuleOf(entity)) || !fromSource(type)) {
+            return; // compiled elsewhere: its package is not ours to add classes to
+        }
+        boolean record = AccessWriter.isRecord(type);
+        List<Member> parts = members.stream().filter(m -> m.element().isAnnotated(ID)).toList();
+        Set<Element> from = new LinkedHashSet<>(entityOrigins);
+        from.add(type);
+        idClasses.of(infos.read(type), parts)
+            .filter(keys -> !record || keys.stream().map(Member::name).toList().equals(type.getRecordComponents().stream()
+                .map(component -> component.getSimpleName().toString()).toList()))
+            .ifPresent(keys -> access(type, ID_ACCESS, keys, record, from, List.of()));
+    }
+
+    /** The binary name of the class a descriptor such as {@code Lp/Outer$Inner;} names. */
+    private static String binaryName(String descriptor) {
+        return descriptor.substring(1, descriptor.length() - 1).replace('/', '.');
     }
 
     /**
@@ -353,7 +390,7 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
         try {
             source = writer.write(type, className, members, record, callbacks);
             var info = infos.read(type);
-            if (!record && type.getKind() == ElementKind.CLASS && !members.isEmpty()
+            if (!record && type.getKind() == ElementKind.CLASS && !members.isEmpty() && !suffix.equals(ID_ACCESS)
                     && !type.getModifiers().contains(Modifier.SEALED)
                     && io.vidocq.noether.jpa.core.model.build.LazySubclassGenerator.supports(info, members)) {
                 String lazy = io.vidocq.noether.jpa.core.model.build.LazySubclassGenerator.name(info.name());
@@ -439,7 +476,8 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
             if (access.endsWith(suffix)) {
                 String binary = access.substring(0, access.length() - suffix.length());
                 TypeElement managed = elements.getTypeElement(qualified(pkg, binary.replace('$', '.')));
-                return managed != null && (annotated(managed, ENTITY, EMBEDDABLE, CONVERTER)
+                // an id class carries no annotation: kept while it exists, looked up by the attributes it lists
+                return managed != null && (suffix.equals(ID_ACCESS) || annotated(managed, ENTITY, EMBEDDABLE, CONVERTER)
                     || ElementFilter.fieldsIn(managed.getEnclosedElements()).stream()
                         .anyMatch(field -> annotated(field, ENUMERATED_VALUE)));
             }

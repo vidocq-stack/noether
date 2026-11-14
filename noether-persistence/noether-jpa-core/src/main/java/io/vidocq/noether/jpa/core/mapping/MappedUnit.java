@@ -273,7 +273,8 @@ public final class MappedUnit {
             EmbeddedPaths.Plan plan = plans.get(entity.javaType());
             ManagedAccess embeddedId = entity.id() instanceof IdModel.Embedded embedded
                 ? embeddables.get(embedded.attribute().embeddable()) : null;
-            ManagedAccess idClass = entity.id() instanceof IdModel.ByIdClass byIdClass ? idClassAccess(byIdClass, loader) : null;
+            ManagedAccess idClass = entity.id() instanceof IdModel.ByIdClass byIdClass
+                ? idClassAccess(byIdClass, loader, generated) : null;
             StatePolicy state = StatePolicy.of(plan.model().attributes(), embeddables::get, valueBinders);
             mapped.put(entity.javaType(), new MappedEntity(plan.model(), plan.access(), root(model, entity), embeddedId,
                 idClass, state, m -> EntityStatements.of(m, MappedEntity.idIndexes(m), binders::get, embeddables::get,
@@ -585,10 +586,11 @@ public final class MappedUnit {
      * order, read by field when the id class declares a field of that name, else by property. The part for a
      * relationship of a derived identity has the type the id class declares (the parent's key, §2.4.1.1).
      * {@code null} when a relationship part has no field of its name: the id class is then the parent's, the
-     * relationship the whole identifier (§2.4.1.3 example 5a). A record is built from these attributes whatever the
-     * order of its components (BUG-20261114-05).
+     * relationship the whole identifier (§2.4.1.3 example 5a). The access noether-jpa-processor generated for these
+     * attributes comes first: the package of the id class then needs no {@code opens} (BUG-20261114-03). Without
+     * it, a record is built from these attributes whatever the order of its components (BUG-20261114-05).
      */
-    private static ManagedAccess idClassAccess(IdModel.ByIdClass id, ClassLoader loader) {
+    private static ManagedAccess idClassAccess(IdModel.ByIdClass id, ClassLoader loader, Generated generated) {
         ClassFileSource source = new ClassFileSource(loader);
         List<AttributeModel> attributes = new ArrayList<>();
         for (AttributeModel part : id.attributes()) {
@@ -607,13 +609,20 @@ public final class MappedUnit {
                 owner != null ? owner : id.idClass(), ColumnModel.defaultFor(part.name()), true, FetchType.EAGER, false,
                 new ValueConversion.None(), false));
         }
-        if (id.idClass().isRecord()) {
+        return generated.code(id.idClass(), Accesses.descriptor(attributes))
+            .orElseGet(() -> bootstrapIdClassAccess(id.idClass(), attributes, source));
+    }
+
+    /** The start-time access of an id class the processor left out, a record built in its components' order. */
+    private static ManagedAccess bootstrapIdClassAccess(Class<?> idClass, List<AttributeModel> attributes,
+            ClassFileSource source) {
+        if (idClass.isRecord()) {
             // the canonical constructor takes the components in their order, which the class file keeps for its fields
-            List<String> components = source.read(id.idClass().getName()).orElseThrow().fields().stream()
+            List<String> components = source.read(idClass.getName()).orElseThrow().fields().stream()
                 .filter(field -> !field.isStatic()).map(FieldInfo::name).toList();
-            return Accesses.ofRecord(id.idClass(), attributes, components);
+            return Accesses.ofRecord(idClass, attributes, components);
         }
-        return Accesses.of(id.idClass(), false, attributes);
+        return Accesses.of(idClass, false, attributes);
     }
 
     /** The class of {@code type}'s hierarchy that declares the field {@code name}, or {@code null}. */
@@ -657,8 +666,9 @@ public final class MappedUnit {
 
         /**
          * The access generated for a class the unit runs code of, beyond its managed classes: a converter (no
-         * attribute), an enum read by its {@code @EnumeratedValue} field (that field). An access that lists other
-         * attributes is another use of the class, not a mismatch: no warning.
+         * attribute), an enum read by its {@code @EnumeratedValue} field (that field), an id class (one attribute per
+         * identifier attribute). An access that lists other attributes is another use of the class, not a mismatch:
+         * no warning.
          */
         Optional<ManagedAccess> code(Class<?> type, List<String> attributes) {
             return byType.getOrDefault(type, List.of()).stream()

@@ -23,16 +23,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.vidocq.noether.jpa.core.spi.ManagedAccess;
-import io.vidocq.noether.jpa.core.spi.ManagedAccessProvider;
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.MethodType;
-import java.net.URL;
-import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 import javax.tools.Diagnostic;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -56,9 +49,9 @@ class ConvertersAndEnumsTest {
     }
 
     @Test
-    void theAccessOfAConverterInstantiatesIt(@TempDir Path out) throws Throwable {
+    void theAccessOfAConverterInstantiatesIt(@TempDir Path out) throws Exception {
         Compilation codes = Compilation.onClassPath(out, CODES);
-        Map<String, ManagedAccess> accesses = accesses(codes.classes());
+        Map<String, ManagedAccess> accesses = Compilation.accesses("codes", codes.classes());
 
         ManagedAccess trim = accesses.get("codes.Trim");
         assertThat(trim.attributes()).isEmpty();
@@ -73,9 +66,9 @@ class ConvertersAndEnumsTest {
     }
 
     @Test
-    void theAccessOfAnEnumReadsItsEnumeratedValueAndNothingElse(@TempDir Path out) throws Throwable {
+    void theAccessOfAnEnumReadsItsEnumeratedValueAndNothingElse(@TempDir Path out) throws Exception {
         Compilation codes = Compilation.onClassPath(out, CODES);
-        ManagedAccess grade = accesses(codes.classes()).get("codes.Grade");
+        ManagedAccess grade = Compilation.accesses("codes", codes.classes()).get("codes.Grade");
 
         assertThat(grade.attributes()).containsExactly("letter:FIELD");
         Object[] constants = grade.type().getEnumConstants();
@@ -87,23 +80,12 @@ class ConvertersAndEnumsTest {
 
     @Test
     void recompilingOneClassKeepsTheAccessesOfTheConvertersAndEnumsOfThePackage(@TempDir Path first,
-            @TempDir Path second) throws Throwable {
+            @TempDir Path second) throws Exception {
         Compilation full = Compilation.onClassPath(first, CODES);
         assertThat(full.success()).isTrue();
         Compilation partial = Compilation.incrementally(second, full, CODES.resolve("codes/Trim.java"));
         assertThat(partial.success()).as("%s", partial.diagnostics()).isTrue();
-        assertThat(accesses(partial.classes(), full.classes())).containsOnlyKeys("codes.Trim", "codes.Quiet", "codes.Grade");
-    }
-
-    private static Map<String, ManagedAccess> accesses(Path... classes) throws Throwable {
-        URL[] urls = new URL[classes.length];
-        for (int i = 0; i < classes.length; i++) {
-            urls[i] = classes[i].toUri().toURL();
-        }
-        URLClassLoader loader = new URLClassLoader(urls, ConvertersAndEnumsTest.class.getClassLoader());
-        Class<?> type = Class.forName("codes._NoetherJpaAccess", true, loader);
-        ManagedAccessProvider provider = (ManagedAccessProvider) MethodHandles.publicLookup()
-            .findConstructor(type, MethodType.methodType(void.class)).invoke();
-        return provider.accesses().stream().collect(Collectors.toMap(a -> a.type().getName(), Function.identity()));
+        assertThat(Compilation.accesses("codes", partial.classes(), full.classes()))
+            .containsOnlyKeys("codes.Trim", "codes.Quiet", "codes.Grade");
     }
 }

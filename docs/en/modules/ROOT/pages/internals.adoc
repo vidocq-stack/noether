@@ -40,6 +40,10 @@ The dialect is resolved later, the first time the factory talks to the database.
 | `noether-jpa-processor`, or nothing: a private lookup at start time
 | Instantiates the converter; reads the enumerated value of each constant.
 
+| `EditionKey$$NoetherIdAccess` (an `@IdClass`)
+| `noether-jpa-processor` (compile time), or `AccessGenerator` (start time, hidden class)
+| Makes the id class, reads and writes one attribute per identifier attribute of the entity.
+
 | `_NoetherJpaAccess`
 | `noether-jpa-processor`
 | The `ManagedAccessProvider` of a package, handed over through `ServiceLoader`.
