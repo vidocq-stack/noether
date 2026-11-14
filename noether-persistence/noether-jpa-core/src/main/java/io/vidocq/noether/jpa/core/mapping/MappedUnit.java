@@ -164,37 +164,61 @@ public final class MappedUnit {
         for (MappedEntity owner : mapped.values()) {
             if (java.lang.reflect.Modifier.isFinal(owner.model().javaType().getModifiers())) continue;
             for (AttributeModel attribute : owner.model().attributes()) {
-                if (!(attribute instanceof AssociationAttribute association) || !association.singleValued()
-                        || !association.owning() || association.fetch() != FetchType.LAZY
-                        || association.access() != AccessKind.PROPERTY || association.name().contains(".")
-                        || association.mapsId() != null
-                        || owner.model().id() instanceof IdModel.Derived derived && derived.relationship().equals(association)) continue;
-                if (owner.statements().reference(owner.model().attributes().indexOf(attribute))
-                        .map(EntityStatements.Reference::businessKey).orElse(false)) continue;
-                var declaring = classes.read(association.declaringClass().getName()).orElseThrow();
-                String suffix = Character.toUpperCase(association.name().charAt(0)) + association.name().substring(1);
-                boolean getter = declaring.methods().stream().anyMatch(m ->
-                    (m.name().equals("get" + suffix) || m.name().equals("get" + association.name()))
-                    && m.type().parameterCount() == 0 && !m.isPrivate()
-                    && (m.flags() & java.lang.classfile.ClassFile.ACC_FINAL) == 0);
-                MappedEntity target = mapped.get(association.targetEntity());
-                if (!getter || target == null || !(target.model().id() instanceof IdModel.Single id)
-                        || target.model().javaType().isSealed()
-                        || !target.model().javaType().getModule().canRead(ManagedAccess.class.getModule())
-                        || inheritance.get(association.targetEntity()).hierarchy().size() != 1) continue;
-                var info = classes.read(association.targetEntity().getName()).orElseThrow();
-                if (!info.isAnnotated("jakarta.persistence.Entity")
-                        || info.methods().stream().noneMatch(m -> m.isAnnotated("jakarta.persistence.Id"))) continue;
-                var members = planner.entityMembers(info);
-                if (!LazySubclassGenerator.supports(info, members)
-                        || !Accesses.descriptor(target.model().attributes()).equals(
-                            members.stream().map(m -> m.name() + ":" + m.access()).toList())) continue;
-                var identifier = members.stream().filter(m -> m.element().isAnnotated("jakarta.persistence.Id"))
-                    .findFirst().orElseThrow();
-                if (identifier.name().equals(id.attribute().name())) supported.add(association);
+                if (attribute instanceof AssociationAttribute association && lazyCandidate(owner, association)
+                        && interceptableGetter(classes, association) && lazyTarget(classes, planner, association)) {
+                    supported.add(association);
+                }
             }
         }
         return Set.copyOf(supported);
+    }
+
+    /**
+     * An owning, single-valued, lazy relationship of a property-access owner, which is neither (part of) the
+     * identifier nor a business key.
+     */
+    private static boolean lazyCandidate(MappedEntity owner, AssociationAttribute association) {
+        return association.singleValued() && association.owning() && association.fetch() == FetchType.LAZY
+            && association.access() == AccessKind.PROPERTY && !association.name().contains(".")
+            && association.mapsId() == null
+            && !(owner.model().id() instanceof IdModel.Derived derived && derived.relationship().equals(association))
+            && !owner.statements().reference(owner.model().attributes().indexOf(association))
+                .map(EntityStatements.Reference::businessKey).orElse(false);
+    }
+
+    /** Whether the owner reads the relationship through a getter a subclass can override. */
+    private static boolean interceptableGetter(ClassFileSource classes, AssociationAttribute association) {
+        var declaring = classes.read(association.declaringClass().getName()).orElseThrow();
+        String suffix = Character.toUpperCase(association.name().charAt(0)) + association.name().substring(1);
+        return declaring.methods().stream().anyMatch(m ->
+            (m.name().equals("get" + suffix) || m.name().equals("get" + association.name()))
+            && m.type().parameterCount() == 0 && !m.isPrivate()
+            && (m.flags() & java.lang.classfile.ClassFile.ACC_FINAL) == 0);
+    }
+
+    /** Whether the target is built as an unloaded lazy subclass: one entity class, keyed by a single identifier. */
+    private boolean lazyTarget(ClassFileSource classes, AccessPlanner planner, AssociationAttribute association) {
+        MappedEntity target = mapped.get(association.targetEntity());
+        if (target == null || !(target.model().id() instanceof IdModel.Single id)
+                || target.model().javaType().isSealed()
+                || !target.model().javaType().getModule().canRead(ManagedAccess.class.getModule())
+                || inheritance.get(association.targetEntity()).hierarchy().size() != 1) {
+            return false;
+        }
+        var info = classes.read(association.targetEntity().getName()).orElseThrow();
+        if (!info.isAnnotated("jakarta.persistence.Entity")
+                || info.methods().stream().noneMatch(m -> m.isAnnotated("jakarta.persistence.Id"))) {
+            return false;
+        }
+        var members = planner.entityMembers(info);
+        if (!LazySubclassGenerator.supports(info, members)
+                || !Accesses.descriptor(target.model().attributes()).equals(
+                    members.stream().map(m -> m.name() + ":" + m.access()).toList())) {
+            return false;
+        }
+        var identifier = members.stream().filter(m -> m.element().isAnnotated("jakarta.persistence.Id"))
+            .findFirst().orElseThrow();
+        return identifier.name().equals(id.attribute().name());
     }
 
     /** Whether the effective annotation/XML mapping permits a safely interceptable to-one reference. */
