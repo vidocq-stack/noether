@@ -145,6 +145,24 @@ public final class EntityStatements {
 
     private record RecordIdentifier(int attribute, ManagedAccess access, Map<Integer, Integer> scalarColumns) {}
 
+    /**
+     * What the statements of every entity of a unit are mapped with: the entity models by class (the targets of
+     * relationships), the binders of basic attributes, the accesses of embeddables, the inheritance mappings by class,
+     * and whether identifiers are delimited.
+     */
+    private record Lookups(Function<Class<?>, EntityModel> models, Function<BasicAttribute, ValueBinder> binders,
+            Function<EmbeddableModel, ManagedAccess> embeddables, Function<Class<?>, InheritanceMapping> inheritances,
+            boolean delimited) {
+    }
+
+    /** The parts of the statements of an entity, filled attribute by attribute. */
+    private record Parts(List<Column> columns, List<Reference> references, List<CollectionMapping> collections,
+            List<ElementCollectionMapping> elementCollections) {
+        Parts() {
+            this(new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>());
+        }
+    }
+
     private EntityStatements(String entity, String unsupported, Function<Class<?>, MappedEntity> entities, List<Reference> references,
             List<CollectionMapping> collections, List<ElementCollectionMapping> elementCollections, List<Column> columns,
             List<TableStatements> tables, Integer version, Select versionSelect, Object discriminatorValue,
@@ -194,28 +212,86 @@ public final class EntityStatements {
             Function<EmbeddableModel, ManagedAccess> embeddables, Function<Class<?>, EntityModel> models,
             Function<Class<?>, MappedEntity> entities, InheritanceMapping inheritance,
             Function<Class<?>, InheritanceMapping> inheritances, boolean delimited) {
+        Lookups lookups = new Lookups(models, binders, embeddables, inheritances, delimited);
         List<Integer> ids = Arrays.stream(idAttributes).boxed().toList();
-        // §2.4.1 derived identities: the relationships of the identifier, and those an @MapsId names, hold key columns
+        Map<String, Integer> mapsIds = mapsIds(model);
+        Identifier generated = generatedColumn(model, delimited);
+        List<SecondaryTableModel> tableModels = tableModels(model, inheritance);
+        List<String> tableNames = tableModels.stream().map(t -> t.table().name()).toList();
+        Parts parts = new Parts();
+        String problem = mapAttributes(model, inheritance, ids, mapsIds, tableNames, lookups, parts);
+        if (problem != null) {
+            return unsupported(model, "P5", problem);
+        }
+        List<Column> columns = parts.columns();
+        List<Reference> references = parts.references();
+        if (inheritance != null) {
+            inheritanceColumns(inheritance, model.attributes(), columns, delimited);
+        }
+        if (columns.stream().anyMatch(column -> column.table() < 0)) {
+            return unsupported(model, "P10", "a column of a table that no @SecondaryTable declares (a mapping file may)");
+        }
+        Integer version = versionColumn(columns);
+        List<Integer> keys = keys(model, columns, references, mapsIds);
+        if (keys == null || keys.isEmpty()) {
+            return unsupported(model, "P5", "an identifier whose columns are not mapped yet");
+        }
+        List<TableStatements> tables = new ArrayList<>();
+        for (int t = 0; t < tableNames.size(); t++) {
+            List<Identifier> keyNames = keyNames(tableModels.get(t), t, keys, columns, inheritance, delimited);
+            TableStatements statements = table(table(tableModels.get(t).table(), delimited), t, columns, keys, keyNames,
+                t == 0 ? version : null, generated);
+            if (statements != null) {
+                tables.add(statements);
+            }
+        }
+        // the row of the primary table, by identifier: its version, or its key when the entity has no version (§3.5)
+        TableStatements primary = tables.getFirst();
+        Select versionSelect = new Select(primary.select().table(), List.of(columns.get(version != null ? version : keys.getFirst()).name()),
+            primary.select().conditions());
+        return new EntityStatements(model.entityName(), null, entities, List.copyOf(references), List.copyOf(parts.collections()),
+            List.copyOf(parts.elementCollections()), List.copyOf(columns), List.copyOf(tables), version, versionSelect,
+            inheritance == null ? null : inheritance.value(), inheritances,
+            recordIdentifier(model, mapsIds, references, columns, embeddables));
+    }
+
+    /** §2.4.1 derived identities: the relationships an {@code @MapsId} names, by the identifier part they map. */
+    private static Map<String, Integer> mapsIds(EntityModel model) {
         Map<String, Integer> mapsIds = new HashMap<>();
         for (int i = 0; i < model.attributes().size(); i++) {
             if (model.attributes().get(i) instanceof AssociationAttribute association && association.mapsId() != null) {
                 mapsIds.put(association.mapsId(), i);
             }
         }
-        Identifier generated = model.id() instanceof IdModel.Single(BasicAttribute single, var generation)
+        return mapsIds;
+    }
+
+    /** The identifier column the database generates ({@code IDENTITY}); {@code null} for another identifier. */
+    private static Identifier generatedColumn(EntityModel model, boolean delimited) {
+        return model.id() instanceof IdModel.Single(BasicAttribute single, var generation)
             && generation.map(g -> g.strategy() == GenerationType.IDENTITY).orElse(false)
             ? Identifier.of(single.column().name(), delimited) : null;
-        List<SecondaryTableModel> tableModels = inheritance == null
-            ? new ArrayList<>() : new ArrayList<>(inheritance.tables());
-        if (inheritance == null) {
-            tableModels.add(new SecondaryTableModel(model.table(), List.of()));
-            tableModels.addAll(model.secondaryTables());
+    }
+
+    /** The tables of an entity: those of its inheritance mapping, else its primary table and its secondary tables. */
+    private static List<SecondaryTableModel> tableModels(EntityModel model, InheritanceMapping inheritance) {
+        if (inheritance != null) {
+            return new ArrayList<>(inheritance.tables());
         }
-        List<String> tableNames = tableModels.stream().map(t -> t.table().name()).toList();
-        List<Column> columns = new ArrayList<>();
-        List<Reference> references = new ArrayList<>();
-        List<CollectionMapping> collections = new ArrayList<>();
-        List<ElementCollectionMapping> elementCollections = new ArrayList<>();
+        List<SecondaryTableModel> tableModels = new ArrayList<>();
+        tableModels.add(new SecondaryTableModel(model.table(), List.of()));
+        tableModels.addAll(model.secondaryTables());
+        return tableModels;
+    }
+
+    /**
+     * Maps each attribute of {@code model} into {@code parts}: its columns, the references of its owned to-one
+     * relationships, its collections and element collections; the problem of the first relationship whose shape is not
+     * mapped yet, else {@code null}.
+     */
+    private static String mapAttributes(EntityModel model, InheritanceMapping inheritance, List<Integer> ids,
+            Map<String, Integer> mapsIds, List<String> tableNames, Lookups lookups, Parts parts) {
+        boolean delimited = lookups.delimited();
         List<AttributeModel> attributes = model.attributes();
         for (int i = 0; i < attributes.size(); i++) {
             boolean id = ids.contains(i);
@@ -223,38 +299,48 @@ public final class EntityStatements {
                 case BasicAttribute _ when id && mapsIds.containsKey("") -> {
                     // its value is the parent's key, which the columns of the relationship hold
                 }
-                case BasicAttribute basic -> columns.add(new Column(Identifier.of(basic.column().name(), delimited), binders.apply(basic), i,
-                    new int[0], new ManagedAccess[0], id, basic.version(), basic.column().insertable(), basic.column().updatable(),
-                    tableIndex(basic.column().table(), tableNames), null));
+                case BasicAttribute basic -> parts.columns().add(new Column(Identifier.of(basic.column().name(), delimited),
+                    lookups.binders().apply(basic), i, new int[0], new ManagedAccess[0], id, basic.version(),
+                    basic.column().insertable(), basic.column().updatable(), tableIndex(basic.column().table(), tableNames), null));
                 case EmbeddedAttribute _ when id && mapsIds.containsKey("") -> {
                     // the whole identifier is the parent's key
                 }
                 case EmbeddedAttribute embedded -> flatten(embedded, embedded.embeddable(), "", i, new int[0], new ManagedAccess[0], id,
-                    binders, embeddables, tableNames, columns, id ? mapsIds.keySet() : Set.of(), delimited);
+                    lookups.binders(), lookups.embeddables(), tableNames, parts.columns(), id ? mapsIds.keySet() : Set.of(), delimited);
+                case AssociationAttribute association when association.singleValued() && association.owning()
+                        && association.joinTable() != null && !id && association.mapsId() == null ->
+                    parts.collections().add(collection(declaring(model, inheritance, association.declaringClass()), association, i,
+                        lookups));
                 case AssociationAttribute association when association.singleValued() && association.owning() -> {
-                    boolean identifier = id || association.mapsId() != null;
-                    if (association.joinTable() != null && !identifier) {
-                        collections.add(collection(inheritance == null ? model : inheritance.declaringEntity(association.declaringClass()),
-                            association, i, models, binders, embeddables, inheritances, delimited));
-                        continue;
-                    }
-                    String problem = foreignKey(association, i, identifier, models, binders, tableNames, columns, references, inheritances, delimited);
+                    String problem = foreignKey(association, i, id || association.mapsId() != null, tableNames, parts.columns(),
+                        parts.references(), lookups);
                     if (problem != null) {
-                        return unsupported(model, "P5", problem);
+                        return problem;
                     }
                 }
                 case AssociationAttribute association when !association.singleValued() ->
-                    collections.add(collection(inheritance == null ? model : inheritance.declaringEntity(association.declaringClass()),
-                        association, i, models, binders, embeddables, inheritances, delimited));
+                    parts.collections().add(collection(declaring(model, inheritance, association.declaringClass()), association, i,
+                        lookups));
                 case ElementCollectionAttribute elements when elements.element() != null ->
-                    elementCollection(inheritance == null ? model : inheritance.declaringEntity(elements.declaringClass()), elements, i,
-                        models, binders, embeddables, inheritances, delimited).ifPresent(elementCollections::add);
+                    elementCollection(declaring(model, inheritance, elements.declaringClass()), elements, i, lookups)
+                        .ifPresent(parts.elementCollections()::add);
                 default -> {
                     // inverse to-one sides have no column; element collections have their own tables
                 }
             }
         }
-        if (inheritance != null && inheritance.joined()) {
+        return null;
+    }
+
+    /** The entity model that declares an attribute: {@code model} itself, or the class of its hierarchy that declares it. */
+    private static EntityModel declaring(EntityModel model, InheritanceMapping inheritance, Class<?> declaringClass) {
+        return inheritance == null ? model : inheritance.declaringEntity(declaringClass);
+    }
+
+    /** The columns an inheritance mapping moves or adds: those of a joined subclass in its own table, the discriminator. */
+    private static void inheritanceColumns(InheritanceMapping inheritance, List<AttributeModel> attributes, List<Column> columns,
+            boolean delimited) {
+        if (inheritance.joined()) {
             for (int c = 0; c < columns.size(); c++) {
                 Column column = columns.get(c);
                 if (column.table() == 0 && !column.id()) {
@@ -264,52 +350,42 @@ public final class EntityStatements {
                 }
             }
         }
-        if (inheritance != null && inheritance.discriminator() != null) {
+        if (inheritance.discriminator() != null) {
             columns.add(new Column(Identifier.of(inheritance.discriminator(), delimited), inheritance.binder(false), -1,
                 new int[0], new ManagedAccess[0], false, false, true, false, 0, null));
         }
-        for (Column column : columns) {
-            if (column.table() < 0) {
-                return unsupported(model, "P10", "a column of a table that no @SecondaryTable declares (a mapping file may)");
-            }
-        }
+    }
+
+    /** The index of the version column (§3.5), the last one marked; {@code null} without one. */
+    private static Integer versionColumn(List<Column> columns) {
         Integer version = null;
         for (int c = 0; c < columns.size(); c++) {
             if (columns.get(c).version()) {
                 version = c;
             }
         }
-        List<Integer> keys = keys(model, columns, references, mapsIds);
-        if (keys == null || keys.isEmpty()) {
-            return unsupported(model, "P5", "an identifier whose columns are not mapped yet");
+        return version;
+    }
+
+    /**
+     * The key column names of the table {@code t}: its join columns when it names them all, else the key columns; those
+     * of a joined inheritance chain or secondary table as the inheritance mapping names them.
+     */
+    private static List<Identifier> keyNames(SecondaryTableModel tableModel, int t, List<Integer> keys, List<Column> columns,
+            InheritanceMapping inheritance, boolean delimited) {
+        List<String> joinNames = tableModel.joinColumns();
+        List<Identifier> keyNames = new ArrayList<>();
+        for (int k = 0; k < keys.size(); k++) {
+            keyNames.add(joinNames.size() == keys.size() && !joinNames.get(k).isBlank()
+                ? Identifier.of(joinNames.get(k), delimited) : columns.get(keys.get(k)).name());
         }
-        List<TableStatements> tables = new ArrayList<>();
-        for (int t = 0; t < tableNames.size(); t++) {
-            TableModel tableModel = tableModels.get(t).table();
-            List<String> joinNames = tableModels.get(t).joinColumns();
-            List<Identifier> keyNames = new ArrayList<>();
-            for (int k = 0; k < keys.size(); k++) {
-                keyNames.add(joinNames.size() == keys.size() && !joinNames.get(k).isBlank()
-                    ? Identifier.of(joinNames.get(k), delimited) : columns.get(keys.get(k)).name());
-            }
-            if (inheritance != null && inheritance.joined() && t < inheritance.chain().size()) {
-                keyNames = inheritance.keyNames(t, keys.stream().map(k -> columns.get(k).name()).toList());
-            } else if (inheritance != null && inheritance.joined() && joinNames.isEmpty()) {
-                keyNames = inheritance.secondaryKeys(tableModels.get(t), keys.stream().map(k -> columns.get(k).name()).toList());
-            }
-            TableStatements statements = table(table(tableModel, delimited), t, columns, keys, keyNames, t == 0 ? version : null, generated);
-            if (statements != null) {
-                tables.add(statements);
-            }
+        if (inheritance != null && inheritance.joined() && t < inheritance.chain().size()) {
+            return inheritance.keyNames(t, keys.stream().map(k -> columns.get(k).name()).toList());
         }
-        // the row of the primary table, by identifier: its version, or its key when the entity has no version (§3.5)
-        TableStatements primary = tables.getFirst();
-        Select versionSelect = new Select(primary.select().table(), List.of(columns.get(version != null ? version : keys.getFirst()).name()),
-            primary.select().conditions());
-        return new EntityStatements(model.entityName(), null, entities, List.copyOf(references), List.copyOf(collections),
-            List.copyOf(elementCollections), List.copyOf(columns), List.copyOf(tables), version, versionSelect,
-            inheritance == null ? null : inheritance.value(), inheritances,
-            recordIdentifier(model, mapsIds, references, columns, embeddables));
+        if (inheritance != null && inheritance.joined() && joinNames.isEmpty()) {
+            return inheritance.secondaryKeys(tableModel, keys.stream().map(k -> columns.get(k).name()).toList());
+        }
+        return keyNames;
     }
 
     private static RecordIdentifier recordIdentifier(EntityModel model, Map<String, Integer> mapsIds,
@@ -354,30 +430,51 @@ public final class EntityStatements {
                 return referenceColumns(model.attributes().indexOf(relationship), references);
             }
             case IdModel.Embedded(EmbeddedAttribute embedded) -> {
-                int attribute = model.attributes().indexOf(embedded);
-                List<AttributeModel> components = embedded.embeddable().attributes();
-                for (int c = 0; c < components.size(); c++) {
-                    Integer mapped = mapsIds.get(components.get(c).name());
-                    List<Integer> part = mapped != null ? referenceColumns(mapped, references) : List.of(columnOf(attribute, c, columns));
-                    if (part == null) {
-                        return null;
-                    }
-                    keys.addAll(part);
+                if (!addEmbeddedKeys(keys, model, embedded, columns, references, mapsIds)) {
+                    return null;
                 }
             }
             case IdModel.ByIdClass byIdClass -> {
-                for (AttributeModel attribute : byIdClass.attributes()) {
-                    int index = model.attributes().indexOf(attribute);
-                    List<Integer> part = attribute instanceof AssociationAttribute ? referenceColumns(index, references)
-                        : List.of(columnOf(index, -1, columns));
-                    if (part == null) {
-                        return null;
-                    }
-                    keys.addAll(part);
+                if (!addIdClassKeys(keys, model, byIdClass, columns, references)) {
+                    return null;
                 }
             }
         }
         return keys.contains(-1) ? null : keys;
+    }
+
+    /**
+     * Adds to {@code keys} the columns of each component of an embedded identifier, the foreign key columns of the
+     * relationship an {@code @MapsId} names for it; whether each component has some.
+     */
+    private static boolean addEmbeddedKeys(List<Integer> keys, EntityModel model, EmbeddedAttribute embedded,
+            List<Column> columns, List<Reference> references, Map<String, Integer> mapsIds) {
+        int attribute = model.attributes().indexOf(embedded);
+        List<AttributeModel> components = embedded.embeddable().attributes();
+        for (int c = 0; c < components.size(); c++) {
+            Integer mapped = mapsIds.get(components.get(c).name());
+            List<Integer> part = mapped != null ? referenceColumns(mapped, references) : List.of(columnOf(attribute, c, columns));
+            if (part == null) {
+                return false;
+            }
+            keys.addAll(part);
+        }
+        return true;
+    }
+
+    /** Adds to {@code keys} the columns of each {@code @Id} attribute of an id class; whether each one has some. */
+    private static boolean addIdClassKeys(List<Integer> keys, EntityModel model, IdModel.ByIdClass byIdClass,
+            List<Column> columns, List<Reference> references) {
+        for (AttributeModel attribute : byIdClass.attributes()) {
+            int index = model.attributes().indexOf(attribute);
+            List<Integer> part = attribute instanceof AssociationAttribute ? referenceColumns(index, references)
+                : List.of(columnOf(index, -1, columns));
+            if (part == null) {
+                return false;
+            }
+            keys.addAll(part);
+        }
+        return true;
     }
 
     /** The column of attribute {@code attribute} — of its component {@code component} when ≥ 0 — or -1. */
@@ -416,9 +513,12 @@ public final class EntityStatements {
      * its target, named by its {@code @JoinColumn}s or by default {@code <attribute>_<referenced column>} (§2.10.3.1,
      * §11.1.25). Returns what P5 does not map yet, or {@code null}.
      */
-    private static String foreignKey(AssociationAttribute association, int attribute, boolean id, Function<Class<?>, EntityModel> models,
-            Function<BasicAttribute, ValueBinder> binders, List<String> tableNames, List<Column> columns, List<Reference> references,
-            Function<Class<?>, InheritanceMapping> inheritances, boolean delimited) {
+    private static String foreignKey(AssociationAttribute association, int attribute, boolean id, List<String> tableNames,
+            List<Column> columns, List<Reference> references, Lookups lookups) {
+        Function<Class<?>, EntityModel> models = lookups.models();
+        Function<BasicAttribute, ValueBinder> binders = lookups.binders();
+        Function<Class<?>, InheritanceMapping> inheritances = lookups.inheritances();
+        boolean delimited = lookups.delimited();
         if (association.joinTable() != null) {
             return "a single-valued relationship through a join table";
         }
@@ -429,78 +529,18 @@ public final class EntityStatements {
         }
         List<KeyColumn> keys = relationalKeys(target, models, binders, inheritances, delimited);
         if (keys == null) {
-            if (association.joinColumns().stream().anyMatch(j -> j.referencedColumnName() != null
-                    && target.attributes().stream().filter(BasicAttribute.class::isInstance).map(BasicAttribute.class::cast)
-                        .anyMatch(a -> sameColumn(Identifier.of(a.column().name(), delimited), Identifier.of(j.referencedColumnName(), delimited))))) {
-                throw new PersistenceException("Business-key joins do not support derived or nested target identifiers");
-            }
+            rejectBusinessKeyToDerivedTarget(association, target, delimited);
             return "a relationship to an entity with a derived identity or a nested embedded identifier";
         }
         boolean business = association.joinColumns().stream().anyMatch(j -> j.referencedColumnName() != null
             && keys.stream().noneMatch(k -> sameColumn(k.identifier(delimited), Identifier.of(j.referencedColumnName(), delimited))));
         if (business) {
-            if (id || association.mapsId() != null || association.name().contains(".")
-                    || inheritances.apply(target.javaType()) != null
-                        && inheritances.apply(target.javaType()).hierarchy().size() != 1) {
-                throw new PersistenceException("Business-key join " + describe(association)
-                    + " requires a non-derived target without inheritance or embedded relationships");
-            }
+            requireBusinessKeyTarget(association, id, target, inheritances);
             List<BasicAttribute> referenced = new ArrayList<>();
             for (JoinColumnModel join : association.joinColumns()) {
-                JoinColumnModel first = association.joinColumns().getFirst();
-                if (join.nullable() != first.nullable() || join.insertable() != first.insertable()
-                        || join.updatable() != first.updatable()) {
-                    throw new PersistenceException("Composite business-key join columns require uniform nullability and writeability");
-                }
-                if (!join.insertable() || !join.updatable()) {
-                    throw new PersistenceException("Business-key joins require writable join columns (insertable=true, updatable=true)");
-                }
-                BasicAttribute basic = target.attributes().stream().filter(BasicAttribute.class::isInstance)
-                    .map(BasicAttribute.class::cast)
-                    .filter(a -> join.referencedColumnName() != null
-                        && sameColumn(Identifier.of(a.column().name(), delimited), Identifier.of(join.referencedColumnName(), delimited)))
-                    .findFirst().orElseThrow(() -> new PersistenceException("Business-key join " + describe(association)
-                        + " must explicitly reference existing BASIC columns"));
-                if (basic.column().nullable() || basic.column().updatable() || !basic.column().insertable() || basic.version()
-                        || referenced.contains(basic)
-                        || keys.stream().anyMatch(k -> sameColumn(k.identifier(delimited), Identifier.of(basic.column().name(), delimited)))) {
-                    throw new PersistenceException("Business-key join " + describe(association)
-                        + " requires distinct, non-null, immutable non-ID BASIC columns (nullable=false, updatable=false)");
-                }
-                if (!target.secondaryTables().isEmpty()) {
-                    var secondary = target.secondaryTables().stream()
-                        .filter(t -> basic.column().table() != null && sameColumn(Identifier.of(t.table().name(), delimited),
-                            Identifier.of(basic.column().table(), delimited))).findFirst().orElse(null);
-                    if (keys.size() != 1 || secondary == null || secondary.joinColumns().size() > 1
-                            || referenced.stream().anyMatch(previous -> !sameColumn(
-                                Identifier.of(previous.column().table(), delimited),
-                                Identifier.of(basic.column().table(), delimited)))) {
-                        throw new PersistenceException("Secondary-table business-key joins require BASIC columns in one declared "
-                            + "secondary table and a single-column target primary key");
-                    }
-                } else if (basic.column().table() != null) {
-                    throw new PersistenceException("Business-key column must belong to a declared secondary table");
-                }
-                if (target.attributes().stream().filter(a -> a instanceof BasicAttribute b
-                        && sameColumn(Identifier.of(b.column().name(), delimited), Identifier.of(basic.column().name(), delimited))).count() != 1) {
-                    throw new PersistenceException("Business-key referenced columns must resolve to one unambiguous BASIC attribute");
-                }
-                referenced.add(basic);
+                referenced.add(businessKeyColumn(association, target, join, keys, referenced, delimited));
             }
-            int[] indexes = new int[referenced.size()];
-            for (int part = 0; part < referenced.size(); part++) {
-                BasicAttribute basic = referenced.get(part);
-                JoinColumnModel join = association.joinColumns().get(part);
-                if (join.table() != null) throw new PersistenceException(
-                    "Business-key joins do not support owner secondary-table join columns; JoinColumn.table is not the target table");
-                indexes[part] = columns.size();
-                columns.add(new Column(Identifier.of(join.name() == null ? leaf(association.name()) + "_" + basic.column().name()
-                    : join.name(), delimited), binders.apply(basic), attribute, new int[0], new ManagedAccess[0], false, false,
-                    join.insertable(), join.updatable(), 0,
-                    new ForeignKey(association.targetEntity(), part, target.attributes().indexOf(basic))));
-            }
-            references.add(new Reference(attribute, association.targetEntity(), indexes,
-                referenced.stream().map(b -> Identifier.of(b.column().name(), delimited)).toList()));
+            addBusinessKeyReference(association, attribute, target, referenced, columns, references, lookups);
             return null;
         }
         JoinColumnModel[] joins = byKeyPart(describe(association), association.joinColumns(), keys, target, delimited);
@@ -520,6 +560,112 @@ public final class EntityStatements {
         return null;
     }
 
+    /** Rejects a business-key join to {@code target}, whose identity is derived or nested. */
+    private static void rejectBusinessKeyToDerivedTarget(AssociationAttribute association, EntityModel target, boolean delimited) {
+        if (association.joinColumns().stream().anyMatch(j -> j.referencedColumnName() != null
+                && target.attributes().stream().filter(BasicAttribute.class::isInstance).map(BasicAttribute.class::cast)
+                    .anyMatch(a -> sameColumn(Identifier.of(a.column().name(), delimited), Identifier.of(j.referencedColumnName(), delimited))))) {
+            throw new PersistenceException("Business-key joins do not support derived or nested target identifiers");
+        }
+    }
+
+    /** Requires the business-key join {@code association} to be neither an ID nor derived, to a target without inheritance. */
+    private static void requireBusinessKeyTarget(AssociationAttribute association, boolean id, EntityModel target,
+            Function<Class<?>, InheritanceMapping> inheritances) {
+        if (id || association.mapsId() != null || association.name().contains(".")
+                || inheritances.apply(target.javaType()) != null
+                    && inheritances.apply(target.javaType()).hierarchy().size() != 1) {
+            throw new PersistenceException("Business-key join " + describe(association)
+                + " requires a non-derived target without inheritance or embedded relationships");
+        }
+    }
+
+    /**
+     * The basic attribute of {@code target} whose column the business-key join column {@code join} references, checked:
+     * uniform and writable join columns, a distinct, non-null, immutable non-ID column, in one declared secondary table
+     * at most, unambiguous; {@code referenced} holds those of the join columns before it.
+     */
+    private static BasicAttribute businessKeyColumn(AssociationAttribute association, EntityModel target, JoinColumnModel join,
+            List<KeyColumn> keys, List<BasicAttribute> referenced, boolean delimited) {
+        JoinColumnModel first = association.joinColumns().getFirst();
+        if (join.nullable() != first.nullable() || join.insertable() != first.insertable()
+                || join.updatable() != first.updatable()) {
+            throw new PersistenceException("Composite business-key join columns require uniform nullability and writeability");
+        }
+        if (!join.insertable() || !join.updatable()) {
+            throw new PersistenceException("Business-key joins require writable join columns (insertable=true, updatable=true)");
+        }
+        BasicAttribute basic = target.attributes().stream().filter(BasicAttribute.class::isInstance)
+            .map(BasicAttribute.class::cast)
+            .filter(a -> join.referencedColumnName() != null
+                && sameColumn(Identifier.of(a.column().name(), delimited), Identifier.of(join.referencedColumnName(), delimited)))
+            .findFirst().orElseThrow(() -> new PersistenceException("Business-key join " + describe(association)
+                + " must explicitly reference existing BASIC columns"));
+        if (basic.column().nullable() || basic.column().updatable() || !basic.column().insertable() || basic.version()
+                || referenced.contains(basic)
+                || keys.stream().anyMatch(k -> sameColumn(k.identifier(delimited), Identifier.of(basic.column().name(), delimited)))) {
+            throw new PersistenceException("Business-key join " + describe(association)
+                + " requires distinct, non-null, immutable non-ID BASIC columns (nullable=false, updatable=false)");
+        }
+        if (!target.secondaryTables().isEmpty()) {
+            var secondary = target.secondaryTables().stream()
+                .filter(t -> basic.column().table() != null && sameColumn(Identifier.of(t.table().name(), delimited),
+                    Identifier.of(basic.column().table(), delimited))).findFirst().orElse(null);
+            if (keys.size() != 1 || secondary == null || secondary.joinColumns().size() > 1
+                    || referenced.stream().anyMatch(previous -> !sameColumn(
+                        Identifier.of(previous.column().table(), delimited),
+                        Identifier.of(basic.column().table(), delimited)))) {
+                throw new PersistenceException("Secondary-table business-key joins require BASIC columns in one declared "
+                    + "secondary table and a single-column target primary key");
+            }
+        } else if (basic.column().table() != null) {
+            throw new PersistenceException("Business-key column must belong to a declared secondary table");
+        }
+        if (target.attributes().stream().filter(a -> a instanceof BasicAttribute b
+                && sameColumn(Identifier.of(b.column().name(), delimited), Identifier.of(basic.column().name(), delimited))).count() != 1) {
+            throw new PersistenceException("Business-key referenced columns must resolve to one unambiguous BASIC attribute");
+        }
+        return basic;
+    }
+
+    /** Adds the business-key join columns of {@code association} to {@code columns}, and its reference to {@code references}. */
+    private static void addBusinessKeyReference(AssociationAttribute association, int attribute, EntityModel target,
+            List<BasicAttribute> referenced, List<Column> columns, List<Reference> references, Lookups lookups) {
+        Function<BasicAttribute, ValueBinder> binders = lookups.binders();
+        boolean delimited = lookups.delimited();
+        int[] indexes = new int[referenced.size()];
+        for (int part = 0; part < referenced.size(); part++) {
+            BasicAttribute basic = referenced.get(part);
+            JoinColumnModel join = association.joinColumns().get(part);
+            if (join.table() != null) throw new PersistenceException(
+                "Business-key joins do not support owner secondary-table join columns; JoinColumn.table is not the target table");
+            indexes[part] = columns.size();
+            columns.add(new Column(Identifier.of(join.name() == null ? leaf(association.name()) + "_" + basic.column().name()
+                : join.name(), delimited), binders.apply(basic), attribute, new int[0], new ManagedAccess[0], false, false,
+                join.insertable(), join.updatable(), 0,
+                new ForeignKey(association.targetEntity(), part, target.attributes().indexOf(basic))));
+        }
+        references.add(new Reference(attribute, association.targetEntity(), indexes,
+            referenced.stream().map(b -> Identifier.of(b.column().name(), delimited)).toList()));
+    }
+
+    /**
+     * The key part whose column {@code join} references (§11.1.25), the last if several match: names compared exactly when
+     * one is delimited, else ignoring case; {@code -1} if none.
+     */
+    private static int referencedPart(JoinColumnModel join, List<KeyColumn> keys, boolean delimited) {
+        int part = -1;
+        for (int candidate = 0; candidate < keys.size(); candidate++) {
+            Identifier referenced = Identifier.of(join.referencedColumnName(), delimited);
+            KeyColumn key = keys.get(candidate);
+            if (key.quoted() || referenced.quoted() || delimited
+                    ? key.name().equals(referenced.name()) : key.name().equalsIgnoreCase(referenced.name())) {
+                part = candidate;
+            }
+        }
+        return part;
+    }
+
     /**
      * The join columns {@code written} for a relationship to {@code target}, one per key column of the target in the
      * order of its key parts (§11.1.25: matched by {@code referencedColumnName}, in order when there is one key
@@ -536,15 +682,7 @@ public final class EntityStatements {
             JoinColumnModel join = written.isEmpty() ? JoinColumnModel.defaults() : written.get(k);
             int part = k;
             if (join.referencedColumnName() != null) {
-                part = -1;
-                for (int candidate = 0; candidate < keys.size(); candidate++) {
-                    Identifier referenced = Identifier.of(join.referencedColumnName(), delimited);
-                    KeyColumn key = keys.get(candidate);
-                    if (key.quoted() || referenced.quoted() || delimited
-                            ? key.name().equals(referenced.name()) : key.name().equalsIgnoreCase(referenced.name())) {
-                        part = candidate;
-                    }
-                }
+                part = referencedPart(join, keys, delimited);
                 if (part < 0) {
                     return null;
                 }
@@ -582,21 +720,23 @@ public final class EntityStatements {
      * name>_<owner key column>} and {@code <attribute>_<target key column>} (§11.1.25).
      */
     private static CollectionMapping collection(EntityModel owner, AssociationAttribute association, int attribute,
-            Function<Class<?>, EntityModel> models, Function<BasicAttribute, ValueBinder> binders,
-            Function<EmbeddableModel, ManagedAccess> embeddables, Function<Class<?>, InheritanceMapping> inheritances, boolean delimited) {
+            Lookups lookups) {
+        Function<Class<?>, EntityModel> models = lookups.models();
+        Function<BasicAttribute, ValueBinder> binders = lookups.binders();
+        Function<Class<?>, InheritanceMapping> inheritances = lookups.inheritances();
+        boolean delimited = lookups.delimited();
         EntityModel target = models.apply(association.targetEntity());
         if (target == null) {
             throw new PersistenceException("The relationship " + association.name() + " of " + association.declaringClass().getName()
                 + " references " + association.targetEntity().getName() + ", which is not an entity of the persistence unit");
         }
-        Indexing indexing = index(leaf(association.name()), association.index(), target, models, binders, embeddables,
-            describe(association), inheritances, delimited);
+        Indexing indexing = index(leaf(association.name()), association.index(), target, describe(association), lookups);
         if (indexing.problem() != null) {
             return new CollectionMapping.Unsupported(attribute, association, indexing.problem());
         }
         IndexMapping index = indexing.index();
         if (!association.owning()) {
-            return inverse(association, attribute, target, index, models, binders, inheritances, delimited);
+            return inverse(association, attribute, target, index, lookups);
         }
         List<KeyColumn> ownerKeys = relationalKeys(owner, models, binders, inheritances, delimited);
         List<KeyColumn> targetKeys = relationalKeys(target, models, binders, inheritances, delimited);
@@ -608,74 +748,107 @@ public final class EntityStatements {
                     && targetKeys.stream().noneMatch(k -> sameColumn(k.identifier(delimited), Identifier.of(j.referencedColumnName(), delimited))))) {
             throw new PersistenceException("Business-key joins do not support join tables");
         }
+        Sides sides = new Sides(owner, target, ownerKeys, targetKeys);
         if (association.kind() == AssociationAttribute.Kind.ONE_TO_MANY && association.joinTable() == null
                 && !association.joinColumns().isEmpty()) {
-            JoinColumnModel[] joins = byKeyPart(describe(association), association.joinColumns(), ownerKeys, owner, delimited);
-            if (joins == null) {
-                return new CollectionMapping.Unsupported(attribute, association, "a join column referencing a column that is not a key");
-            }
-            String tableName = joins[0].table();
-            if (Arrays.stream(joins).anyMatch(j -> !java.util.Objects.equals(tableName, j.table()))) {
-                throw new PersistenceException("The join columns of " + describe(association) + " must belong to one target table");
-            }
-            TableModel targetTable = primaryTable(target, inheritances);
-            List<Identifier> targetNames = targetKeys.stream().map(k -> k.identifier(delimited)).toList();
-            if (tableName != null && !tableName.equals(targetTable.name())) {
-                InheritanceMapping targetInheritance = inheritances.apply(target.javaType());
-                List<SecondaryTableModel> targetTables = targetInheritance == null
-                    ? target.secondaryTables() : targetInheritance.tables();
-                SecondaryTableModel selected = targetTables.stream()
-                    .filter(t -> t.table().name().equals(tableName)).findFirst()
-                    .orElseThrow(() -> new PersistenceException("Unknown target table " + tableName + " of " + describe(association)));
-                targetTable = selected.table();
-                List<Identifier> keyNames = secondaryJoinKeys(association, target, binders, delimited);
-                if (selected.joinColumns().size() == keyNames.size()) {
-                    targetNames = selected.joinColumns().stream().map(n -> Identifier.of(n, delimited)).toList();
-                } else if (targetInheritance != null && targetInheritance.joined()) {
-                    int t = targetTables.indexOf(selected);
-                    targetNames = t < targetInheritance.chain().size()
-                        ? targetInheritance.keyNames(t, keyNames)
-                        : targetInheritance.secondaryKeys(selected, keyNames);
-                }
-            }
-            List<Identifier> names = new ArrayList<>();
-            for (int k = 0; k < ownerKeys.size(); k++) {
-                names.add(Identifier.of(joins[k].name() == null
-                    ? owner.entityName() + "_" + ownerKeys.get(k).name() : joins[k].name(), delimited));
-            }
-            return new CollectionMapping.ForeignKey(attribute, association, table(targetTable, delimited), names,
-                ownerKeys.stream().map(KeyColumn::binder).toList(),
-                targetNames,
-                targetKeys.stream().map(KeyColumn::binder).toList(), List.of(joins), index);
+            return foreignKeyCollection(association, attribute, sides, index, lookups);
         }
+        return joinTableCollection(association, attribute, sides, index, lookups);
+    }
+
+    /** The owner and the target of a collection-valued relationship, with their key columns. */
+    private record Sides(EntityModel owner, EntityModel target, List<KeyColumn> ownerKeys, List<KeyColumn> targetKeys) {}
+
+    /** The table holding the foreign key of a unidirectional one-to-many, with the key columns it joins on. */
+    private record TargetTable(TableModel table, List<Identifier> keyNames) {}
+
+    /** A unidirectional one-to-many mapped by join columns in the table of its target (§11.1.25). */
+    private static CollectionMapping foreignKeyCollection(AssociationAttribute association, int attribute, Sides sides,
+            IndexMapping index, Lookups lookups) {
+        boolean delimited = lookups.delimited();
+        JoinColumnModel[] joins = byKeyPart(describe(association), association.joinColumns(), sides.ownerKeys(), sides.owner(),
+            delimited);
+        if (joins == null) {
+            return new CollectionMapping.Unsupported(attribute, association, "a join column referencing a column that is not a key");
+        }
+        String tableName = joins[0].table();
+        if (Arrays.stream(joins).anyMatch(j -> !java.util.Objects.equals(tableName, j.table()))) {
+            throw new PersistenceException("The join columns of " + describe(association) + " must belong to one target table");
+        }
+        TargetTable targetTable = targetTable(association, sides, tableName, lookups);
+        return new CollectionMapping.ForeignKey(attribute, association, table(targetTable.table(), delimited),
+            joinColumnNames(joins, sides.ownerKeys(), sides.owner().entityName(), delimited),
+            sides.ownerKeys().stream().map(KeyColumn::binder).toList(),
+            targetTable.keyNames(),
+            sides.targetKeys().stream().map(KeyColumn::binder).toList(), List.of(joins), index);
+    }
+
+    /**
+     * The table of the target named {@code tableName} by the join columns of {@code association}, its primary table
+     * when {@code null}, with the key columns of that table.
+     */
+    private static TargetTable targetTable(AssociationAttribute association, Sides sides, String tableName, Lookups lookups) {
+        Function<Class<?>, InheritanceMapping> inheritances = lookups.inheritances();
+        boolean delimited = lookups.delimited();
+        EntityModel target = sides.target();
+        TableModel targetTable = primaryTable(target, inheritances);
+        List<Identifier> targetNames = sides.targetKeys().stream().map(k -> k.identifier(delimited)).toList();
+        if (tableName == null || tableName.equals(targetTable.name())) {
+            return new TargetTable(targetTable, targetNames);
+        }
+        InheritanceMapping targetInheritance = inheritances.apply(target.javaType());
+        List<SecondaryTableModel> targetTables = targetInheritance == null
+            ? target.secondaryTables() : targetInheritance.tables();
+        SecondaryTableModel selected = targetTables.stream()
+            .filter(t -> t.table().name().equals(tableName)).findFirst()
+            .orElseThrow(() -> new PersistenceException("Unknown target table " + tableName + " of " + describe(association)));
+        List<Identifier> keyNames = secondaryJoinKeys(association, target, lookups.binders(), delimited);
+        if (selected.joinColumns().size() == keyNames.size()) {
+            targetNames = selected.joinColumns().stream().map(n -> Identifier.of(n, delimited)).toList();
+        } else if (targetInheritance != null && targetInheritance.joined()) {
+            int t = targetTables.indexOf(selected);
+            targetNames = t < targetInheritance.chain().size()
+                ? targetInheritance.keyNames(t, keyNames)
+                : targetInheritance.secondaryKeys(selected, keyNames);
+        }
+        return new TargetTable(selected.table(), targetNames);
+    }
+
+    /** A many-to-many, or a one-to-many through a join table, by default {@code <owner table>_<target table>} (§11.1.27). */
+    private static CollectionMapping joinTableCollection(AssociationAttribute association, int attribute, Sides sides,
+            IndexMapping index, Lookups lookups) {
+        Function<Class<?>, InheritanceMapping> inheritances = lookups.inheritances();
+        boolean delimited = lookups.delimited();
+        EntityModel owner = sides.owner();
+        EntityModel target = sides.target();
         JoinTableModel written = association.joinTable() != null ? association.joinTable() : JoinTableModel.defaults();
-        JoinColumnModel[] ownerJoins = byKeyPart(describe(association), written.joinColumns(), ownerKeys, owner, delimited);
-        JoinColumnModel[] targetJoins = byKeyPart(describe(association), written.inverseJoinColumns(), targetKeys, target, delimited);
+        JoinColumnModel[] ownerJoins = byKeyPart(describe(association), written.joinColumns(), sides.ownerKeys(), owner, delimited);
+        JoinColumnModel[] targetJoins = byKeyPart(describe(association), written.inverseJoinColumns(), sides.targetKeys(), target,
+            delimited);
         if (ownerJoins == null || targetJoins == null) {
             return new CollectionMapping.Unsupported(attribute, association, "a join column referencing a column that is not a key");
         }
         String ownerPrefix = inverseOf(owner, association, target).map(EntityStatements::leaf).orElse(owner.entityName());
-        List<Identifier> ownerColumns = new ArrayList<>();
-        List<ValueBinder> ownerBinders = new ArrayList<>();
-        for (int k = 0; k < ownerKeys.size(); k++) {
-            String name = ownerJoins[k].name();
-            ownerColumns.add(Identifier.of(name != null ? name : ownerPrefix + "_" + ownerKeys.get(k).name(), delimited));
-            ownerBinders.add(ownerKeys.get(k).binder());
-        }
-        List<Identifier> targetColumns = new ArrayList<>();
-        List<ValueBinder> targetBinders = new ArrayList<>();
-        for (int k = 0; k < targetKeys.size(); k++) {
-            String name = targetJoins[k].name();
-            targetColumns.add(Identifier.of(name != null ? name : leaf(association.name()) + "_" + targetKeys.get(k).name(), delimited));
-            targetBinders.add(targetKeys.get(k).binder());
-        }
         String tableName = written.name() != null ? written.name()
             : Identifier.of(primaryTable(owner, inheritances).name()).name() + "_"
                 + Identifier.of(primaryTable(target, inheritances).name()).name();
-        Table table = new Table(Identifier.of(tableName, delimited), written.schema() == null ? null : Identifier.of(written.schema(), delimited),
-            written.catalog() == null ? null : Identifier.of(written.catalog(), delimited));
-        return new CollectionMapping.JoinTable(attribute, association, table, ownerColumns, ownerBinders, targetColumns,
-            targetBinders, index, List.of(ownerJoins), List.of(targetJoins));
+        Table table = table(new TableModel(tableName, written.schema(), written.catalog()), delimited);
+        return new CollectionMapping.JoinTable(attribute, association, table,
+            joinColumnNames(ownerJoins, sides.ownerKeys(), ownerPrefix, delimited),
+            sides.ownerKeys().stream().map(KeyColumn::binder).toList(),
+            joinColumnNames(targetJoins, sides.targetKeys(), leaf(association.name()), delimited),
+            sides.targetKeys().stream().map(KeyColumn::binder).toList(), index, List.of(ownerJoins), List.of(targetJoins));
+    }
+
+    /** The names of the join columns {@code joins}, one per key column, by default {@code <prefix>_<key column>} (§11.1.25). */
+    private static List<Identifier> joinColumnNames(JoinColumnModel[] joins, List<KeyColumn> keys, String prefix,
+            boolean delimited) {
+        List<Identifier> names = new ArrayList<>();
+        for (int k = 0; k < keys.size(); k++) {
+            String name = joins[k].name();
+            names.add(Identifier.of(name != null ? name : prefix + "_" + keys.get(k).name(), delimited));
+        }
+        return names;
     }
 
     /**
@@ -683,8 +856,11 @@ public final class EntityStatements {
      * in the table of the target, beside the foreign key of the owning side: this side writes it.
      */
     private static CollectionMapping inverse(AssociationAttribute association, int attribute, EntityModel target, IndexMapping index,
-            Function<Class<?>, EntityModel> models, Function<BasicAttribute, ValueBinder> binders,
-            Function<Class<?>, InheritanceMapping> inheritances, boolean delimited) {
+            Lookups lookups) {
+        Function<Class<?>, EntityModel> models = lookups.models();
+        Function<BasicAttribute, ValueBinder> binders = lookups.binders();
+        Function<Class<?>, InheritanceMapping> inheritances = lookups.inheritances();
+        boolean delimited = lookups.delimited();
         if (index == null || !index.stored()) {
             return new CollectionMapping.MappedBy(attribute, association, index, null, null);
         }
@@ -718,10 +894,12 @@ public final class EntityStatements {
      * key or a position, its column; for a key entity, its foreign key columns, by default {@code <attribute>_KEY}
      * (§11.1.35). {@code target} is {@code null} for an element collection.
      */
-    private static Indexing index(String name, CollectionIndex index, EntityModel target, Function<Class<?>, EntityModel> models,
-            Function<BasicAttribute, ValueBinder> binders, Function<EmbeddableModel, ManagedAccess> embeddables,
-            String relationship, Function<Class<?>, InheritanceMapping> inheritances,
-            boolean delimited) {
+    private static Indexing index(String name, CollectionIndex index, EntityModel target, String relationship, Lookups lookups) {
+        Function<Class<?>, EntityModel> models = lookups.models();
+        Function<BasicAttribute, ValueBinder> binders = lookups.binders();
+        Function<EmbeddableModel, ManagedAccess> embeddables = lookups.embeddables();
+        Function<Class<?>, InheritanceMapping> inheritances = lookups.inheritances();
+        boolean delimited = lookups.delimited();
         return switch (index) {
             case null -> new Indexing(null, null);
             case CollectionIndex.Unsupported(String feature) -> new Indexing(null, feature);
@@ -783,115 +961,161 @@ public final class EntityStatements {
      * of its basic value or of its embeddable, overrides applied. Empty for an owner whose key P5 does not reference yet.
      */
     private static Optional<ElementCollectionMapping> elementCollection(EntityModel owner, ElementCollectionAttribute elements,
-            int attribute, Function<Class<?>, EntityModel> models, Function<BasicAttribute, ValueBinder> binders,
-            Function<EmbeddableModel, ManagedAccess> embeddables, Function<Class<?>, InheritanceMapping> inheritances, boolean delimited) {
+            int attribute, Lookups lookups) {
+        Function<Class<?>, EntityModel> models = lookups.models();
+        Function<BasicAttribute, ValueBinder> binders = lookups.binders();
+        Function<Class<?>, InheritanceMapping> inheritances = lookups.inheritances();
+        boolean delimited = lookups.delimited();
         boolean relationships = elements.element() instanceof EmbeddedAttribute embedded && hasRelationships(embedded.embeddable());
         String problem = "The element collection " + elements.name() + " of " + owner.javaType().getName()
             + " contains relationships and requires ";
         List<KeyColumn> ownerKeys = relationalKeys(owner, models, binders, inheritances, delimited);
         if (ownerKeys == null) {
-            if (relationships) throw new PersistenceException(problem + "a mapped owner key");
-            return Optional.empty();
+            return unmappedElements(relationships, problem + "a mapped owner key");
         }
         CollectionTableModel written = elements.table();
         JoinColumnModel[] joins = byKeyPart("the collection table of " + elements.name() + " of " + elements.declaringClass().getName(),
             written.joinColumns(), ownerKeys, owner, delimited);
         if (joins == null) {
-            if (relationships) throw new PersistenceException(problem + "collection joins to the owner's key");
-            return Optional.empty();
+            return unmappedElements(relationships, problem + "collection joins to the owner's key");
         }
-        List<Identifier> ownerColumns = new ArrayList<>();
-        List<ValueBinder> ownerBinders = new ArrayList<>();
-        for (int k = 0; k < ownerKeys.size(); k++) {
-            String name = joins[k].name();
-            ownerColumns.add(Identifier.of(name != null ? name : owner.entityName() + "_" + ownerKeys.get(k).name(), delimited));
-            ownerBinders.add(ownerKeys.get(k).binder());
-        }
+        List<Identifier> ownerColumns = joinColumnNames(joins, ownerKeys, owner.entityName(), delimited);
         String tableName = written.name() != null ? written.name() : owner.entityName() + "_" + leaf(elements.name());
-        Indexing indexing = index(leaf(elements.name()), elements.index(), null, models, binders, embeddables,
-            "the element collection " + elements.name() + " of " + elements.declaringClass().getName(), inheritances, delimited);
+        Indexing indexing = index(leaf(elements.name()), elements.index(), null,
+            "the element collection " + elements.name() + " of " + elements.declaringClass().getName(), lookups);
         if (indexing.problem() != null) {
-            if (relationships) throw new PersistenceException(problem + "a supported collection index: " + indexing.problem());
-            return Optional.empty();
+            return unmappedElements(relationships, problem + "a supported collection index: " + indexing.problem());
         }
+        List<Column> columns = elementColumns(elements, tableName, lookups);
+        Table table = table(new TableModel(tableName, written.schema(), written.catalog()), delimited);
+        requireDistinctColumns(ownerColumns, indexing.index(), columns);
+        return Optional.of(new ElementCollectionMapping(attribute, elements, table, ownerColumns,
+            ownerKeys.stream().map(KeyColumn::binder).toList(), indexing.index(), columns));
+    }
+
+    /**
+     * An element collection P5 does not map: empty, unless its elements hold relationships, which then fail with
+     * {@code problem}.
+     */
+    private static Optional<ElementCollectionMapping> unmappedElements(boolean relationships, String problem) {
+        if (relationships) {
+            throw new PersistenceException(problem);
+        }
+        return Optional.empty();
+    }
+
+    /** The element columns of {@code elements}: those of its basic value, or of its embeddable in attribute order. */
+    private static List<Column> elementColumns(ElementCollectionAttribute elements, String tableName, Lookups lookups) {
+        Function<BasicAttribute, ValueBinder> binders = lookups.binders();
+        boolean delimited = lookups.delimited();
         List<Column> columns = new ArrayList<>();
         switch (elements.element()) {
             case BasicAttribute basic -> columns.add(new Column(Identifier.of(basic.column().name(), delimited), binders.apply(basic), 0, new int[0],
                 new ManagedAccess[0], false, false, basic.column().insertable(), basic.column().updatable(), 0, null));
             case EmbeddedAttribute embedded -> {
                 flatten(embedded, embedded.embeddable(), "", 0, new int[0], new ManagedAccess[0], false,
-                    binders, embeddables, List.of(tableName), columns, Set.of(), delimited);
-                elementReferences(embedded.embeddable(), new int[0], new ManagedAccess[0], columns,
-                    models, binders, embeddables, inheritances, delimited, elements.name());
+                    binders, lookups.embeddables(), List.of(tableName), columns, Set.of(), delimited);
+                elementReferences(embedded.embeddable(), new int[0], new ManagedAccess[0], columns, lookups, elements.name());
                 columns.sort((left, right) -> java.util.Arrays.compare(left.path(), right.path()));
             }
             default -> throw new IllegalStateException("An element is basic or embeddable: " + elements.element());
         }
-        Table table = new Table(Identifier.of(tableName, delimited), written.schema() == null ? null : Identifier.of(written.schema(), delimited),
-            written.catalog() == null ? null : Identifier.of(written.catalog(), delimited));
+        return columns;
+    }
+
+    /** Requires the owner, index and element columns of a collection table to be distinct. */
+    private static void requireDistinctColumns(List<Identifier> ownerColumns, IndexMapping index, List<Column> columns) {
         java.util.Set<Identifier> names = new java.util.HashSet<>(ownerColumns);
-        for (Identifier name : indexing.index() == null ? List.<Identifier>of() : indexing.index().columns()) {
+        for (Identifier name : index == null ? List.<Identifier>of() : index.columns()) {
             if (!names.add(name)) throw new PersistenceException("Duplicate collection column " + name);
         }
         for (Column column : columns) {
             if (!names.add(column.name())) throw new PersistenceException("Duplicate collection column " + column.name());
         }
-        return Optional.of(new ElementCollectionMapping(attribute, elements, table, ownerColumns, ownerBinders, indexing.index(), columns));
     }
 
+    /**
+     * Adds the foreign key columns of the to-one relationships of the embeddable {@code model}, nested at {@code path},
+     * to the element columns of {@code collection}.
+     */
     private static void elementReferences(EmbeddableModel model, int[] path, ManagedAccess[] accesses, List<Column> columns,
-            Function<Class<?>, EntityModel> models, Function<BasicAttribute, ValueBinder> binders,
-            Function<EmbeddableModel, ManagedAccess> embeddables, Function<Class<?>, InheritanceMapping> inheritances,
-            boolean delimited, String collection) {
+            Lookups lookups, String collection) {
         for (int i = 0; i < model.attributes().size(); i++) {
             int[] nested = Arrays.copyOf(path, path.length + 1);
             nested[path.length] = i;
             ManagedAccess[] along = Arrays.copyOf(accesses, accesses.length + 1);
-            along[accesses.length] = embeddables.apply(model);
-            AttributeModel attribute = model.attributes().get(i);
-            if (attribute instanceof EmbeddedAttribute embedded) {
-                elementReferences(embedded.embeddable(), nested, along, columns, models, binders,
-                    embeddables, inheritances, delimited, collection);
-            } else if (attribute instanceof ElementCollectionAttribute) {
-                throw new PersistenceException("The element collection " + collection + " cannot contain nested collections");
-            } else if (attribute instanceof AssociationAttribute association) {
-                String problem = "The element collection " + collection + " relationship " + association.name() + ": ";
-                if (!association.singleValued() || !association.owning() || association.joinTable() != null
-                        || association.mapsId() != null || association.orphanRemoval()) {
-                    throw new PersistenceException(problem
-                        + "requires an owning to-one FK without join table, MapsId or orphan removal");
+            along[accesses.length] = lookups.embeddables().apply(model);
+            switch (model.attributes().get(i)) {
+                case EmbeddedAttribute embedded ->
+                    elementReferences(embedded.embeddable(), nested, along, columns, lookups, collection);
+                case ElementCollectionAttribute _ ->
+                    throw new PersistenceException("The element collection " + collection + " cannot contain nested collections");
+                case AssociationAttribute association ->
+                    elementReference(association, nested, along, columns, lookups, collection);
+                case BasicAttribute _ -> {
+                    // Basic columns are the flattened element columns.
                 }
-                EntityModel target = models.apply(association.targetEntity());
-                InheritanceMapping inheritance = target == null ? null : inheritances.apply(target.javaType());
-                if (target == null || !(target.id() instanceof IdModel.Single || target.id() instanceof IdModel.Embedded
-                        || target.id() instanceof IdModel.ByIdClass)
-                        || inheritance != null && (inheritance.joined() || inheritance.tablePerClass()
-                            || inheritance.hierarchy().size() != 1)
-                        || !eligibleElementTarget(target, models, inheritances)) {
-                    throw new PersistenceException(problem + "requires an eligible primary-key target");
-                }
-                List<KeyColumn> keys = relationalKeys(target, models, binders, inheritances, delimited);
-                JoinColumnModel[] joins = keys == null || keys.isEmpty() ? null
-                    : byKeyPart(problem, association.joinColumns(), keys, target, delimited);
-                if (joins == null) {
-                    throw new PersistenceException(problem + "requires a complete join to its primary key");
-                }
-                JoinColumnModel first = joins[0];
-                for (JoinColumnModel join : joins) {
-                    if (join.nullable() != first.nullable() || join.insertable() != first.insertable()
-                            || join.updatable() != first.updatable()) {
-                        throw new PersistenceException(problem + "requires uniform composite join-column nullability and writeability");
-                    }
-                    if (!join.insertable() || !join.updatable() || join.table() != null && !join.table().isBlank()) {
-                        throw new PersistenceException(problem + "requires writable collection-table join columns");
-                    }
-                }
-                for (int part = 0; part < keys.size(); part++) {
-                    JoinColumnModel join = joins[part];
-                    String name = join.name() == null ? association.name() + "_" + keys.get(part).name() : join.name();
-                    columns.add(new Column(Identifier.of(name, delimited), keys.get(part).binder(), 0, nested, along,
-                        false, false, true, true, 0, new ForeignKey(association.targetEntity(), part)));
-                }
+            }
+        }
+    }
+
+    /**
+     * Adds the foreign key columns of the to-one relationship {@code association}, at {@code path} in an embeddable
+     * element of {@code collection}, one per key column of its target.
+     */
+    private static void elementReference(AssociationAttribute association, int[] path, ManagedAccess[] accesses,
+            List<Column> columns, Lookups lookups, String collection) {
+        Function<Class<?>, EntityModel> models = lookups.models();
+        boolean delimited = lookups.delimited();
+        String problem = "The element collection " + collection + " relationship " + association.name() + ": ";
+        if (!association.singleValued() || !association.owning() || association.joinTable() != null
+                || association.mapsId() != null || association.orphanRemoval()) {
+            throw new PersistenceException(problem
+                + "requires an owning to-one FK without join table, MapsId or orphan removal");
+        }
+        EntityModel target = models.apply(association.targetEntity());
+        requireEligibleElementTarget(target, problem, lookups);
+        List<KeyColumn> keys = relationalKeys(target, models, lookups.binders(), lookups.inheritances(), delimited);
+        JoinColumnModel[] joins = keys == null || keys.isEmpty() ? null
+            : byKeyPart(problem, association.joinColumns(), keys, target, delimited);
+        if (joins == null) {
+            throw new PersistenceException(problem + "requires a complete join to its primary key");
+        }
+        requireUniformWritableJoins(joins, problem);
+        for (int part = 0; part < keys.size(); part++) {
+            JoinColumnModel join = joins[part];
+            String name = join.name() == null ? association.name() + "_" + keys.get(part).name() : join.name();
+            columns.add(new Column(Identifier.of(name, delimited), keys.get(part).binder(), 0, path, accesses,
+                false, false, true, true, 0, new ForeignKey(association.targetEntity(), part)));
+        }
+    }
+
+    /**
+     * Requires the target of a relationship of an embeddable element to be an entity with a simple, embedded or ID-class
+     * primary key, outside joined, table-per-class or multi-entity hierarchies.
+     */
+    private static void requireEligibleElementTarget(EntityModel target, String problem, Lookups lookups) {
+        Function<Class<?>, InheritanceMapping> inheritances = lookups.inheritances();
+        InheritanceMapping inheritance = target == null ? null : inheritances.apply(target.javaType());
+        if (target == null || !(target.id() instanceof IdModel.Single || target.id() instanceof IdModel.Embedded
+                || target.id() instanceof IdModel.ByIdClass)
+                || inheritance != null && (inheritance.joined() || inheritance.tablePerClass()
+                    || inheritance.hierarchy().size() != 1)
+                || !eligibleElementTarget(target, lookups.models(), inheritances)) {
+            throw new PersistenceException(problem + "requires an eligible primary-key target");
+        }
+    }
+
+    /** Requires the join columns of a relationship of an embeddable element to be uniform and writable, in the collection table. */
+    private static void requireUniformWritableJoins(JoinColumnModel[] joins, String problem) {
+        JoinColumnModel first = joins[0];
+        for (JoinColumnModel join : joins) {
+            if (join.nullable() != first.nullable() || join.insertable() != first.insertable()
+                    || join.updatable() != first.updatable()) {
+                throw new PersistenceException(problem + "requires uniform composite join-column nullability and writeability");
+            }
+            if (!join.insertable() || !join.updatable() || join.table() != null && !join.table().isBlank()) {
+                throw new PersistenceException(problem + "requires writable collection-table join columns");
             }
         }
     }
@@ -902,55 +1126,97 @@ public final class EntityStatements {
             .filter(AssociationAttribute.class::isInstance).map(AssociationAttribute.class::cast)
             .filter(association -> association.mapsId() != null).toList();
         if (mapsIds.isEmpty()) {
-            if (!(target.id() instanceof IdModel.ByIdClass idClass)) return true;
-            List<AssociationAttribute> relationships = idClass.attributes().stream()
-                .filter(AssociationAttribute.class::isInstance).map(AssociationAttribute.class::cast).toList();
-            if (relationships.isEmpty()) return true;
-            if (idClass.attributes().stream().anyMatch(attribute ->
-                    !(attribute instanceof BasicAttribute || attribute instanceof AssociationAttribute))) return false;
-            return relationships.stream().allMatch(derived -> derived.mapsId() == null
-                && derived.singleValued() && derived.owning() && derived.joinTable() == null
-                && eligibleBasicElementParent(derived, relationships.size() == 1, models, inheritances));
+            return eligibleIdClassTarget(target, models, inheritances);
         }
         for (AssociationAttribute derived : mapsIds) {
-            if (!derived.singleValued() || !derived.owning() || derived.joinTable() != null) return false;
-            if (target.id() instanceof IdModel.Single) {
-                if (mapsIds.size() != 1 || !derived.mapsId().isEmpty()
-                        || derived.kind() != AssociationAttribute.Kind.ONE_TO_ONE) return false;
-            } else if (target.id() instanceof IdModel.Embedded(EmbeddedAttribute embedded)) {
-                List<AttributeModel> parts = embedded.embeddable().attributes();
-                EntityModel parent = models.apply(derived.targetEntity());
-                Class<?> parentKey = parent == null ? null : switch (parent.id()) {
-                    case IdModel.Embedded(EmbeddedAttribute parentId) -> parentId.javaType();
-                    case IdModel.ByIdClass parentId -> parentId.idClass();
-                    default -> null;
-                };
-                if (parts.stream().anyMatch(attribute -> !(attribute instanceof BasicAttribute))) {
-                    boolean mappedComponents = parts.stream().allMatch(part -> part instanceof BasicAttribute
-                        || part instanceof EmbeddedAttribute nested
-                            && nested.embeddable().attributes().stream().allMatch(BasicAttribute.class::isInstance)
-                            && mapsIds.stream().anyMatch(mapping -> part.name().equals(mapping.mapsId())));
-                    if (derived.mapsId().isEmpty() || !mappedComponents) return false;
-                    AttributeModel component = parts.stream().filter(part -> part.name().equals(derived.mapsId()))
-                        .findFirst().orElse(null);
-                    if (component instanceof EmbeddedAttribute nested) {
-                        if (parentKey != nested.javaType()
-                                || !eligibleBasicElementParent(derived, false, models, inheritances)) return false;
-                        continue;
-                    }
-                }
-                if (derived.mapsId().isEmpty()) {
-                    return mapsIds.size() == 1 && derived.kind() == AssociationAttribute.Kind.ONE_TO_ONE
-                        && parentKey == embedded.javaType()
-                        && eligibleBasicElementParent(derived, false, models, inheritances);
-                }
-                if (parts.stream().map(AttributeModel::name).noneMatch(derived.mapsId()::equals)) return false;
-            } else {
-                return false;
+            Derivation derivation = derivation(target, derived, mapsIds, models, inheritances);
+            if (derivation == Derivation.CHECK_PARENT) {
+                derivation = simpleNonPolymorphicParent(derived, models, inheritances) ? Derivation.NEXT : Derivation.INELIGIBLE;
             }
-            if (!simpleNonPolymorphicParent(derived, models, inheritances)) return false;
+            if (derivation != Derivation.NEXT) {
+                return derivation == Derivation.ELIGIBLE;
+            }
         }
         return true;
+    }
+
+    /** What a relationship of the derived identity of an element target says of it, the next relationship asked if any. */
+    private enum Derivation {
+        /** The target is not eligible. */
+        INELIGIBLE,
+        /** The target is eligible, whatever its other relationships. */
+        ELIGIBLE,
+        /** Eligible so far: ask the next relationship. */
+        NEXT,
+        /** Eligible so far if the parent is a simple, non-polymorphic entity; then ask the next relationship. */
+        CHECK_PARENT
+    }
+
+    /** An element target without {@code @MapsId}: eligible unless the relationships of its id class are not simple. */
+    private static boolean eligibleIdClassTarget(EntityModel target, Function<Class<?>, EntityModel> models,
+            Function<Class<?>, InheritanceMapping> inheritances) {
+        if (!(target.id() instanceof IdModel.ByIdClass idClass)) return true;
+        List<AssociationAttribute> relationships = idClass.attributes().stream()
+            .filter(AssociationAttribute.class::isInstance).map(AssociationAttribute.class::cast).toList();
+        if (relationships.isEmpty()) return true;
+        if (idClass.attributes().stream().anyMatch(attribute ->
+                !(attribute instanceof BasicAttribute || attribute instanceof AssociationAttribute))) return false;
+        return relationships.stream().allMatch(derived -> derived.mapsId() == null
+            && derived.singleValued() && derived.owning() && derived.joinTable() == null
+            && eligibleBasicElementParent(derived, relationships.size() == 1, models, inheritances));
+    }
+
+    /** What the {@code @MapsId} relationship {@code derived} of an element target says of it. */
+    private static Derivation derivation(EntityModel target, AssociationAttribute derived, List<AssociationAttribute> mapsIds,
+            Function<Class<?>, EntityModel> models, Function<Class<?>, InheritanceMapping> inheritances) {
+        if (!derived.singleValued() || !derived.owning() || derived.joinTable() != null) return Derivation.INELIGIBLE;
+        return switch (target.id()) {
+            case IdModel.Single _ -> mapsIds.size() != 1 || !derived.mapsId().isEmpty()
+                || derived.kind() != AssociationAttribute.Kind.ONE_TO_ONE ? Derivation.INELIGIBLE : Derivation.CHECK_PARENT;
+            case IdModel.Embedded(EmbeddedAttribute embedded) -> embeddedDerivation(embedded, derived, mapsIds, models, inheritances);
+            default -> Derivation.INELIGIBLE;
+        };
+    }
+
+    /** {@link #derivation} for a target whose identifier is the embedded {@code embedded}. */
+    private static Derivation embeddedDerivation(EmbeddedAttribute embedded, AssociationAttribute derived,
+            List<AssociationAttribute> mapsIds, Function<Class<?>, EntityModel> models,
+            Function<Class<?>, InheritanceMapping> inheritances) {
+        List<AttributeModel> parts = embedded.embeddable().attributes();
+        Class<?> parentKey = parentKeyClass(models.apply(derived.targetEntity()));
+        if (parts.stream().anyMatch(attribute -> !(attribute instanceof BasicAttribute))) {
+            if (derived.mapsId().isEmpty() || !mappedComponents(parts, mapsIds)) return Derivation.INELIGIBLE;
+            AttributeModel component = parts.stream().filter(part -> part.name().equals(derived.mapsId()))
+                .findFirst().orElse(null);
+            if (component instanceof EmbeddedAttribute nested) {
+                return parentKey != nested.javaType() || !eligibleBasicElementParent(derived, false, models, inheritances)
+                    ? Derivation.INELIGIBLE : Derivation.NEXT;
+            }
+        }
+        if (derived.mapsId().isEmpty()) {
+            return mapsIds.size() == 1 && derived.kind() == AssociationAttribute.Kind.ONE_TO_ONE
+                && parentKey == embedded.javaType()
+                && eligibleBasicElementParent(derived, false, models, inheritances) ? Derivation.ELIGIBLE : Derivation.INELIGIBLE;
+        }
+        return parts.stream().map(AttributeModel::name).noneMatch(derived.mapsId()::equals)
+            ? Derivation.INELIGIBLE : Derivation.CHECK_PARENT;
+    }
+
+    /** The class of the composite identifier of {@code parent}: its embedded id or its id class; {@code null} otherwise. */
+    private static Class<?> parentKeyClass(EntityModel parent) {
+        return parent == null ? null : switch (parent.id()) {
+            case IdModel.Embedded(EmbeddedAttribute parentId) -> parentId.javaType();
+            case IdModel.ByIdClass parentId -> parentId.idClass();
+            default -> null;
+        };
+    }
+
+    /** Whether each component of an embedded id is basic, or an embeddable of basic attributes an {@code @MapsId} maps. */
+    private static boolean mappedComponents(List<AttributeModel> parts, List<AssociationAttribute> mapsIds) {
+        return parts.stream().allMatch(part -> part instanceof BasicAttribute
+            || part instanceof EmbeddedAttribute nested
+                && nested.embeddable().attributes().stream().allMatch(BasicAttribute.class::isInstance)
+                && mapsIds.stream().anyMatch(mapping -> part.name().equals(mapping.mapsId())));
     }
 
     private static boolean simpleNonPolymorphicParent(AssociationAttribute association,
@@ -1014,10 +1280,11 @@ public final class EntityStatements {
         };
         if (keys == null) return null;
         for (AttributeModel attribute : entity.attributes()) {
-            if (!(attribute instanceof AssociationAttribute association) || association.mapsId() == null) continue;
-            if (!association.mapsId().isEmpty()) continue;
-            keys = associationKeyColumns(association, models, binders, delimited);
-            if (keys == null) return null;
+            if (attribute instanceof AssociationAttribute association && association.mapsId() != null
+                    && association.mapsId().isEmpty()) {
+                keys = associationKeyColumns(association, models, binders, delimited);
+                if (keys == null) return null;
+            }
         }
         InheritanceMapping mapping = inheritances.apply(entity.javaType());
         if (keys == null || mapping == null || !mapping.joined()) {
@@ -1131,19 +1398,27 @@ public final class EntityStatements {
     }
 
     /** The statements of table {@code t}; {@code null} for a secondary table no column is mapped to. */
+    /** Whether the table {@code t} holds {@code column}: the primary table its key columns too, another table its own. */
+    private static boolean inTable(Column column, int t) {
+        return t == 0 ? column.id() || column.table() == 0 : !column.id() && column.table() == t;
+    }
+
     private static TableStatements table(Table table, int t, List<Column> columns, List<Integer> keys, List<Identifier> keyNames,
             Integer version, Identifier generated) {
         List<Parameter> keyParameters = keys.stream().map(c -> new Parameter(c, false)).toList();
-        List<Identifier> insertColumns = new ArrayList<>(t == 0 ? List.of() : keyNames);
-        List<Parameter> insertParameters = new ArrayList<>(t == 0 ? List.of() : keyParameters);
+        List<Identifier> insertColumns = new ArrayList<>();
+        List<Parameter> insertParameters = new ArrayList<>();
+        if (t != 0) {
+            insertColumns.addAll(keyNames);
+            insertParameters.addAll(keyParameters);
+        }
         List<Identifier> setColumns = new ArrayList<>();
         List<Parameter> setParameters = new ArrayList<>();
         List<Identifier> selectColumns = new ArrayList<>();
         List<Integer> selected = new ArrayList<>();
         for (int c = 0; c < columns.size(); c++) {
             Column column = columns.get(c);
-            boolean mine = t == 0 ? column.id() || column.table() == 0 : !column.id() && column.table() == t;
-            if (!mine) {
+            if (!inTable(column, t)) {
                 continue;
             }
             selectColumns.add(column.name());
@@ -1498,18 +1773,16 @@ public final class EntityStatements {
             if (column.foreignKey() != null && !referencesResolved || column.attribute() < 0
                     || column.attribute() == deferredIdentifier) {
                 c++; // relationships and deferred record identifiers are populated separately
-                continue;
-            }
-            if (column.path().length == 0) {
+            } else if (column.path().length == 0) {
                 state[column.attribute()] = values[c++];
-                continue;
+            } else {
+                int end = c;
+                while (end < columns.size() && columns.get(end).attribute() == column.attribute()) {
+                    end++;
+                }
+                state[column.attribute()] = embeddable(columns, values, nulls, c, end, 0);
+                c = end;
             }
-            int end = c;
-            while (end < columns.size() && columns.get(end).attribute() == column.attribute()) {
-                end++;
-            }
-            state[column.attribute()] = embeddable(columns, values, nulls, c, end, 0);
-            c = end;
         }
     }
 
