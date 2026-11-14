@@ -1264,14 +1264,19 @@ final class Translator {
         };
     }
 
-    /** {@code NEW type(arguments)} (§4.8.2): the class is the application's, loaded by the class loader of the unit. */
+    /**
+     * {@code NEW type(arguments)} (§4.8.2): the class is the application's, one noether-jpa-processor generated the
+     * constructors of, else loaded by name by the class loader of the unit.
+     */
     private Compiled.Item constructor(Ast.Constructor constructor, List<Expression> sqlItems) {
-        Class<?> type;
-        try {
-            type = Class.forName(constructor.className(), false, unit.loader());
-        } catch (ClassNotFoundException e) {
-            throw new IllegalArgumentException("The constructor expression names " + constructor.className()
-                + ", which cannot be loaded (§4.8.2)", e);
+        Class<?> type = unit.resultClass(constructor.className()).orElse(null);
+        if (type == null) {
+            try {
+                type = Class.forName(constructor.className(), false, unit.loader());
+            } catch (ClassNotFoundException e) {
+                throw new IllegalArgumentException("The constructor expression names " + constructor.className()
+                    + ", which cannot be loaded (§4.8.2)", e);
+            }
         }
         List<Compiled.Item> arguments = new ArrayList<>();
         for (Ast.Expr argument : constructor.arguments()) {

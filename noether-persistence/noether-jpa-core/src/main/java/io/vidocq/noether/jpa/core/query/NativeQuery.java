@@ -86,6 +86,8 @@ public class NativeQuery extends AbstractQuery implements Query {
     private final Map<Integer, Object> values = new HashMap<>();
     private final Executor executor;
     private final QueryRuntime runtime;
+    /** The constructors of the classes the results build, read once per query (§4.8.2, §3.11.15). */
+    private final Map<Class<?>, ResultConstructors> constructors = new HashMap<>();
     private final Class<?> resultClass;
     private final String resultSetMapping;
 
@@ -237,6 +239,10 @@ public class NativeQuery extends AbstractQuery implements Query {
         return rows;
     }
 
+    private ResultConstructors constructors(Class<?> type) {
+        return constructors.computeIfAbsent(type, t -> ResultConstructors.of(t, runtime.mapping()));
+    }
+
     /** Maps one result row for native queries and stored procedures (§3.11.11–12). */
     Object readResult(ResultSet row, Class<?> resultClass, String resultSetMapping) throws SQLException {
         ResultSetMetaData metadata = row.getMetaData();
@@ -288,7 +294,7 @@ public class NativeQuery extends AbstractQuery implements Query {
             arguments[i] = convert(value, type);
             types[i] = primitiveBox(type);
         }
-        for (ResultConstructors.Candidate constructor : ResultConstructors.of(result.targetClass()).candidates()) {
+        for (ResultConstructors.Candidate constructor : constructors(result.targetClass()).candidates()) {
             if (accepts(constructor.parameters(), types, arguments)) {
                 return constructor.newInstance(arguments);
             }

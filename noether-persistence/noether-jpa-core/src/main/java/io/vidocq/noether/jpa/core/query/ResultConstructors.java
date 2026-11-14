@@ -19,6 +19,8 @@
  */
 package io.vidocq.noether.jpa.core.query;
 
+import io.vidocq.noether.jpa.core.mapping.MappedUnit;
+import io.vidocq.noether.jpa.core.spi.ResultConstructorAccess;
 import jakarta.persistence.PersistenceException;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
@@ -30,10 +32,12 @@ import java.util.List;
 
 /**
  * The public constructors of a class that a query builds without it being an entity: {@code SELECT NEW} (§4.8.2) and
- * {@code @ConstructorResult} (§3.11.15). Such a class is named by the query, not compiled with the processor, so its
- * constructors are found reflectively — once per class, kept as long as the class (a {@link ClassValue}), and called
- * through method handles for every row. On the module path, the class's package must be exported to this module, as for
- * any provider.
+ * {@code @ConstructorResult} (§3.11.15). Those noether-jpa-processor generated, for a class a named query or a
+ * result-set mapping of the sources names, come first: they call the constructors from the class's own package
+ * (BUG-20261114-04). Otherwise the constructors are found reflectively — once per class, kept as long as the class (a
+ * {@link ClassValue}), and called through method handles for every row: on the module path, the class's package must
+ * be exported to this module, as for any provider. The generated constructors are in declaration order, the reflective
+ * ones in the order {@link Class#getConstructors()} gives, in practice the same.
  */
 final class ResultConstructors {
 
@@ -55,12 +59,30 @@ final class ResultConstructors {
         this.candidates = List.copyOf(found);
     }
 
-    /** The constructors of {@code type}, read on first use. */
+    private ResultConstructors(ResultConstructorAccess generated) {
+        List<Candidate> found = new ArrayList<>();
+        for (int i = 0; i < generated.constructors().size(); i++) {
+            found.add(new Candidate(generated.type(), generated.constructors().get(i).toArray(Class<?>[]::new), generated, i));
+        }
+        this.candidates = List.copyOf(found);
+    }
+
+    /** The constructors of {@code type}: those generated for it, else those read reflectively on first use. */
+    static ResultConstructors of(Class<?> type, MappedUnit unit) {
+        return unit.resultConstructors(type).map(ResultConstructors::of).orElseGet(() -> of(type));
+    }
+
+    /** The constructors of {@code type}, read reflectively on first use. */
     static ResultConstructors of(Class<?> type) {
         return OF.get(type);
     }
 
-    /** The public constructors, in the order {@link Class#getConstructors()} lists them. */
+    /** The constructors noether-jpa-processor generated. */
+    static ResultConstructors of(ResultConstructorAccess generated) {
+        return new ResultConstructors(generated);
+    }
+
+    /** The public constructors, in declaration order, or in the order {@link Class#getConstructors()} lists them. */
     List<Candidate> candidates() {
         return candidates;
     }
@@ -74,12 +96,25 @@ final class ResultConstructors {
         private final Class<?>[] parameters;
         private final MethodHandle handle;
         private final ReflectiveOperationException denied;
+        private final ResultConstructorAccess generated;
+        private final int index;
 
         private Candidate(Class<?> type, Class<?>[] parameters, MethodHandle handle, ReflectiveOperationException denied) {
             this.type = type;
             this.parameters = parameters;
             this.handle = handle;
             this.denied = denied;
+            this.generated = null;
+            this.index = -1;
+        }
+
+        private Candidate(Class<?> type, Class<?>[] parameters, ResultConstructorAccess generated, int index) {
+            this.type = type;
+            this.parameters = parameters;
+            this.handle = null;
+            this.denied = null;
+            this.generated = generated;
+            this.index = index;
         }
 
         private static Candidate of(Class<?> type, Constructor<?> constructor) {
@@ -108,6 +143,13 @@ final class ResultConstructors {
          * takes its boxed value, never {@code null}).
          */
         Object newInstance(Object[] arguments) {
+            if (generated != null) {
+                try {
+                    return generated.construct(index, arguments);
+                } catch (RuntimeException e) {
+                    throw new PersistenceException("The constructor of " + type.getName() + " failed: " + e, e);
+                }
+            }
             if (handle == null) {
                 throw new PersistenceException("The constructor of " + type.getName() + " cannot be called: "
                     + denied.getMessage(), denied);

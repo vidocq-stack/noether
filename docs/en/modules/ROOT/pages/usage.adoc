@@ -133,8 +133,9 @@ A `DataSource` passed to Noether is used as it is: Noether neither pools it nor 
 Compile the entities with `noether-jpa-processor`, as in xref:getting-started.adoc#pom[Getting started]. Then:
 
 * *On the module path*, the module of the entities declares what the processor generated, one line per package
-  that holds an entity, an embeddable, an id class, a converter or an enum mapped by its `@EnumeratedValue` field
-  (the processor prints it, and the factory names it when it is missing):
+  that holds an entity, an embeddable, an id class, a converter, an enum mapped by its `@EnumeratedValue` field, or
+  a class a named query or a result-set mapping builds (the processor prints it, and the factory names it when it is
+  missing):
 +
 [source,java]
 ----
@@ -229,8 +230,12 @@ mappings (`@SqlResultSetMapping`) and stored procedures (`createStoredProcedureQ
 JPQL supports the 3.2 language: joins and fetch joins, `TREAT`, `TYPE`, subqueries, constructor expressions
 (`select new`), set operations (`union`, `intersect`, `except`), bulk `update` and `delete`, and the 3.2 functions.
 A constructor expression or a `@ConstructorResult` calls a public constructor of a class that need not be an entity;
-Noether looks the constructor up once per class, not per row. A stored-procedure query created outside a transaction
-runs in the transaction that is current when it executes.
+Noether looks the constructor up once per class, not per row. For a class that a `@NamedQuery` constructor expression
+or a `@SqlResultSetMapping` names, `noether-jpa-processor` generates the constructors, called from the class's own
+package. A class that only a query built at run time names (`createQuery("select new …")`, a Criteria `construct`) is
+built reflectively: on the module path, its package must be exported to Noether
+(`exports com.acme.shop.report to io.vidocq.noether.jpa.core;`). A stored-procedure query created outside a
+transaction runs in the transaction that is current when it executes.
 
 [#loading]
 == Loading relationships

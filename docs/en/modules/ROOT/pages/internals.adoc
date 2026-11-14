@@ -44,6 +44,10 @@ The dialect is resolved later, the first time the factory talks to the database.
 | `noether-jpa-processor` (compile time), or `AccessGenerator` (start time, hidden class)
 | Makes the id class, reads and writes one attribute per identifier attribute of the entity.
 
+| `Summary$$NoetherConstructors` (a result class)
+| `noether-jpa-processor`, or nothing: the public constructors read reflectively at the first execution
+| Calls the public constructors of a class a named query or a result-set mapping builds (`ResultConstructorAccess`).
+
 | `_NoetherJpaAccess`
 | `noether-jpa-processor`
 | The `ManagedAccessProvider` of a package, handed over through `ServiceLoader`.

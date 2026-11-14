@@ -23,10 +23,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.vidocq.noether.jpa.core.spi.ManagedAccess;
 import io.vidocq.noether.jpa.processorit.closed.Account;
+import io.vidocq.noether.jpa.processorit.closed.AccountSummary;
 import io.vidocq.noether.jpa.processorit.closed.Badge;
 import io.vidocq.noether.jpa.processorit.closed.Booth;
 import io.vidocq.noether.jpa.processorit.closed.BoothKey;
 import io.vidocq.noether.jpa.processorit.closed.Note;
+import io.vidocq.noether.jpa.processorit.closed.PremiumAccount;
 import io.vidocq.noether.jpa.processorit.closed.Seat;
 import io.vidocq.noether.jpa.processorit.closed.SeatKey;
 import io.vidocq.noether.jpa.processorit.closed.Tier;
@@ -37,7 +39,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Compiled with noether-jpa-processor, the code a unit runs of a package that is neither exported nor opened, beyond
- * its entities: a converter, an enum mapped by its {@code @EnumeratedValue} field, an id class.
+ * its entities: a converter, an enum mapped by its {@code @EnumeratedValue} field, an id class, the class a named
+ * query or a result-set mapping builds.
  */
 class ClosedPackageCodeModulePathTest {
 
@@ -86,6 +89,26 @@ class ClosedPackageCodeModulePathTest {
             factory.runInTransaction(em -> em.persist(booth));
             assertThat(factory.getPersistenceUnitUtil().getIdentifier(booth)).isEqualTo(new BoothKey(3, "C"));
             factory.runInTransaction(em -> assertThat(em.find(Booth.class, new BoothKey(3, "C")).holder()).isEqualTo("Ada"));
+        }
+    }
+
+    @Test
+    void aNamedQueryBuildsAResultClassOfTheClosedPackage() { // §4.8.2
+        try (var factory = factory("processor-constructor-expression", Account.class, PremiumAccount.class)) {
+            factory.runInTransaction(em -> em.persist(new PremiumAccount(11, "summed", 42)));
+            factory.runInTransaction(em -> assertThat(
+                    em.createNamedQuery("Account.summaries", AccountSummary.class).getSingleResult())
+                .isEqualTo(new AccountSummary(11, "summed")));
+        }
+    }
+
+    @Test
+    void aResultSetMappingBuildsAResultClassOfTheClosedPackage() { // §3.11.15
+        try (var factory = factory("processor-constructor-result", Account.class, PremiumAccount.class)) {
+            factory.runInTransaction(em -> em.persist(new PremiumAccount(12, "mapped", 7)));
+            factory.runInTransaction(em -> assertThat(
+                    em.createNativeQuery("select id, name from Account", "Account.summaryRows").getSingleResult())
+                .isEqualTo(new AccountSummary(12, "mapped")));
         }
     }
 

@@ -1776,7 +1776,10 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
 ## BUG-20261114-04 — A constructor expression cannot build a result class of a closed package
 
 - **Date**: 2026-11-14
-- **Status**: OPEN
+- **Status**: FIXED on `fix/result-constructors-codegen` for the classes the sources name: the processor generates
+  `<Class>$$NoetherConstructors` (a `ResultConstructorAccess`) for each class a `@NamedQuery` constructor expression or
+  a `@SqlResultSetMapping` names, and `ResultConstructors` takes it before the reflective lookup. A class only a query
+  built at run time names stays reflective: its package must be exported to the core.
 - **Affected module**: `noether-jpa-core` (`ResultConstructors`), `noether-jpa-processor`
 - **Symptom**: `select new ….closed.AccountSummary(a.id, a.name) from Account a`, with the record in a package that
   is neither exported nor opened, fails at execution: `The constructor of ….AccountSummary cannot be called: access to
@@ -1786,6 +1789,11 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
   which needs the package exported to it; the processor generates nothing for result classes.
 - **Investigations**:
   - 2026-11-14: reproduced red with BUG-20261114-01.
+  - 2026-11-14: fixed for named queries and result-set mappings (`ResultConstructorsTest` of the processor,
+    `ClosedPackageCodeModulePathTest.aNamedQueryBuildsAResultClassOfTheClosedPackage` and
+    `aResultSetMappingBuildsAResultClassOfTheClosedPackage`). The reproduction moved from a dynamic `createQuery`,
+    whose string APT cannot see, to a `@NamedQuery`. Left reflective: a class with a public constructor that declares a
+    checked exception, an abstract or inner class.
 
 ## BUG-20261114-05 — A record id class whose components follow another order gets the identifier values swapped
 

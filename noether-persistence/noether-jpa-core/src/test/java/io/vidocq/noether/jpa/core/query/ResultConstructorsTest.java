@@ -22,6 +22,7 @@ package io.vidocq.noether.jpa.core.query;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.vidocq.noether.jpa.core.spi.ResultConstructorAccess;
 import jakarta.persistence.PersistenceException;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -70,6 +71,54 @@ class ResultConstructorsTest {
             .isInstanceOf(PersistenceException.class)
             .hasMessageContaining(Failing.class.getName())
             .cause().isInstanceOf(IllegalStateException.class).hasMessage("no witness");
+    }
+
+    @Test
+    void theGeneratedConstructorsAreTheCandidatesInTheirOrder() {
+        ResultConstructors generated = ResultConstructors.of(new PairConstructors());
+
+        assertThat(generated.candidates()).extracting(candidate -> List.of(candidate.parameters()))
+            .containsExactly(List.of(String.class), List.of(String.class, int.class));
+        assertThat(generated.candidates().get(1).newInstance(new Object[] {"seats", 12})).isEqualTo(new Pair("seats", 12));
+    }
+
+    @Test
+    void theExceptionOfAGeneratedConstructorIsTheCauseOfThePersistenceException() {
+        ResultConstructors.Candidate failing = ResultConstructors.of(new FailingConstructors()).candidates().getFirst();
+        Object[] arguments = {"no witness"};
+
+        assertThatThrownBy(() -> failing.newInstance(arguments))
+            .isInstanceOf(PersistenceException.class)
+            .hasMessageContaining(Failing.class.getName())
+            .cause().isInstanceOf(IllegalStateException.class).hasMessage("no witness");
+    }
+
+    /** What noether-jpa-processor generates for {@link Pair}: its public constructors, in declaration order. */
+    private static final class PairConstructors extends ResultConstructorAccess {
+        PairConstructors() {
+            super(Pair.class, List.of(List.of(String.class), List.of(String.class, int.class)));
+        }
+
+        @Override
+        public Object construct(int constructor, Object[] arguments) {
+            return switch (constructor) {
+                case 0 -> new Pair((String) arguments[0]);
+                case 1 -> new Pair((String) arguments[0], (Integer) arguments[1]);
+                default -> throw new IndexOutOfBoundsException(constructor);
+            };
+        }
+    }
+
+    /** What noether-jpa-processor generates for {@link Failing}. */
+    private static final class FailingConstructors extends ResultConstructorAccess {
+        FailingConstructors() {
+            super(Failing.class, List.of(List.of(String.class)));
+        }
+
+        @Override
+        public Object construct(int constructor, Object[] arguments) {
+            return new Failing((String) arguments[0]);
+        }
     }
 
     /** Two public constructors and a private one, which a query never calls. */

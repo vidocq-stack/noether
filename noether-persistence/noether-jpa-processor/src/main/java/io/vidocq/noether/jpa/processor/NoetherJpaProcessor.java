@@ -23,9 +23,12 @@ import io.vidocq.noether.jpa.core.model.AccessKind;
 import io.vidocq.noether.jpa.core.model.build.AccessPlanner;
 import io.vidocq.noether.jpa.core.model.build.AccessPlanner.Member;
 import io.vidocq.noether.jpa.core.model.source.ClassInfo;
+import io.vidocq.noether.jpa.core.model.source.MethodInfo;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.Writer;
+import java.lang.classfile.ClassFile;
+import java.lang.constant.ConstantDescs;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -37,18 +40,25 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.Filer;
 import javax.annotation.processing.Messager;
 import javax.annotation.processing.ProcessingEnvironment;
 import javax.annotation.processing.RoundEnvironment;
 import javax.lang.model.SourceVersion;
+import javax.lang.model.element.AnnotationMirror;
+import javax.lang.model.element.AnnotationValue;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.ModuleElement;
+import javax.lang.model.element.NestingKind;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
+import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.ElementFilter;
 import javax.lang.model.util.Elements;
 import javax.tools.Diagnostic;
@@ -85,9 +95,22 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
     private static final String ID = "jakarta.persistence.Id";
     private static final String ACCESS = "$$NoetherAccess";
     private static final String ID_ACCESS = "$$NoetherIdAccess";
+    private static final String RESULT_CONSTRUCTORS = "$$NoetherConstructors";
+    private static final String NAMED_QUERY = "jakarta.persistence.NamedQuery";
+    private static final String NAMED_QUERIES = "jakarta.persistence.NamedQueries";
+    private static final String RESULT_SET_MAPPING = "jakarta.persistence.SqlResultSetMapping";
+    private static final String RESULT_SET_MAPPINGS = "jakarta.persistence.SqlResultSetMappings";
     private static final String SERVICES = "META-INF/services/" + SPI;
     private static final List<String> SUFFIXES =
-        List.of(ACCESS, "$$NoetherFieldAccess", "$$NoetherPropertyAccess", ID_ACCESS);
+        List.of(ACCESS, "$$NoetherFieldAccess", "$$NoetherPropertyAccess", ID_ACCESS, RESULT_CONSTRUCTORS);
+    /** The suffixes of what is generated for a class without a mapping annotation: kept while the class exists. */
+    private static final Set<String> UNANNOTATED = Set.of(ID_ACCESS, RESULT_CONSTRUCTORS);
+    /**
+     * A constructor expression (§4.8.2) and the fully qualified name of its class. A string literal of the query that
+     * looks like one only adds the constructors of a class of that name, if there is one.
+     */
+    private static final Pattern SELECT_NEW = Pattern.compile("\\bnew\\s+([\\w$]+(?:\\.[\\w$]+)*)\\s*\\(",
+        Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
 
     /** The source of a provider, filled with formatted(): package line, class name, SPI, kept accesses, instances. */
     private static final String PROVIDER_SOURCE = """
@@ -109,7 +132,17 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
         }
         """;
 
+    /** The method of a provider that hands the result constructors of its package over. */
+    private static final String RESULT_CONSTRUCTORS_METHOD = """
+
+            @java.lang.Override
+            public java.util.List<io.vidocq.noether.jpa.core.spi.ResultConstructorAccess> resultConstructors() {
+                return java.util.List.of(%s);
+            }
+        """;
+
     private Elements elements;
+    private javax.lang.model.util.Types types;
     private Filer filer;
     private Messager messager;
     private ElementInfos infos;
@@ -137,6 +170,7 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
     public synchronized void init(ProcessingEnvironment processingEnv) {
         super.init(processingEnv);
         elements = processingEnv.getElementUtils();
+        types = processingEnv.getTypeUtils();
         filer = processingEnv.getFiler();
         messager = processingEnv.getMessager();
         infos = new ElementInfos(elements, processingEnv.getTypeUtils());
@@ -180,6 +214,20 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
         for (TypeElement type : entities) {
             entity(type);
         }
+        unmanagedCode(round);
+        if (generated.size() == before && deferred.isEmpty() && !pending.isEmpty()) {
+            // a round that generated nothing: hand over what the previous rounds generated
+            pending.forEach(this::provider);
+            pending.clear();
+        }
+        return false;
+    }
+
+    /**
+     * The code a unit runs of classes it does not manage, compiled in this round: converters, enums mapped by their
+     * {@code @EnumeratedValue} field, the classes the queries build.
+     */
+    private void unmanagedCode(RoundEnvironment round) {
         TypeElement converter = elements.getTypeElement(CONVERTER);
         if (converter != null) {
             ElementFilter.typesIn(round.getElementsAnnotatedWith(converter)).forEach(this::converter);
@@ -188,12 +236,9 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
         if (enumeratedValue != null) {
             ElementFilter.fieldsIn(round.getElementsAnnotatedWith(enumeratedValue)).forEach(this::enumeratedValue);
         }
-        if (generated.size() == before && deferred.isEmpty() && !pending.isEmpty()) {
-            // a round that generated nothing: hand over what the previous rounds generated
-            pending.forEach(this::provider);
-            pending.clear();
+        for (Element origin : annotatedWithAny(round, NAMED_QUERY, NAMED_QUERIES, RESULT_SET_MAPPING, RESULT_SET_MAPPINGS)) {
+            resultClasses(origin).forEach(result -> resultConstructors(result, origin));
         }
-        return false;
     }
 
     private void entity(TypeElement type) {
@@ -255,7 +300,7 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
     private void idClass(TypeElement entity, List<ClassInfo> hierarchy, List<Member> members, Set<Element> entityOrigins) {
         TypeElement type = hierarchy.stream().map(c -> c.annotation(ID_CLASS)).flatMap(Optional::stream)
             .reduce((first, second) -> second)
-            .map(idClass -> infos.element(binaryName(idClass.type("value").descriptorString())))
+            .map(idClass -> infos.element(AccessWriter.binaryName(idClass.type("value"))))
             .orElse(null);
         if (type == null || !elements.getModuleOf(type).equals(elements.getModuleOf(entity)) || !fromSource(type)) {
             return; // compiled elsewhere: its package is not ours to add classes to
@@ -279,11 +324,6 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
             return Optional.empty();
         }
         return Optional.of(components.stream().map(byName::get).toList());
-    }
-
-    /** The binary name of the class a descriptor such as {@code Lp/Outer$Inner;} names. */
-    private static String binaryName(String descriptor) {
-        return descriptor.substring(1, descriptor.length() - 1).replace('/', '.');
     }
 
     /**
@@ -398,13 +438,12 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
     private boolean access(TypeElement type, String suffix, List<Member> members, boolean record, Set<Element> from,
             List<AccessPlanner.Callback> callbacks) {
         String pkg = AccessWriter.packageOf(type);
-        String className = elements.getBinaryName(type).toString().substring(pkg.isEmpty() ? 0 : pkg.length() + 1) + suffix;
+        String className = generatedName(type, pkg, suffix);
         String qualified = qualified(pkg, className);
         if (generated.contains(qualified)) {
             return true;
         }
-        if (providers.contains(pkg)) {
-            note(type, "its package already has its provider, written in an earlier round");
+        if (providerWritten(type, pkg)) {
             return false;
         }
         String source;
@@ -429,6 +468,26 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
             note(type, e.getMessage());
             return false;
         }
+        return handOver(type, pkg, className, source, from);
+    }
+
+    /** The simple name of the class generated for {@code type} in its package: its binary name and {@code suffix}. */
+    private String generatedName(TypeElement type, String pkg, String suffix) {
+        return elements.getBinaryName(type).toString().substring(pkg.isEmpty() ? 0 : pkg.length() + 1) + suffix;
+    }
+
+    /** Whether the provider of {@code pkg} is already written: what {@code type} needs is left to the bootstrap. */
+    private boolean providerWritten(TypeElement type, String pkg) {
+        if (providers.contains(pkg)) {
+            note(type, "its package already has its provider, written in an earlier round");
+            return true;
+        }
+        return false;
+    }
+
+    /** Writes a generated class and hands it over through the provider of its package. */
+    private boolean handOver(TypeElement type, String pkg, String className, String source, Set<Element> from) {
+        String qualified = qualified(pkg, className);
         if (!write(qualified, source, from)) {
             return false;
         }
@@ -441,13 +500,121 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
         return true;
     }
 
+    /** The elements of the round annotated with any of {@code annotations}, each once. */
+    private Set<Element> annotatedWithAny(RoundEnvironment round, String... annotations) {
+        Set<Element> found = new LinkedHashSet<>();
+        for (String annotation : annotations) {
+            TypeElement type = elements.getTypeElement(annotation);
+            if (type != null) {
+                found.addAll(round.getElementsAnnotatedWith(type));
+            }
+        }
+        return found;
+    }
+
+    /**
+     * The classes the queries declared on {@code origin} build without them being entities: those its named queries
+     * name in a constructor expression (§4.8.2), and the targets of the constructor results of its result-set
+     * mappings (§3.11.15).
+     */
+    private Set<TypeElement> resultClasses(Element origin) {
+        Set<TypeElement> found = new LinkedHashSet<>();
+        for (AnnotationMirror annotation : origin.getAnnotationMirrors()) {
+            switch (((TypeElement) annotation.getAnnotationType().asElement()).getQualifiedName().toString()) {
+                case NAMED_QUERY -> constructed(annotation, found);
+                case NAMED_QUERIES -> nested(annotation, "value").forEach(query -> constructed(query, found));
+                case RESULT_SET_MAPPING -> mapped(annotation, found);
+                case RESULT_SET_MAPPINGS -> nested(annotation, "value").forEach(mapping -> mapped(mapping, found));
+                default -> {
+                    // another annotation: no query
+                }
+            }
+        }
+        return found;
+    }
+
+    /** The classes the constructor expressions of a {@code @NamedQuery} name. */
+    private void constructed(AnnotationMirror namedQuery, Set<TypeElement> found) {
+        Matcher expression = SELECT_NEW.matcher(String.valueOf(value(namedQuery, "query").getValue()));
+        while (expression.find()) {
+            TypeElement type = elements.getTypeElement(expression.group(1).replace('$', '.'));
+            if (type != null) {
+                found.add(type);
+            }
+        }
+    }
+
+    /** The target classes of the constructor results of a {@code @SqlResultSetMapping}. */
+    private void mapped(AnnotationMirror mapping, Set<TypeElement> found) {
+        for (AnnotationMirror result : nested(mapping, "classes")) {
+            if (value(result, "targetClass").getValue() instanceof DeclaredType target
+                    && target.asElement() instanceof TypeElement type) {
+                found.add(type);
+            }
+        }
+    }
+
+    private AnnotationValue value(AnnotationMirror annotation, String member) {
+        return elements.getElementValuesWithDefaults(annotation).entrySet().stream()
+            .filter(entry -> entry.getKey().getSimpleName().contentEquals(member))
+            .map(Map.Entry::getValue).findFirst().orElseThrow();
+    }
+
+    /** The annotations an annotation-array member holds. */
+    private List<AnnotationMirror> nested(AnnotationMirror annotation, String member) {
+        return value(annotation, member).getValue() instanceof List<?> values
+            ? values.stream().filter(AnnotationValue.class::isInstance).map(v -> ((AnnotationValue) v).getValue())
+                .filter(AnnotationMirror.class::isInstance).map(AnnotationMirror.class::cast).toList()
+            : List.of();
+    }
+
+    /**
+     * The public constructors of a class a query builds, called from its own package: a class of a package that is
+     * neither exported nor opened then needs no {@code exports} (BUG-20261114-04). Left to the bootstrap: an
+     * abstract class, an inner class, a class compiled by a module that does not read the provider, and a class
+     * whose public constructor declares a checked exception.
+     */
+    private void resultConstructors(TypeElement type, Element origin) {
+        boolean inner = type.getNestingKind() == NestingKind.MEMBER && type.getKind() == ElementKind.CLASS
+            && !type.getModifiers().contains(Modifier.STATIC);
+        if (type.getKind() != ElementKind.CLASS && type.getKind() != ElementKind.RECORD || inner
+                || type.getModifiers().contains(Modifier.ABSTRACT) || !handsOver(type)) {
+            return;
+        }
+        String pkg = AccessWriter.packageOf(type);
+        String className = generatedName(type, pkg, RESULT_CONSTRUCTORS);
+        if (generated.contains(qualified(pkg, className)) || providerWritten(type, pkg)) {
+            return;
+        }
+        if (ElementFilter.constructorsIn(type.getEnclosedElements()).stream()
+                .filter(constructor -> constructor.getModifiers().contains(Modifier.PUBLIC))
+                .flatMap(constructor -> constructor.getThrownTypes().stream()).anyMatch(this::checked)) {
+            note(type, "a public constructor declares a checked exception");
+            return;
+        }
+        List<MethodInfo> constructors = infos.read(type).methods().stream()
+            .filter(m -> m.name().equals(ConstantDescs.INIT_NAME) && (m.flags() & ClassFile.ACC_PUBLIC) != 0).toList();
+        try {
+            handOver(type, pkg, className, writer.writeConstructors(type, className, constructors), Set.of(type, origin));
+        } catch (AccessWriter.Unsupported e) {
+            note(type, e.getMessage());
+        }
+    }
+
+    private boolean checked(TypeMirror thrown) {
+        return !types.isSubtype(thrown, elements.getTypeElement("java.lang.RuntimeException").asType())
+            && !types.isSubtype(thrown, elements.getTypeElement("java.lang.Error").asType());
+    }
+
     /** The provider of a package: it hands over the accesses generated in it, and those an earlier build kept. */
     private void provider(String pkg, List<String> accesses) {
         Set<String> all = new LinkedHashSet<>(accesses);
         all.addAll(earlier(pkg));
         StringBuilder instances = new StringBuilder();
+        StringBuilder constructors = new StringBuilder();
         for (String access : all) {
-            instances.append(instances.isEmpty() ? "" : ", ").append("new ").append(access).append("()");
+            StringBuilder list = access.endsWith(RESULT_CONSTRUCTORS) ? constructors : instances;
+            list.append(list.isEmpty() ? "" : ", ").append("new ").append(access).append("()");
         }
         Set<String> helpers = new LinkedHashSet<>(metamodelWriter.helpers());
         TypeElement previous = elements.getTypeElement(qualified(pkg, PROVIDER));
@@ -461,7 +628,8 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
         String source = PROVIDER_SOURCE.formatted(pkg.isEmpty() ? "" : "package " + pkg + ";\n\n", PROVIDER, SPI,
             String.join(",", all), instances, String.join(",", helpers));
         int closing = source.lastIndexOf('}');
-        source = source.substring(0, closing) + metamodelWriter.initializer(helpers) + source.substring(closing);
+        source = source.substring(0, closing) + metamodelWriter.initializer(helpers)
+            + (constructors.isEmpty() ? "" : RESULT_CONSTRUCTORS_METHOD.formatted(constructors)) + source.substring(closing);
         if (write(qualified(pkg, PROVIDER), source, origins.getOrDefault(pkg, Set.of()))) {
             providers.add(pkg);
         }
@@ -497,8 +665,8 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
             if (access.endsWith(suffix)) {
                 String binary = access.substring(0, access.length() - suffix.length());
                 TypeElement managed = elements.getTypeElement(qualified(pkg, binary.replace('$', '.')));
-                // an id class carries no annotation: kept while it exists, looked up by the attributes it lists
-                return managed != null && (suffix.equals(ID_ACCESS) || annotated(managed, ENTITY, EMBEDDABLE, CONVERTER)
+                // an id class or a result class carries no annotation: kept while it exists
+                return managed != null && (UNANNOTATED.contains(suffix) || annotated(managed, ENTITY, EMBEDDABLE, CONVERTER)
                     || ElementFilter.fieldsIn(managed.getEnclosedElements()).stream()
                         .anyMatch(field -> annotated(field, ENUMERATED_VALUE)));
             }

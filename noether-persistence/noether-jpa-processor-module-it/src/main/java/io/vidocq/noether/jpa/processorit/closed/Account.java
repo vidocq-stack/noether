@@ -19,12 +19,20 @@
  */
 package io.vidocq.noether.jpa.processorit.closed;
 
+import jakarta.persistence.ColumnResult;
+import jakarta.persistence.ConstructorResult;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
+import jakarta.persistence.NamedQuery;
+import jakarta.persistence.SqlResultSetMapping;
 import jakarta.persistence.Version;
 
 /** Abstract hierarchy root in an application package that is neither exported nor opened. */
 @Entity
+@NamedQuery(name = "Account.summaries",
+    query = "select new io.vidocq.noether.jpa.processorit.closed.AccountSummary(a.id, a.name) from Account a")
+@SqlResultSetMapping(name = "Account.summaryRows", classes = @ConstructorResult(targetClass = AccountSummary.class,
+    columns = {@ColumnResult(name = "id", type = Long.class), @ColumnResult(name = "name")}))
 public abstract class Account {
     @Id private long id;
     private String name;

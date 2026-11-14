@@ -37,4 +37,12 @@ public interface ManagedAccessProvider {
     default java.util.Set<Class<?>> populateMetamodel(jakarta.persistence.metamodel.Metamodel metamodel) {
         return java.util.Set.of();
     }
+
+    /**
+     * The public constructors of the classes of the package that the queries of the sources build without them being
+     * entities ({@code SELECT NEW}, {@code @ConstructorResult}).
+     */
+    default List<ResultConstructorAccess> resultConstructors() {
+        return List.of();
+    }
 }

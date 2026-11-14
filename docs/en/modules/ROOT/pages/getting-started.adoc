@@ -348,6 +348,10 @@ Next to `Book.class`, `target/classes/com/acme/library` holds what `noether-jpa-
   the entity, by field when the id class declares a field of that name, else by property. A record lists them in the
   order of its components, and the factory start reorders them to the entity's.
 
+| `Summary$$NoetherConstructors`
+| For a class a `@NamedQuery` constructor expression (`select new`) or a `@SqlResultSetMapping` builds, its public
+  constructors, called from its package. A class only a query built at run time names is built reflectively.
+
 | `Book_`
 | The canonical metamodel of Jakarta Persistence (§6.2.1.1), for type-safe Criteria queries: `Book_.title`,
   `Book_.published`.

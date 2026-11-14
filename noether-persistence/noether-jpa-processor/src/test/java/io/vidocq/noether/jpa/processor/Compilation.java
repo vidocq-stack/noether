@@ -21,6 +21,7 @@ package io.vidocq.noether.jpa.processor;
 
 import io.vidocq.noether.jpa.core.spi.ManagedAccess;
 import io.vidocq.noether.jpa.core.spi.ManagedAccessProvider;
+import io.vidocq.noether.jpa.core.spi.ResultConstructorAccess;
 import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -134,14 +135,26 @@ record Compilation(boolean success, List<Diagnostic<? extends JavaFileObject>> d
      */
     static Map<String, ManagedAccess> accesses(String pkg, Path... classes)
             throws MalformedURLException, ReflectiveOperationException {
+        return provider(pkg, classes).accesses().stream()
+            .collect(Collectors.toMap(a -> a.type().getName(), Function.identity()));
+    }
+
+    /** The result constructors the provider of package {@code pkg} hands over, by class name. */
+    static Map<String, ResultConstructorAccess> resultConstructors(String pkg, Path... classes)
+            throws MalformedURLException, ReflectiveOperationException {
+        return provider(pkg, classes).resultConstructors().stream()
+            .collect(Collectors.toMap(a -> a.type().getName(), Function.identity()));
+    }
+
+    private static ManagedAccessProvider provider(String pkg, Path... classes)
+            throws MalformedURLException, ReflectiveOperationException {
         URL[] urls = new URL[classes.length];
         for (int i = 0; i < classes.length; i++) {
             urls[i] = classes[i].toUri().toURL();
         }
         URLClassLoader loader = new URLClassLoader(urls, Compilation.class.getClassLoader());
         Class<?> type = Class.forName(pkg + "." + NoetherJpaProcessor.PROVIDER, true, loader);
-        ManagedAccessProvider provider = (ManagedAccessProvider) type.getConstructor().newInstance();
-        return provider.accesses().stream().collect(Collectors.toMap(a -> a.type().getName(), Function.identity()));
+        return (ManagedAccessProvider) type.getConstructor().newInstance();
     }
 
     String source(String relativePath) {
