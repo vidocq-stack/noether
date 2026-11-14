@@ -270,10 +270,10 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
     }
 
     /** The keys of a record id class in the order of its components; empty when the components name other keys. */
-    private static Optional<List<Member>> inComponentOrder(List<Member> keys, TypeElement record) {
+    private static Optional<List<Member>> inComponentOrder(List<Member> keys, TypeElement idClass) {
         Map<String, Member> byName = new LinkedHashMap<>();
         keys.forEach(key -> byName.put(key.name(), key));
-        List<String> components = record.getRecordComponents().stream()
+        List<String> components = idClass.getRecordComponents().stream()
             .map(component -> component.getSimpleName().toString()).toList();
         if (components.size() != keys.size() || !byName.keySet().equals(new HashSet<>(components))) {
             return Optional.empty();
