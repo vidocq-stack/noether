@@ -181,7 +181,8 @@ public final class MappedUnit {
         return association.singleValued() && association.owning() && association.fetch() == FetchType.LAZY
             && association.access() == AccessKind.PROPERTY && !association.name().contains(".")
             && association.mapsId() == null
-            && !(owner.model().id() instanceof IdModel.Derived derived && derived.relationship().equals(association))
+            && !(owner.model().id() instanceof IdModel.Derived(AssociationAttribute relationship)
+                && relationship.equals(association))
             && !owner.statements().reference(owner.model().attributes().indexOf(association))
                 .map(EntityStatements.Reference::businessKey).orElse(false);
     }
