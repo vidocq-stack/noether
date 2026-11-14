@@ -30,17 +30,17 @@ import java.util.List;
  */
 final class ReorderedAccess extends ManagedAccess {
 
-    private final ManagedAccess record;
+    private final ManagedAccess inOrder;
     private final int[] component;
 
     /**
-     * @param record the access of the record, its attributes in component order
+     * @param inOrder the access of the record, its attributes in component order
      * @param attributes the attributes in the owner's order, as {@code name:FIELD} or {@code name:PROPERTY}
      * @param component for each attribute, its index among the components
      */
-    ReorderedAccess(ManagedAccess record, List<String> attributes, int[] component) {
-        super(record.type(), attributes);
-        this.record = record;
+    ReorderedAccess(ManagedAccess inOrder, List<String> attributes, int[] component) {
+        super(inOrder.type(), attributes);
+        this.inOrder = inOrder;
         this.component = component.clone();
     }
 
@@ -50,11 +50,11 @@ final class ReorderedAccess extends ManagedAccess {
         for (int i = 0; i < components.length; i++) {
             ordered[component[i]] = components[i];
         }
-        return record.construct(ordered);
+        return inOrder.construct(ordered);
     }
 
     @Override
     public Object get(Object instance, int attribute) {
-        return record.get(instance, component[attribute]);
+        return inOrder.get(instance, component[attribute]);
     }
 }
