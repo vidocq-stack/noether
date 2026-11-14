@@ -167,13 +167,15 @@ class PersistenceXmlParserTest {
     }
 
     @Test
-    void malformedXmlAndDoctypesAreRejected() {
-        assertThatThrownBy(() -> PersistenceXmlParser.parse(new ByteArrayInputStream("<persistence".getBytes(StandardCharsets.UTF_8)),
-            root(), getClass().getClassLoader())).isInstanceOf(PersistenceException.class);
+    void malformedXmlAndDoctypesAreRejected() throws Exception {
+        var unitRoot = root();
+        var loader = getClass().getClassLoader();
+        var malformed = new ByteArrayInputStream("<persistence".getBytes(StandardCharsets.UTF_8));
+        assertThatThrownBy(() -> PersistenceXmlParser.parse(malformed, unitRoot, loader)).isInstanceOf(PersistenceException.class);
         String withEntity = "<?xml version=\"1.0\"?><!DOCTYPE persistence [<!ENTITY x SYSTEM \"file:///etc/passwd\">]>"
             + "<persistence xmlns=\"" + JAKARTA + "\" version=\"3.2\"><persistence-unit name=\"&x;\"/></persistence>";
-        assertThatThrownBy(() -> PersistenceXmlParser.parse(new ByteArrayInputStream(withEntity.getBytes(StandardCharsets.UTF_8)),
-            root(), getClass().getClassLoader())).isInstanceOf(PersistenceException.class);
+        var withDoctype = new ByteArrayInputStream(withEntity.getBytes(StandardCharsets.UTF_8));
+        assertThatThrownBy(() -> PersistenceXmlParser.parse(withDoctype, unitRoot, loader)).isInstanceOf(PersistenceException.class);
     }
 
     @Test

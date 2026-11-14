@@ -88,9 +88,10 @@ class BeanValidationTest {
 
     @Test
     void autoDoesNotHideInvalidAvailableProviderConfiguration() {
-        assertThatThrownBy(() -> BeanValidation.open(settings(ValidationMode.AUTO,
-            Map.of("jakarta.persistence.validation.group.pre-remove", "missing.Group")),
-            getClass().getClassLoader(), null)).isInstanceOf(PersistenceException.class);
+        var missingGroup = settings(ValidationMode.AUTO,
+            Map.of("jakarta.persistence.validation.group.pre-remove", "missing.Group"));
+        var loader = getClass().getClassLoader();
+        assertThatThrownBy(() -> BeanValidation.open(missingGroup, loader, null)).isInstanceOf(PersistenceException.class);
     }
 
     @Test
@@ -104,7 +105,8 @@ class BeanValidationTest {
                 return super.loadClass(name, resolve);
             }
         };
-        assertThatThrownBy(() -> BeanValidation.open(settings(ValidationMode.AUTO, Map.of()), broken, null))
+        var auto = settings(ValidationMode.AUTO, Map.of());
+        assertThatThrownBy(() -> BeanValidation.open(auto, broken, null))
             .isInstanceOf(PersistenceException.class);
         ClassLoader absent = new ClassLoader(getClass().getClassLoader()) {
             @Override

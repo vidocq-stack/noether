@@ -66,7 +66,8 @@ class EntityManagerLifecycleTest {
         assertThat(em.getProperties()).containsEntry("from.xml", "xml").containsEntry("from.em", "em").containsEntry("overridden", "em");
         em.setProperty("later", "set");
         assertThat(em.getProperties()).containsEntry("later", "set");
-        assertThatThrownBy(() -> em.getProperties().put("x", "y")).isInstanceOf(UnsupportedOperationException.class);
+        var properties = em.getProperties();
+        assertThatThrownBy(() -> properties.put("x", "y")).isInstanceOf(UnsupportedOperationException.class);
         em.close();
     }
 
@@ -94,7 +95,8 @@ class EntityManagerLifecycleTest {
         assertThatThrownBy(em::getFlushMode).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> em.setFlushMode(FlushModeType.COMMIT)).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> em.setProperty("a", "b")).isInstanceOf(IllegalStateException.class);
-        assertThatThrownBy(() -> em.persist(new Object())).isInstanceOf(IllegalStateException.class);
+        var notAnEntity = new Object();
+        assertThatThrownBy(() -> em.persist(notAnEntity)).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> em.find(Object.class, 1)).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> em.createQuery("select x from X x")).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> em.unwrap(EntityManager.class)).isInstanceOf(IllegalStateException.class);
@@ -123,7 +125,8 @@ class EntityManagerLifecycleTest {
     @Test
     void aResourceLocalFactoryHasNoSynchronizationType() { // EntityManagerFactory.createEntityManager(SynchronizationType)
         assertThatThrownBy(() -> emf.createEntityManager(SynchronizationType.SYNCHRONIZED)).isInstanceOf(IllegalStateException.class);
-        assertThatThrownBy(() -> emf.createEntityManager(SynchronizationType.UNSYNCHRONIZED, Map.of()))
+        Map<String, Object> noProperties = Map.of();
+        assertThatThrownBy(() -> emf.createEntityManager(SynchronizationType.UNSYNCHRONIZED, noProperties))
             .isInstanceOf(IllegalStateException.class);
     }
 

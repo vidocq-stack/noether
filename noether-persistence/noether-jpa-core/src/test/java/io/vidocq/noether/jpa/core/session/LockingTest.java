@@ -87,7 +87,8 @@ class LockingTest {
         Crew crew = em.find(Crew.class, 1L);
         assertThatThrownBy(() -> em.lock(crew, LockModeType.OPTIMISTIC)).isInstanceOf(TransactionRequiredException.class);
         em.getTransaction().begin();
-        assertThatThrownBy(() -> em.lock(new Crew(2, "new"), LockModeType.OPTIMISTIC)).isInstanceOf(IllegalArgumentException.class);
+        var unmanaged = new Crew(2, "new");
+        assertThatThrownBy(() -> em.lock(unmanaged, LockModeType.OPTIMISTIC)).isInstanceOf(IllegalArgumentException.class);
         em.getTransaction().rollback();
     }
 
@@ -100,7 +101,8 @@ class LockingTest {
         try (Statement other = database.createStatement()) {
             other.executeUpdate("update Crew set version = 7 where id = 1");
         }
-        assertThatThrownBy(() -> em.getTransaction().commit()).isInstanceOf(RollbackException.class)
+        var transaction = em.getTransaction();
+        assertThatThrownBy(transaction::commit).isInstanceOf(RollbackException.class)
             .hasCauseInstanceOf(OptimisticLockException.class);
     }
 
@@ -119,8 +121,8 @@ class LockingTest {
         em.find(Crew.class, 1L, LockModeType.PESSIMISTIC_WRITE);
         EntityManager other = emf.createEntityManager();
         other.getTransaction().begin();
-        assertThatThrownBy(() -> other.find(Crew.class, 1L, LockModeType.PESSIMISTIC_WRITE,
-            Map.of("jakarta.persistence.lock.timeout", 100)))
+        Map<String, Object> lockTimeout = Map.of("jakarta.persistence.lock.timeout", 100);
+        assertThatThrownBy(() -> other.find(Crew.class, 1L, LockModeType.PESSIMISTIC_WRITE, lockTimeout))
             .isInstanceOfAny(LockTimeoutException.class, PessimisticLockException.class);
         em.getTransaction().commit();
         other.getTransaction().rollback();
@@ -132,8 +134,9 @@ class LockingTest {
         em.find(Crew.class, 1L, LockModeType.PESSIMISTIC_WRITE);
         EntityManager other = emf.createEntityManager();
         other.getTransaction().begin();
-        assertThatThrownBy(() -> other.find(Crew.class, 1L, LockModeType.PESSIMISTIC_WRITE,
-            Map.of("jakarta.persistence.lock.timeout", 100))).isInstanceOf(LockTimeoutException.class);
+        Map<String, Object> lockTimeout = Map.of("jakarta.persistence.lock.timeout", 100);
+        assertThatThrownBy(() -> other.find(Crew.class, 1L, LockModeType.PESSIMISTIC_WRITE, lockTimeout))
+            .isInstanceOf(LockTimeoutException.class);
         assertThat(other.getTransaction().getRollbackOnly()).isFalse();
         em.getTransaction().commit();
         other.getTransaction().rollback();

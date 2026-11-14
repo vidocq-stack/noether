@@ -158,8 +158,10 @@ class BulkQueryTest {
         assertThat(em.createQuery("DELETE FROM Emp e WHERE e.name = 'Newcomer'").executeUpdate()).isEqualTo(1);
         em.getTransaction().rollback();
         em.clear();
-        assertThatThrownBy(() -> em.createQuery("DELETE FROM Emp e").executeUpdate()).isInstanceOf(TransactionRequiredException.class);
-        assertThatThrownBy(() -> em.createQuery("DELETE FROM Emp e").getResultList()).isInstanceOf(IllegalStateException.class);
+        var outsideTransaction = em.createQuery("DELETE FROM Emp e");
+        assertThatThrownBy(outsideTransaction::executeUpdate).isInstanceOf(TransactionRequiredException.class);
+        var deleteAsSelect = em.createQuery("DELETE FROM Emp e");
+        assertThatThrownBy(deleteAsSelect::getResultList).isInstanceOf(IllegalStateException.class);
         assertThat(scalar("select count(*) from Emp")).isEqualTo("3");
     }
 }

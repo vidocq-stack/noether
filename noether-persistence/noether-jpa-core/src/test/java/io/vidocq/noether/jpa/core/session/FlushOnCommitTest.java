@@ -130,7 +130,8 @@ class FlushOnCommitTest {
         em.getTransaction().begin();
         em.context().persist(newCustomer(1, "Vidocq"), customer);
         em.context().persist(newCustomer(2, "Eugène"), customer);
-        assertThatThrownBy(() -> em.getTransaction().commit()).isInstanceOf(RollbackException.class)
+        var transaction = em.getTransaction();
+        assertThatThrownBy(transaction::commit).isInstanceOf(RollbackException.class)
             .hasCauseInstanceOf(EntityExistsException.class);
         assertThat(em.getTransaction().isActive()).isFalse();
         assertThat(rows()).isEqualTo(1);

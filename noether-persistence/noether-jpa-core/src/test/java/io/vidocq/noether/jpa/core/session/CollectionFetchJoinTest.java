@@ -295,12 +295,14 @@ class CollectionFetchJoinTest {
     }
 
     @Test void unsupportedPaginationIsExplicitlyRefusedBeforeReadingPartialCollections() {
-        assertThatThrownBy(() -> em.createQuery("select o, o.name from CfOwner o left join fetch o.children")
-            .setMaxResults(1).getResultList()).isInstanceOf(PersistenceException.class).hasMessageContaining("collection fetch");
-        assertThatThrownBy(() -> em.createQuery("select o from CfOwner o left join fetch o.children c order by c.name", Owner.class)
-            .setFirstResult(1).getResultList()).isInstanceOf(PersistenceException.class).hasMessageContaining("collection fetch");
-        assertThatThrownBy(() -> em.createQuery("select c from CfOwner o join CfOwner c on c.id = o.id left join fetch c.children",
-            Owner.class).setMaxResults(1).getResultList()).isInstanceOf(PersistenceException.class).hasMessageContaining("collection fetch");
+        var twoItems = em.createQuery("select o, o.name from CfOwner o left join fetch o.children").setMaxResults(1);
+        assertThatThrownBy(twoItems::getResultList).isInstanceOf(PersistenceException.class).hasMessageContaining("collection fetch");
+        var elementOrdered = em.createQuery("select o from CfOwner o left join fetch o.children c order by c.name", Owner.class)
+            .setFirstResult(1);
+        assertThatThrownBy(elementOrdered::getResultList).isInstanceOf(PersistenceException.class).hasMessageContaining("collection fetch");
+        var twoRoots = em.createQuery("select c from CfOwner o join CfOwner c on c.id = o.id left join fetch c.children",
+            Owner.class).setMaxResults(1);
+        assertThatThrownBy(twoRoots::getResultList).isInstanceOf(PersistenceException.class).hasMessageContaining("collection fetch");
         assertThat(selects()).isZero();
     }
 
@@ -357,8 +359,8 @@ class CollectionFetchJoinTest {
         assertThat(em.createQuery("select distinct i from CfInventory i join fetch i.tags order by i.id", Inventory.class)
             .getResultList()).extracting(i -> i.id).containsExactly(1L, 2L);
         assertThat(selects()).isEqualTo(1);
-        assertThatThrownBy(() -> em.createQuery("select i from CfInventory i join fetch i.tags", Inventory.class)
-            .getSingleResult()).isInstanceOf(NonUniqueResultException.class);
+        var everyInventory = em.createQuery("select i from CfInventory i join fetch i.tags", Inventory.class);
+        assertThatThrownBy(everyInventory::getSingleResult).isInstanceOf(NonUniqueResultException.class);
     }
 
     @Test void singleResultNeverLimitsCollectionRowsAndCacheStoresCompletedGraph() {

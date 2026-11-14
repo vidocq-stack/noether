@@ -33,11 +33,11 @@ class InverseElementCollectionTest {
 
     private void refusesCollectionPath(boolean xml, String fixture, String path, Class<?>... types) {
         var ddl = new java.io.StringWriter();
+        var scripted = configuration(xml, fixture, types)
+            .property("jakarta.persistence.schema-generation.scripts.action", "create")
+            .property("jakarta.persistence.schema-generation.scripts.create-target", ddl);
         assertThatThrownBy(() -> {
-            try (var ignored = configuration(xml, fixture, types)
-                    .property("jakarta.persistence.schema-generation.scripts.action", "create")
-                    .property("jakarta.persistence.schema-generation.scripts.create-target", ddl)
-                    .createEntityManagerFactory()) {}
+            try (var ignored = scripted.createEntityManagerFactory()) {}
         }).isInstanceOf(PersistenceException.class)
             .hasStackTraceContaining("mappedBy").hasStackTraceContaining(path)
             .hasStackTraceContaining("element collection");
@@ -66,18 +66,18 @@ class InverseElementCollectionTest {
 
     @ParameterizedTest @ValueSource(booleans = {false, true})
     void relationshipCannotTargetAnEmbeddableInsteadOfItsContainingEntity(boolean xml) {
+        var valueTarget = configuration(xml, "value-target", ValueTarget.class, ListValue.class);
         assertThatThrownBy(() -> {
-            try (var ignored = configuration(xml, "value-target", ValueTarget.class, ListValue.class)
-                    .createEntityManagerFactory()) {}
+            try (var ignored = valueTarget.createEntityManagerFactory()) {}
         }).isInstanceOf(PersistenceException.class)
             .hasStackTraceContaining("value").hasStackTraceContaining("entity");
     }
 
     @ParameterizedTest @ValueSource(booleans = {false, true})
     void collectionEmbeddableCannotBeTheInverseSide(boolean xml) {
+        var inverseValue = configuration(xml, "inverse-value", InverseOwner.class, InverseTarget.class);
         assertThatThrownBy(() -> {
-            try (var ignored = configuration(xml, "inverse-value", InverseOwner.class,
-                    InverseTarget.class).createEntityManagerFactory()) {}
+            try (var ignored = inverseValue.createEntityManagerFactory()) {}
         }).isInstanceOf(PersistenceException.class)
             .hasStackTraceContaining("owning").hasStackTraceContaining("collection");
     }

@@ -1551,8 +1551,9 @@ class CollectionSubgraphTest {
         assertThat(selects()).isEqualTo(9);
         cold();
         // a non-scalar ordering cannot page whole owners in SQL: refused, never paginated in memory
-        assertThatThrownBy(() -> em.createQuery("select o from CsOrder o order by o.customer.name", Order.class)
-            .setHint(FETCH, graph("lines", "supplier", "category")).setMaxResults(1).getResultList())
+        var byCustomerName = em.createQuery("select o from CsOrder o order by o.customer.name", Order.class)
+            .setHint(FETCH, graph("lines", "supplier", "category")).setMaxResults(1);
+        assertThatThrownBy(byCustomerName::getResultList)
             .isInstanceOf(PersistenceException.class);
     }
 

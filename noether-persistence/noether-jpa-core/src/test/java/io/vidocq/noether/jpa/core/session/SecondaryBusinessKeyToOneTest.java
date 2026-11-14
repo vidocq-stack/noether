@@ -264,9 +264,10 @@ class SecondaryBusinessKeyToOneTest {
 
     private void rejected(PersistenceConfiguration configuration, String message) {
         var ddl = new StringWriter();
-        assertThatThrownBy(() -> configuration
+        var scripted = configuration
             .property(PersistenceConfiguration.SCHEMAGEN_SCRIPTS_ACTION, "create")
-            .property("jakarta.persistence.schema-generation.scripts.create-target", ddl).createEntityManagerFactory())
+            .property("jakarta.persistence.schema-generation.scripts.create-target", ddl);
+        assertThatThrownBy(scripted::createEntityManagerFactory)
             .isInstanceOf(PersistenceException.class).hasMessageContaining(message);
         assertThat(ddl.toString()).isEmpty();
     }

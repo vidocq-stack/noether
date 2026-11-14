@@ -374,7 +374,8 @@ class OrmXmlTest {
 
     @Test
     void joinColumnsCannotSilentlyOverrideADefaultJoinTable() {
-        assertThatThrownBy(() -> EntityModelBuilder.build(List.of(LinkEntity.InvalidOverride.class.getName()), LOADER))
+        var invalidOverride = List.of(LinkEntity.InvalidOverride.class.getName());
+        assertThatThrownBy(() -> EntityModelBuilder.build(invalidOverride, LOADER))
             .isInstanceOf(PersistenceException.class).hasMessageContaining("AssociationOverride")
             .hasMessageContaining("join-table");
     }
@@ -502,16 +503,14 @@ class OrmXmlTest {
 
     @Test
     void aDelimitedPrimaryKeyReferenceCannotMatchADifferentlyCasedColumn() {
-        assertThatThrownBy(() -> {
-            try (var ignored = new PersistenceConfiguration("orm-delimited-wrong-case")
-                    .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
-                    .managedClass(QuotedGenerators.Root.class).managedClass(QuotedGenerators.WrongCase.class)
-                    .mappingFile("orm/delimited.xml")
-                    .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:orm-delimited-wrong-case")
-                    .property(PersistenceConfiguration.SCHEMAGEN_DATABASE_ACTION, "drop-and-create")
-                    .createEntityManagerFactory()) {
-            }
-        }).isInstanceOf(PersistenceException.class).hasMessageContaining("primary key join column");
+        var wrongCase = new PersistenceConfiguration("orm-delimited-wrong-case")
+                .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
+                .managedClass(QuotedGenerators.Root.class).managedClass(QuotedGenerators.WrongCase.class)
+                .mappingFile("orm/delimited.xml")
+                .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:orm-delimited-wrong-case")
+                .property(PersistenceConfiguration.SCHEMAGEN_DATABASE_ACTION, "drop-and-create");
+        assertThatThrownBy(wrongCase::createEntityManagerFactory)
+            .isInstanceOf(PersistenceException.class).hasMessageContaining("primary key join column");
     }
 
     @Test
@@ -663,11 +662,11 @@ class OrmXmlTest {
 
     @Test
     void theMappingFilesOfAUnitAreFoundOnItsClassLoaderWithoutARoot() {
-        assertThatThrownBy(() -> new PersistenceConfiguration("orm-missing")
+        var missingMappingFile = new PersistenceConfiguration("orm-missing")
                 .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
                 .mappingFile("orm/none.xml")
-                .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:orm-missing")
-                .createEntityManagerFactory())
+                .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:orm-missing");
+        assertThatThrownBy(missingMappingFile::createEntityManagerFactory)
             .isInstanceOf(PersistenceException.class).hasMessageContaining("orm/none.xml");
         URL unused = LOADER.getResource("orm/units.xml");
         assertThat(unused).isNotNull();

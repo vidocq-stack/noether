@@ -95,7 +95,8 @@ class NoetherPersistenceProviderTest {
     @Test
     void thePropertiesAreACopy() {
         try (EntityManagerFactory emf = Persistence.createEntityManagerFactory("h2")) {
-            assertThatThrownBy(() -> emf.getProperties().put("x", "y")).isInstanceOf(UnsupportedOperationException.class);
+            var properties = emf.getProperties();
+            assertThatThrownBy(() -> properties.put("x", "y")).isInstanceOf(UnsupportedOperationException.class);
         }
     }
 
@@ -106,7 +107,8 @@ class NoetherPersistenceProviderTest {
         assertThat(emf.isOpen()).isFalse();
         assertThatThrownBy(emf::close).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(emf::createEntityManager).isInstanceOf(IllegalStateException.class);
-        assertThatThrownBy(() -> emf.createEntityManager(Map.of())).isInstanceOf(IllegalStateException.class);
+        var noProperties = Map.of();
+        assertThatThrownBy(() -> emf.createEntityManager(noProperties)).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(emf::getProperties).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(emf::getCache).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(emf::getCriteriaBuilder).isInstanceOf(IllegalStateException.class);
@@ -188,8 +190,9 @@ class NoetherPersistenceProviderTest {
         });
         try {
             assertThatThrownBy(() -> Persistence.createEntityManagerFactory("callback")).isInstanceOf(PersistenceException.class);
-            assertThatThrownBy(() -> Persistence.createEntityManagerFactory("h2",
-                Map.of("jakarta.persistence.validation.mode", "callback"))).isInstanceOf(PersistenceException.class);
+            var callbackMode = Map.of("jakarta.persistence.validation.mode", "callback");
+            assertThatThrownBy(() -> Persistence.createEntityManagerFactory("h2", callbackMode))
+                .isInstanceOf(PersistenceException.class);
             try (EntityManagerFactory auto = Persistence.createEntityManagerFactory("h2",
                     Map.of("jakarta.persistence.validation.mode", "auto"))) {
                 assertThat(auto.isOpen()).isTrue();
@@ -213,8 +216,8 @@ class NoetherPersistenceProviderTest {
         });
         try {
             assertThatThrownBy(() -> Persistence.createEntityManagerFactory("callback")).isInstanceOf(PersistenceException.class);
-            assertThatThrownBy(() -> Persistence.createEntityManagerFactory("h2",
-                Map.of("jakarta.persistence.validation.mode", "auto"))).isInstanceOf(PersistenceException.class);
+            var autoMode = Map.of("jakarta.persistence.validation.mode", "auto");
+            assertThatThrownBy(() -> Persistence.createEntityManagerFactory("h2", autoMode)).isInstanceOf(PersistenceException.class);
         } finally {
             Thread.currentThread().setContextClassLoader(original);
         }

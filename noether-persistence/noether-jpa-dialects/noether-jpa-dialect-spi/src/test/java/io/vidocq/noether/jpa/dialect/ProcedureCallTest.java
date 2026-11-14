@@ -38,10 +38,13 @@ class ProcedureCallTest {
             assertThatThrownBy(() -> Identifier.qualified(text, false)).as(text).isInstanceOf(IllegalArgumentException.class);
             assertThatThrownBy(() -> Identifier.qualified(text, true)).as(text).isInstanceOf(IllegalArgumentException.class);
         }
-        assertThatThrownBy(() -> new ProcedureCall(List.of(Identifier.of("a;DROP TABLE X")), List.of()))
+        var unsafeName = List.of(Identifier.of("a;DROP TABLE X"));
+        List<ProcedureCall.Parameter> noParameters = List.of();
+        assertThatThrownBy(() -> new ProcedureCall(unsafeName, noParameters))
             .isInstanceOf(IllegalArgumentException.class);
+        var unsafeParameterName = Identifier.of("a => 1);DROP TABLE X");
         assertThatThrownBy(() -> new ProcedureCall.Parameter(ProcedureCall.Mode.IN, java.sql.Types.INTEGER,
-            Identifier.of("a => 1);DROP TABLE X"))).isInstanceOf(IllegalArgumentException.class);
+            unsafeParameterName)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

@@ -130,19 +130,22 @@ class ConfigurationBootstrapTest {
     @Test
     void aClassWithoutNoArgConstructorInValidationXmlFailsTheBootstrap() {
         withValidationXml("<message-interpolator>" + NoDefaultConstructorInterpolator.class.getName() + "</message-interpolator>");
-        assertThatThrownBy(() -> configuration().buildValidatorFactory()).isInstanceOf(ValidationException.class);
+        Configuration<?> config = configuration();
+        assertThatThrownBy(config::buildValidatorFactory).isInstanceOf(ValidationException.class);
     }
 
     @Test
     void anUnknownClassInValidationXmlFailsTheBootstrap() {
         withValidationXml("<clock-provider>com.acme.DoesNotExist</clock-provider>");
-        assertThatThrownBy(() -> configuration().buildValidatorFactory()).isInstanceOf(ValidationException.class);
+        Configuration<?> config = configuration();
+        assertThatThrownBy(config::buildValidatorFactory).isInstanceOf(ValidationException.class);
     }
 
     @Test
     void anUnknownProviderInValidationXmlFailsTheBootstrap() {
         withValidationXml("<default-provider>com.acme.DoesNotExist</default-provider>");
-        assertThatThrownBy(() -> configuration().buildValidatorFactory()).isInstanceOf(ValidationException.class);
+        Configuration<?> config = configuration();
+        assertThatThrownBy(config::buildValidatorFactory).isInstanceOf(ValidationException.class);
     }
 
     @Test
@@ -156,7 +159,8 @@ class ConfigurationBootstrapTest {
                     : super.getResourceAsStream(name);
             }
         });
-        assertThatThrownBy(() -> configuration().buildValidatorFactory()).isInstanceOf(ValidationException.class);
+        Configuration<?> config = configuration();
+        assertThatThrownBy(config::buildValidatorFactory).isInstanceOf(ValidationException.class);
     }
 
     @Test

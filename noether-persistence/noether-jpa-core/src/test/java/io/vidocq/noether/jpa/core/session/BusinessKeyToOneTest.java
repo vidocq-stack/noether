@@ -193,17 +193,19 @@ class BusinessKeyToOneTest {
                 em.persist(new Order(1, new Customer(42, "EXISTING")));
                 em.getTransaction().commit();
                 em.getTransaction().begin();
-                assertThatThrownBy(() -> em.createQuery("update BusinessOrder o set o.customer = :c where o.id = 1")
-                    .setParameter("c", new Customer(999, "MISSING")).executeUpdate())
+                var toMissing = em.createQuery("update BusinessOrder o set o.customer = :c where o.id = 1")
+                    .setParameter("c", new Customer(999, "MISSING"));
+                assertThatThrownBy(toMissing::executeUpdate)
                     .isInstanceOf(PersistenceException.class).hasMessageContaining("identity");
                 em.getTransaction().rollback();
                 em.clear();
                 em.getTransaction().begin();
                 var pending = new Customer(999, "NOT-INSERTED");
                 em.persist(pending);
-                assertThatThrownBy(() -> em.createQuery("update BusinessOrder o set o.customer = :c where o.id = 1")
+                var toPending = em.createQuery("update BusinessOrder o set o.customer = :c where o.id = 1")
                     .setFlushMode(jakarta.persistence.FlushModeType.COMMIT)
-                    .setParameter("c", pending).executeUpdate())
+                    .setParameter("c", pending);
+                assertThatThrownBy(toPending::executeUpdate)
                     .isInstanceOf(PersistenceException.class).hasMessageContaining("identity");
                 em.getTransaction().rollback();
                 em.clear();
@@ -474,7 +476,8 @@ class BusinessKeyToOneTest {
                 em.find(Customer.class, 42L).code = "CHANGED";
                 assertThatThrownBy(em::flush).isInstanceOf(PersistenceException.class).hasMessageContaining("immutable");
                 em.getTransaction().rollback();
-                assertThatThrownBy(() -> em.createQuery("update BusinessCustomer c set c.code = 'CHANGED'").executeUpdate())
+                // the bulk SET of a referenced value is refused when the query is translated, at createQuery
+                assertThatThrownBy(() -> em.createQuery("update BusinessCustomer c set c.code = 'CHANGED'"))
                     .isInstanceOf(RuntimeException.class);
             }
         }
@@ -690,7 +693,8 @@ class BusinessKeyToOneTest {
                         em.getTransaction().commit();
                     }
                     assertThat(factory.getCache().contains(Customer.class, 42L)).isTrue();
-                    assertThatThrownBy(() -> factory.getCache().contains(Customer.class, "NOT-AN-ID"))
+                    var cache = factory.getCache();
+                    assertThatThrownBy(() -> cache.contains(Customer.class, "NOT-AN-ID"))
                         .isInstanceOf(IllegalArgumentException.class);
                     try (var em = factory.createEntityManager()) {
                         assertThat(em.find(Order.class, 1L).customer).isSameAs(em.find(Order.class, 2L).customer)

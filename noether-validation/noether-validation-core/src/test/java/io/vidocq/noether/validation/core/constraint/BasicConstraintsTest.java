@@ -77,7 +77,8 @@ class BasicConstraintsTest {
         var ci = annotation(F.class, "anyCase", Pattern.class);
         assertThat(pattern(new PatternValidatorForCharSequence(), ci, "abc", "ABC", "AB1", null)).isEqualTo("TTFT");
         var broken = annotation(F.class, "broken", Pattern.class);
-        assertThatThrownBy(() -> new PatternValidatorForCharSequence().initialize(broken)).isInstanceOf(IllegalArgumentException.class);
+        var brokenValidator = new PatternValidatorForCharSequence();
+        assertThatThrownBy(() -> brokenValidator.initialize(broken)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

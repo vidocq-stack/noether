@@ -183,7 +183,8 @@ class ValidationXmlParserTest {
 
     @Test
     void malformedXmlIsRejected() {
-        assertThatThrownBy(() -> ValidationXmlParser.parse(new ByteArrayInputStream("<validation-config".getBytes(StandardCharsets.UTF_8))))
+        var in = new ByteArrayInputStream("<validation-config".getBytes(StandardCharsets.UTF_8));
+        assertThatThrownBy(() -> ValidationXmlParser.parse(in))
             .isInstanceOf(ValidationException.class);
     }
 
@@ -191,7 +192,8 @@ class ValidationXmlParserTest {
     void aDoctypeIsRejected() {
         String xml = "<?xml version=\"1.0\"?><!DOCTYPE validation-config [<!ENTITY x SYSTEM \"file:///etc/passwd\">]>"
             + "<validation-config xmlns=\"" + NS_3 + "\" version=\"3.0\"><default-provider>&x;</default-provider></validation-config>";
-        assertThatThrownBy(() -> ValidationXmlParser.parse(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8))))
+        var in = new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8));
+        assertThatThrownBy(() -> ValidationXmlParser.parse(in))
             .isInstanceOf(ValidationException.class);
     }
 

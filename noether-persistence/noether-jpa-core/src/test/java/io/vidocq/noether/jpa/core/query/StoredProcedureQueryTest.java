@@ -142,8 +142,8 @@ class StoredProcedureQueryTest {
         query.setParameter("\"Input\"\"Value\"", 41);
         assertThat(query.getParameter("\"Input\"\"Value\"").getName()).isEqualTo("\"Input\"\"Value\"");
         assertThat(query.getSingleResult()).isEqualTo(42);
-        assertThatThrownBy(() -> em.createStoredProcedureQuery("\"Mixed.Schema\".\"add\"\"one\"", Integer.class)
-            .getSingleResult()).isInstanceOf(PersistenceException.class);
+        var wrongCase = em.createStoredProcedureQuery("\"Mixed.Schema\".\"add\"\"one\"", Integer.class);
+        assertThatThrownBy(wrongCase::getSingleResult).isInstanceOf(PersistenceException.class);
     }
 
     @Test
@@ -232,7 +232,8 @@ class StoredProcedureQueryTest {
         query.registerStoredProcedureParameter(1, Integer.class, ParameterMode.IN);
         em.close();
         assertThatThrownBy(() -> query.setParameter(1, 1)).isInstanceOf(IllegalStateException.class);
-        assertThatThrownBy(() -> query.setParameter(1, Calendar.getInstance(), TemporalType.DATE))
+        var today = Calendar.getInstance();
+        assertThatThrownBy(() -> query.setParameter(1, today, TemporalType.DATE))
             .isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> query.getParameter(1, Integer.class)).isInstanceOf(IllegalStateException.class);
     }
@@ -259,7 +260,8 @@ class StoredProcedureQueryTest {
         sql("CREATE ALIAS NOTHING AS 'Integer nothing() { return null; }'");
         StoredProcedureQuery query = em.createStoredProcedureQuery("NOTHING", Integer.class);
         assertThat(query.getResultList()).containsExactly((Object) null);
-        assertThatThrownBy(() -> query.getResultList().add(1)).isInstanceOf(UnsupportedOperationException.class);
+        var nullResults = query.getResultList();
+        assertThatThrownBy(() -> nullResults.add(1)).isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test

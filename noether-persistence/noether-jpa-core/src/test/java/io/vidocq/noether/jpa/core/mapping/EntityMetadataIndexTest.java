@@ -58,7 +58,8 @@ class EntityMetadataIndexTest {
             assertThat(inverse.indexUpdate()).isNotNull();
             assertThat(statements.collection(inverse.attribute()).orElseThrow()).isSameAs(inverse);
         }
-        assertThatThrownBy(() -> statements.inverseIndexes().clear()).isInstanceOf(UnsupportedOperationException.class);
+        var inverseIndexes = statements.inverseIndexes();
+        assertThatThrownBy(inverseIndexes::clear).isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test

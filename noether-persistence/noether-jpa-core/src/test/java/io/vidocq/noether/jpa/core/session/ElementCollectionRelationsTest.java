@@ -298,7 +298,8 @@ class ElementCollectionRelationsTest {
                     transaction(em, () -> em.createNativeQuery(
                         "UPDATE composite_target_elements SET target_serial = NULL WHERE owner_id = 5").executeUpdate());
                     em.clear();
-                    assertThatThrownBy(() -> em.find(CompositeOwner.class, 5L).elements.size())
+                    var partialOwner = em.find(CompositeOwner.class, 5L);
+                    assertThatThrownBy(() -> partialOwner.elements.size())
                         .isInstanceOf(PersistenceException.class).hasMessageContaining("partially null");
                 }
             }
@@ -461,10 +462,11 @@ class ElementCollectionRelationsTest {
                 assertThat((Object[]) rows.get(2)).containsOnlyNulls();
                 assertThat((Object[]) rows.get(3)).containsExactly(destination.id, source.id, "route");
                 em.getTransaction().begin();
-                assertThatThrownBy(() -> em.createNativeQuery(
+                var duplicateInsert = em.createNativeQuery(
                     "insert into multi_parent_values (owner_id, value_position, element_source, element_destination, element_code)"
                         + " values (10, 4, ?, ?, 'missing')")
-                    .setParameter(1, source.id).setParameter(2, destination.id).executeUpdate())
+                    .setParameter(1, source.id).setParameter(2, destination.id);
+                assertThatThrownBy(duplicateInsert::executeUpdate)
                     .isInstanceOf(PersistenceException.class);
                 em.getTransaction().rollback();
 
@@ -530,7 +532,8 @@ class ElementCollectionRelationsTest {
                     .executeUpdate());
                 em.clear();
                 factory.getCache().evictAll();
-                assertThatThrownBy(() -> em.find(MultiParentOwner.class, 11L).values.size())
+                var partialOwner = em.find(MultiParentOwner.class, 11L);
+                assertThatThrownBy(() -> partialOwner.values.size())
                     .isInstanceOf(PersistenceException.class).hasMessageContaining("partially null");
             }
         }
@@ -576,10 +579,11 @@ class ElementCollectionRelationsTest {
                 assertThat((Object[]) rows.get(2)).containsOnlyNulls();
                 assertThat((Object[]) rows.get(3)).containsExactly(3L, 19L, 7L, 23L, "second");
                 em.getTransaction().begin();
-                assertThatThrownBy(() -> em.createNativeQuery(
+                var duplicateInsert = em.createNativeQuery(
                     "insert into composite_link_values (owner_id, value_position, element_embedded_region,"
                         + " element_embedded_serial, element_idclass_region, element_idclass_serial, element_code)"
-                        + " values (12, 4, 3, 19, 7, 23, 'missing')").executeUpdate())
+                        + " values (12, 4, 3, 19, 7, 23, 'missing')");
+                assertThatThrownBy(duplicateInsert::executeUpdate)
                     .isInstanceOf(PersistenceException.class);
                 em.getTransaction().rollback();
                 em.clear();
@@ -653,7 +657,8 @@ class ElementCollectionRelationsTest {
                     "update composite_link_values set element_embedded_serial = null where owner_id = 13").executeUpdate());
                 em.clear();
                 factory.getCache().evictAll();
-                assertThatThrownBy(() -> em.find(CompositeLinkOwner.class, 13L).values.size())
+                var partialOwner = em.find(CompositeLinkOwner.class, 13L);
+                assertThatThrownBy(() -> partialOwner.values.size())
                     .isInstanceOf(PersistenceException.class).hasMessageContaining("partially null");
             }
         }
@@ -695,10 +700,11 @@ class ElementCollectionRelationsTest {
                 assertThat((Object[]) rows.get(2)).containsOnlyNulls();
                 assertThat((Object[]) rows.get(3)).containsExactly(destination.id, source.id, "route");
                 em.getTransaction().begin();
-                assertThatThrownBy(() -> em.createNativeQuery(
+                var duplicateInsert = em.createNativeQuery(
                     "insert into multi_maps_values (owner_id, value_position, element_source, element_destination, element_code)"
                         + " values (16, 4, ?, ?, 'missing')")
-                    .setParameter(1, source.id).setParameter(2, destination.id).executeUpdate())
+                    .setParameter(1, source.id).setParameter(2, destination.id);
+                assertThatThrownBy(duplicateInsert::executeUpdate)
                     .isInstanceOf(PersistenceException.class);
                 em.getTransaction().rollback();
                 em.clear();
@@ -766,7 +772,8 @@ class ElementCollectionRelationsTest {
                     "update multi_maps_values set element_destination = null where owner_id = 17").executeUpdate());
                 em.clear();
                 factory.getCache().evictAll();
-                assertThatThrownBy(() -> em.find(MultiMapsOwner.class, 17L).values.size())
+                var partialOwner = em.find(MultiMapsOwner.class, 17L);
+                assertThatThrownBy(() -> partialOwner.values.size())
                     .isInstanceOf(PersistenceException.class).hasMessageContaining("partially null");
             }
         }
@@ -804,9 +811,10 @@ class ElementCollectionRelationsTest {
     }
 
     @Test void multipleMapsIdElementTargetsKeepOverlapAndPolymorphicParentRefusals() {
-        assertThatThrownBy(() -> configuration(false, MultiMapsOwner.class, MultiMapsValue.class,
+        var overlappingMapsId = configuration(false, MultiMapsOwner.class, MultiMapsValue.class,
             MultiMapsTarget.class, MultiMapsKey.class, MapsIdElementParent.class)
-            .mappingFile("orm/element-collection-overlapping-mapsid.xml").createEntityManagerFactory())
+            .mappingFile("orm/element-collection-overlapping-mapsid.xml");
+        assertThatThrownBy(overlappingMapsId::createEntityManagerFactory)
             .isInstanceOf(PersistenceException.class).hasMessageContaining("overlapping identifier mappings");
         assertThatThrownBy(() -> factory(false, MultiMapsOwner.class, MultiMapsValue.class,
             MultiMapsTarget.class, MultiMapsKey.class, MapsIdElementParent.class, MapsParentSubtype.class))
@@ -844,9 +852,10 @@ class ElementCollectionRelationsTest {
                 assertThat((Object[]) rows.get(2)).containsOnlyNulls();
                 assertThat((Object[]) rows.get(3)).containsExactly(19L, 3L);
                 em.getTransaction().begin();
-                assertThatThrownBy(() -> em.createNativeQuery(
+                var duplicateInsert = em.createNativeQuery(
                     "insert into shared_composite_values (owner_id, value_position, element_region, element_serial)"
-                        + " values (19, 4, 3, 3)").executeUpdate())
+                        + " values (19, 4, 3, 3)");
+                assertThatThrownBy(duplicateInsert::executeUpdate)
                     .isInstanceOf(PersistenceException.class);
                 em.getTransaction().rollback();
                 em.clear();
@@ -914,7 +923,8 @@ class ElementCollectionRelationsTest {
                     "update shared_composite_values set element_serial = null where owner_id = 20").executeUpdate());
                 em.clear();
                 factory.getCache().evictAll();
-                assertThatThrownBy(() -> em.find(SharedCompositeOwner.class, 20L).values.size())
+                var partialOwner = em.find(SharedCompositeOwner.class, 20L);
+                assertThatThrownBy(() -> partialOwner.values.size())
                     .isInstanceOf(PersistenceException.class).hasMessageContaining("partially null");
             }
         }
@@ -998,9 +1008,10 @@ class ElementCollectionRelationsTest {
                 assertThat((Object[]) rows.get(2)).containsOnlyNulls();
                 assertThat((Object[]) rows.get(3)).containsExactly(19L, 3L);
                 em.getTransaction().begin();
-                assertThatThrownBy(() -> em.createNativeQuery(
+                var duplicateInsert = em.createNativeQuery(
                     "insert into shared_idclass_values (owner_id, value_position, element_region, element_serial)"
-                        + " values (22, 4, 3, 3)").executeUpdate())
+                        + " values (22, 4, 3, 3)");
+                assertThatThrownBy(duplicateInsert::executeUpdate)
                     .isInstanceOf(PersistenceException.class);
                 em.getTransaction().rollback();
                 em.clear();
@@ -1068,7 +1079,8 @@ class ElementCollectionRelationsTest {
                     "update shared_idclass_values set element_serial = null where owner_id = 23").executeUpdate());
                 em.clear();
                 factory.getCache().evictAll();
-                assertThatThrownBy(() -> em.find(SharedIdClassOwner.class, 23L).values.size())
+                var partialOwner = em.find(SharedIdClassOwner.class, 23L);
+                assertThatThrownBy(() -> partialOwner.values.size())
                     .isInstanceOf(PersistenceException.class).hasMessageContaining("partially null");
             }
         }
@@ -1135,8 +1147,9 @@ class ElementCollectionRelationsTest {
         assertThatThrownBy(() -> factory(false, SharedIdClassOwner.class, SharedIdClassValue.class,
             SharedIdClassTarget.class, SharedClassParent.class, IdClassKey.class, SharedClassParentSubtype.class))
             .isInstanceOf(PersistenceException.class).hasMessageContaining("requires an eligible primary-key target");
-        assertThatThrownBy(() -> configuration(false, MismatchedSharedClassTarget.class,
-            SharedClassParent.class, IdClassKey.class, CompositeKey.class).createEntityManagerFactory())
+        var mismatchedTarget = configuration(false, MismatchedSharedClassTarget.class,
+            SharedClassParent.class, IdClassKey.class, CompositeKey.class);
+        assertThatThrownBy(mismatchedTarget::createEntityManagerFactory)
             .isInstanceOf(PersistenceException.class).hasMessageContaining("identifier types must match");
     }
 
@@ -1176,9 +1189,10 @@ class ElementCollectionRelationsTest {
                 assertThat((Object[]) rows.get(3)).containsExactly("same", 19L, 3L);
                 assertThat((Object[]) rows.get(4)).containsExactly("other", 3L, 19L);
                 em.getTransaction().begin();
-                assertThatThrownBy(() -> em.createNativeQuery(
+                var duplicateInsert = em.createNativeQuery(
                     "insert into named_composite_values (owner_id, value_position, element_code, element_region, element_serial)"
-                        + " values (25, 5, 'same', 3, 3)").executeUpdate()).isInstanceOf(PersistenceException.class);
+                        + " values (25, 5, 'same', 3, 3)");
+                assertThatThrownBy(duplicateInsert::executeUpdate).isInstanceOf(PersistenceException.class);
                 em.getTransaction().rollback();
                 em.clear();
                 factory.getCache().evictAll();
@@ -1251,7 +1265,8 @@ class ElementCollectionRelationsTest {
                     "update named_composite_values set element_serial = null where owner_id = 26").executeUpdate());
                 em.clear();
                 factory.getCache().evictAll();
-                assertThatThrownBy(() -> em.find(NamedCompositeOwner.class, 26L).values.size())
+                var partialOwner = em.find(NamedCompositeOwner.class, 26L);
+                assertThatThrownBy(() -> partialOwner.values.size())
                     .isInstanceOf(PersistenceException.class).hasMessageContaining("partially null");
             }
         }
@@ -1344,8 +1359,8 @@ class ElementCollectionRelationsTest {
     }
 
     @Test void namedCompositeMapsIdTargetsKeepBroaderIdentityShapesRefused() {
-        assertThatThrownBy(() -> namedCompositeConfiguration(false).managedClass(CompositeParentSubtype.class)
-            .createEntityManagerFactory()).isInstanceOf(PersistenceException.class)
+        var polymorphicParent = namedCompositeConfiguration(false).managedClass(CompositeParentSubtype.class);
+        assertThatThrownBy(polymorphicParent::createEntityManagerFactory).isInstanceOf(PersistenceException.class)
             .hasMessageContaining("requires an eligible primary-key target");
     }
 
@@ -1387,9 +1402,10 @@ class ElementCollectionRelationsTest {
                 assertThat((Object[]) rows.get(3)).containsExactly("same", 19L, 3L);
                 assertThat((Object[]) rows.get(4)).containsExactly("other", 3L, 19L);
                 em.getTransaction().begin();
-                assertThatThrownBy(() -> em.createNativeQuery(
+                var duplicateInsert = em.createNativeQuery(
                     "insert into named_class_values (owner_id, value_position, element_code, element_region, element_serial)"
-                        + " values (29, 5, 'same', 3, 3)").executeUpdate()).isInstanceOf(PersistenceException.class);
+                        + " values (29, 5, 'same', 3, 3)");
+                assertThatThrownBy(duplicateInsert::executeUpdate).isInstanceOf(PersistenceException.class);
                 em.getTransaction().rollback();
                 em.clear();
                 factory.getCache().evictAll();
@@ -1463,7 +1479,8 @@ class ElementCollectionRelationsTest {
                     "update named_class_values set element_serial = null where owner_id = 30").executeUpdate());
                 em.clear();
                 factory.getCache().evictAll();
-                assertThatThrownBy(() -> em.find(NamedClassCompositeOwner.class, 30L).values.size())
+                var partialOwner = em.find(NamedClassCompositeOwner.class, 30L);
+                assertThatThrownBy(() -> partialOwner.values.size())
                     .isInstanceOf(PersistenceException.class).hasMessageContaining("partially null");
             }
         }
@@ -1558,11 +1575,12 @@ class ElementCollectionRelationsTest {
     }
 
     @Test void namedIdClassMapsIdKeepsPolymorphicAndMismatchedParentsRefused() {
-        assertThatThrownBy(() -> namedClassCompositeConfiguration(false).managedClass(SharedClassParentSubtype.class)
-            .createEntityManagerFactory()).isInstanceOf(PersistenceException.class)
+        var polymorphicParent = namedClassCompositeConfiguration(false).managedClass(SharedClassParentSubtype.class);
+        assertThatThrownBy(polymorphicParent::createEntityManagerFactory).isInstanceOf(PersistenceException.class)
             .hasMessageContaining("requires an eligible primary-key target");
-        assertThatThrownBy(() -> configuration(false, MismatchedNamedClassTarget.class, NamedCompositeKey.class,
-            CompositeKey.class, SharedClassParent.class, IdClassKey.class).createEntityManagerFactory())
+        var mismatchedTarget = configuration(false, MismatchedNamedClassTarget.class, NamedCompositeKey.class,
+            CompositeKey.class, SharedClassParent.class, IdClassKey.class);
+        assertThatThrownBy(mismatchedTarget::createEntityManagerFactory)
             .isInstanceOf(PersistenceException.class).hasMessageContaining("identifier types must match");
     }
 
@@ -1608,10 +1626,11 @@ class ElementCollectionRelationsTest {
                 assertThat((Object[]) rows.get(3)).containsExactly("same", 19L, 3L, 23L, 5L);
                 assertThat((Object[]) rows.get(4)).containsExactly("other", 3L, 19L, 23L, 5L);
                 em.getTransaction().begin();
-                assertThatThrownBy(() -> em.createNativeQuery(
+                var duplicateInsert = em.createNativeQuery(
                     "insert into multiple_composite_values (owner_id, value_position, element_code,"
                         + " element_first_region, element_first_serial, element_second_region, element_second_serial)"
-                        + " values (33, 5, 'same', 3, 19, 23, 5)").executeUpdate())
+                        + " values (33, 5, 'same', 3, 19, 23, 5)");
+                assertThatThrownBy(duplicateInsert::executeUpdate)
                     .isInstanceOf(PersistenceException.class);
                 em.getTransaction().rollback();
                 em.clear();
@@ -1688,7 +1707,8 @@ class ElementCollectionRelationsTest {
                     "update multiple_composite_values set element_second_serial = null where owner_id = 34").executeUpdate());
                 em.clear();
                 factory.getCache().evictAll();
-                assertThatThrownBy(() -> em.find(MultipleCompositeOwner.class, 34L).values.size())
+                var partialOwner = em.find(MultipleCompositeOwner.class, 34L);
+                assertThatThrownBy(() -> partialOwner.values.size())
                     .isInstanceOf(PersistenceException.class).hasMessageContaining("partially null");
             }
         }
@@ -1844,15 +1864,16 @@ class ElementCollectionRelationsTest {
 
     @Test void multipleCompositeMapsIdKeepsPolymorphicOverlappingAndUnmappedPartsRefused() {
         for (Class<?> subtype : List.of(CompositeParentSubtype.class, SharedClassParentSubtype.class)) {
-            assertThatThrownBy(() -> multipleCompositeConfiguration(false).managedClass(subtype)
-                .createEntityManagerFactory()).isInstanceOf(PersistenceException.class)
+            var polymorphicParent = multipleCompositeConfiguration(false).managedClass(subtype);
+            assertThatThrownBy(polymorphicParent::createEntityManagerFactory).isInstanceOf(PersistenceException.class)
                 .hasMessageContaining("requires an eligible primary-key target");
         }
-        assertThatThrownBy(() -> multipleCompositeConfiguration(false).managedClass(OverlappingCompositeTarget.class)
-            .createEntityManagerFactory()).isInstanceOf(PersistenceException.class)
+        var overlappingTarget = multipleCompositeConfiguration(false).managedClass(OverlappingCompositeTarget.class);
+        assertThatThrownBy(overlappingTarget::createEntityManagerFactory).isInstanceOf(PersistenceException.class)
             .hasMessageContaining("overlapping identifier mappings");
-        assertThatThrownBy(() -> configuration(false, UnmappedCompositeTarget.class, MultipleCompositeKey.class,
-            CompositeTarget.class, CompositeKey.class, IdClassKey.class).createEntityManagerFactory())
+        var unmappedTarget = configuration(false, UnmappedCompositeTarget.class, MultipleCompositeKey.class,
+            CompositeTarget.class, CompositeKey.class, IdClassKey.class);
+        assertThatThrownBy(unmappedTarget::createEntityManagerFactory)
             .isInstanceOf(PersistenceException.class).hasMessageContaining("unmapped nested embedded identifier parts");
     }
 

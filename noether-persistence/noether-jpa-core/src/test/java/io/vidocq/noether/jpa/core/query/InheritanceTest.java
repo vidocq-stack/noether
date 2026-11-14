@@ -61,10 +61,14 @@ class InheritanceTest {
             em.clear();
             assertThat(em.createNativeQuery("SELECT id AS \"Key\", DTYPE AS \"Kind\"\"Label\" FROM Animal",
                 "animal-quoted").getSingleResult()).isInstanceOf(Cat.class);
-            assertThatThrownBy(() -> em.createNativeQuery("SELECT id AS \"Key\", DTYPE AS \"kind\"\"label\" FROM Animal",
-                "animal-quoted").getSingleResult()).isInstanceOf(PersistenceException.class).hasMessageContaining("Kind");
-            assertThatThrownBy(() -> em.createNativeQuery("SELECT id AS \"Key\", 'NotAnAnimal' AS \"Kind\"\"Label\" FROM Animal",
-                "animal-quoted").getSingleResult()).isInstanceOf(PersistenceException.class).hasMessageContaining("discriminator");
+            var wrongKindCase = em.createNativeQuery("SELECT id AS \"Key\", DTYPE AS \"kind\"\"label\" FROM Animal",
+                "animal-quoted");
+            assertThatThrownBy(wrongKindCase::getSingleResult)
+                .isInstanceOf(PersistenceException.class).hasMessageContaining("Kind");
+            var notAnAnimal = em.createNativeQuery("SELECT id AS \"Key\", 'NotAnAnimal' AS \"Kind\"\"Label\" FROM Animal",
+                "animal-quoted");
+            assertThatThrownBy(notAnAnimal::getSingleResult)
+                .isInstanceOf(PersistenceException.class).hasMessageContaining("discriminator");
         }
     }
 
@@ -85,11 +89,13 @@ class InheritanceTest {
             em.clear();
             assertThat(em.createNativeQuery("SELECT \"id\" AS \"keyLabel\", \"DTYPE\" AS \"kindLabel\" FROM \"Animal\"",
                 "animal-default").getSingleResult()).isInstanceOf(Cat.class);
-            assertThatThrownBy(() -> em.createNativeQuery(
-                "SELECT \"id\" AS \"keyLabel\", \"DTYPE\" AS \"KINDLABEL\" FROM \"Animal\"", "animal-default").getSingleResult())
+            var wrongKindCase = em.createNativeQuery(
+                "SELECT \"id\" AS \"keyLabel\", \"DTYPE\" AS \"KINDLABEL\" FROM \"Animal\"", "animal-default");
+            assertThatThrownBy(wrongKindCase::getSingleResult)
                 .isInstanceOf(PersistenceException.class).hasMessageContaining("kindLabel");
-            assertThatThrownBy(() -> em.createNativeQuery(
-                "SELECT \"id\" AS \"KEYLABEL\", \"DTYPE\" AS \"kindLabel\" FROM \"Animal\"", "animal-default").getSingleResult())
+            var wrongKeyCase = em.createNativeQuery(
+                "SELECT \"id\" AS \"KEYLABEL\", \"DTYPE\" AS \"kindLabel\" FROM \"Animal\"", "animal-default");
+            assertThatThrownBy(wrongKeyCase::getSingleResult)
                 .isInstanceOf(PersistenceException.class).hasMessageContaining("keyLabel");
         }
     }
@@ -450,7 +456,8 @@ class InheritanceTest {
             }
             em.getTransaction().begin();
             ((Manager) loaded).office = "stale";
-            assertThatThrownBy(() -> em.getTransaction().commit()).isInstanceOf(RollbackException.class)
+            var staleTransaction = em.getTransaction();
+            assertThatThrownBy(staleTransaction::commit).isInstanceOf(RollbackException.class)
                 .hasRootCauseInstanceOf(OptimisticLockException.class);
         }
     }

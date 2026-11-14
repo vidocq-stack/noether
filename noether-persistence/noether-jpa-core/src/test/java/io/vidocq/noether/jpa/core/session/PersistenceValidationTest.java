@@ -104,7 +104,8 @@ class PersistenceValidationTest {
             " " + PersistChecks.class.getName() + ", jakarta.validation.groups.Default "));
         try (EntityManager em = emf.createEntityManager()) {
             em.getTransaction().begin();
-            assertThatThrownBy(() -> em.persist(new ValidatedEntry(72L, null)))
+            var unnamed = new ValidatedEntry(72L, null);
+            assertThatThrownBy(() -> em.persist(unnamed))
                 .isInstanceOf(ConstraintViolationException.class);
             em.getTransaction().rollback();
         }
@@ -126,7 +127,8 @@ class PersistenceValidationTest {
         EntityManager em = emf.createEntityManager();
 
         em.getTransaction().begin();
-        assertThatThrownBy(() -> em.persist(new ValidatedEntry(1L, null)))
+        var unnamed = new ValidatedEntry(1L, null);
+        assertThatThrownBy(() -> em.persist(unnamed))
             .isInstanceOf(ConstraintViolationException.class);
         assertThat(em.getTransaction().getRollbackOnly()).isTrue();
         em.getTransaction().rollback();
@@ -183,7 +185,8 @@ class PersistenceValidationTest {
         em.getTransaction().commit();
 
         em.getTransaction().begin();
-        assertThatThrownBy(() -> em.persist(new ValidatedEntry(5L, "valid", null)))
+        var withoutRelated = new ValidatedEntry(5L, "valid", null);
+        assertThatThrownBy(() -> em.persist(withoutRelated))
             .isInstanceOf(ConstraintViolationException.class);
         assertThat(em.getTransaction().getRollbackOnly()).isTrue();
         em.getTransaction().rollback();

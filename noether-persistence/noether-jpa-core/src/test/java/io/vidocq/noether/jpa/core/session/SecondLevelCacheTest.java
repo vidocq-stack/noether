@@ -510,7 +510,8 @@ class SecondLevelCacheTest {
             EntityManager em = failingEmf.createEntityManager();
             em.getTransaction().begin();
             em.persist(new CacheEntry(26L, "committed"));
-            assertThatThrownBy(() -> em.getTransaction().commit()).isInstanceOf(PersistenceException.class);
+            var transaction = em.getTransaction();
+            assertThatThrownBy(transaction::commit).isInstanceOf(PersistenceException.class);
             assertThat(failingEmf.getCache().contains(CacheEntry.class, 26L)).isTrue();
             em.close();
         } finally {

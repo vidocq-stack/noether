@@ -82,10 +82,14 @@ class StandardDialectTest {
 
     @Test
     void statementsThatWouldTouchEveryRowAreRefused() {
-        assertThatThrownBy(() -> new Delete(Table.of("BOOK"), List.of())).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new Update(Table.of("BOOK"), columns("TITLE"), List.of()))
+        Table book = Table.of("BOOK");
+        List<Identifier> none = List.of();
+        List<Identifier> title = columns("TITLE");
+        List<Identifier> id = columns("ID");
+        assertThatThrownBy(() -> new Delete(book, none)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new Update(book, title, none))
             .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new Update(Table.of("BOOK"), List.of(), columns("ID"))).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new Update(book, none, id)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

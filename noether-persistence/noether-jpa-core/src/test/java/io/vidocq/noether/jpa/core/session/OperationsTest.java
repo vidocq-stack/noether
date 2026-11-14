@@ -123,7 +123,8 @@ class OperationsTest {
         insertCrew(1, "Brigade", 0);
         em.getTransaction().begin();
         em.persist(new Crew(1, "Other"));
-        assertThatThrownBy(() -> em.getTransaction().commit()).isInstanceOf(RollbackException.class)
+        var transaction = em.getTransaction();
+        assertThatThrownBy(transaction::commit).isInstanceOf(RollbackException.class)
             .hasCauseInstanceOf(EntityExistsException.class);
     }
 
@@ -195,7 +196,8 @@ class OperationsTest {
         insertCrew(1, "Brigade", 0);
         em.getTransaction().begin();
         em.remove(new Crew(2, "never stored")); // new: ignored
-        assertThatThrownBy(() -> em.remove(new Crew(1, "detached"))).isInstanceOf(IllegalArgumentException.class);
+        var detached = new Crew(1, "detached");
+        assertThatThrownBy(() -> em.remove(detached)).isInstanceOf(IllegalArgumentException.class);
         em.getTransaction().rollback();
     }
 
@@ -287,7 +289,8 @@ class OperationsTest {
 
     @Test
     void onlyAManagedInstanceIsRefreshed() {
-        assertThatThrownBy(() -> em.refresh(new Crew(1, "Brigade"))).isInstanceOf(IllegalArgumentException.class);
+        var unmanaged = new Crew(1, "Brigade");
+        assertThatThrownBy(() -> em.refresh(unmanaged)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

@@ -215,7 +215,8 @@ class ManagedAccessTest {
         Object[] state = new Object[2];
         access.read(new Geo(1.5, 2.5), state);
         assertThat(state).containsExactly(1.5, 2.5);
-        assertThatThrownBy(() -> access.write(new Geo(0, 0), state)).isInstanceOf(UnsupportedOperationException.class);
+        var origin = new Geo(0, 0);
+        assertThatThrownBy(() -> access.write(origin, state)).isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test
@@ -233,8 +234,9 @@ class ManagedAccessTest {
         EntityModel model = model(Customer.class);
         ManagedAccess access = Accesses.of(model);
         Object customer = access.instantiate();
-        assertThatThrownBy(() -> access.set(customer, index(model, "name"), 12)).isInstanceOf(ClassCastException.class);
-        assertThatThrownBy(() -> access.get("not a customer", index(model, "name"))).isInstanceOf(ClassCastException.class);
+        int nameIndex = index(model, "name");
+        assertThatThrownBy(() -> access.set(customer, nameIndex, 12)).isInstanceOf(ClassCastException.class);
+        assertThatThrownBy(() -> access.get("not a customer", nameIndex)).isInstanceOf(ClassCastException.class);
     }
 
     @Test

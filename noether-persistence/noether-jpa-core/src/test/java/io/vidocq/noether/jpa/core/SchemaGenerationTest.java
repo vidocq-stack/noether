@@ -124,11 +124,11 @@ class SchemaGenerationTest {
 
     @Test
     void invalidActionsAndMissingTargetsAreRejectedBeforeExecutingDdl() {
-        assertThatThrownBy(() -> configuration("p9-invalid")
-            .property("jakarta.persistence.schema-generation.database.action", "invalid")
-            .createEntityManagerFactory()).isInstanceOf(PersistenceException.class);
-        assertThatThrownBy(() -> configuration("p9-invalid")
-            .property("jakarta.persistence.schema-generation.scripts.action", "create")
-            .createEntityManagerFactory()).isInstanceOf(PersistenceException.class);
+        var invalidAction = configuration("p9-invalid")
+            .property("jakarta.persistence.schema-generation.database.action", "invalid");
+        assertThatThrownBy(invalidAction::createEntityManagerFactory).isInstanceOf(PersistenceException.class);
+        var missingTarget = configuration("p9-invalid")
+            .property("jakarta.persistence.schema-generation.scripts.action", "create");
+        assertThatThrownBy(missingTarget::createEntityManagerFactory).isInstanceOf(PersistenceException.class);
     }
 }

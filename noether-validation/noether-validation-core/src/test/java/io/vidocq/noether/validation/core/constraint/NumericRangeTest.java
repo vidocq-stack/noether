@@ -106,8 +106,10 @@ class NumericRangeTest {
     @Test
     void decimalBoundsRejectMalformedAnnotationValue() {
         var bad = annotation(F.class, "dminBad", DecimalMin.class);
-        assertThatThrownBy(() -> new DecimalMinValidatorForInteger().initialize(bad)).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new DecimalMinValidatorForCharSequence().initialize(bad)).isInstanceOf(IllegalArgumentException.class);
+        var forInteger = new DecimalMinValidatorForInteger();
+        var forCharSequence = new DecimalMinValidatorForCharSequence();
+        assertThatThrownBy(() -> forInteger.initialize(bad)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> forCharSequence.initialize(bad)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

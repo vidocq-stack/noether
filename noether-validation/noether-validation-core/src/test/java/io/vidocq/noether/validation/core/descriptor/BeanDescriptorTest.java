@@ -226,9 +226,11 @@ class BeanDescriptorTest {
     @Test
     void theDescriptorsAreImmutable() {
         PropertyDescriptor name = validator.getConstraintsForClass(Customer.class).getConstraintsForProperty("name");
-        assertThatThrownBy(() -> name.getConstraintDescriptors().clear()).isInstanceOf(UnsupportedOperationException.class);
+        var descriptors = name.getConstraintDescriptors();
+        assertThatThrownBy(descriptors::clear).isInstanceOf(UnsupportedOperationException.class);
         BeanDescriptor customer = validator.getConstraintsForClass(Customer.class);
-        assertThatThrownBy(() -> customer.getConstrainedProperties().clear()).isInstanceOf(UnsupportedOperationException.class);
+        var properties = customer.getConstrainedProperties();
+        assertThatThrownBy(properties::clear).isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test

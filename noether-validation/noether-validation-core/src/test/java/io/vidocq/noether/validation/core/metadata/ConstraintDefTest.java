@@ -70,7 +70,8 @@ class ConstraintDefTest {
     @Test
     void theAttributesMapIsReadOnly() {
         ConstraintDef def = on("plain").get(0);
-        assertThatThrownBy(() -> def.getAttributes().put("x", 1)).isInstanceOf(UnsupportedOperationException.class);
+        var attributes = def.getAttributes();
+        assertThatThrownBy(() -> attributes.put("x", 1)).isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test

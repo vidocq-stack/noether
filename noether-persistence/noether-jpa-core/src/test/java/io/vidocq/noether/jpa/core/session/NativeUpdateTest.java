@@ -102,7 +102,8 @@ class NativeUpdateTest {
 
     @Test
     void anUpdateNeedsATransaction() { // §3.11.6
-        assertThatThrownBy(() -> em.createNativeQuery("DELETE FROM Crew").executeUpdate())
+        var deleteAll = em.createNativeQuery("DELETE FROM Crew");
+        assertThatThrownBy(deleteAll::executeUpdate)
             .isInstanceOf(TransactionRequiredException.class);
     }
 
@@ -150,17 +151,21 @@ class NativeUpdateTest {
             .getSingleResult()).isEqualTo(new CrewName(1, "Brigade"));
         assertThat(em.createNativeQuery("SELECT id AS \"CrewKey\" FROM Crew WHERE id = 1", "quoted-entity")
             .getSingleResult()).isSameAs(em.find(Crew.class, 1L));
-        assertThatThrownBy(() -> em.createNativeQuery("SELECT 1 AS \"crewkey\"", "quoted-entity").getSingleResult())
+        var foldedKey = em.createNativeQuery("SELECT 1 AS \"crewkey\"", "quoted-entity");
+        assertThatThrownBy(foldedKey::getSingleResult)
             .isInstanceOf(PersistenceException.class).hasMessageContaining("CrewKey");
-        assertThatThrownBy(() -> em.createNativeQuery("SELECT 42 AS \"value\"\"label\"", "quoted-column").getSingleResult())
+        var foldedColumn = em.createNativeQuery("SELECT 42 AS \"value\"\"label\"", "quoted-column");
+        assertThatThrownBy(foldedColumn::getSingleResult)
             .isInstanceOf(PersistenceException.class).hasMessageContaining("Value");
     }
 
     @Test
     void unquotedResultNamesRejectAmbiguousFoldedLabelsAndDoNotMatchHiddenColumnNames() {
-        assertThatThrownBy(() -> em.createNativeQuery("SELECT 1 AS \"name\", 2 AS \"NAME\"", "crew-names").getSingleResult())
+        var ambiguous = em.createNativeQuery("SELECT 1 AS \"name\", 2 AS \"NAME\"", "crew-names");
+        assertThatThrownBy(ambiguous::getSingleResult)
             .isInstanceOf(PersistenceException.class).hasMessageContaining("Ambiguous");
-        assertThatThrownBy(() -> em.createNativeQuery("SELECT name AS other FROM Crew", "crew-names").getResultList())
+        var hiddenColumn = em.createNativeQuery("SELECT name AS other FROM Crew", "crew-names");
+        assertThatThrownBy(hiddenColumn::getResultList)
             .isInstanceOf(PersistenceException.class).hasMessageContaining("no column");
     }
 
@@ -174,7 +179,8 @@ class NativeUpdateTest {
              EntityManager manager = delimited.createEntityManager()) {
             assertThat(manager.createNativeQuery("SELECT 'exact' AS \"name\", 'folded' AS \"NAME\"", "crew-names")
                 .getSingleResult()).isEqualTo("exact");
-            assertThatThrownBy(() -> manager.createNativeQuery("SELECT 'wrong' AS \"NAME\"", "crew-names").getSingleResult())
+            var foldedOnly = manager.createNativeQuery("SELECT 'wrong' AS \"NAME\"", "crew-names");
+            assertThatThrownBy(foldedOnly::getSingleResult)
                 .isInstanceOf(PersistenceException.class).hasMessageContaining("no column");
             assertThat(manager.createNativeQuery("SELECT 1 AS \"id\", 'Brigade' AS \"name\"", "crew-records")
                 .getSingleResult()).isEqualTo(new CrewName(1, "Brigade"));
@@ -185,14 +191,16 @@ class NativeUpdateTest {
     void nonKeyFieldAliasesAlsoRequireExactDelimitedLabels() {
         assertThat(em.createNativeQuery("SELECT id AS \"CrewKey\", name AS \"CrewName\" FROM Crew WHERE id = 1",
             "quoted-fields").getSingleResult()).isSameAs(em.find(Crew.class, 1L));
-        assertThatThrownBy(() -> em.createNativeQuery("SELECT id AS \"CrewKey\", name AS \"crewname\" FROM Crew WHERE id = 1",
-            "quoted-fields").getSingleResult()).isInstanceOf(PersistenceException.class).hasMessageContaining("CrewName");
+        var foldedField = em.createNativeQuery("SELECT id AS \"CrewKey\", name AS \"crewname\" FROM Crew WHERE id = 1",
+            "quoted-fields");
+        assertThatThrownBy(foldedField::getSingleResult).isInstanceOf(PersistenceException.class).hasMessageContaining("CrewName");
     }
 
     @Test
     void aFailedStatementMarksTheTransactionForRollback() { // §3.12
         em.getTransaction().begin();
-        assertThatThrownBy(() -> em.createNativeQuery("DELETE FROM NoSuchTable").executeUpdate())
+        var deleteFromMissingTable = em.createNativeQuery("DELETE FROM NoSuchTable");
+        assertThatThrownBy(deleteFromMissingTable::executeUpdate)
             .isInstanceOf(PersistenceException.class);
         assertThat(em.getTransaction().getRollbackOnly()).isTrue();
         em.getTransaction().rollback();

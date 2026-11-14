@@ -125,7 +125,8 @@ class AnnotationFactoryTest {
     @Test
     void aMemberWithoutDefaultMustBeGiven() {
         AnnotationTypeInfo info = AnnotationTypeInfo.of(SampleAnnotation.class);
-        assertThatThrownBy(() -> AnnotationFactory.create(info, Map.of()))
+        Map<String, Object> noMember = Map.of();
+        assertThatThrownBy(() -> AnnotationFactory.create(info, noMember))
             .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("required");
     }
 

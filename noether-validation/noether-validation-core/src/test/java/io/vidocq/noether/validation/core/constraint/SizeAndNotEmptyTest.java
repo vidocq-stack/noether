@@ -89,8 +89,10 @@ class SizeAndNotEmptyTest {
     void sizeRejectsInvalidParameters() {
         var negative = annotation(F.class, "negativeMin", Size.class);
         var inverted = annotation(F.class, "inverted", Size.class);
-        assertThatThrownBy(() -> new SizeValidatorForCharSequence().initialize(negative)).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new SizeValidatorForCollection().initialize(inverted)).isInstanceOf(IllegalArgumentException.class);
+        var forCharSequence = new SizeValidatorForCharSequence();
+        var forCollection = new SizeValidatorForCollection();
+        assertThatThrownBy(() -> forCharSequence.initialize(negative)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> forCollection.initialize(inverted)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

@@ -488,7 +488,8 @@ class LazyBatchTest {
         em.detach(detached); em.detach(owners.getFirst());
         owners.get(1).getValues().size();
         owners.get(1).getTarget().getName();
-        assertThatThrownBy(() -> owners.getFirst().getValues().size()).isInstanceOf(PersistenceException.class);
+        var detachedValues = owners.getFirst().getValues();
+        assertThatThrownBy(detachedValues::size).isInstanceOf(PersistenceException.class);
         assertThatThrownBy(detached::getName).isInstanceOf(PersistenceException.class);
         var pending = owners.get(4).getValues();
         var reference = owners.get(4).getTarget();
@@ -497,8 +498,10 @@ class LazyBatchTest {
         assertThatThrownBy(reference::getName).isInstanceOf(PersistenceException.class);
         Owner fresh = em.find(Owner.class, 5L);
         em.close();
-        assertThatThrownBy(() -> fresh.getValues().size()).isInstanceOf(PersistenceException.class);
-        assertThatThrownBy(() -> fresh.getTarget().getName()).isInstanceOf(PersistenceException.class);
+        var freshValues = fresh.getValues();
+        assertThatThrownBy(freshValues::size).isInstanceOf(PersistenceException.class);
+        var freshTarget = fresh.getTarget();
+        assertThatThrownBy(freshTarget::getName).isInstanceOf(PersistenceException.class);
     }
 
     @Test void invalidBatchSizesFailAtBootstrap() {

@@ -127,8 +127,9 @@ class PersistenceUnitUtilTest {
     void anObjectThatIsNotAnEntityOfTheUnitIsRefused() { // §7.11: IllegalArgumentException
         assertThatThrownBy(() -> util.getIdentifier("not an entity")).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> util.getVersion(this)).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> util.isInstance(new Emp(2, "Clerk", null), String.class))
+        var clerk = new Emp(2, "Clerk", null);
+        assertThatThrownBy(() -> util.isInstance(clerk, String.class))
             .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> util.isLoaded(new Emp(2, "Clerk", null), "nickname")).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> util.isLoaded(clerk, "nickname")).isInstanceOf(IllegalArgumentException.class);
     }
 }

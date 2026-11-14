@@ -263,9 +263,11 @@ class JpqlQueryTest {
 
     @Test
     void singleResults() { // §3.11: NoResultException, NonUniqueResultException
-        assertThatThrownBy(() -> em.createQuery("SELECT e FROM Emp e WHERE e.id = 99").getSingleResult())
+        var noRow = em.createQuery("SELECT e FROM Emp e WHERE e.id = 99");
+        assertThatThrownBy(noRow::getSingleResult)
             .isInstanceOf(NoResultException.class);
-        assertThatThrownBy(() -> em.createQuery("SELECT e FROM Emp e").getSingleResult()).isInstanceOf(NonUniqueResultException.class);
+        var everyRow = em.createQuery("SELECT e FROM Emp e");
+        assertThatThrownBy(everyRow::getSingleResult).isInstanceOf(NonUniqueResultException.class);
         assertThat(em.createQuery("SELECT e FROM Emp e WHERE e.id = 99").getSingleResultOrNull()).isNull();
     }
 
@@ -297,9 +299,11 @@ class JpqlQueryTest {
         assertThatThrownBy(() -> em.createQuery("SELECT e.nickname FROM Emp e")).isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("nickname");
         assertThatThrownBy(() -> em.createQuery("SELECT e.name FROM Emp e", Integer.class)).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> em.createQuery("SELECT e FROM Emp e WHERE e.name = :n").setParameter("other", "x"))
+        var unknownParameter = em.createQuery("SELECT e FROM Emp e WHERE e.name = :n");
+        assertThatThrownBy(() -> unknownParameter.setParameter("other", "x"))
             .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> em.createQuery("SELECT e FROM Emp e WHERE e.name = :n").getResultList())
+        var unboundParameter = em.createQuery("SELECT e FROM Emp e WHERE e.name = :n");
+        assertThatThrownBy(unboundParameter::getResultList)
             .isInstanceOf(IllegalStateException.class); // §3.11: a parameter not bound
     }
 }

@@ -206,13 +206,14 @@ class TablePerClassTest {
             assertThat(em.getLockMode(locked)).isEqualTo(LockModeType.PESSIMISTIC_WRITE);
             try (var other = emf.createEntityManager()) {
                 other.getTransaction().begin();
-                assertThatThrownBy(() -> other.find(DetailedRecord.class, new RecordKey(3, 4),
-                    LockModeType.PESSIMISTIC_WRITE, java.util.Map.of("jakarta.persistence.lock.timeout", 0)))
+                var leafKey = new RecordKey(3, 4);
+                var noWait = java.util.Map.<String, Object>of("jakarta.persistence.lock.timeout", 0);
+                assertThatThrownBy(() -> other.find(DetailedRecord.class, leafKey, LockModeType.PESSIMISTIC_WRITE, noWait))
                     .isInstanceOfAny(LockTimeoutException.class, PessimisticLockException.class);
                 other.getTransaction().rollback();
             }
-            assertThatThrownBy(() -> em.createQuery("select r.label from Record r").setLockMode(LockModeType.PESSIMISTIC_WRITE)
-                .getResultList()).isInstanceOf(PersistenceException.class).hasMessageContaining("entity");
+            var scalarLock = em.createQuery("select r.label from Record r").setLockMode(LockModeType.PESSIMISTIC_WRITE);
+            assertThatThrownBy(scalarLock::getResultList).isInstanceOf(PersistenceException.class).hasMessageContaining("entity");
             em.getTransaction().rollback();
         }
     }

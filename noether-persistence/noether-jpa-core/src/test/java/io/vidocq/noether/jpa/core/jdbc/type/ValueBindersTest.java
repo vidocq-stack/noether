@@ -258,7 +258,8 @@ class ValueBindersTest {
 
     @Test
     void aTypeThatCannotBeStoredIsRejected() {
-        assertThatThrownBy(() -> binders.of(attribute(Thread.class, new ValueConversion.None())))
+        BasicAttribute thread = attribute(Thread.class, new ValueConversion.None());
+        assertThatThrownBy(() -> binders.of(thread))
             .isInstanceOf(PersistenceException.class).hasMessageContaining(Thread.class.getName());
     }
 

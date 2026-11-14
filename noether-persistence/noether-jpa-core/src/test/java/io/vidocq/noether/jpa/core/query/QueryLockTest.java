@@ -102,9 +102,11 @@ class QueryLockTest {
 
     @Test
     void aLockModeNeedsATransactionAndASelect() { // §3.11: TransactionRequiredException, IllegalStateException
-        assertThatThrownBy(() -> em.createQuery("SELECT e FROM Emp e").setLockMode(LockModeType.PESSIMISTIC_READ).getResultList())
+        var lockedSelect = em.createQuery("SELECT e FROM Emp e").setLockMode(LockModeType.PESSIMISTIC_READ);
+        assertThatThrownBy(lockedSelect::getResultList)
             .isInstanceOf(TransactionRequiredException.class);
-        assertThatThrownBy(() -> em.createQuery("DELETE FROM Emp e").setLockMode(LockModeType.PESSIMISTIC_READ))
+        var delete = em.createQuery("DELETE FROM Emp e");
+        assertThatThrownBy(() -> delete.setLockMode(LockModeType.PESSIMISTIC_READ))
             .isInstanceOf(IllegalStateException.class);
         assertThat(em.createQuery("SELECT e FROM Emp e").setLockMode(LockModeType.NONE).getResultList()).hasSize(2);
     }

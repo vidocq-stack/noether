@@ -430,10 +430,8 @@ class MapsIdToOneTest {
     void missingParentIsRefusedWithoutPhantomZeroIdentity() {
         try (var factory = factory(); var em = factory.createEntityManager()) {
             em.getTransaction().begin();
-            assertThatThrownBy(() -> {
-                em.persist(new Shared(null));
-                em.flush();
-            }).isInstanceOf(PersistenceException.class).hasMessageContaining("MapsId");
+            em.persist(new Shared(null));
+            assertThatThrownBy(em::flush).isInstanceOf(PersistenceException.class).hasMessageContaining("MapsId");
             em.getTransaction().rollback();
             assertThat(factory.getCache().contains(Shared.class, 0L)).isFalse();
         }
@@ -489,8 +487,8 @@ class MapsIdToOneTest {
             em.persist(other);
             em.getTransaction().commit();
             em.getTransaction().begin();
-            assertThatThrownBy(() -> em.createQuery("update MapsShared s set s.parent = :parent")
-                .setParameter("parent", other).executeUpdate())
+            // the bulk SET is refused when the query is translated, at createQuery
+            assertThatThrownBy(() -> em.createQuery("update MapsShared s set s.parent = :parent"))
                 .isInstanceOf(PersistenceException.class).hasMessageContaining("MapsId");
             em.getTransaction().rollback();
         }
@@ -633,10 +631,8 @@ class MapsIdToOneTest {
         try (var factory = factory(); var em = factory.createEntityManager()) {
             var named = new Named(null, new Parent("incomplete"));
             em.getTransaction().begin();
-            assertThatThrownBy(() -> {
-                em.persist(named);
-                em.flush();
-            }).isInstanceOf(PersistenceException.class).hasMessageContaining("MapsId");
+            em.persist(named);
+            assertThatThrownBy(em::flush).isInstanceOf(PersistenceException.class).hasMessageContaining("MapsId");
             em.getTransaction().rollback();
         }
     }

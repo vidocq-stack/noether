@@ -301,7 +301,8 @@ class ValidatorEngineTest {
 
     @Test
     void validatePropertyRejectsAnUnknownPropertyButNotAnUnconstrainedOne() {
-        assertThatThrownBy(() -> validator.validateProperty(new Person("A"), "nope")).isInstanceOf(IllegalArgumentException.class);
+        var person = new Person("A");
+        assertThatThrownBy(() -> validator.validateProperty(person, "nope")).isInstanceOf(IllegalArgumentException.class);
         assertThat(validator.validateProperty(new Address("a", "b"), "street")).isEmpty();
     }
 
@@ -320,17 +321,19 @@ class ValidatorEngineTest {
 
     @Test
     void theArgumentsAreChecked() {
+        var person = new Person("A");
         assertThatThrownBy(() -> validator.validate(null)).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> validator.validate(new Person("A"), (Class<?>[]) null)).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> validator.validate(new Person("A"), (Class<?>) null)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> validator.validate(person, (Class<?>[]) null)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> validator.validate(person, (Class<?>) null)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> validator.validateProperty(null, "x")).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> validator.validateProperty(new Person("A"), "")).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> validator.validateProperty(person, "")).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> validator.validateValue(null, "x", 1)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void anExceptionFromAGetterIsWrapped() {
-        assertThatThrownBy(() -> validator.validateProperty(new BadGetter(), "value")).isInstanceOf(ValidationException.class);
+        var badGetter = new BadGetter();
+        assertThatThrownBy(() -> validator.validateProperty(badGetter, "value")).isInstanceOf(ValidationException.class);
     }
 
     // ---- validators ----------------------------------------------------------------------------------
@@ -347,23 +350,27 @@ class ValidatorEngineTest {
 
     @Test
     void aRuntimeExceptionInIsValidIsWrapped() {
-        assertThatThrownBy(() -> validator.validateProperty(new Composition(), "broken"))
+        var composition = new Composition();
+        assertThatThrownBy(() -> validator.validateProperty(composition, "broken"))
             .isInstanceOf(ValidationException.class).hasRootCauseMessage("kaboom");
     }
 
     @Test
     void disablingTheDefaultViolationWithoutAddingOneIsAnError() {
-        assertThatThrownBy(() -> validator.validateProperty(new Composition(), "silent")).isInstanceOf(ValidationException.class);
+        var composition = new Composition();
+        assertThatThrownBy(() -> validator.validateProperty(composition, "silent")).isInstanceOf(ValidationException.class);
     }
 
     @Test
     void anAmbiguousValidatorResolutionIsAnError() {
-        assertThatThrownBy(() -> validator.validateProperty(new Composition(), "ambiguous")).isInstanceOf(UnexpectedTypeException.class);
+        var composition = new Composition();
+        assertThatThrownBy(() -> validator.validateProperty(composition, "ambiguous")).isInstanceOf(UnexpectedTypeException.class);
     }
 
     @Test
     void aConstraintWithoutValidatorForTheDeclaredTypeIsAnError() {
-        assertThatThrownBy(() -> validator.validateProperty(new Composition(), "noValidatorForObject"))
+        var composition = new Composition();
+        assertThatThrownBy(() -> validator.validateProperty(composition, "noValidatorForObject"))
             .isInstanceOf(UnexpectedTypeException.class);
     }
 
@@ -386,7 +393,9 @@ class ValidatorEngineTest {
                     public void releaseInstance(jakarta.validation.ConstraintValidator<?, ?> instance) {
                     }
                 }).buildValidatorFactory()) {
-            assertThatThrownBy(() -> custom.getValidator().validate(new Address(null, null))).isInstanceOf(ValidationException.class);
+            var customValidator = custom.getValidator();
+            var address = new Address(null, null);
+            assertThatThrownBy(() -> customValidator.validate(address)).isInstanceOf(ValidationException.class);
         }
     }
 
@@ -478,13 +487,16 @@ class ValidatorEngineTest {
                         return true;
                     }
                 }).buildValidatorFactory()) {
-            assertThatThrownBy(() -> custom.getValidator().validate(new Person("A"))).isInstanceOf(ValidationException.class);
+            var customValidator = custom.getValidator();
+            var person = new Person("A");
+            assertThatThrownBy(() -> customValidator.validate(person)).isInstanceOf(ValidationException.class);
         }
     }
 
     @Test
     void aParameterNodeCannotBeAddedOutsideAnExecutable() {
-        assertThatThrownBy(() -> validator.validate(new ParameterNodeOnField()))
+        var bean = new ParameterNodeOnField();
+        assertThatThrownBy(() -> validator.validate(bean))
             .isInstanceOf(ValidationException.class).hasRootCauseInstanceOf(IllegalStateException.class);
     }
 

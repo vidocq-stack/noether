@@ -82,7 +82,9 @@ class PersistenceContextTest {
     @Test
     void anotherInstanceWithTheSameIdentityCannotBePersisted() { // §3.2.2
         context.persist(customer(1), type(Customer.class));
-        assertThatThrownBy(() -> context.persist(customer(1), type(Customer.class))).isInstanceOf(EntityExistsException.class);
+        Object sameIdentity = customer(1);
+        MappedEntity customerType = type(Customer.class);
+        assertThatThrownBy(() -> context.persist(sameIdentity, customerType)).isInstanceOf(EntityExistsException.class);
     }
 
     @Test

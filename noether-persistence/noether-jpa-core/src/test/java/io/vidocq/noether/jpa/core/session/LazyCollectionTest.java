@@ -463,7 +463,8 @@ class LazyCollectionTest {
         em.clear();
         assertThat(fetched.get(0).tags).extracting(t -> t.name).containsExactly("red");
         assertThat(fetched.get(1).tags).isEmpty();
-        assertThatThrownBy(() -> fetched.get(0).children.size()).isInstanceOf(PersistenceException.class);
+        var unfetchedChildren = fetched.get(0).children;
+        assertThatThrownBy(unfetchedChildren::size).isInstanceOf(PersistenceException.class);
     }
 
     @Test
