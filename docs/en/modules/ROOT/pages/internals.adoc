@@ -36,6 +36,10 @@ The dialect is resolved later, the first time the factory talks to the database.
 | `noether-jpa-processor` (compile time), or `AccessGenerator` (start time, hidden class)
 | Instantiates the entity, reads and writes its persistent state, its identifier and version.
 
+| `Isbn$$NoetherAccess` (a converter), `Genre$$NoetherAccess` (an `@EnumeratedValue` enum)
+| `noether-jpa-processor`, or nothing: a private lookup at start time
+| Instantiates the converter; reads the enumerated value of each constant.
+
 | `_NoetherJpaAccess`
 | `noether-jpa-processor`
 | The `ManagedAccessProvider` of a package, handed over through `ServiceLoader`.

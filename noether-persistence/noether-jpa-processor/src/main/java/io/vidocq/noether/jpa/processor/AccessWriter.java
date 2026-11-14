@@ -120,6 +120,14 @@ final class AccessWriter {
             }
         """;
 
+    private static final String NO_ATTRIBUTE = """
+
+            @java.lang.Override
+            public java.lang.Object get(java.lang.Object instance, int attribute) {
+                throw new java.lang.IndexOutOfBoundsException(attribute);
+            }
+        """;
+
     private static final String SET = """
 
             @java.lang.Override
@@ -210,9 +218,10 @@ final class AccessWriter {
         if (!referenceable(type, pkg)) {
             throw new Unsupported(self + " cannot be named from its own package");
         }
+        boolean readOnly = type.getKind() == ElementKind.ENUM; // its enumerated value is read, never written (§11.1.18)
         List<Slot> slots = new ArrayList<>();
         for (Member member : members) {
-            slots.add(slot(type, member, pkg, record));
+            slots.add(slot(type, member, pkg, record, readOnly));
         }
         List<String> listeners = new ArrayList<>();
         List<CallbackSlot> callbackSlots = new ArrayList<>();
@@ -240,7 +249,7 @@ final class AccessWriter {
         StringBuilder methods = new StringBuilder();
         if (record) {
             methods.append(construct(self, slots));
-        } else {
+        } else if (!readOnly) {
             methods.append(instantiate(type, self));
         }
         if (!callbackSlots.isEmpty()) {
@@ -252,14 +261,18 @@ final class AccessWriter {
             }
             methods.append(CALLBACK.formatted(self, cases));
         }
-        methods.append(GET.formatted(self, lines(slots, (slot, i) -> "                case " + i + " -> " + value(slot, i) + ";")));
-        methods.append(READ.formatted(self, lines(slots, (slot, i) -> "            state[" + i + "] = " + value(slot, i) + ";")));
-        if (!record) {
+        if (slots.isEmpty()) {
+            methods.append(NO_ATTRIBUTE); // a converter: instantiated, never read nor written
+        } else {
+            methods.append(GET.formatted(self, lines(slots, (slot, i) -> "                case " + i + " -> " + value(slot, i) + ";")));
+            methods.append(READ.formatted(self, lines(slots, (slot, i) -> "            state[" + i + "] = " + value(slot, i) + ";")));
+        }
+        if (!record && !readOnly && !slots.isEmpty()) {
             methods.append(SET.formatted(self, lines(slots, (slot, i) -> "                case " + i + " -> " + assignment(slot, i, "value") + ";")));
             methods.append(WRITE.formatted(self, lines(slots, (slot, i) -> "            " + assignment(slot, i, "state[" + i + "]") + ";")));
         }
         return CLASS.formatted(self, pkg.isEmpty() ? "" : "package " + pkg + ";\n\n", className,
-            handles(type, slots, record, callbackSlots), attributes, methods, callbackDescriptors, listenerFields);
+            handles(type, slots, record || readOnly, callbackSlots), attributes, methods, callbackDescriptors, listenerFields);
     }
 
     /** One line per slot, each ended by a new line. */
@@ -282,7 +295,7 @@ final class AccessWriter {
         return "entity." + slot.setter() + "((" + slot.type() + ") " + value + ")";
     }
 
-    private Slot slot(TypeElement type, Member member, String pkg, boolean record) throws Unsupported {
+    private Slot slot(TypeElement type, Member member, String pkg, boolean record, boolean readOnly) throws Unsupported {
         ClassInfo owner = member.owner();
         String ownerPackage = owner.name().contains(".") ? owner.name().substring(0, owner.name().lastIndexOf('.')) : "";
         boolean samePackage = ownerPackage.equals(pkg);
@@ -306,7 +319,7 @@ final class AccessWriter {
             if (!direct && !sameModule) {
                 throw new Unsupported("the field " + member.name() + " of " + owner.name() + " belongs to another module");
             }
-            return new Slot(member, typeName, direct, direct, member.name(), member.name(), depth, typeLiteral, null);
+            return new Slot(member, typeName, direct, direct || readOnly, member.name(), member.name(), depth, typeLiteral, null);
         }
         MethodInfo getter = (MethodInfo) member.element();
         MethodInfo setter = setter(owner, getter, member.name())
@@ -421,9 +434,16 @@ final class AccessWriter {
     }
 
     /** The method handles of the members the generated class cannot reach directly, and their static initialiser. */
-    private String handles(TypeElement type, List<Slot> slots, boolean record, List<CallbackSlot> callbacks) {
-        boolean constructor = !record && privateConstructor(type);
-        boolean any = !record && (slots.stream().anyMatch(s -> !s.directGet() || !s.directSet()) || constructor)
+    /**
+     * The handles of the members the generated class cannot name, and of a private constructor.
+     *
+     * @param notBuilt whether the access never builds an instance: a record, built through its canonical constructor,
+     *        and an enum
+     */
+    private String handles(TypeElement type, List<Slot> slots, boolean notBuilt, List<CallbackSlot> callbacks) {
+        boolean constructor = !notBuilt && privateConstructor(type);
+        // a record slot is read and never written through its public accessor: it never needs a handle
+        boolean any = slots.stream().anyMatch(s -> !s.directGet() || !s.directSet()) || constructor
             || callbacks.stream().anyMatch(c -> c.handle() != null);
         if (!any) {
             return "";

@@ -1709,6 +1709,77 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     loader) is read once and is not a duplicate. `find` now reads every `persistence.xml` of the loader, where it
     used to stop at the first match.
 
+## BUG-20261114-01 — A converter of a closed package fails at bootstrap, even compiled with the processor
+
+- **Date**: 2026-11-14
+- **Status**: FIXED on `fix/closed-package-codegen`: the processor generates `<Converter>$$NoetherAccess`, whose
+  `instantiate()` calls the no-arg constructor from the converter's package, and `ValueBinders` takes it before the
+  private lookup.
+- **Affected module**: `noether-jpa-core` (`ValueBinders.converter`, `Handles.newInstance`), `noether-jpa-processor`
+- **Symptom**: an entity of a package that is neither exported nor opened, compiled with `noether-jpa-processor`
+  and handed over by `provides … with <pkg>._NoetherJpaAccess`, fails to start when an attribute goes through a
+  converter of that package: `PersistenceException: The attribute text of ….Note cannot be stored: Noether cannot
+  access the class ….Shout: compile it with noether-jpa-processor and declare the access it generates`, caused by
+  `IllegalAccessException: module … does not open … to module io.vidocq.noether.jpa.core`. The message asks for
+  what the application already does.
+- **Minimal reproduction**: `ClosedPackageCodeModulePathTest.aConverterOfTheClosedPackageConvertsTheAttribute`:
+  ```sh
+  ./mvnw -ntp -pl noether-persistence/noether-jpa-processor-module-it -am verify \
+    -Dtest=ClosedPackageCodeModulePathTest -Dsurefire.failIfNoSpecifiedTests=false
+  ```
+- **Hypothesised cause**: the processor generates accesses for entities and embeddables only; the converter is
+  instantiated at bootstrap through a private lookup, which needs the package opened to the core.
+- **Investigations**:
+  - 2026-11-14: found by the compile-time design review of Noether's reflective sites (the maintainer asked to move
+    every reflective path to compile time, reflection staying the fallback for unprocessed archives). Reproduced red.
+  - 2026-11-14: cause confirmed. Every `@Converter` of the round now gets an access with no attribute, handed over
+    by the provider of its package (a package without entity gets one too); a converter of a module that does not
+    read `io.vidocq.noether.jpa.core` is left to the bootstrap without error. `ConvertersAndEnumsTest` covers the
+    generated source, a private constructor and an incremental build.
+
+## BUG-20261114-02 — An enum of a closed package mapped by its @EnumeratedValue field fails at bootstrap
+
+- **Date**: 2026-11-14
+- **Status**: FIXED on `fix/closed-package-codegen`: the processor generates `<Enum>$$NoetherAccess`, a read-only
+  access with the `@EnumeratedValue` field as its one attribute, and `ValueBinders` reads the values through it.
+- **Affected module**: `noether-jpa-core` (`ValueBinders`, `Handles.getter`), `noether-jpa-processor`
+- **Symptom**: same setting as BUG-20261114-01, with an attribute whose enum keeps its database value in a private
+  `@EnumeratedValue` field: `Noether cannot access the class ….Tier`, caused by the same `IllegalAccessException`.
+- **Minimal reproduction**: `ClosedPackageCodeModulePathTest.anEnumOfTheClosedPackageIsStoredAsItsEnumeratedValue`.
+- **Hypothesised cause**: the field is read through a private lookup at bootstrap; the processor generates nothing
+  for enums.
+- **Investigations**:
+  - 2026-11-14: reproduced red with BUG-20261114-01.
+  - 2026-11-14: cause confirmed. `AccessWriter` gets a read-only shape for an enum: no instantiation, no setter, a
+    handle from the enum's own lookup for a private field.
+
+## BUG-20261114-03 — An @IdClass of a closed package fails at bootstrap: the processor never serves id classes
+
+- **Date**: 2026-11-14
+- **Status**: OPEN
+- **Affected module**: `noether-jpa-core` (`MappedUnit.idClassAccess`), `noether-jpa-processor`
+- **Symptom**: same setting as BUG-20261114-01, with an entity whose `@IdClass` is in its own package: `Noether cannot
+  access the class ….SeatKey`, caused by the same `IllegalAccessException`.
+- **Minimal reproduction**: `ClosedPackageCodeModulePathTest.anIdClassOfTheClosedPackageFindsTheEntity`.
+- **Hypothesised cause**: `MappedUnit.idClassAccess` always ends in `Accesses.of`, the start-time hidden class: no
+  generated access is looked up for an id class, and the processor writes none.
+- **Investigations**:
+  - 2026-11-14: reproduced red with BUG-20261114-01.
+
+## BUG-20261114-04 — A constructor expression cannot build a result class of a closed package
+
+- **Date**: 2026-11-14
+- **Status**: OPEN
+- **Affected module**: `noether-jpa-core` (`ResultConstructors`), `noether-jpa-processor`
+- **Symptom**: `select new ….closed.AccountSummary(a.id, a.name) from Account a`, with the record in a package that
+  is neither exported nor opened, fails at execution: `The constructor of ….AccountSummary cannot be called: access to
+  public member failed`, an `IllegalAccessException` from `ResultConstructors$Candidate`.
+- **Minimal reproduction**: `ClosedPackageCodeModulePathTest.aConstructorExpressionBuildsAResultClassOfTheClosedPackage`.
+- **Hypothesised cause**: the public constructors are read with `getConstructors()` and unreflected from the core,
+  which needs the package exported to it; the processor generates nothing for result classes.
+- **Investigations**:
+  - 2026-11-14: reproduced red with BUG-20261114-01.
+
 ## BUG-20261114-05 — A record id class whose components follow another order gets the identifier values swapped
 
 - **Date**: 2026-11-14

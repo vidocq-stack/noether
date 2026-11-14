@@ -339,6 +339,10 @@ Next to `Book.class`, `target/classes/com/acme/library` holds what `noether-jpa-
 | `_NoetherJpaAccess`
 | The `ManagedAccessProvider` of the package: it hands the accesses of its entities over to Noether.
 
+| `Isbn$$NoetherAccess`, `Genre$$NoetherAccess`
+| For a converter, the access instantiates it; for an enum mapped by its `@EnumeratedValue` field, it reads that
+  field. A package that holds only a converter or such an enum gets its `_NoetherJpaAccess` too.
+
 | `Book_`
 | The canonical metamodel of Jakarta Persistence (§6.2.1.1), for type-safe Criteria queries: `Book_.title`,
   `Book_.published`.

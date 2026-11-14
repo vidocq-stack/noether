@@ -132,8 +132,9 @@ A `DataSource` passed to Noether is used as it is: Noether neither pools it nor 
 
 Compile the entities with `noether-jpa-processor`, as in xref:getting-started.adoc#pom[Getting started]. Then:
 
-* *On the module path*, the module of the entities declares what the processor generated, one line per entity
-  package (the processor prints it, and the factory names it when it is missing):
+* *On the module path*, the module of the entities declares what the processor generated, one line per package
+  that holds an entity, an embeddable, a converter or an enum mapped by its `@EnumeratedValue` field (the processor
+  prints it, and the factory names it when it is missing):
 +
 [source,java]
 ----
@@ -143,6 +144,7 @@ provides io.vidocq.noether.jpa.core.spi.ManagedAccessProvider
 * *On the class path*, there is nothing to declare: the processor registers the accesses in `META-INF/services`.
 * *Entities compiled without the processor* (a third-party jar) get their access when the factory starts. On the
   module path, their package must be open to Noether: `opens com.acme.shop.model to io.vidocq.noether.jpa.core;`.
+  So must the package of a converter or of an `@EnumeratedValue` enum compiled without it.
 
 Annotations and `orm.xml` mapping files both work, together or alone (`metadata-complete`). Records are supported
 as embeddables. See xref:concepts.adoc#entity-access[Entity access].

@@ -20,8 +20,10 @@
 package io.vidocq.noether.jpa.core.jdbc.type;
 
 import io.vidocq.noether.jpa.core.access.Handles;
+import io.vidocq.noether.jpa.core.model.AccessKind;
 import io.vidocq.noether.jpa.core.model.BasicAttribute;
 import io.vidocq.noether.jpa.core.model.ValueConversion;
+import io.vidocq.noether.jpa.core.spi.ManagedAccess;
 import io.vidocq.noether.jpa.dialect.Dialect;
 import jakarta.persistence.AttributeConverter;
 import jakarta.persistence.PersistenceException;
@@ -57,6 +59,7 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
@@ -180,9 +183,29 @@ public final class ValueBinders {
 
     private final ClassLoader loader;
     private final Map<Class<?>, AttributeConverter<?, ?>> converters = new ConcurrentHashMap<>();
+    private final GeneratedCode generated;
 
     public ValueBinders(ClassLoader loader) {
+        this(loader, GeneratedCode.NONE);
+    }
+
+    /**
+     * Binders that instantiate a converter, and read the enumerated value of an enum, through the access
+     * noether-jpa-processor generated for its class when there is one: a package that is neither exported nor
+     * opened then needs no {@code opens} (BUG-20261114-01, BUG-20261114-02).
+     */
+    public ValueBinders(ClassLoader loader, GeneratedCode generated) {
         this.loader = loader;
+        this.generated = generated;
+    }
+
+    /** The access noether-jpa-processor generated for a class, matched by the attributes it lists. */
+    @FunctionalInterface
+    public interface GeneratedCode {
+        /** No generated code: every class goes through the start-time path. */
+        GeneratedCode NONE = (type, attributes) -> Optional.empty();
+
+        Optional<ManagedAccess> find(Class<?> type, List<String> attributes);
     }
 
     /** The binder of {@code attribute}. */
@@ -201,7 +224,8 @@ public final class ValueBinders {
 
     /** The shared instance of a converter class. */
     public AttributeConverter<?, ?> converter(Class<?> converterClass) {
-        return converters.computeIfAbsent(converterClass, c -> (AttributeConverter<?, ?>) Handles.newInstance(c));
+        return converters.computeIfAbsent(converterClass, c -> (AttributeConverter<?, ?>) generated.find(c, List.of())
+            .map(ManagedAccess::instantiate).orElseGet(() -> Handles.newInstance(c)));
     }
 
     // ---- types without conversion -----------------------------------------------------------------------
@@ -431,24 +455,36 @@ public final class ValueBinders {
     }
 
     private ValueBinder byEnumeratedValue(Class<?> type, String field, Class<?> valueType) {
-        MethodHandle getter = Handles.getter(type, field, valueType);
+        Function<Object, Object> enumeratedValue = enumeratedValue(type, field, valueType);
         Map<Object, Object> valueOf = new HashMap<>();
         Map<Object, Object> constantOf = new HashMap<>();
         for (Object constant : type.getEnumConstants()) {
-            Object value;
-            try {
-                value = getter.invokeExact(constant);
-            } catch (VirtualMachineError e) {
-                throw e;
-            } catch (Throwable e) {
-                throw new PersistenceException("Noether cannot read the enumerated value of " + constant, e);
-            }
+            Object value = enumeratedValue.apply(constant);
             valueOf.put(constant, value);
             if (constantOf.putIfAbsent(value, constant) != null) {
                 throw new PersistenceException("Two constants of " + type.getName() + " share the enumerated value " + value);
             }
         }
         return new ByEnumeratedValue(type, Map.copyOf(valueOf), Map.copyOf(constantOf), of(boxed(valueType)));
+    }
+
+    /** How the enumerated value of a constant is read: by the generated access of its enum, else by a handle. */
+    private Function<Object, Object> enumeratedValue(Class<?> type, String field, Class<?> valueType) {
+        Optional<ManagedAccess> access = generated.find(type, List.of(field + ":" + AccessKind.FIELD));
+        if (access.isPresent()) {
+            ManagedAccess enumeration = access.get();
+            return constant -> enumeration.get(constant, 0);
+        }
+        MethodHandle getter = Handles.getter(type, field, valueType);
+        return constant -> {
+            try {
+                return getter.invokeExact(constant);
+            } catch (VirtualMachineError e) {
+                throw e;
+            } catch (Throwable e) {
+                throw new PersistenceException("Noether cannot read the enumerated value of " + constant, e);
+            }
+        };
     }
 
     // ---- large objects (§11.1.30) -----------------------------------------------------------------------

@@ -43,6 +43,8 @@ import javax.annotation.processing.ProcessingEnvironment;
 import javax.annotation.processing.RoundEnvironment;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.Element;
+import javax.lang.model.element.ElementKind;
+import javax.lang.model.element.Modifier;
 import javax.lang.model.element.ModuleElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
@@ -76,6 +78,9 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
     private static final String CORE = "io.vidocq.noether.jpa.core";
     private static final String ENTITY = "jakarta.persistence.Entity";
     private static final String EMBEDDABLE = "jakarta.persistence.Embeddable";
+    private static final String CONVERTER = "jakarta.persistence.Converter";
+    private static final String ENUMERATED_VALUE = "jakarta.persistence.EnumeratedValue";
+    private static final String ACCESS = "$$NoetherAccess";
     private static final String SERVICES = "META-INF/services/" + SPI;
     private static final List<String> SUFFIXES = List.of("$$NoetherAccess", "$$NoetherFieldAccess", "$$NoetherPropertyAccess");
 
@@ -168,6 +173,14 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
         for (TypeElement type : entities) {
             entity(type);
         }
+        TypeElement converter = elements.getTypeElement(CONVERTER);
+        if (converter != null) {
+            ElementFilter.typesIn(round.getElementsAnnotatedWith(converter)).forEach(this::converter);
+        }
+        TypeElement enumeratedValue = elements.getTypeElement(ENUMERATED_VALUE);
+        if (enumeratedValue != null) {
+            ElementFilter.fieldsIn(round.getElementsAnnotatedWith(enumeratedValue)).forEach(this::enumeratedValue);
+        }
         if (generated.size() == before && deferred.isEmpty() && !pending.isEmpty()) {
             // a round that generated nothing: hand over what the previous rounds generated
             pending.forEach(this::provider);
@@ -213,6 +226,41 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
                 embedded(type, member, from);
             }
         }
+    }
+
+    /**
+     * The access of a converter (§3.9), which instantiates it: a converter of a package that is neither exported nor
+     * opened then needs no {@code opens} (BUG-20261114-01).
+     */
+    private void converter(TypeElement type) {
+        if (type.getKind() == ElementKind.CLASS && !type.getModifiers().contains(Modifier.ABSTRACT) && handsOver(type)) {
+            access(type, ACCESS, List.of(), false, Set.of(type), List.of());
+        }
+    }
+
+    /**
+     * The access of an enum mapped by its {@code @EnumeratedValue} field (§11.1.18), which reads that field: such an
+     * enum of a package that is neither exported nor opened then needs no {@code opens} (BUG-20261114-02).
+     */
+    private void enumeratedValue(VariableElement field) {
+        if (!(field.getEnclosingElement() instanceof TypeElement type) || type.getKind() != ElementKind.ENUM
+                || !handsOver(type)) {
+            return;
+        }
+        ClassInfo info = infos.read(type);
+        String name = field.getSimpleName().toString();
+        info.field(name).ifPresent(declared -> access(type, ACCESS,
+            List.of(new Member(name, AccessKind.FIELD, info, declared, declared.type(), declared.genericSignature())),
+            false, Set.of(type), List.of()));
+    }
+
+    /**
+     * Whether the processor hands over the code of a class that is not managed: compiled here, by a module that reads
+     * the provider. Unlike an entity, such a class may sit in a library that never reads it: left to the bootstrap.
+     */
+    private boolean handsOver(TypeElement type) {
+        ModuleElement owner = elements.getModuleOf(type);
+        return fromSource(type) && (owner.isUnnamed() || reads(owner, CORE));
     }
 
     /**
@@ -305,7 +353,8 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
         try {
             source = writer.write(type, className, members, record, callbacks);
             var info = infos.read(type);
-            if (!record && !type.getModifiers().contains(javax.lang.model.element.Modifier.SEALED)
+            if (!record && type.getKind() == ElementKind.CLASS && !members.isEmpty()
+                    && !type.getModifiers().contains(Modifier.SEALED)
                     && io.vidocq.noether.jpa.core.model.build.LazySubclassGenerator.supports(info, members)) {
                 String lazy = io.vidocq.noether.jpa.core.model.build.LazySubclassGenerator.name(info.name());
                 try (var output = filer.createClassFile(lazy, type).openOutputStream()) {
@@ -390,13 +439,17 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
             if (access.endsWith(suffix)) {
                 String binary = access.substring(0, access.length() - suffix.length());
                 TypeElement managed = elements.getTypeElement(qualified(pkg, binary.replace('$', '.')));
-                return managed != null && managed.getAnnotationMirrors().stream().anyMatch(a -> {
-                    String name = ((TypeElement) a.getAnnotationType().asElement()).getQualifiedName().toString();
-                    return name.equals(ENTITY) || name.equals(EMBEDDABLE);
-                });
+                return managed != null && (annotated(managed, ENTITY, EMBEDDABLE, CONVERTER)
+                    || ElementFilter.fieldsIn(managed.getEnclosedElements()).stream()
+                        .anyMatch(field -> annotated(field, ENUMERATED_VALUE)));
             }
         }
         return false;
+    }
+
+    private static boolean annotated(Element element, String... annotations) {
+        return element.getAnnotationMirrors().stream().anyMatch(a -> List.of(annotations)
+            .contains(((TypeElement) a.getAnnotationType().asElement()).getQualifiedName().toString()));
     }
 
     /** The last round: register the providers for the class path, check the module declares them. */
