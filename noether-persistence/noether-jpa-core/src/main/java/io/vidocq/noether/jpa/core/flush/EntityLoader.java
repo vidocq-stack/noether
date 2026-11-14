@@ -170,6 +170,25 @@ public final class EntityLoader {
         public FetchedEntity(MappedEntity type, Object id, Object[] values, boolean[] nulls) {
             this(type, id, values, nulls, new EntityKey(type.root(), id));
         }
+
+        /** Equal to a fetch of the same entity with the same columns: the arrays compare by their content. */
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof FetchedEntity(var otherType, var otherId, var otherValues, var otherNulls, var otherKey)
+                && Objects.equals(type, otherType) && Objects.equals(id, otherId) && Arrays.equals(values, otherValues)
+                && Arrays.equals(nulls, otherNulls) && Objects.equals(key, otherKey);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(type, id, Arrays.hashCode(values), Arrays.hashCode(nulls), key);
+        }
+
+        @Override
+        public String toString() {
+            return "FetchedEntity[type=" + type + ", id=" + id + ", values=" + Arrays.toString(values) + ", nulls="
+                + Arrays.toString(nulls) + ", key=" + key + "]";
+        }
     }
 
     /** One collection row; an absent LEFT row still records its owner. Entity elements carry their identifier. */

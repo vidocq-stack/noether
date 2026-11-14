@@ -414,7 +414,7 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
             }
             AccessKind access = AccessPlanner.embeddableAccess(info, member.access());
             boolean record = AccessWriter.isRecord(type);
-            String suffix = record ? "$$NoetherAccess" : access == AccessKind.FIELD ? "$$NoetherFieldAccess" : "$$NoetherPropertyAccess";
+            String suffix = record ? ACCESS : access == AccessKind.FIELD ? "$$NoetherFieldAccess" : "$$NoetherPropertyAccess";
             List<Member> members = planner.embeddableMembers(info, member.access());
             metamodelWriter.plan(type, members, null);
             // the access type of an embeddable may come from its owner: the owner is an origin of its access too

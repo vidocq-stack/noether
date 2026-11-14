@@ -739,10 +739,17 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
             }
             if (compiled.collection() != null) {
                 // the single item of a collection fetch is its root entity (Translator.collectionHydration): a key
-                collectionRows.add(fetchedElement(compiled.collection(), ((EntityKey) first).id(),
-                    fetchedRow, results, column));
+                collectionRows.add(fetchedElement(compiled.collection(), ownerId(first), fetchedRow, results, column));
             }
         }
+    }
+
+    /** The identifier of the owner of a collection fetch row, whose single item is its root entity. */
+    private static Object ownerId(Object first) {
+        if (first instanceof EntityKey(_, var id)) {
+            return id;
+        }
+        throw new IllegalStateException("A collection fetch row starts with its root entity, not " + first);
     }
 
     /** Reads the select items of the current row and adds the row to {@code rows}; gives its first item. */

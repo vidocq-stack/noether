@@ -25,6 +25,7 @@ import jakarta.persistence.EntityExistsException;
 import jakarta.persistence.LockModeType;
 import java.util.AbstractList;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -369,6 +370,18 @@ public final class PersistenceContext {
         @Override
         public int size() {
             return array.length;
+        }
+
+        /** The {@link java.util.List} contract, over the array when both sides are entries. */
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof Entries entries ? Arrays.equals(array, entries.array) : super.equals(other);
+        }
+
+        /** The {@link java.util.List} contract: {@link Arrays#hashCode(Object[])} computes the same value. */
+        @Override
+        public int hashCode() {
+            return Arrays.hashCode(array);
         }
     }
 

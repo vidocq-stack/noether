@@ -31,6 +31,7 @@ import io.vidocq.noether.jpa.core.model.build.fixtures.TicketKey;
 import io.vidocq.noether.jpa.core.model.build.fixtures.Twin;
 import io.vidocq.noether.jpa.core.spi.ManagedAccess;
 import jakarta.persistence.EntityExistsException;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -194,6 +195,24 @@ class PersistenceContextTest {
         assertThat(filled).extracting(ManagedEntity::instance).containsExactly(second, third);
         assertThat(context.entries()).isEmpty();
         assertThat(context.size()).isZero();
+    }
+
+    @Test
+    void entriesAreEqualToAnyListOfTheSameEntriesInTheSameOrder() { // the List contract
+        Object first = customer(1);
+        context.persist(first, type(Customer.class));
+        context.persist(customer(2), type(Customer.class));
+        List<ManagedEntity> entries = context.entries();
+        List<ManagedEntity> copy = new ArrayList<>(entries);
+
+        assertThat(entries).isEqualTo(copy).hasSameHashCodeAs(copy);
+        assertThat(copy).isEqualTo(entries);
+        Object third = customer(3);
+        context.persist(third, type(Customer.class));
+        context.detach(third);
+        assertThat(context.entries()).isNotSameAs(entries).isEqualTo(entries);
+        context.detach(first);
+        assertThat(context.entries()).isNotEqualTo(entries);
     }
 
     @Test
