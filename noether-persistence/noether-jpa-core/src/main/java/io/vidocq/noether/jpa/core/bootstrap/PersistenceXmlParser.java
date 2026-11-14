@@ -141,28 +141,46 @@ public final class PersistenceXmlParser {
         }
         PersistenceUnitTransactionType transactionType = enumValue(PersistenceUnitTransactionType.class,
             r.getAttributeValue(null, "transaction-type"), PersistenceUnitTransactionType.RESOURCE_LOCAL, "transaction-type");
-        String description = null;
-        String provider = null;
-        String jta = null;
-        String nonJta = null;
-        String scope = null;
-        List<String> qualifiers = new ArrayList<>();
-        List<String> mappingFiles = new ArrayList<>();
-        List<URL> jarFiles = new ArrayList<>();
-        List<String> classes = new ArrayList<>();
-        boolean excludeUnlisted = false;
-        SharedCacheMode cacheMode = SharedCacheMode.UNSPECIFIED;
-        ValidationMode validationMode = ValidationMode.AUTO;
-        Map<String, Object> properties = new LinkedHashMap<>();
-
-        while (r.hasNext()) {
+        UnitElements unit = new UnitElements(name, rootUrl);
+        boolean open = true;
+        while (open && r.hasNext()) {
             int event = r.next();
             if (event == XMLStreamConstants.END_ELEMENT && "persistence-unit".equals(r.getLocalName())) {
-                break;
+                open = false;
+            } else if (event == XMLStreamConstants.START_ELEMENT) {
+                unit.read(r);
             }
-            if (event != XMLStreamConstants.START_ELEMENT) {
-                continue;
-            }
+        }
+        return new PersistenceUnitDefinition(name, unit.description, unit.provider, transactionType, unit.jta, unit.nonJta,
+            unit.mappingFiles, unit.jarFiles, unit.classes, unit.excludeUnlisted, unit.cacheMode, unit.validationMode,
+            unit.properties, rootUrl, version, unit.qualifiers, unit.scope, classLoader, List.of());
+    }
+
+    /** The subelements of a {@code persistence-unit}, as they are read. */
+    private static final class UnitElements {
+        private final String name;
+        private final URL rootUrl;
+        private String description;
+        private String provider;
+        private String jta;
+        private String nonJta;
+        private String scope;
+        private final List<String> qualifiers = new ArrayList<>();
+        private final List<String> mappingFiles = new ArrayList<>();
+        private final List<URL> jarFiles = new ArrayList<>();
+        private final List<String> classes = new ArrayList<>();
+        private boolean excludeUnlisted;
+        private SharedCacheMode cacheMode = SharedCacheMode.UNSPECIFIED;
+        private ValidationMode validationMode = ValidationMode.AUTO;
+        private final Map<String, Object> properties = new LinkedHashMap<>();
+
+        UnitElements(String name, URL rootUrl) {
+            this.name = name;
+            this.rootUrl = rootUrl;
+        }
+
+        /** The element the reader is at, a start element. */
+        void read(XMLStreamReader r) throws XMLStreamException {
             switch (r.getLocalName()) {
                 case "description" -> description = text(r);
                 case "provider" -> provider = text(r);
@@ -193,9 +211,6 @@ public final class PersistenceXmlParser {
                 }
             }
         }
-        return new PersistenceUnitDefinition(name, description, provider, transactionType, jta, nonJta, mappingFiles, jarFiles,
-            classes, excludeUnlisted, cacheMode, validationMode, properties, rootUrl, version, qualifiers, scope, classLoader,
-            List.of());
     }
 
     private static String text(XMLStreamReader r) throws XMLStreamException {

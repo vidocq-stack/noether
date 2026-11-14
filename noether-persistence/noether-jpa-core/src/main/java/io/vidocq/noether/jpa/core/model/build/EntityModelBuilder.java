@@ -51,7 +51,6 @@ import io.vidocq.noether.jpa.core.model.source.AnnotationInfo;
 import io.vidocq.noether.jpa.core.model.source.ClassFileSource;
 import io.vidocq.noether.jpa.core.model.source.ClassInfos;
 import io.vidocq.noether.jpa.core.model.source.ClassInfo;
-import io.vidocq.noether.jpa.core.model.source.FieldInfo;
 import io.vidocq.noether.jpa.core.model.source.MethodInfo;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.FetchType;
@@ -272,44 +271,9 @@ public final class EntityModelBuilder {
         }
         List<ClassInfo> hierarchy = planner.hierarchy(info);
         AccessKind access = planner.defaultAccess(info, hierarchy);
-        Map<String, AnnotationInfo> overrides = overrides(info);
-        Map<String, AnnotationInfo> converts = converts(info);
-        Map<String, AnnotationInfo> associationOverrides = new LinkedHashMap<>();
-        for (ClassInfo declaring : hierarchy) {
-            declaring.annotation(ASSOCIATION_OVERRIDE).ifPresent(o -> associationOverrides.put(o.string("name"), o));
-            declaring.annotation(ASSOCIATION_OVERRIDES).ifPresent(container ->
-                container.annotations(Members.VALUE).forEach(o -> associationOverrides.put(o.string("name"), o)));
-        }
-
         List<AttributeModel> attributes = new ArrayList<>();
         Map<AttributeModel, Member> members = new LinkedHashMap<>();
-        for (ClassInfo declaring : hierarchy) {
-            for (Member member : planner.members(declaring, AccessPlanner.classAccess(declaring, access))) {
-                boolean inherited = declaring != info;
-                AttributeModel attribute = attribute(member, inherited ? overrides : Map.of(), inherited ? converts : Map.of());
-                if (attribute instanceof EmbeddedAttribute(var name, var javaType, var embeddedAccess, var owner, var embeddable,
-                        var columns)) {
-                    Map<String, AnnotationInfo> nested = prefixed(associationOverrides, member.name() + ".");
-                    attribute = new EmbeddedAttribute(name, javaType, embeddedAccess, owner, associationOverrides(embeddable, nested), columns);
-                    associationOverrides.keySet().removeIf(path -> path.startsWith(member.name() + "."));
-                }
-                AnnotationInfo associationOverride = associationOverrides.remove(member.name());
-                if (associationOverride != null) {
-                    if (!inherited || !declaring.isAnnotated(JPA + "MappedSuperclass")
-                            || !(attribute instanceof AssociationAttribute relationship)) {
-                        throw new PersistenceException("The @AssociationOverride " + member.name() + " of " + info.name()
-                            + " must name a relationship inherited from a mapped superclass (§11.1.2)");
-                    }
-                    attribute = associationOverride(relationship, associationOverride);
-                }
-                attributes.add(attribute);
-                members.put(attribute, member);
-            }
-        }
-        if (!associationOverrides.isEmpty()) {
-            throw new PersistenceException("The @AssociationOverride paths " + associationOverrides.keySet() + " of "
-                + info.name() + " are unknown");
-        }
+        collectAttributes(info, hierarchy, access, attributes, members);
         IdModel id = id(info, hierarchy, members);
         Optional<BasicAttribute> version = attributes.stream().<BasicAttribute>mapMulti((attribute, versions) -> {
             if (attribute instanceof BasicAttribute basic && basic.version()) {
@@ -321,6 +285,67 @@ public final class EntityModelBuilder {
         return new EntityModel(type, entityName, table(info, entityName), AccessPlanner.classAccess(info, access), id, attributes, version,
             superEntity, secondaryTables(info), callbacks(info),
             info.annotation(JPA + "Cacheable").map(annotation -> annotation.bool(Members.VALUE)).orElse(null));
+    }
+
+    /**
+     * The persistent attributes of an entity and of its superclasses, in {@code attributes}, each with the member it is
+     * read from, in {@code members}; the attribute and association overrides of the entity apply to inherited attributes.
+     */
+    private void collectAttributes(ClassInfo info, List<ClassInfo> hierarchy, AccessKind access, List<AttributeModel> attributes,
+            Map<AttributeModel, Member> members) {
+        Map<String, AnnotationInfo> overrides = overrides(info);
+        Map<String, AnnotationInfo> converts = converts(info);
+        Map<String, AnnotationInfo> associationOverrides = associationOverridesByPath(hierarchy);
+        for (ClassInfo declaring : hierarchy) {
+            boolean inherited = declaring != info;
+            for (Member member : planner.members(declaring, AccessPlanner.classAccess(declaring, access))) {
+                AttributeModel attribute = attribute(member, inherited ? overrides : Map.of(), inherited ? converts : Map.of());
+                attribute = associationOverridden(info, declaring, member, attribute, associationOverrides);
+                attributes.add(attribute);
+                members.put(attribute, member);
+            }
+        }
+        if (!associationOverrides.isEmpty()) {
+            throw new PersistenceException("The @AssociationOverride paths " + associationOverrides.keySet() + " of "
+                + info.name() + " are unknown");
+        }
+    }
+
+    /** The {@code @AssociationOverride}s written along a class hierarchy, by the path of the attribute they override. */
+    private static Map<String, AnnotationInfo> associationOverridesByPath(List<ClassInfo> hierarchy) {
+        Map<String, AnnotationInfo> associationOverrides = new LinkedHashMap<>();
+        for (ClassInfo declaring : hierarchy) {
+            declaring.annotation(ASSOCIATION_OVERRIDE).ifPresent(o -> associationOverrides.put(o.string("name"), o));
+            declaring.annotation(ASSOCIATION_OVERRIDES).ifPresent(container ->
+                container.annotations(Members.VALUE).forEach(o -> associationOverrides.put(o.string("name"), o)));
+        }
+        return associationOverrides;
+    }
+
+    /**
+     * {@code attribute} with the association overrides of the entity {@code info} that name it: those under its path
+     * for an embedded attribute, and the one of its name, which must be a relationship inherited from a mapped
+     * superclass (§11.1.2). The overrides applied are removed from {@code associationOverrides}.
+     */
+    private static AttributeModel associationOverridden(ClassInfo info, ClassInfo declaring, Member member, AttributeModel attribute,
+            Map<String, AnnotationInfo> associationOverrides) {
+        AttributeModel overridden = attribute;
+        if (attribute instanceof EmbeddedAttribute(var name, var javaType, var embeddedAccess, var owner, var embeddable,
+                var columns)) {
+            Map<String, AnnotationInfo> nested = prefixed(associationOverrides, member.name() + ".");
+            overridden = new EmbeddedAttribute(name, javaType, embeddedAccess, owner, associationOverrides(embeddable, nested), columns);
+            associationOverrides.keySet().removeIf(path -> path.startsWith(member.name() + "."));
+        }
+        AnnotationInfo associationOverride = associationOverrides.remove(member.name());
+        if (associationOverride == null) {
+            return overridden;
+        }
+        if (declaring == info || !declaring.isAnnotated(JPA + "MappedSuperclass")
+                || !(overridden instanceof AssociationAttribute relationship)) {
+            throw new PersistenceException("The @AssociationOverride " + member.name() + " of " + info.name()
+                + " must name a relationship inherited from a mapped superclass (§11.1.2)");
+        }
+        return associationOverride(relationship, associationOverride);
     }
 
     private void checkEntityClass(ClassInfo info) {
@@ -567,28 +592,10 @@ public final class EntityModelBuilder {
 
     /** The conversion of a basic map key: {@code @Convert(attributeName = "key")}, auto-applied, {@code @MapKeyEnumerated}, {@code @MapKeyTemporal}. */
     private ValueConversion keyConversion(Member member, Class<?> type) {
-        AnnotationInfo convert = converts(member.element()).get("key");
-        Optional<ValueConversion> explicit = convert == null ? Optional.empty() : explicit(convert);
-        if (explicit.isPresent()) {
-            return explicit.get();
-        }
-        Class<?> boxed = Types.box(type);
-        for (ConverterModel candidate : converters) {
-            if (candidate.autoApply() && candidate.attributeType() == boxed) {
-                return new ValueConversion.Converted(candidate.converterClass(), candidate.databaseType());
-            }
-        }
-        if (type.isEnum()) {
-            String enumType = member.element().annotation(JPA + "MapKeyEnumerated").map(e -> e.enumConstant(Members.VALUE))
-                .orElse("ORDINAL");
-            return "STRING".equals(enumType) ? new ValueConversion.EnumString() : new ValueConversion.EnumOrdinal();
-        }
-        if (Types.isLegacyTemporal(type)) {
-            String temporal = member.element().annotation(JPA + "MapKeyTemporal").map(t -> t.enumConstant(Members.VALUE))
-                .orElse("TIMESTAMP");
-            return new ValueConversion.Temporal(TemporalType.valueOf(temporal));
-        }
-        return new ValueConversion.None();
+        Annotated element = member.element();
+        return Optional.ofNullable(converts(element).get("key")).flatMap(this::explicit)
+            .or(() -> autoApplied(type))
+            .orElseGet(() -> implicit(type, element, JPA + "MapKeyEnumerated", JPA + "MapKeyTemporal"));
     }
 
     /** The {@code @JoinColumn}s written on an element, in order. */
@@ -630,31 +637,47 @@ public final class EntityModelBuilder {
 
     /** §3.9 converters (explicit, then auto-applied), then enums (§11.1.18, @EnumeratedValue), then legacy temporals. */
     private ValueConversion conversion(Member member, Class<?> type) {
-        Optional<ValueConversion> explicit = member.element().annotation(JPA + "Convert").flatMap(this::explicit);
-        if (explicit.isPresent()) {
-            return explicit.get();
-        }
+        Annotated element = member.element();
+        return element.annotation(JPA + "Convert").flatMap(this::explicit)
+            .or(() -> autoApplied(type))
+            .or(() -> enumeratedValue(type))
+            .orElseGet(() -> implicit(type, element, JPA + "Enumerated", JPA + "Temporal"));
+    }
+
+    /** The converter applied automatically (§3.9) to the attributes of {@code type}, if there is one. */
+    private Optional<ValueConversion> autoApplied(Class<?> type) {
         Class<?> boxed = Types.box(type);
         for (ConverterModel candidate : converters) {
             if (candidate.autoApply() && candidate.attributeType() == boxed) {
-                return new ValueConversion.Converted(candidate.converterClass(), candidate.databaseType());
+                return Optional.of(new ValueConversion.Converted(candidate.converterClass(), candidate.databaseType()));
             }
         }
+        return Optional.empty();
+    }
+
+    /** An enum stored as the value of its {@code @EnumeratedValue} field (§11.1.18), if {@code type} is one that has it. */
+    private Optional<ValueConversion> enumeratedValue(Class<?> type) {
+        if (!type.isEnum()) {
+            return Optional.empty();
+        }
+        return source.read(type.getName()).flatMap(info -> info.fields().stream()
+                .filter(field -> field.isAnnotated(JPA + "EnumeratedValue")).findFirst())
+            .<ValueConversion>map(field -> new ValueConversion.EnumByValue(field.name(), Types.load(field.type(), loader)));
+    }
+
+    /**
+     * The conversion without a converter: an enum by its ordinal, or by its name when its {@code enumerated} annotation
+     * says {@code STRING}; a legacy temporal by the {@code TemporalType} of its {@code temporal} annotation, a
+     * timestamp by default; otherwise none.
+     */
+    private static ValueConversion implicit(Class<?> type, Annotated element, String enumerated, String temporal) {
         if (type.isEnum()) {
-            ClassInfo enumInfo = source.read(type.getName()).orElse(null);
-            if (enumInfo != null) {
-                for (FieldInfo field : enumInfo.fields()) {
-                    if (field.isAnnotated(JPA + "EnumeratedValue")) {
-                        return new ValueConversion.EnumByValue(field.name(), Types.load(field.type(), loader));
-                    }
-                }
-            }
-            String enumType = member.element().annotation(JPA + "Enumerated").map(e -> e.enumConstant(Members.VALUE)).orElse("ORDINAL");
+            String enumType = element.annotation(enumerated).map(e -> e.enumConstant(Members.VALUE)).orElse("ORDINAL");
             return "STRING".equals(enumType) ? new ValueConversion.EnumString() : new ValueConversion.EnumOrdinal();
         }
         if (Types.isLegacyTemporal(type)) {
-            String temporal = member.element().annotation(JPA + "Temporal").map(t -> t.enumConstant(Members.VALUE)).orElse("TIMESTAMP");
-            return new ValueConversion.Temporal(TemporalType.valueOf(temporal));
+            String temporalType = element.annotation(temporal).map(t -> t.enumConstant(Members.VALUE)).orElse("TIMESTAMP");
+            return new ValueConversion.Temporal(TemporalType.valueOf(temporalType));
         }
         return new ValueConversion.None();
     }

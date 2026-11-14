@@ -39,23 +39,31 @@ final class ValidationProviderBridge {
             "pre-update", groups(settings.property(GROUP_PREFIX + "pre-update"), loader, true),
             "pre-remove", groups(settings.property(GROUP_PREFIX + "pre-remove"), loader, false));
         Object configured = settings.property("jakarta.persistence.validation.factory");
-        ValidatorFactory validatorFactory;
-        boolean owned;
-        if (configured != null) {
-            if (!(configured instanceof ValidatorFactory supplied)) {
-                throw new PersistenceException("jakarta.persistence.validation.factory must be a ValidatorFactory");
-            }
-            validatorFactory = supplied;
-            owned = false;
-        } else {
-            validatorFactory = Validation.byDefaultProvider().providerResolver(() -> providers(loader))
-                .configure().buildValidatorFactory();
-            owned = true;
+        boolean owned = configured == null;
+        ValidatorFactory factory = owned ? defaultFactory(loader) : supplied(configured);
+        return new EventValidator(eventGroups, validator(factory, owned, mapping), factory, owned);
+    }
+
+    /** The factory the unit is given: it must be a {@link ValidatorFactory}. */
+    private static ValidatorFactory supplied(Object configured) {
+        if (configured instanceof ValidatorFactory supplied) {
+            return supplied;
         }
-        ValidatorFactory factory = validatorFactory;
-        jakarta.validation.Validator validator;
+        throw new PersistenceException("jakarta.persistence.validation.factory must be a ValidatorFactory");
+    }
+
+    /** A factory of the default provider, the providers being looked up with the class loader of the unit. */
+    private static ValidatorFactory defaultFactory(ClassLoader loader) {
+        return Validation.byDefaultProvider().providerResolver(() -> providers(loader)).configure().buildValidatorFactory();
+    }
+
+    /**
+     * The validator of {@code factory} that does not cascade to entity associations (§3.7.1); when it cannot be made,
+     * a factory the unit {@code owned} is closed before the failure propagates.
+     */
+    private static jakarta.validation.Validator validator(ValidatorFactory factory, boolean owned, MappedUnit mapping) {
         try {
-            validator = factory.usingContext().traversableResolver(
+            return factory.usingContext().traversableResolver(
                 new PersistenceTraversableResolver(factory.getTraversableResolver(), mapping)).getValidator();
         } catch (RuntimeException | Error failure) {
             if (owned) {
@@ -67,28 +75,31 @@ final class ValidationProviderBridge {
             }
             throw failure;
         }
-        return new BeanValidation.Validator() {
-            @Override
-            public void validate(String event, Object entity) {
-                Class<?>[] groups = eventGroups.get(event);
-                if (groups == null || groups.length == 0) {
-                    return;
-                }
-                Set<?> violations = validator.validate(entity, groups);
-                if (!violations.isEmpty()) {
-                    @SuppressWarnings({ "rawtypes", "unchecked" })
-                    ConstraintViolationException failure = new ConstraintViolationException((Set) violations);
-                    throw failure;
-                }
-            }
+    }
 
-            @Override
-            public void close() {
-                if (owned) {
-                    factory.close();
-                }
+    /** Validates an entity, at each lifecycle event, against the groups of that event; closes the factory it owns. */
+    private record EventValidator(Map<String, Class<?>[]> eventGroups, jakarta.validation.Validator validator,
+            ValidatorFactory factory, boolean owned) implements BeanValidation.Validator {
+        @Override
+        public void validate(String event, Object entity) {
+            Class<?>[] groups = eventGroups.get(event);
+            if (groups == null || groups.length == 0) {
+                return;
             }
-        };
+            Set<?> violations = validator.validate(entity, groups);
+            if (!violations.isEmpty()) {
+                @SuppressWarnings({ "rawtypes", "unchecked" })
+                ConstraintViolationException failure = new ConstraintViolationException((Set) violations);
+                throw failure;
+            }
+        }
+
+        @Override
+        public void close() {
+            if (owned) {
+                factory.close();
+            }
+        }
     }
 
     private static List<jakarta.validation.spi.ValidationProvider<?>> providers(ClassLoader loader) {

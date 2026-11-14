@@ -92,9 +92,7 @@ final class OrmXmlReader {
     }
 
     private static XmlElement read(XMLStreamReader r, MappingFile file) throws XMLStreamException {
-        Validation validation = null;
-        Deque<Builder> open = new ArrayDeque<>();
-        XmlElement root = null;
+        ElementTree tree = new ElementTree(r, file);
         while (r.hasNext()) {
             int event = r.next();
             int line = r.getLocation().getLineNumber();
@@ -102,57 +100,15 @@ final class OrmXmlReader {
                 case XMLStreamConstants.DTD -> throw error(file, line, "a DTD is not allowed in a mapping file", null);
                 case XMLStreamConstants.ENTITY_REFERENCE -> throw error(file, line,
                     "the entity reference &" + r.getLocalName() + "; is not allowed in a mapping file", null);
-                case XMLStreamConstants.START_ELEMENT -> {
-                    if (validation == null) {
-                        checkRoot(r, file, line);
-                        validation = new Validation(file, r);
-                        validation.start();
-                    }
-                    Builder builder = new Builder(r.getLocalName(), line);
-                    AttributesImpl attributes = new AttributesImpl();
-                    for (int i = 0; i < r.getAttributeCount(); i++) {
-                        String namespace = r.getAttributeNamespace(i) == null ? "" : r.getAttributeNamespace(i);
-                        if (XSI.equals(namespace)) {
-                            continue;
-                        }
-                        String local = r.getAttributeLocalName(i);
-                        String value = r.getAttributeValue(i);
-                        if (open.isEmpty() && namespace.isEmpty() && "version".equals(local)) {
-                            value = "3.2"; // validated against the 3.2 schema, the version was checked above
-                        } else if (namespace.isEmpty()) {
-                            builder.attributes.put(local, r.getAttributeValue(i));
-                        }
-                        attributes.addAttribute(namespace, local, local, "CDATA", value);
-                    }
-                    validation.startElement(validationNamespace(r.getNamespaceURI(), validation.namespace), builder.name, attributes);
-                    open.push(builder);
-                }
-                case XMLStreamConstants.CHARACTERS, XMLStreamConstants.CDATA, XMLStreamConstants.SPACE -> {
-                    if (!open.isEmpty()) {
-                        open.peek().text.append(r.getText());
-                        validation.characters(r.getText());
-                    }
-                }
-                case XMLStreamConstants.END_ELEMENT -> {
-                    Builder closed = open.pop();
-                    validation.endElement(validationNamespace(r.getNamespaceURI(), validation.namespace), closed.name);
-                    XmlElement element = closed.build();
-                    if (open.isEmpty()) {
-                        root = element;
-                    } else {
-                        open.peek().children.add(element);
-                    }
-                }
+                case XMLStreamConstants.START_ELEMENT -> tree.startElement(line);
+                case XMLStreamConstants.CHARACTERS, XMLStreamConstants.CDATA, XMLStreamConstants.SPACE -> tree.characters();
+                case XMLStreamConstants.END_ELEMENT -> tree.endElement();
                 default -> {
                     // comments, processing instructions, the end of the document
                 }
             }
         }
-        if (root == null) {
-            throw error(file, -1, "the mapping file has no root element", null);
-        }
-        validation.end();
-        return root;
+        return tree.root();
     }
 
     /** The namespace an element is validated in: the 3.2 one for the elements of the document's orm namespace. */
@@ -185,6 +141,76 @@ final class OrmXmlReader {
     static PersistenceException error(MappingFile file, int line, String message, Throwable cause) {
         String where = "Mapping file " + file.name() + (line > 0 ? ", line " + line : "");
         return new PersistenceException(where + ": " + message, cause);
+    }
+
+    /** The elements of a mapping file, built from the events StAX reads and validated as they are read. */
+    private static final class ElementTree {
+        private final XMLStreamReader reader;
+        private final MappingFile file;
+        private final Deque<Builder> open = new ArrayDeque<>();
+        private Validation validation;
+        private XmlElement root;
+
+        ElementTree(XMLStreamReader reader, MappingFile file) {
+            this.reader = reader;
+            this.file = file;
+        }
+
+        void startElement(int line) {
+            if (validation == null) {
+                checkRoot(reader, file, line);
+                validation = new Validation(file, reader);
+                validation.start();
+            }
+            Builder builder = new Builder(reader.getLocalName(), line);
+            AttributesImpl attributes = new AttributesImpl();
+            for (int i = 0; i < reader.getAttributeCount(); i++) {
+                String namespace = reader.getAttributeNamespace(i) == null ? "" : reader.getAttributeNamespace(i);
+                if (!XSI.equals(namespace)) {
+                    attribute(i, namespace, builder, attributes);
+                }
+            }
+            validation.startElement(validationNamespace(reader.getNamespaceURI(), validation.namespace), builder.name, attributes);
+            open.push(builder);
+        }
+
+        /** The attribute at {@code index}: kept on the element when it has no namespace, and passed on to the validation. */
+        private void attribute(int index, String namespace, Builder builder, AttributesImpl attributes) {
+            String local = reader.getAttributeLocalName(index);
+            String value = reader.getAttributeValue(index);
+            if (open.isEmpty() && namespace.isEmpty() && "version".equals(local)) {
+                value = "3.2"; // validated against the 3.2 schema, the version was checked by checkRoot
+            } else if (namespace.isEmpty()) {
+                builder.attributes.put(local, value);
+            }
+            attributes.addAttribute(namespace, local, local, "CDATA", value);
+        }
+
+        void characters() {
+            if (!open.isEmpty()) {
+                open.peek().text.append(reader.getText());
+                validation.characters(reader.getText());
+            }
+        }
+
+        void endElement() {
+            Builder closed = open.pop();
+            validation.endElement(validationNamespace(reader.getNamespaceURI(), validation.namespace), closed.name);
+            XmlElement element = closed.build();
+            if (open.isEmpty()) {
+                root = element;
+            } else {
+                open.peek().children.add(element);
+            }
+        }
+
+        XmlElement root() {
+            if (root == null) {
+                throw error(file, -1, "the mapping file has no root element", null);
+            }
+            validation.end();
+            return root;
+        }
     }
 
     private static final class Builder {

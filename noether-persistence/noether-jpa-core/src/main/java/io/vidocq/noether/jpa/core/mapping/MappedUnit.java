@@ -110,51 +110,68 @@ public final class MappedUnit {
         for (MappedEntity owner : mapped.values()) {
             if (!owner.statements().supported()) continue;
             for (var reference : owner.statements().references()) {
-                if (!reference.businessKey()) continue;
-                var target = mapped.get(reference.target());
-                if (!owner.model().secondaryTables().isEmpty() || inheritance.get(owner.model().javaType()).hierarchy().size() != 1) {
-                    throw new PersistenceException("Business-key joins do not support owner inheritance or secondary tables");
-                }
-                var columns = owner.statements().referencedColumns(reference);
-                for (int c : reference.columns()) {
-                    var column = owner.statements().columns().get(c);
-                    if (owner.statements().columns().stream().filter(other -> EntityStatements.sameColumn(other.name(), column.name())).count() != 1) {
-                        throw new PersistenceException("Business-key join columns must have distinct, unshared owner column names");
-                    }
-                }
-                businessKeyAttributes.computeIfAbsent(target, _ -> new LinkedHashSet<>())
-                    .addAll(columns.stream().map(EntityStatements.Column::attribute).toList());
-                boolean unique = columns.size() == 1
-                    && ((BasicAttribute) target.model().attributes().get(columns.getFirst().attribute())).column().unique();
-                var info = source.read(target.model().javaType().getName()).orElseThrow();
-                var table = info.annotation("jakarta.persistence.Table").orElse(null);
-                if (columns.getFirst().table() != 0) {
-                    var secondary = new ArrayList<AnnotationInfo>();
-                    info.annotation("jakarta.persistence.SecondaryTable").ifPresent(secondary::add);
-                    info.annotation("jakarta.persistence.SecondaryTables").ifPresent(a -> secondary.addAll(a.annotations("value")));
-                    var name = owner.statements().referencedTable(reference).select().table().name();
-                    table = secondary.stream().filter(a -> EntityStatements.sameColumn(identifier(a.string("name")), name))
-                        .findFirst().orElseThrow();
-                }
-                if (table != null) {
-                    unique |= table.annotations("uniqueConstraints").stream().anyMatch(u -> {
-                        var names = u.strings("columnNames").stream().map(this::identifier).toList();
-                        return names.size() == columns.size() && columns.stream()
-                            .allMatch(c -> names.stream().anyMatch(n -> EntityStatements.sameColumn(n, c.name())));
-                    });
-                }
-                if (!unique) throw new PersistenceException("Business-key join to " + target.model().entityName()
-                    + " requires a matching unique constraint on the referenced BASIC columns");
-                for (var attribute : target.model().attributes()) {
-                    if (attribute instanceof AssociationAttribute inverse && !inverse.singleValued()
-                            && inverse.targetEntity() == owner.model().javaType()
-                            && inverse.mappedBy() != null && inverse.mappedBy().equals(
-                                owner.model().attributes().get(reference.attribute()).name())) {
-                        throw new PersistenceException("Business-key joins do not yet support inverse collections");
-                    }
+                if (reference.businessKey()) {
+                    validateBusinessKey(owner, reference);
                 }
             }
         }
+    }
+
+    /**
+     * A reference by business key: an owner without inheritance or secondary tables and with distinct columns, a
+     * unique key on the referenced columns, and no inverse collection; its referenced attributes are recorded.
+     */
+    private void validateBusinessKey(MappedEntity owner, EntityStatements.Reference reference) {
+        var target = mapped.get(reference.target());
+        if (!owner.model().secondaryTables().isEmpty() || inheritance.get(owner.model().javaType()).hierarchy().size() != 1) {
+            throw new PersistenceException("Business-key joins do not support owner inheritance or secondary tables");
+        }
+        var columns = owner.statements().referencedColumns(reference);
+        for (int c : reference.columns()) {
+            var column = owner.statements().columns().get(c);
+            if (owner.statements().columns().stream().filter(other -> EntityStatements.sameColumn(other.name(), column.name())).count() != 1) {
+                throw new PersistenceException("Business-key join columns must have distinct, unshared owner column names");
+            }
+        }
+        businessKeyAttributes.computeIfAbsent(target, _ -> new LinkedHashSet<>())
+            .addAll(columns.stream().map(EntityStatements.Column::attribute).toList());
+        if (!uniqueBusinessKey(owner, reference, target, columns)) {
+            throw new PersistenceException("Business-key join to " + target.model().entityName()
+                + " requires a matching unique constraint on the referenced BASIC columns");
+        }
+        for (var attribute : target.model().attributes()) {
+            if (attribute instanceof AssociationAttribute inverse && !inverse.singleValued()
+                    && inverse.targetEntity() == owner.model().javaType()
+                    && inverse.mappedBy() != null && inverse.mappedBy().equals(
+                        owner.model().attributes().get(reference.attribute()).name())) {
+                throw new PersistenceException("Business-key joins do not yet support inverse collections");
+            }
+        }
+    }
+
+    /** Whether the columns a business key references are unique: a unique column, or a unique constraint of their table. */
+    private boolean uniqueBusinessKey(MappedEntity owner, EntityStatements.Reference reference, MappedEntity target,
+            List<EntityStatements.Column> columns) {
+        boolean unique = columns.size() == 1
+            && ((BasicAttribute) target.model().attributes().get(columns.getFirst().attribute())).column().unique();
+        var info = source.read(target.model().javaType().getName()).orElseThrow();
+        var table = info.annotation("jakarta.persistence.Table").orElse(null);
+        if (columns.getFirst().table() != 0) {
+            var secondary = new ArrayList<AnnotationInfo>();
+            info.annotation("jakarta.persistence.SecondaryTable").ifPresent(secondary::add);
+            info.annotation("jakarta.persistence.SecondaryTables").ifPresent(a -> secondary.addAll(a.annotations("value")));
+            var name = owner.statements().referencedTable(reference).select().table().name();
+            table = secondary.stream().filter(a -> EntityStatements.sameColumn(identifier(a.string("name")), name))
+                .findFirst().orElseThrow();
+        }
+        if (table != null) {
+            unique |= table.annotations("uniqueConstraints").stream().anyMatch(u -> {
+                var names = u.strings("columnNames").stream().map(this::identifier).toList();
+                return names.size() == columns.size() && columns.stream()
+                    .allMatch(c -> names.stream().anyMatch(n -> EntityStatements.sameColumn(n, c.name())));
+            });
+        }
+        return unique;
     }
 
     /** Referenced immutable values are protected even against in-memory changes ignored by updatable=false. */
@@ -302,26 +319,37 @@ public final class MappedUnit {
             if (attribute instanceof EmbeddedAttribute embedded) {
                 validateInverseElementPaths(embedded.embeddable().attributes(), name, model, source);
             } else if (attribute instanceof AssociationAttribute association) {
-                EntityModel target = model.entity(association.targetEntity()).orElse(null);
-                if (target == null && source.read(association.targetEntity().getName())
-                        .map(info -> info.isAnnotated("jakarta.persistence.Embeddable")).orElse(false)) {
-                    throw new PersistenceException("The relationship " + name
-                        + " targets an embeddable, not an entity (§2.7): reference its containing entity instead");
-                }
-                if (target == null || association.mappedBy() == null) continue;
-                List<AttributeModel> current = target.attributes();
-                for (String segment : association.mappedBy().split("\\.")) {
-                    AttributeModel step = current.stream().filter(a -> a.name().equals(segment)).findFirst().orElse(null);
-                    if (step instanceof ElementCollectionAttribute) {
-                        throw new PersistenceException("The relationship " + name + " mappedBy="
-                            + association.mappedBy() + " traverses an element collection: Noether does not support"
-                            + " inverse collection-table relationships; an element has no entity identity (§2.7–2.8)"
-                            + " and a collection path is not a single-valued embedded path (§11.1.31, §11.1.42)");
-                    }
-                    if (!(step instanceof EmbeddedAttribute embedded)) break;
-                    current = embedded.embeddable().attributes();
-                }
+                validateInverseElementPath(association, name, model, source);
             }
+        }
+    }
+
+    /**
+     * The relationship {@code name} targets an entity, and its {@code mappedBy} path, when it has one, does not
+     * traverse an element collection.
+     */
+    private static void validateInverseElementPath(AssociationAttribute association, String name, PersistenceUnitModel model,
+            ClassInfos source) {
+        EntityModel target = model.entity(association.targetEntity()).orElse(null);
+        if (target == null && source.read(association.targetEntity().getName())
+                .map(info -> info.isAnnotated("jakarta.persistence.Embeddable")).orElse(false)) {
+            throw new PersistenceException("The relationship " + name
+                + " targets an embeddable, not an entity (§2.7): reference its containing entity instead");
+        }
+        if (target == null || association.mappedBy() == null) {
+            return;
+        }
+        List<AttributeModel> current = target.attributes();
+        for (String segment : association.mappedBy().split("\\.")) {
+            AttributeModel step = current.stream().filter(a -> a.name().equals(segment)).findFirst().orElse(null);
+            if (step instanceof ElementCollectionAttribute) {
+                throw new PersistenceException("The relationship " + name + " mappedBy="
+                    + association.mappedBy() + " traverses an element collection: Noether does not support"
+                    + " inverse collection-table relationships; an element has no entity identity (§2.7–2.8)"
+                    + " and a collection path is not a single-valued embedded path (§11.1.31, §11.1.42)");
+            }
+            if (!(step instanceof EmbeddedAttribute embedded)) break;
+            current = embedded.embeddable().attributes();
         }
     }
 
@@ -329,48 +357,8 @@ public final class MappedUnit {
         for (EntityModel owner : unit.entities()) {
             Set<String> mapped = new LinkedHashSet<>();
             for (AttributeModel attribute : owner.attributes()) {
-                if (!(attribute instanceof AssociationAttribute association) || association.mapsId() == null) continue;
-                String name = association.mapsId();
-                String problem = "Invalid @MapsId relationship " + owner.entityName() + "." + association.name() + ": ";
-                if (!association.singleValued() || !association.owning() || association.joinTable() != null) {
-                    throw new PersistenceException(problem + "requires an owning to-one foreign key");
-                }
-                if (name.isEmpty() && association.kind() != AssociationAttribute.Kind.ONE_TO_ONE) {
-                    throw new PersistenceException(problem + "a shared whole identifier requires OneToOne (§2.4.2.1)");
-                }
-                if (!mapped.add(name) || mapped.contains("") && mapped.size() > 1) {
-                    throw new PersistenceException(problem + "overlapping identifier mappings");
-                }
-                EntityModel target = unit.entities().stream().filter(e -> e.javaType() == association.targetEntity())
-                    .findFirst().orElseThrow(() -> new PersistenceException(problem + "target is not managed"));
-                if (target.attributes().stream().anyMatch(a -> a instanceof AssociationAttribute r && r.mapsId() != null)) {
-                    throw new PersistenceException(problem + "chained derived identifiers are not supported");
-                }
-                if (target.id() instanceof IdModel.Embedded(var embedded)
-                        && embedded.embeddable().attributes().stream().anyMatch(a -> !(a instanceof BasicAttribute))
-                        || target.id() instanceof IdModel.ByIdClass byIdClass
-                            && byIdClass.attributes().stream().anyMatch(a -> !(a instanceof BasicAttribute))) {
-                    throw new PersistenceException(problem + "nested or relationship-valued target identifiers are not supported");
-                }
-                Class<?> targetId = switch (target.id()) {
-                    case IdModel.Single single -> single.attribute().javaType();
-                    case IdModel.Embedded(var embedded) -> embedded.javaType();
-                    case IdModel.ByIdClass byIdClass -> byIdClass.idClass();
-                    case IdModel.Derived _ -> throw new PersistenceException(problem + "chained derived identifiers are not supported");
-                };
-                AttributeModel dependent = switch (owner.id()) {
-                    case IdModel.Single single when name.isEmpty() && single.generation().isEmpty() -> single.attribute();
-                    case IdModel.Embedded(var embedded) when name.isEmpty() -> embedded;
-                    case IdModel.Embedded(var embedded) -> embedded.embeddable().attributes().stream()
-                        .filter(a -> a.name().equals(name)).findFirst()
-                        .orElseThrow(() -> new PersistenceException(problem + "no direct embedded identifier attribute " + name));
-                    default -> throw new PersistenceException(problem + "requires an assigned simple or embedded identifier");
-                };
-                if (boxed(dependent.javaType()) != boxed(targetId)) {
-                    throw new PersistenceException(problem + "identifier types must match the target identifier type");
-                }
-                if (association.joinColumns().stream().anyMatch(j -> !j.insertable() || j.table() != null)) {
-                    throw new PersistenceException(problem + "requires insertable primary-table join columns");
+                if (attribute instanceof AssociationAttribute association && association.mapsId() != null) {
+                    validateMapsId(unit, owner, association, mapped);
                 }
             }
             if (!mapped.isEmpty() && owner.id() instanceof IdModel.Embedded(var embedded)
@@ -380,6 +368,63 @@ public final class MappedUnit {
                     + ": unmapped nested embedded identifier parts are not supported");
             }
         }
+    }
+
+    /** A {@code @MapsId} relationship of {@code owner} (§2.4.1); {@code mappedIds} collects the identifier attributes mapped. */
+    private static void validateMapsId(PersistenceUnitModel unit, EntityModel owner, AssociationAttribute association,
+            Set<String> mappedIds) {
+        String name = association.mapsId();
+        String problem = "Invalid @MapsId relationship " + owner.entityName() + "." + association.name() + ": ";
+        if (!association.singleValued() || !association.owning() || association.joinTable() != null) {
+            throw new PersistenceException(problem + "requires an owning to-one foreign key");
+        }
+        if (name.isEmpty() && association.kind() != AssociationAttribute.Kind.ONE_TO_ONE) {
+            throw new PersistenceException(problem + "a shared whole identifier requires OneToOne (§2.4.2.1)");
+        }
+        if (!mappedIds.add(name) || mappedIds.contains("") && mappedIds.size() > 1) {
+            throw new PersistenceException(problem + "overlapping identifier mappings");
+        }
+        EntityModel target = unit.entities().stream().filter(e -> e.javaType() == association.targetEntity())
+            .findFirst().orElseThrow(() -> new PersistenceException(problem + "target is not managed"));
+        validateMapsIdTarget(target, problem);
+        Class<?> targetId = switch (target.id()) {
+            case IdModel.Single single -> single.attribute().javaType();
+            case IdModel.Embedded(var embedded) -> embedded.javaType();
+            case IdModel.ByIdClass byIdClass -> byIdClass.idClass();
+            case IdModel.Derived _ -> throw new PersistenceException(problem + "chained derived identifiers are not supported");
+        };
+        AttributeModel dependent = mapsIdAttribute(owner, name, problem);
+        if (boxed(dependent.javaType()) != boxed(targetId)) {
+            throw new PersistenceException(problem + "identifier types must match the target identifier type");
+        }
+        if (association.joinColumns().stream().anyMatch(j -> !j.insertable() || j.table() != null)) {
+            throw new PersistenceException(problem + "requires insertable primary-table join columns");
+        }
+    }
+
+    /** The target of a {@code @MapsId} relationship has an identifier of its own, of basic attributes only. */
+    private static void validateMapsIdTarget(EntityModel target, String problem) {
+        if (target.attributes().stream().anyMatch(a -> a instanceof AssociationAttribute r && r.mapsId() != null)) {
+            throw new PersistenceException(problem + "chained derived identifiers are not supported");
+        }
+        if (target.id() instanceof IdModel.Embedded(var embedded)
+                && embedded.embeddable().attributes().stream().anyMatch(a -> !(a instanceof BasicAttribute))
+                || target.id() instanceof IdModel.ByIdClass byIdClass
+                    && byIdClass.attributes().stream().anyMatch(a -> !(a instanceof BasicAttribute))) {
+            throw new PersistenceException(problem + "nested or relationship-valued target identifiers are not supported");
+        }
+    }
+
+    /** The identifier attribute of {@code owner} a {@code @MapsId} names: its whole identifier when {@code name} is empty. */
+    private static AttributeModel mapsIdAttribute(EntityModel owner, String name, String problem) {
+        return switch (owner.id()) {
+            case IdModel.Single single when name.isEmpty() && single.generation().isEmpty() -> single.attribute();
+            case IdModel.Embedded(var embedded) when name.isEmpty() -> embedded;
+            case IdModel.Embedded(var embedded) -> embedded.embeddable().attributes().stream()
+                .filter(a -> a.name().equals(name)).findFirst()
+                .orElseThrow(() -> new PersistenceException(problem + "no direct embedded identifier attribute " + name));
+            default -> throw new PersistenceException(problem + "requires an assigned simple or embedded identifier");
+        };
     }
 
     private static Class<?> boxed(Class<?> type) {
@@ -406,38 +451,9 @@ public final class MappedUnit {
         names.add(typeColumn);
         List<Query> operands = new ArrayList<>();
         for (var entity : hierarchy) {
-            if (!requested.model().javaType().isAssignableFrom(entity.model().javaType())) continue;
-            var columns = rangeColumns(entity);
-            List<Expression> selected = new ArrayList<>();
-            for (var definition : definitions.entrySet()) {
-                var column = columns.get(definition.getKey());
-                if (column != null) {
-                    selected.add(new Expression.Column("n" + column.table(), column.name()));
-                } else {
-                    // An empty scalar subquery supplies an exactly typed NULL, including converters, binary and temporal values.
-                    var declared = definition.getValue();
-                    var table = declared.getKey().statements().tables().get(declared.getValue().table()).select().table();
-                    selected.add(new Expression.Subquery(Query.from(new Query.From(table, "z", List.of()))
-                        .select(new Expression.Column("z", declared.getValue().name()))
-                        .where(new Expression.Literal(false)).build()));
-                }
+            if (requested.model().javaType().isAssignableFrom(entity.model().javaType())) {
+                operands.add(rangeOperand(entity, definitions));
             }
-            selected.add(new Expression.Literal(entity.model().entityName()));
-            var tables = entity.statements().tables();
-            List<Query.Join> joins = new ArrayList<>();
-            for (int t = 1; t < tables.size(); t++) {
-                Expression on = null;
-                for (int k = 0; k < tables.get(t).select().conditions().size(); k++) {
-                    var part = new Expression.Binary(
-                        new Expression.Column("n" + t, tables.get(t).select().conditions().get(k)), Expression.Operator.EQ,
-                        new Expression.Column("n0", tables.getFirst().select().conditions().get(k)));
-                    on = on == null ? part : new Expression.Binary(on, Expression.Operator.AND, part);
-                }
-                joins.add(new Query.Join(Query.Join.Kind.LEFT, tables.get(t).select().table(), "n" + t, on));
-            }
-            operands.add(new Query(false, selected,
-                List.of(new Query.From(tables.getFirst().select().table(), "n0", joins)),
-                null, List.of(), null, List.of(), null, null));
         }
         if (operands.isEmpty()) throw new PersistenceException("TABLE_PER_CLASS query has no concrete managed subtype: "
             + requested.model().entityName());
@@ -445,6 +461,49 @@ public final class MappedUnit {
             : new SetQuery(operands, java.util.Collections.nCopies(operands.size() - 1,
                 new SetQuery.Operation(SetQuery.Operator.UNION, true)), List.of(), null, null);
         return Table.derived(query, names);
+    }
+
+    /**
+     * The {@code SELECT} of one concrete entity of a table-per-class range: each column of the range, its own or a
+     * typed {@code NULL}, then the entity name.
+     */
+    private Query rangeOperand(MappedEntity entity, Map<Identifier, Map.Entry<MappedEntity, RangeColumn>> definitions) {
+        var columns = rangeColumns(entity);
+        List<Expression> selected = new ArrayList<>();
+        for (var definition : definitions.entrySet()) {
+            var column = columns.get(definition.getKey());
+            if (column != null) {
+                selected.add(new Expression.Column("n" + column.table(), column.name()));
+            } else {
+                // An empty scalar subquery supplies an exactly typed NULL, including converters, binary and temporal values.
+                var declared = definition.getValue();
+                var table = declared.getKey().statements().tables().get(declared.getValue().table()).select().table();
+                selected.add(new Expression.Subquery(Query.from(new Query.From(table, "z", List.of()))
+                    .select(new Expression.Column("z", declared.getValue().name()))
+                    .where(new Expression.Literal(false)).build()));
+            }
+        }
+        selected.add(new Expression.Literal(entity.model().entityName()));
+        var tables = entity.statements().tables();
+        return new Query(false, selected,
+            List.of(new Query.From(tables.getFirst().select().table(), "n0", secondaryJoins(tables))),
+            null, List.of(), null, List.of(), null, null);
+    }
+
+    /** The left joins of the other tables of an entity ({@code n1}, ...) to its first one ({@code n0}), on their keys. */
+    private static List<Query.Join> secondaryJoins(List<EntityStatements.TableStatements> tables) {
+        List<Query.Join> joins = new ArrayList<>();
+        for (int t = 1; t < tables.size(); t++) {
+            Expression on = null;
+            for (int k = 0; k < tables.get(t).select().conditions().size(); k++) {
+                var part = new Expression.Binary(
+                    new Expression.Column("n" + t, tables.get(t).select().conditions().get(k)), Expression.Operator.EQ,
+                    new Expression.Column("n0", tables.getFirst().select().conditions().get(k)));
+                on = on == null ? part : new Expression.Binary(on, Expression.Operator.AND, part);
+            }
+            joins.add(new Query.Join(Query.Join.Kind.LEFT, tables.get(t).select().table(), "n" + t, on));
+        }
+        return joins;
     }
 
     public Identifier queryColumn(MappedEntity entity, EntityStatements.Column column) {
@@ -472,28 +531,43 @@ public final class MappedUnit {
         entity.statements().columns().forEach(c -> columns.put(queryColumn(entity, c), new RangeColumn(c.table(), c.name())));
         for (var owner : mapped.values()) {
             for (var collection : owner.statements().collections()) {
-                if (!collection.association().targetEntity().isAssignableFrom(entity.model().javaType())) continue;
-                Table table;
-                List<Identifier> names = new ArrayList<>();
-                if (collection instanceof CollectionMapping.ForeignKey foreign) {
-                    table = foreign.table();
-                    names.addAll(foreign.ownerColumns());
-                    if (foreign.index() != null) names.addAll(foreign.index().columns());
-                } else if (collection instanceof CollectionMapping.MappedBy inverse && inverse.indexUpdate() != null) {
-                    table = inverse.indexUpdate().table();
-                    names.addAll(inverse.index().columns());
-                } else continue;
-                var target = mapped.get(collection.association().targetEntity());
-                var tables = collectionTables(target, table);
-                for (int t = 0; t < entity.statements().tables().size(); t++) {
-                    if (tables.contains(entity.statements().tables().get(t).select().table())) {
-                        int index = t;
-                        names.forEach(name -> columns.putIfAbsent(name, new RangeColumn(index, name)));
-                    }
+                if (collection.association().targetEntity().isAssignableFrom(entity.model().javaType())) {
+                    addCollectionColumns(entity, collection, columns);
                 }
             }
         }
         return columns;
+    }
+
+    /** The key and index columns a collection that targets {@code entity} keeps in the tables of that entity. */
+    private void addCollectionColumns(MappedEntity entity, CollectionMapping collection, Map<Identifier, RangeColumn> columns) {
+        switch (collection) {
+            case CollectionMapping.ForeignKey foreign -> {
+                List<Identifier> names = new ArrayList<>(foreign.ownerColumns());
+                if (foreign.index() != null) {
+                    names.addAll(foreign.index().columns());
+                }
+                addRangeColumns(entity, collection, foreign.table(), names, columns);
+            }
+            case CollectionMapping.MappedBy inverse when inverse.indexUpdate() != null ->
+                addRangeColumns(entity, collection, inverse.indexUpdate().table(), inverse.index().columns(), columns);
+            default -> {
+                // the other collections keep no column in the tables of their target
+            }
+        }
+    }
+
+    /** The columns {@code names} of a collection, in each table of {@code entity} that is a table of the collection. */
+    private void addRangeColumns(MappedEntity entity, CollectionMapping collection, Table table, List<Identifier> names,
+            Map<Identifier, RangeColumn> columns) {
+        var target = mapped.get(collection.association().targetEntity());
+        var tables = collectionTables(target, table);
+        for (int t = 0; t < entity.statements().tables().size(); t++) {
+            if (tables.contains(entity.statements().tables().get(t).select().table())) {
+                int index = t;
+                names.forEach(name -> columns.putIfAbsent(name, new RangeColumn(index, name)));
+            }
+        }
     }
 
     /** The physical tables that contain a collection's target-side foreign key or index. */
@@ -527,29 +601,10 @@ public final class MappedUnit {
         model.entities().forEach(e -> entities.add(e.javaType()));
         Map<Class<?>, Set<Class<?>>> references = new LinkedHashMap<>();
         for (EntityModel entity : model.entities()) {
-            Set<Class<?>> targets = new LinkedHashSet<>();
-            for (AttributeModel attribute : entity.attributes()) {
-                if (attribute instanceof AssociationAttribute association && association.owning() && association.singleValued()
-                        && association.joinTable() == null && entities.contains(association.targetEntity())
-                        && association.targetEntity() != entity.javaType()) {
-                    targets.add(association.targetEntity());
-                }
-            }
-            references.put(entity.javaType(), targets);
+            references.put(entity.javaType(), toOneTargets(entity, entities));
         }
         for (EntityModel entity : model.entities()) {
-            for (AttributeModel attribute : entity.attributes()) {
-                if (attribute instanceof AssociationAttribute association && association.owning()
-                        && association.kind() == AssociationAttribute.Kind.ONE_TO_MANY && association.joinTable() == null
-                        && !association.joinColumns().isEmpty() && entities.contains(association.targetEntity())
-                        && association.targetEntity() != entity.javaType()) {
-                    for (Class<?> candidate : entities) {
-                        if (association.targetEntity().isAssignableFrom(candidate) && candidate != entity.javaType()) {
-                            references.get(candidate).add(entity.javaType());
-                        }
-                    }
-                }
-            }
+            addForeignKeyCollections(entity, entities, references);
         }
         Map<Class<?>, Integer> ranks = new IdentityHashMap<>();
         int rank = 0;
@@ -571,6 +626,38 @@ public final class MappedUnit {
             }
         }
         return ranks;
+    }
+
+    /** The other entities the owned to-one relationships of {@code entity} reference by a foreign key of its own. */
+    private static Set<Class<?>> toOneTargets(EntityModel entity, Set<Class<?>> entities) {
+        Set<Class<?>> targets = new LinkedHashSet<>();
+        for (AttributeModel attribute : entity.attributes()) {
+            if (attribute instanceof AssociationAttribute association && association.owning() && association.singleValued()
+                    && association.joinTable() == null && entities.contains(association.targetEntity())
+                    && association.targetEntity() != entity.javaType()) {
+                targets.add(association.targetEntity());
+            }
+        }
+        return targets;
+    }
+
+    /**
+     * The one-to-many relationships of {@code entity} mapped by a foreign key in the target table: each target entity
+     * references {@code entity}, as its rows hold the key of a row of {@code entity}.
+     */
+    private static void addForeignKeyCollections(EntityModel entity, Set<Class<?>> entities, Map<Class<?>, Set<Class<?>>> references) {
+        for (AttributeModel attribute : entity.attributes()) {
+            if (attribute instanceof AssociationAttribute association && association.owning()
+                    && association.kind() == AssociationAttribute.Kind.ONE_TO_MANY && association.joinTable() == null
+                    && !association.joinColumns().isEmpty() && entities.contains(association.targetEntity())
+                    && association.targetEntity() != entity.javaType()) {
+                for (Class<?> candidate : entities) {
+                    if (association.targetEntity().isAssignableFrom(candidate) && candidate != entity.javaType()) {
+                        references.get(candidate).add(entity.javaType());
+                    }
+                }
+            }
+        }
     }
 
     /**

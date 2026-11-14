@@ -115,39 +115,57 @@ public record ElementCollectionMapping(int attribute, ElementCollectionAttribute
         boolean[] resolved = new boolean[values.length];
         for (int c = 0; c < values.length; c++) {
             EntityStatements.Column column = columns.get(c);
-            if (column.foreignKey() == null || resolved[c]) continue;
-            var foreignKey = column.foreignKey();
-            List<Integer> parts = new ArrayList<>();
-            for (int part = 0; part < columns.size(); part++) {
-                var candidate = columns.get(part);
-                if (candidate.foreignKey() != null && candidate.foreignKey().target() == foreignKey.target()
-                        && Arrays.equals(candidate.path(), column.path())) parts.add(part);
-            }
-            parts.sort(java.util.Comparator.comparingInt(part -> columns.get(part).foreignKey().part()));
-            Object[] key = new Object[parts.size()];
-            boolean allNull = true;
-            boolean anyNull = false;
-            for (int part = 0; part < parts.size(); part++) {
-                int index = parts.get(part);
-                if (columns.get(index).foreignKey().part() != part) {
-                    throw new PersistenceException("The composite identity columns of " + model.name() + " are incomplete");
+            if (column.foreignKey() != null && !resolved[c]) {
+                List<Integer> parts = referenceParts(column);
+                Object target = referenced(parts, values, nulls, column.foreignKey().target(), resolve);
+                for (int part : parts) {
+                    values[part] = target;
+                    resolved[part] = true;
                 }
-                key[part] = values[index];
-                allNull &= nulls[index];
-                anyNull |= nulls[index];
-            }
-            if (!allNull && anyNull) {
-                throw new PersistenceException("The composite relationship key of " + model.name() + " is partially null");
-            }
-            Object target = allNull ? null : resolve.apply(foreignKey.target(), key);
-            for (int part : parts) {
-                values[part] = target;
-                resolved[part] = true;
             }
         }
         Object[] state = new Object[1];
         EntityStatements.hydrate(columns, values, nulls, state, true);
         return state[0];
+    }
+
+    /** The indexes of the columns of the reference {@code column} is a column of, in the order of the parts of its key. */
+    private List<Integer> referenceParts(EntityStatements.Column column) {
+        var foreignKey = column.foreignKey();
+        List<Integer> parts = new ArrayList<>();
+        for (int part = 0; part < columns.size(); part++) {
+            var candidate = columns.get(part);
+            if (candidate.foreignKey() != null && candidate.foreignKey().target() == foreignKey.target()
+                    && Arrays.equals(candidate.path(), column.path())) {
+                parts.add(part);
+            }
+        }
+        parts.sort(java.util.Comparator.comparingInt(part -> columns.get(part).foreignKey().part()));
+        return parts;
+    }
+
+    /**
+     * The entity of type {@code target} the key columns {@code parts} of an element designate, {@code null} when they
+     * all are {@code NULL}; {@code resolve} finds it from its key.
+     */
+    private Object referenced(List<Integer> parts, Object[] values, boolean[] nulls, Class<?> target,
+            BiFunction<Class<?>, Object[], Object> resolve) {
+        Object[] key = new Object[parts.size()];
+        boolean allNull = true;
+        boolean anyNull = false;
+        for (int part = 0; part < parts.size(); part++) {
+            int index = parts.get(part);
+            if (columns.get(index).foreignKey().part() != part) {
+                throw new PersistenceException("The composite identity columns of " + model.name() + " are incomplete");
+            }
+            key[part] = values[index];
+            allNull &= nulls[index];
+            anyNull |= nulls[index];
+        }
+        if (!allNull && anyNull) {
+            throw new PersistenceException("The composite relationship key of " + model.name() + " is partially null");
+        }
+        return allNull ? null : resolve.apply(target, key);
     }
 
     public boolean hasReferences() {

@@ -165,26 +165,36 @@ public final class AccessPlanner {
     public List<Member> members(ClassInfo info, AccessKind access) {
         List<Member> members = new ArrayList<>();
         for (FieldInfo field : info.fields()) {
-            if (field.isStatic() || field.isSynthetic() || field.isTransientModifier() || field.isAnnotated(TRANSIENT)) {
-                continue;
-            }
-            AccessKind fieldAccess = explicitAccess(field).orElse(null);
-            if (access == AccessKind.FIELD || fieldAccess == AccessKind.FIELD) {
+            if (persistentField(field, access)) {
                 members.add(new Member(field.name(), AccessKind.FIELD, info, field, field.type(), field.genericSignature()));
             }
         }
         for (MethodInfo method : info.methods()) {
             String property = propertyName(method);
-            if (property == null || method.isAnnotated(TRANSIENT)) {
-                continue;
-            }
-            AccessKind methodAccess = explicitAccess(method).orElse(null);
-            boolean persistent = access == AccessKind.PROPERTY ? methodAccess != AccessKind.FIELD : methodAccess == AccessKind.PROPERTY;
-            if (persistent && hasSetter(info, method, property)) {
+            if (property != null && persistentProperty(info, method, property, access)) {
                 members.add(new Member(property, AccessKind.PROPERTY, info, method, method.type().returnType(), method.genericSignature()));
             }
         }
         return members;
+    }
+
+    /** Whether a field is persistent: neither static, synthetic nor transient, and read by field access, its own or its class's. */
+    private static boolean persistentField(FieldInfo field, AccessKind access) {
+        if (field.isStatic() || field.isSynthetic() || field.isTransientModifier() || field.isAnnotated(TRANSIENT)) {
+            return false;
+        }
+        AccessKind fieldAccess = explicitAccess(field).orElse(null);
+        return access == AccessKind.FIELD || fieldAccess == AccessKind.FIELD;
+    }
+
+    /** Whether the getter of {@code property} is persistent: not transient, read by property access and with a setter. */
+    private static boolean persistentProperty(ClassInfo info, MethodInfo method, String property, AccessKind access) {
+        if (method.isAnnotated(TRANSIENT)) {
+            return false;
+        }
+        AccessKind methodAccess = explicitAccess(method).orElse(null);
+        boolean persistent = access == AccessKind.PROPERTY ? methodAccess != AccessKind.FIELD : methodAccess == AccessKind.PROPERTY;
+        return persistent && hasSetter(info, method, property);
     }
 
     /**
@@ -219,6 +229,16 @@ public final class AccessPlanner {
      */
     public List<Callback> callbacks(ClassInfo entity) {
         List<ClassInfo> hierarchy = hierarchy(entity);
+        List<Callback> callbacks = new ArrayList<>();
+        for (String listener : listeners(hierarchy)) {
+            addCallbacks(listenerChain(listener), listener, callbacks);
+        }
+        addCallbacks(hierarchy, null, callbacks);
+        return callbacks;
+    }
+
+    /** The entity listeners of a class hierarchy, in the order of {@link #callbacks(ClassInfo)}. */
+    private List<String> listeners(List<ClassInfo> hierarchy) {
         List<String> listeners = new ArrayList<>();
         if (hierarchy.stream().noneMatch(info -> info.isAnnotated(JPA + "ExcludeDefaultListeners"))) {
             listeners.addAll(source.defaultListeners());
@@ -231,35 +251,38 @@ public final class AccessPlanner {
             info.annotation(JPA + "EntityListeners").ifPresent(a -> a.types("value")
                 .forEach(type -> listeners.add(ClassFileSource.binaryName(type))));
         }
-        List<Callback> callbacks = new ArrayList<>();
-        for (String listener : listeners) {
-            List<ClassInfo> chain = new ArrayList<>();
-            Optional<ClassInfo> current = source.read(listener);
-            while (current.isPresent()) {
-                chain.addFirst(current.get());
-                String superclass = current.get().superclassName();
-                current = superclass == null || superclass.startsWith(JAVA_PACKAGES) ? Optional.empty() : source.read(superclass);
-            }
-            Set<String> seen = new HashSet<>();
-            for (ClassInfo info : chain) {
-                for (MethodInfo method : info.methods()) {
-                    String kind = kind(method);
-                    if (kind != null && !method.isStatic() && method.type().parameterCount() == 1 && seen.add(kind + method.name())) {
-                        callbacks.add(new Callback(kind, info.name(), method.name(), listener, method.type().parameterType(0)));
-                    }
-                }
-            }
+        return listeners;
+    }
+
+    /** A listener class and its superclasses, up to the first one of the JDK, superclasses first. */
+    private List<ClassInfo> listenerChain(String listener) {
+        List<ClassInfo> chain = new ArrayList<>();
+        Optional<ClassInfo> current = source.read(listener);
+        while (current.isPresent()) {
+            chain.addFirst(current.get());
+            String superclass = current.get().superclassName();
+            current = superclass == null || superclass.startsWith(JAVA_PACKAGES) ? Optional.empty() : source.read(superclass);
         }
+        return chain;
+    }
+
+    /**
+     * The lifecycle methods of a class chain, superclasses first: those of an entity listener ({@code listener}), which
+     * take the entity, or those of the entity itself ({@code listener} is {@code null}), which take nothing. An
+     * overridden method keeps the place of the superclass method.
+     */
+    private static void addCallbacks(List<ClassInfo> chain, String listener, List<Callback> callbacks) {
+        int parameters = listener == null ? 0 : 1;
         Set<String> seen = new HashSet<>();
-        for (ClassInfo info : hierarchy) {
+        for (ClassInfo info : chain) {
             for (MethodInfo method : info.methods()) {
                 String kind = kind(method);
-                if (kind != null && !method.isStatic() && method.type().parameterCount() == 0 && seen.add(kind + method.name())) {
-                    callbacks.add(new Callback(kind, info.name(), method.name(), null, null));
+                if (kind != null && !method.isStatic() && method.type().parameterCount() == parameters && seen.add(kind + method.name())) {
+                    ClassDesc parameter = parameters == 0 ? null : method.type().parameterType(0);
+                    callbacks.add(new Callback(kind, info.name(), method.name(), listener, parameter));
                 }
             }
         }
-        return callbacks;
     }
 
     /** The callback annotation of {@code method}, if it has one. */

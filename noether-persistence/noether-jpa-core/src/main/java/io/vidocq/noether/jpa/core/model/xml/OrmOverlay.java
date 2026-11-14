@@ -357,51 +357,22 @@ public final class OrmOverlay implements ClassInfos {
         List<List<AnnotationInfo>> methods = new ArrayList<>();
         info.methods().forEach(m -> methods.add(kept(m.annotations(), complete)));
         if (declaration != null) {
-            if (declaration.element().name().equals(XmlNames.CONVERTER)) {
-                String autoApply = declaration.element().attribute("auto-apply");
-                remove(type, CONVERTER);
-                type.add(raw.annotation(CONVERTER, autoApply == null ? Map.of() : Map.of("autoApply", parseBoolean(autoApply))));
-            } else {
-                declared(info, declaration, type, fields, methods);
-            }
+            declared(info, declaration, type, fields, methods);
         }
         for (String kind : replaced) {
             methods.forEach(annotations -> remove(annotations, JPA + kind));
         }
         for (Placement placement : placed) {
-            for (int m = 0; m < info.methods().size(); m++) {
-                MethodInfo method = info.methods().get(m);
-                if (method.name().equals(placement.method()) && !method.isStatic()
-                        && method.type().parameterCount() == placement.parameters()) {
-                    replace(methods.get(m), JPA + placement.kind(), raw.annotation(JPA + placement.kind(), Map.of()));
-                    break;
-                }
-            }
+            placeCallback(info, placement, methods);
         }
         if (schema != null || catalog != null) {
-            if (type.stream().anyMatch(a -> a.typeName().equals(ENTITY)) && type.stream().noneMatch(a -> a.typeName().equals(TABLE))) {
-                type.add(raw.annotation(TABLE, Map.of()));
-            }
-            schemas(type, schema, catalog);
-            fields.forEach(annotations -> schemas(annotations, schema, catalog));
-            methods.forEach(annotations -> schemas(annotations, schema, catalog));
+            defaultSchemas(type, fields, methods, schema, catalog);
         }
         if (cascadePersist) {
             fields.forEach(this::cascadePersist);
             methods.forEach(this::cascadePersist);
         }
-        List<FieldInfo> newFields = new ArrayList<>();
-        for (int f = 0; f < info.fields().size(); f++) {
-            FieldInfo field = info.fields().get(f);
-            newFields.add(new FieldInfo(field.name(), field.type(), field.genericSignature(), field.flags(), fields.get(f)));
-        }
-        List<MethodInfo> newMethods = new ArrayList<>();
-        for (int m = 0; m < info.methods().size(); m++) {
-            MethodInfo method = info.methods().get(m);
-            newMethods.add(new MethodInfo(method.name(), method.type(), method.genericSignature(), method.flags(), methods.get(m)));
-        }
-        return new ClassInfo(name, info.superclassName(), info.interfaceNames(), info.flags(), info.genericSignature(), info.isRecord(),
-            type, newFields, newMethods);
+        return overlaid(info, type, fields, methods);
     }
 
     /** The annotations a class keeps: all of them, or, for a metadata-complete mapping, none of Jakarta Persistence (§12.2.3.1). */
@@ -415,11 +386,75 @@ public final class OrmOverlay implements ClassInfos {
         return kept;
     }
 
-    /** An {@code entity}, {@code mapped-superclass} or {@code embeddable} element (§12.2.3 to §12.2.5). */
+    /** Writes the callback annotation of {@code placement} on the method it names (§3.6.1). */
+    private void placeCallback(ClassInfo info, Placement placement, List<List<AnnotationInfo>> methods) {
+        for (int m = 0; m < info.methods().size(); m++) {
+            MethodInfo method = info.methods().get(m);
+            if (method.name().equals(placement.method()) && !method.isStatic()
+                    && method.type().parameterCount() == placement.parameters()) {
+                replace(methods.get(m), JPA + placement.kind(), raw.annotation(JPA + placement.kind(), Map.of()));
+                return;
+            }
+        }
+    }
+
+    /** §12.2.1.x, §12.2.2.x: the default schema and catalog, on the tables and generators of a class that do not name theirs. */
+    private void defaultSchemas(List<AnnotationInfo> type, List<List<AnnotationInfo>> fields, List<List<AnnotationInfo>> methods,
+            String schema, String catalog) {
+        if (type.stream().anyMatch(a -> a.typeName().equals(ENTITY)) && type.stream().noneMatch(a -> a.typeName().equals(TABLE))) {
+            type.add(raw.annotation(TABLE, Map.of()));
+        }
+        schemas(type, schema, catalog);
+        fields.forEach(annotations -> schemas(annotations, schema, catalog));
+        methods.forEach(annotations -> schemas(annotations, schema, catalog));
+    }
+
+    /** {@code info} with the annotations of the class, of its fields and of its methods replaced. */
+    private static ClassInfo overlaid(ClassInfo info, List<AnnotationInfo> type, List<List<AnnotationInfo>> fields,
+            List<List<AnnotationInfo>> methods) {
+        List<FieldInfo> newFields = new ArrayList<>();
+        for (int f = 0; f < info.fields().size(); f++) {
+            FieldInfo field = info.fields().get(f);
+            newFields.add(new FieldInfo(field.name(), field.type(), field.genericSignature(), field.flags(), fields.get(f)));
+        }
+        List<MethodInfo> newMethods = new ArrayList<>();
+        for (int m = 0; m < info.methods().size(); m++) {
+            MethodInfo method = info.methods().get(m);
+            newMethods.add(new MethodInfo(method.name(), method.type(), method.genericSignature(), method.flags(), methods.get(m)));
+        }
+        return new ClassInfo(info.name(), info.superclassName(), info.interfaceNames(), info.flags(), info.genericSignature(),
+            info.isRecord(), type, newFields, newMethods);
+    }
+
+    /** An {@code entity}, {@code mapped-superclass}, {@code embeddable} (§12.2.3 to §12.2.5) or {@code converter} element. */
     private void declared(ClassInfo info, Declaration declaration, List<AnnotationInfo> type, List<List<AnnotationInfo>> fields,
             List<List<AnnotationInfo>> methods) {
         XmlElement element = declaration.element();
+        if (element.name().equals(XmlNames.CONVERTER)) {
+            String autoApply = element.attribute("auto-apply");
+            remove(type, CONVERTER);
+            type.add(raw.annotation(CONVERTER, autoApply == null ? Map.of() : Map.of("autoApply", parseBoolean(autoApply))));
+            return;
+        }
         Context context = declaration.context();
+        managedType(element, type);
+        String access = access(info, element, context, type, fields, methods);
+        if (element.attribute("cacheable") != null) {
+            replace(type, JPA + "Cacheable", raw.annotation(JPA + "Cacheable", Map.of(VALUE, parseBoolean(element.attribute("cacheable")))));
+        }
+        classElements(element, context, type);
+        Optional<XmlElement> attributes = element.child(XmlNames.ATTRIBUTES);
+        if (attributes.isPresent()) {
+            for (XmlElement attribute : attributes.get().children()) {
+                if (!attribute.name().equals(XmlNames.DESCRIPTION)) {
+                    attribute(info, attribute, context, access, fields, methods);
+                }
+            }
+        }
+    }
+
+    /** The {@code @Entity}, {@code @MappedSuperclass} or {@code @Embeddable} an element stands for, with its entity name. */
+    private void managedType(XmlElement element, List<AnnotationInfo> type) {
         String kind = switch (element.name()) {
             case XmlNames.ENTITY -> ENTITY;
             case XmlNames.MAPPED_SUPERCLASS -> MAPPED_SUPERCLASS;
@@ -439,11 +474,10 @@ public final class OrmOverlay implements ClassInfos {
         }
         remove(type, ENTITY, MAPPED_SUPERCLASS, EMBEDDABLE);
         type.add(raw.annotation(kind, written));
+    }
 
-        String access = access(info, element, context, type, fields, methods);
-        if (element.attribute("cacheable") != null) {
-            replace(type, JPA + "Cacheable", raw.annotation(JPA + "Cacheable", Map.of(VALUE, parseBoolean(element.attribute("cacheable")))));
-        }
+    /** The subelements of an {@code entity}, {@code mapped-superclass} or {@code embeddable} that stand for class annotations. */
+    private void classElements(XmlElement element, Context context, List<AnnotationInfo> type) {
         Map<String, List<AnnotationInfo>> merged = new LinkedHashMap<>();
         List<AnnotationInfo> secondaryTables = new ArrayList<>();
         List<AnnotationInfo> primaryKeyJoinColumns = new ArrayList<>();
@@ -451,7 +485,7 @@ public final class OrmOverlay implements ClassInfos {
             switch (child.name()) {
                 case XmlNames.DESCRIPTION, XmlNames.ATTRIBUTES, "pre-persist", "post-persist", "pre-remove", "post-remove", "pre-update",
                     "post-update", "post-load" -> {
-                    // documentation, or read below (attributes) and by resolveCallbacks (callbacks)
+                    // documentation, or read by declared (attributes) and by resolveCallbacks (callbacks)
                 }
                 case "table" -> replace(type, TABLE, convert(TABLE, child, context, Set.of()));
                 case "secondary-table" -> secondaryTables.add(convert(SECONDARY_TABLE, child, context, Set.of()));
@@ -489,16 +523,8 @@ public final class OrmOverlay implements ClassInfos {
         if (!primaryKeyJoinColumns.isEmpty()) {
             group(type, JPA + "PrimaryKeyJoinColumn", primaryKeyJoinColumns);
         }
-        merged.forEach((annotation, written2) -> merge(type, annotation, written2,
+        merged.forEach((annotation, written) -> merge(type, annotation, written,
             annotation.equals(CONVERT) ? ATTRIBUTE_NAME : "name"));
-        Optional<XmlElement> attributes = element.child(XmlNames.ATTRIBUTES);
-        if (attributes.isPresent()) {
-            for (XmlElement attribute : attributes.get().children()) {
-                if (!attribute.name().equals(XmlNames.DESCRIPTION)) {
-                    attribute(info, attribute, context, access, fields, methods);
-                }
-            }
-        }
     }
 
     /**
@@ -521,10 +547,10 @@ public final class OrmOverlay implements ClassInfos {
             replace(type, ACCESS, raw.annotation(ACCESS, Map.of(VALUE, new EnumValue(ACCESS_TYPE, written))));
             return written;
         }
-        if (fields.stream().anyMatch(a -> annotated(a, ID) || annotated(a, EMBEDDED_ID))) {
+        if (fields.stream().anyMatch(OrmOverlay::identifier)) {
             return FIELD_ACCESS;
         }
-        if (methods.stream().anyMatch(a -> annotated(a, ID) || annotated(a, EMBEDDED_ID))) {
+        if (methods.stream().anyMatch(OrmOverlay::identifier)) {
             return PROPERTY_ACCESS;
         }
         Optional<XmlElement> id = element.child(XmlNames.ATTRIBUTES).flatMap(a -> a.children().stream()
@@ -532,29 +558,48 @@ public final class OrmOverlay implements ClassInfos {
         if (id.isPresent()) {
             return info.field(id.get().attribute("name")).isPresent() ? FIELD_ACCESS : PROPERTY_ACCESS;
         }
-        String superclass = info.superclassName();
+        return inheritedAccess(info.superclassName());
+    }
+
+    /** Whether the annotations of a member make it an identifier. */
+    private static boolean identifier(List<AnnotationInfo> annotations) {
+        return annotated(annotations, ID) || annotated(annotations, EMBEDDED_ID);
+    }
+
+    private static boolean annotated(List<AnnotationInfo> annotations, String type) {
+        return annotations.stream().anyMatch(a -> a.typeName().equals(type));
+    }
+
+    /** The access type the first superclass that decides one gives, from {@code superclassName} up; {@code null} if none does. */
+    private String inheritedAccess(String superclassName) {
+        String superclass = superclassName;
         while (superclass != null && !superclass.startsWith("java.")) {
             Optional<ClassInfo> parent = read(superclass);
             if (parent.isEmpty()) {
-                break;
+                return null;
             }
-            Optional<AnnotationInfo> explicit = parent.get().annotation(ACCESS);
-            if (explicit.isPresent()) {
-                return explicit.get().enumConstant(VALUE);
-            }
-            if (parent.get().fields().stream().anyMatch(f -> f.isAnnotated(ID) || f.isAnnotated(EMBEDDED_ID))) {
-                return FIELD_ACCESS;
-            }
-            if (parent.get().methods().stream().anyMatch(m -> m.isAnnotated(ID) || m.isAnnotated(EMBEDDED_ID))) {
-                return PROPERTY_ACCESS;
+            String decided = decidedAccess(parent.get());
+            if (decided != null) {
+                return decided;
             }
             superclass = parent.get().superclassName();
         }
         return null;
     }
 
-    private static boolean annotated(List<AnnotationInfo> annotations, String type) {
-        return annotations.stream().anyMatch(a -> a.typeName().equals(type));
+    /** The access type a class decides: its {@code @Access}, else the placement of its identifier; {@code null} if neither. */
+    private static String decidedAccess(ClassInfo info) {
+        Optional<AnnotationInfo> explicit = info.annotation(ACCESS);
+        if (explicit.isPresent()) {
+            return explicit.get().enumConstant(VALUE);
+        }
+        if (info.fields().stream().anyMatch(f -> f.isAnnotated(ID) || f.isAnnotated(EMBEDDED_ID))) {
+            return FIELD_ACCESS;
+        }
+        if (info.methods().stream().anyMatch(m -> m.isAnnotated(ID) || m.isAnnotated(EMBEDDED_ID))) {
+            return PROPERTY_ACCESS;
+        }
+        return null;
     }
 
     // ---- attributes (§12.2.3.x) ------------------------------------------------------------------------------
@@ -566,58 +611,89 @@ public final class OrmOverlay implements ClassInfos {
     private void attribute(ClassInfo info, XmlElement attribute, Context context, String classAccess,
             List<List<AnnotationInfo>> fields, List<List<AnnotationInfo>> methods) {
         String name = attribute.attribute("name");
+        int fieldIndex = fieldIndex(info, name);
+        int getterIndex = getterIndex(info, name);
+        List<AnnotationInfo> field = fieldIndex < 0 ? null : fields.get(fieldIndex);
+        List<AnnotationInfo> getter = getterIndex < 0 ? null : methods.get(getterIndex);
+        if (field == null && getter == null) {
+            throw error(context, attribute, THE_CLASS + info.name() + " has no field or property " + name);
+        }
+        if (field != null) {
+            removeJpa(field);
+        }
+        if (getter != null) {
+            removeJpa(getter);
+        }
+        if (attribute.name().equals("transient")) {
+            AnnotationInfo transientAnnotation = raw.annotation(TRANSIENT, Map.of());
+            if (field != null) {
+                field.add(transientAnnotation);
+            }
+            if (getter != null) {
+                getter.add(transientAnnotation);
+            }
+            return;
+        }
+        persistent(info, attribute, context, classAccess, field, getter);
+    }
+
+    /** The index of the instance field named {@code name}, or -1. */
+    private static int fieldIndex(ClassInfo info, String name) {
         int field = -1;
         for (int f = 0; f < info.fields().size(); f++) {
             if (info.fields().get(f).name().equals(name) && !info.fields().get(f).isStatic()) {
                 field = f;
             }
         }
+        return field;
+    }
+
+    /** The index of the getter of the property named {@code name}, or -1. */
+    private static int getterIndex(ClassInfo info, String name) {
         int getter = -1;
         for (int m = 0; m < info.methods().size(); m++) {
             if (name.equals(AccessPlanner.propertyName(info.methods().get(m)))) {
                 getter = m;
             }
         }
-        if (field < 0 && getter < 0) {
-            throw error(context, attribute, THE_CLASS + info.name() + " has no field or property " + name);
-        }
-        if (field >= 0) {
-            removeJpa(fields.get(field));
-        }
-        if (getter >= 0) {
-            removeJpa(methods.get(getter));
-        }
-        if (attribute.name().equals("transient")) {
-            AnnotationInfo transientAnnotation = raw.annotation(TRANSIENT, Map.of());
-            if (field >= 0) {
-                fields.get(field).add(transientAnnotation);
-            }
-            if (getter >= 0) {
-                methods.get(getter).add(transientAnnotation);
-            }
-            return;
-        }
+        return getter;
+    }
+
+    /**
+     * A persistent attribute: the annotations its element stands for, on the field ({@code null} if none), the getter
+     * ({@code null} if none) or both, as its access type reads them.
+     */
+    private void persistent(ClassInfo info, XmlElement attribute, Context context, String classAccess, List<AnnotationInfo> field,
+            List<AnnotationInfo> getter) {
         String memberAccess = attribute.attribute(XmlNames.ACCESS);
         String access = memberAccess != null ? memberAccess : classAccess;
-        if (FIELD_ACCESS.equals(access) && field < 0 || PROPERTY_ACCESS.equals(access) && getter < 0) {
+        if (FIELD_ACCESS.equals(access) && field == null || PROPERTY_ACCESS.equals(access) && getter == null) {
             throw error(context, attribute, THE_CLASS + info.name() + " has no " + (FIELD_ACCESS.equals(access) ? "field " : "property ")
-                + name + " for its " + access + " access");
+                + attribute.attribute("name") + " for its " + access + " access");
         }
         List<AnnotationInfo> annotations = mapping(attribute, context);
         if (memberAccess != null) {
-            annotations.add(raw.annotation(ACCESS, Map.of(VALUE, new EnumValue(ACCESS_TYPE, memberAccess))));
-            // §2.3.2: the member the class access would read is not persistent besides the one named
-            if (memberAccess.equals(FIELD_ACCESS) && getter >= 0) {
-                methods.get(getter).add(raw.annotation(TRANSIENT, Map.of()));
-            } else if (memberAccess.equals(PROPERTY_ACCESS) && field >= 0) {
-                fields.get(field).add(raw.annotation(TRANSIENT, Map.of()));
-            }
+            ownAccess(memberAccess, annotations, field, getter);
         }
-        if (!PROPERTY_ACCESS.equals(access) && field >= 0) {
-            fields.get(field).addAll(annotations);
+        if (!PROPERTY_ACCESS.equals(access) && field != null) {
+            field.addAll(annotations);
         }
-        if (!FIELD_ACCESS.equals(access) && getter >= 0) {
-            methods.get(getter).addAll(annotations);
+        if (!FIELD_ACCESS.equals(access) && getter != null) {
+            getter.addAll(annotations);
+        }
+    }
+
+    /**
+     * An attribute's own {@code access}, written as {@code @Access}; §2.3.2: the member the access type of its class
+     * would read is not persistent besides the one it names.
+     */
+    private void ownAccess(String memberAccess, List<AnnotationInfo> annotations, List<AnnotationInfo> field,
+            List<AnnotationInfo> getter) {
+        annotations.add(raw.annotation(ACCESS, Map.of(VALUE, new EnumValue(ACCESS_TYPE, memberAccess))));
+        if (memberAccess.equals(FIELD_ACCESS) && getter != null) {
+            getter.add(raw.annotation(TRANSIENT, Map.of()));
+        } else if (memberAccess.equals(PROPERTY_ACCESS) && field != null) {
+            field.add(raw.annotation(TRANSIENT, Map.of()));
         }
     }
 

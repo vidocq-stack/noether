@@ -21,6 +21,7 @@ package io.vidocq.noether.jpa.core.mapping;
 
 import io.vidocq.noether.jpa.core.model.AssociationAttribute;
 import io.vidocq.noether.jpa.core.model.AttributeModel;
+import io.vidocq.noether.jpa.core.model.EmbeddedAttribute;
 import io.vidocq.noether.jpa.core.model.EntityModel;
 import io.vidocq.noether.jpa.core.model.IdModel;
 import io.vidocq.noether.jpa.core.spi.ManagedAccess;
@@ -184,26 +185,34 @@ public final class MappedEntity {
                 if (whole >= 0) {
                     parts.add(new KeyPart(whole, -1, true));
                 } else {
-                    int attribute = model.attributes().indexOf(embedded);
-                    List<AttributeModel> components = embedded.embeddable().attributes();
-                    for (int c = 0; c < components.size(); c++) {
-                        int mapped = mapsId(model, components.get(c).name());
-                        parts.add(mapped >= 0 ? new KeyPart(mapped, c, true) : new KeyPart(attribute, c, false));
-                    }
+                    addEmbeddedParts(model, embedded, parts);
                 }
             }
-            case IdModel.ByIdClass byIdClass -> {
-                List<AttributeModel> attributes = byIdClass.attributes();
-                for (AttributeModel attribute : attributes) {
-                    parts.add(new KeyPart(model.attributes().indexOf(attribute), -1, attribute instanceof AssociationAttribute));
-                }
-                if (attributes.size() == 1 && parts.getFirst().parent() && idClass == null) {
-                    // §2.4.1.3 example 5a: the id class is the parent's, the relationship its whole identifier
-                    parts.set(0, new KeyPart(parts.getFirst().attribute(), -1, true));
-                }
-            }
+            case IdModel.ByIdClass byIdClass -> addIdClassParts(model, byIdClass, idClass, parts);
         }
         return List.copyOf(parts);
+    }
+
+    /** The components of an {@code @EmbeddedId}: each the key of the parent of the {@code @MapsId} naming it, if any. */
+    private static void addEmbeddedParts(EntityModel model, EmbeddedAttribute embedded, List<KeyPart> parts) {
+        int attribute = model.attributes().indexOf(embedded);
+        List<AttributeModel> components = embedded.embeddable().attributes();
+        for (int c = 0; c < components.size(); c++) {
+            int mapped = mapsId(model, components.get(c).name());
+            parts.add(mapped >= 0 ? new KeyPart(mapped, c, true) : new KeyPart(attribute, c, false));
+        }
+    }
+
+    /** The {@code @Id} attributes of an entity with an id class, the relationships among them being keys of parents. */
+    private static void addIdClassParts(EntityModel model, IdModel.ByIdClass byIdClass, ManagedAccess idClass, List<KeyPart> parts) {
+        List<AttributeModel> attributes = byIdClass.attributes();
+        for (AttributeModel attribute : attributes) {
+            parts.add(new KeyPart(model.attributes().indexOf(attribute), -1, attribute instanceof AssociationAttribute));
+        }
+        if (attributes.size() == 1 && parts.getFirst().parent() && idClass == null) {
+            // §2.4.1.3 example 5a: the id class is the parent's, the relationship its whole identifier
+            parts.set(0, new KeyPart(parts.getFirst().attribute(), -1, true));
+        }
     }
 
     /** The relationship whose {@code @MapsId} is {@code value} ({@code ""}: the whole identifier), or -1. */
@@ -245,24 +254,32 @@ public final class MappedEntity {
         boolean generated = model.id() instanceof IdModel.Single single && single.generation().isPresent();
         for (KeyPart part : parts) {
             Object value = access.get(instance, part.attribute());
-            if (part.parent()) {
-                Object parentId = value == null ? null : parent(part, value).id(value);
-                if (parentId == null) {
-                    return null;
-                }
-                values.addAll(Arrays.asList(parent(part, value).statements().keyValues(parentId)));
-                continue;
-            }
-            if (part.component() >= 0) {
-                value = value == null ? null : embeddedId.get(value, part.component());
-            }
-            value = assigned(value, generated);
-            if (value == null) {
+            boolean assigned = part.parent() ? addParentKey(part, value, values) : addOwnKey(part, value, generated, values);
+            if (!assigned) {
                 return null;
             }
-            values.add(value);
         }
         return values.size() == 1 ? values.getFirst() : CompositeId.of(values.toArray());
+    }
+
+    /** Adds to {@code values} the key of the parent {@code target} a relationship part references; false while it has none. */
+    private boolean addParentKey(KeyPart part, Object target, List<Object> values) {
+        Object parentId = target == null ? null : parent(part, target).id(target);
+        if (parentId == null) {
+            return false;
+        }
+        values.addAll(Arrays.asList(parent(part, target).statements().keyValues(parentId)));
+        return true;
+    }
+
+    /** Adds to {@code values} an own part of the identity, a component of {@code value} for an embedded identifier; false while unassigned. */
+    private boolean addOwnKey(KeyPart part, Object value, boolean generated, List<Object> values) {
+        Object key = assigned(part.component() >= 0 && value != null ? embeddedId.get(value, part.component()) : value, generated);
+        if (key == null) {
+            return false;
+        }
+        values.add(key);
+        return true;
     }
 
     /**
@@ -301,59 +318,73 @@ public final class MappedEntity {
      */
     public void deriveId(Object instance) {
         switch (model.id()) {
-            case IdModel.Single single when derivedWhole() -> {
-                Object target = access.get(instance, parts.getFirst().attribute());
-                if (target != null && parent(parts.getFirst(), target).id(target) != null) {
-                    access.set(instance, model.attributes().indexOf(single.attribute()), parent(parts.getFirst(), target).idObject(target));
-                }
-            }
-            case IdModel.Embedded embedded when derivedWhole() -> {
-                Object target = access.get(instance, parts.getFirst().attribute());
-                Object parentId = target == null ? null : parent(parts.getFirst(), target).id(target);
-                if (parentId != null) {
-                    // Copy key attributes, not the parent's potentially differently ordered physical tuple.
-                    Object[] components = new Object[embedded.attribute().embeddable().attributes().size()];
-                    embeddedId.read(parent(parts.getFirst(), target).idObject(target), components);
-                    Object key = embeddedId.type().isRecord() ? embeddedId.construct(components) : embeddedId.instantiate();
-                    if (!embeddedId.type().isRecord()) {
-                        embeddedId.write(key, components);
-                    }
-                    access.set(instance, model.attributes().indexOf(embedded.attribute()), key);
-                }
-            }
-            case IdModel.Embedded embedded when parts.stream().anyMatch(KeyPart::parent) -> {
-                int attribute = model.attributes().indexOf(embedded.attribute());
-                Object key = access.get(instance, attribute);
-                if (embeddedId.type().isRecord()) {
-                    if (key == null) {
-                        throw new jakarta.persistence.PersistenceException("@MapsId requires the remaining embedded identifier parts");
-                    }
-                    Object[] components = new Object[embedded.attribute().embeddable().attributes().size()];
-                    embeddedId.read(key, components);
-                    for (KeyPart part : parts) {
-                        Object target = part.parent() ? access.get(instance, part.attribute()) : null;
-                        if (target != null && parent(part, target).id(target) != null) {
-                            components[part.component()] = parent(part, target).idObject(target);
-                        }
-                    }
-                    access.set(instance, attribute, embeddedId.construct(components));
-                    break;
-                }
-                if (key == null) {
-                    key = embeddedId.instantiate();
-                    access.set(instance, attribute, key);
-                }
-                for (KeyPart part : parts) {
-                    Object target = part.parent() ? access.get(instance, part.attribute()) : null;
-                    if (target != null && parent(part, target).id(target) != null) {
-                        embeddedId.set(key, part.component(), parent(part, target).idObject(target));
-                    }
-                }
-            }
+            case IdModel.Single single when derivedWhole() -> deriveSingleId(instance, single);
+            case IdModel.Embedded embedded when derivedWhole() -> deriveWholeEmbeddedId(instance, embedded);
+            case IdModel.Embedded embedded when parts.stream().anyMatch(KeyPart::parent) -> deriveEmbeddedIdParts(instance, embedded);
             default -> {
                 // nothing an @MapsId maps
             }
         }
+    }
+
+    /** The {@code @Id} an {@code @MapsId} without value maps: the identifier of the parent, once it has one. */
+    private void deriveSingleId(Object instance, IdModel.Single single) {
+        Object target = access.get(instance, parts.getFirst().attribute());
+        if (target != null && parent(parts.getFirst(), target).id(target) != null) {
+            access.set(instance, model.attributes().indexOf(single.attribute()), parent(parts.getFirst(), target).idObject(target));
+        }
+    }
+
+    /** The {@code @EmbeddedId} an {@code @MapsId} without value maps: a copy of the identifier of the parent, once it has one. */
+    private void deriveWholeEmbeddedId(Object instance, IdModel.Embedded embedded) {
+        Object target = access.get(instance, parts.getFirst().attribute());
+        Object parentId = target == null ? null : parent(parts.getFirst(), target).id(target);
+        if (parentId != null) {
+            // Copy key attributes, not the parent's potentially differently ordered physical tuple.
+            Object[] components = new Object[embedded.attribute().embeddable().attributes().size()];
+            embeddedId.read(parent(parts.getFirst(), target).idObject(target), components);
+            Object key = embeddedId.type().isRecord() ? embeddedId.construct(components) : embeddedId.instantiate();
+            if (!embeddedId.type().isRecord()) {
+                embeddedId.write(key, components);
+            }
+            access.set(instance, model.attributes().indexOf(embedded.attribute()), key);
+        }
+    }
+
+    /** The components of an {@code @EmbeddedId} the {@code @MapsId} relationships name: the identifiers of their parents. */
+    private void deriveEmbeddedIdParts(Object instance, IdModel.Embedded embedded) {
+        int attribute = model.attributes().indexOf(embedded.attribute());
+        Object key = access.get(instance, attribute);
+        if (embeddedId.type().isRecord()) {
+            deriveRecordIdParts(instance, embedded, attribute, key);
+            return;
+        }
+        if (key == null) {
+            key = embeddedId.instantiate();
+            access.set(instance, attribute, key);
+        }
+        for (KeyPart part : parts) {
+            Object target = part.parent() ? access.get(instance, part.attribute()) : null;
+            if (target != null && parent(part, target).id(target) != null) {
+                embeddedId.set(key, part.component(), parent(part, target).idObject(target));
+            }
+        }
+    }
+
+    /** {@link #deriveEmbeddedIdParts} for a record {@code @EmbeddedId}: a new record, the other components kept. */
+    private void deriveRecordIdParts(Object instance, IdModel.Embedded embedded, int attribute, Object key) {
+        if (key == null) {
+            throw new jakarta.persistence.PersistenceException("@MapsId requires the remaining embedded identifier parts");
+        }
+        Object[] components = new Object[embedded.attribute().embeddable().attributes().size()];
+        embeddedId.read(key, components);
+        for (KeyPart part : parts) {
+            Object target = part.parent() ? access.get(instance, part.attribute()) : null;
+            if (target != null && parent(part, target).id(target) != null) {
+                components[part.component()] = parent(part, target).idObject(target);
+            }
+        }
+        access.set(instance, attribute, embeddedId.construct(components));
     }
 
     public boolean hasMapsId() {

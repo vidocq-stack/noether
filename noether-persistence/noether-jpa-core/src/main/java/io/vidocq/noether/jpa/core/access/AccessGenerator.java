@@ -34,6 +34,7 @@ import io.vidocq.noether.jpa.core.model.build.LazySubclassGenerator;
 import io.vidocq.noether.jpa.core.model.source.ClassFileSource;
 import io.vidocq.noether.jpa.core.spi.ManagedAccess;
 import jakarta.persistence.PersistenceException;
+import java.lang.classfile.ClassBuilder;
 import java.lang.classfile.ClassFile;
 import java.lang.classfile.CodeBuilder;
 import java.lang.classfile.Label;
@@ -236,45 +237,62 @@ final class AccessGenerator {
             cb.withSuperclass(CD_MANAGED_ACCESS);
             cb.withMethodBody(INIT_NAME, CONSTRUCTOR, ClassFile.ACC_PUBLIC, code -> code
                 .aload(0).aload(1).aload(2).aload(3).invokespecial(CD_MANAGED_ACCESS, INIT_NAME, CONSTRUCTOR).return_());
-            if (lazyCreator >= 0) {
-                cb.withMethodBody("instantiateLazy", INSTANTIATE, ClassFile.ACC_PUBLIC, code -> code
-                    .ldc(handle(lazyCreator)).invokevirtual(CD_MethodHandle, INVOKE_EXACT, INSTANTIATE).areturn());
+            creators(cb, isRecord, creator, lazyCreator);
+            dispatchers(cb, isRecord, getters, setters, callbacks);
+            bulkCopies(cb, isRecord, getters, setters);
+        });
+    }
+
+    /** {@code instantiateLazy}, then {@code construct} (a record) or {@code instantiate}, for the creators the class has. */
+    private static void creators(ClassBuilder cb, boolean isRecord, int creator, int lazyCreator) {
+        if (lazyCreator >= 0) {
+            cb.withMethodBody("instantiateLazy", INSTANTIATE, ClassFile.ACC_PUBLIC, code -> code
+                .ldc(handle(lazyCreator)).invokevirtual(CD_MethodHandle, INVOKE_EXACT, INSTANTIATE).areturn());
+        }
+        if (creator >= 0 && isRecord) {
+            cb.withMethodBody("construct", CONSTRUCT, ClassFile.ACC_PUBLIC | ClassFile.ACC_VARARGS, code -> code
+                .ldc(handle(creator)).aload(1).invokevirtual(CD_MethodHandle, INVOKE_EXACT, CONSTRUCT).areturn());
+        } else if (creator >= 0) {
+            cb.withMethodBody("instantiate", INSTANTIATE, ClassFile.ACC_PUBLIC, code -> code
+                .ldc(handle(creator)).invokevirtual(CD_MethodHandle, INVOKE_EXACT, INSTANTIATE).areturn());
+        }
+    }
+
+    /** {@code get}, {@code set} (not for a record) and {@code callback} (when there are callbacks), by attribute index. */
+    private static void dispatchers(ClassBuilder cb, boolean isRecord, int[] getters, int[] setters, int[] callbacks) {
+        cb.withMethodBody("get", GET, ClassFile.ACC_PUBLIC, code -> dispatch(code, getters, index -> code
+            .ldc(handle(index)).aload(1).invokevirtual(CD_MethodHandle, INVOKE_EXACT, GETTER).areturn()));
+        if (!isRecord) {
+            cb.withMethodBody("set", SET, ClassFile.ACC_PUBLIC, code -> dispatch(code, setters, index -> code
+                .ldc(handle(index)).aload(1).aload(3).invokevirtual(CD_MethodHandle, INVOKE_EXACT, SETTER).return_()));
+        }
+        if (callbacks.length > 0) {
+            cb.withMethodBody("callback", CALLBACK, ClassFile.ACC_PUBLIC, code -> dispatch(code, callbacks, index -> code
+                .ldc(handle(index)).aload(1).invokevirtual(CD_MethodHandle, INVOKE_EXACT, INVOKE).return_()));
+        }
+    }
+
+    /**
+     * Straight-line bulk copies: {@code read}, state[i] = getter(instance), and {@code write} (not for a record),
+     * setter(instance, state[i]).
+     */
+    private static void bulkCopies(ClassBuilder cb, boolean isRecord, int[] getters, int[] setters) {
+        cb.withMethodBody("read", BULK, ClassFile.ACC_PUBLIC, code -> {
+            for (int i = 0; i < getters.length; i++) {
+                code.aload(2).loadConstant(i).ldc(handle(getters[i])).aload(1)
+                    .invokevirtual(CD_MethodHandle, INVOKE_EXACT, GETTER).aastore();
             }
-            if (creator >= 0 && isRecord) {
-                cb.withMethodBody("construct", CONSTRUCT, ClassFile.ACC_PUBLIC | ClassFile.ACC_VARARGS, code -> code
-                    .ldc(handle(creator)).aload(1).invokevirtual(CD_MethodHandle, INVOKE_EXACT, CONSTRUCT).areturn());
-            } else if (creator >= 0) {
-                cb.withMethodBody("instantiate", INSTANTIATE, ClassFile.ACC_PUBLIC, code -> code
-                    .ldc(handle(creator)).invokevirtual(CD_MethodHandle, INVOKE_EXACT, INSTANTIATE).areturn());
-            }
-            cb.withMethodBody("get", GET, ClassFile.ACC_PUBLIC, code -> dispatch(code, getters, index -> code
-                .ldc(handle(index)).aload(1).invokevirtual(CD_MethodHandle, INVOKE_EXACT, GETTER).areturn()));
-            if (!isRecord) {
-                cb.withMethodBody("set", SET, ClassFile.ACC_PUBLIC, code -> dispatch(code, setters, index -> code
-                    .ldc(handle(index)).aload(1).aload(3).invokevirtual(CD_MethodHandle, INVOKE_EXACT, SETTER).return_()));
-            }
-            if (callbacks.length > 0) {
-                cb.withMethodBody("callback", CALLBACK, ClassFile.ACC_PUBLIC, code -> dispatch(code, callbacks, index -> code
-                    .ldc(handle(index)).aload(1).invokevirtual(CD_MethodHandle, INVOKE_EXACT, INVOKE).return_()));
-            }
-            // straight-line bulk copies: state[i] = getter(instance), setter(instance, state[i])
-            cb.withMethodBody("read", BULK, ClassFile.ACC_PUBLIC, code -> {
-                for (int i = 0; i < getters.length; i++) {
-                    code.aload(2).loadConstant(i).ldc(handle(getters[i])).aload(1)
-                        .invokevirtual(CD_MethodHandle, INVOKE_EXACT, GETTER).aastore();
+            code.return_();
+        });
+        if (!isRecord) {
+            cb.withMethodBody("write", BULK, ClassFile.ACC_PUBLIC, code -> {
+                for (int i = 0; i < setters.length; i++) {
+                    code.ldc(handle(setters[i])).aload(1).aload(2).loadConstant(i).aaload()
+                        .invokevirtual(CD_MethodHandle, INVOKE_EXACT, SETTER);
                 }
                 code.return_();
             });
-            if (!isRecord) {
-                cb.withMethodBody("write", BULK, ClassFile.ACC_PUBLIC, code -> {
-                    for (int i = 0; i < setters.length; i++) {
-                        code.ldc(handle(setters[i])).aload(1).aload(2).loadConstant(i).aaload()
-                            .invokevirtual(CD_MethodHandle, INVOKE_EXACT, SETTER);
-                    }
-                    code.return_();
-                });
-            }
-        });
+        }
     }
 
     /** {@code switch (attribute)}, local 2, over the handles; any other index is out of bounds. */

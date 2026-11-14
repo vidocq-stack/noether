@@ -23,6 +23,7 @@ import io.vidocq.noether.jpa.core.jdbc.type.ValueBinder;
 import io.vidocq.noether.jpa.core.model.EntityModel;
 import io.vidocq.noether.jpa.core.model.PersistenceUnitModel;
 import io.vidocq.noether.jpa.core.model.SecondaryTableModel;
+import io.vidocq.noether.jpa.core.model.source.AnnotationInfo;
 import io.vidocq.noether.jpa.core.model.source.ClassInfos;
 import io.vidocq.noether.jpa.core.model.source.ClassInfo;
 import io.vidocq.noether.jpa.dialect.Dialect;
@@ -36,6 +37,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /** Relational inheritance metadata (§2.14), read from class files, never entity annotations by reflection. */
 public final class InheritanceMapping {
@@ -111,7 +113,7 @@ public final class InheritanceMapping {
 
     private Map<Class<?>, Object> values() {
         Map<Class<?>, Object> values = new java.util.IdentityHashMap<>();
-        var used = new java.util.HashSet<>();
+        Set<Object> used = new java.util.HashSet<>();
         for (EntityModel entity : hierarchy) {
             var written = info(entity).annotation(JPA + "DiscriminatorValue");
             if (discriminator == null || "STRING".equals(discriminatorType)) {
@@ -120,27 +122,37 @@ public final class InheritanceMapping {
                 values.put(entity.javaType(), entityValue);
                 used.add(entityValue);
             } else if (written.isPresent()) {
-                String text = written.get().string(VALUE);
-                Object entityValue;
-                if (INTEGER.equals(discriminatorType)) {
-                    try {
-                        entityValue = Integer.valueOf(text);
-                    } catch (NumberFormatException e) {
-                        throw new PersistenceException("An INTEGER discriminator requires a numeric @DiscriminatorValue: "
-                            + entity.javaType().getName(), e);
-                    }
-                } else {
-                    if (text.length() != 1) {
-                        throw new PersistenceException("A CHAR discriminator requires a one-character @DiscriminatorValue: "
-                            + entity.javaType().getName());
-                    }
-                    entityValue = text;
-                }
+                Object entityValue = writtenValue(entity, written.get().string(VALUE));
                 values.put(entity.javaType(), entityValue);
                 used.add(entityValue);
             }
         }
-        // §11.1.13 leaves non-STRING defaults provider-defined: stable class-name order, avoiding explicit values.
+        addDefaultValues(values, used);
+        return Map.copyOf(values);
+    }
+
+    /** The value a {@code @DiscriminatorValue} writes for an INTEGER or CHAR discriminator. */
+    private Object writtenValue(EntityModel entity, String text) {
+        if (INTEGER.equals(discriminatorType)) {
+            try {
+                return Integer.valueOf(text);
+            } catch (NumberFormatException e) {
+                throw new PersistenceException("An INTEGER discriminator requires a numeric @DiscriminatorValue: "
+                    + entity.javaType().getName(), e);
+            }
+        }
+        if (text.length() != 1) {
+            throw new PersistenceException("A CHAR discriminator requires a one-character @DiscriminatorValue: "
+                + entity.javaType().getName());
+        }
+        return text;
+    }
+
+    /**
+     * The values of the entities without a {@code @DiscriminatorValue}: §11.1.13 leaves non-STRING defaults
+     * provider-defined, so they are numbered in a stable class-name order, avoiding the explicit values ({@code used}).
+     */
+    private void addDefaultValues(Map<Class<?>, Object> values, Set<Object> used) {
         int next = 0;
         for (EntityModel entity : hierarchy.stream().sorted(java.util.Comparator.comparing(e -> e.javaType().getName())).toList()) {
             if (values.containsKey(entity.javaType())) {
@@ -151,21 +163,22 @@ public final class InheritanceMapping {
                 if (INTEGER.equals(discriminatorType)) {
                     candidate = next++;
                 } else {
-                    int code = 'A' + next++;
-                    if (code > Character.MAX_VALUE) {
-                        throw new PersistenceException("The CHAR discriminator range is exhausted in " + root().entityName());
-                    }
-                    if (Character.isSurrogate((char) code)) {
-                        code = 0xE000;
-                        next = code - 'A' + 1;
-                    }
+                    int code = characterCode('A' + next);
+                    next = code - 'A' + 1;
                     candidate = Character.toString((char) code);
                 }
             } while (used.contains(candidate));
             values.put(entity.javaType(), candidate);
             used.add(candidate);
         }
-        return Map.copyOf(values);
+    }
+
+    /** The character of a CHAR discriminator default numbered {@code code}: past the surrogates, within the char range. */
+    private int characterCode(int code) {
+        if (code > Character.MAX_VALUE) {
+            throw new PersistenceException("The CHAR discriminator range is exhausted in " + root().entityName());
+        }
+        return Character.isSurrogate((char) code) ? 0xE000 : code;
     }
 
     public Class<?> concrete(Object value) {
@@ -202,36 +215,44 @@ public final class InheritanceMapping {
     public List<Identifier> keyNames(int table, List<Identifier> rootKeys) {
         List<Identifier> keys = rootKeys;
         for (int t = 1; t <= table; t++) {
-            List<io.vidocq.noether.jpa.core.model.source.AnnotationInfo> joins = new ArrayList<>();
+            List<AnnotationInfo> joins = new ArrayList<>();
             ClassInfo info = info(chain.get(t));
             info.annotation(JPA + "PrimaryKeyJoinColumn").ifPresent(joins::add);
             info.annotation(JPA + "PrimaryKeyJoinColumns").ifPresent(a -> joins.addAll(a.annotations(VALUE)));
-            if (joins.isEmpty()) {
-                continue;
+            if (!joins.isEmpty()) {
+                keys = joinedKeys(chain.get(t), joins, keys);
             }
-            if (joins.size() != keys.size()) {
-                throw new PersistenceException("Primary key join column count differs from the key of " + chain.get(t).entityName());
-            }
-            List<Identifier> next = new ArrayList<>();
-            for (int k = 0; k < keys.size(); k++) {
-                Identifier referenced = keys.get(k);
-                var join = joins.stream().filter(a -> {
-                    String name = a.string("referencedColumnName");
-                    if (name.isBlank()) return false;
-                    Identifier written = Identifier.of(name, source.delimitedIdentifiers());
-                    return written.quoted() || referenced.quoted()
-                        ? written.name().equals(referenced.name()) : written.name().equalsIgnoreCase(referenced.name());
-                })
-                    .findFirst().orElse(joins.get(k).string("referencedColumnName").isBlank() ? joins.get(k) : null);
-                if (join == null) {
-                    throw new PersistenceException("No primary key join column references " + referenced + " in "
-                        + chain.get(t).entityName());
-                }
-                next.add(join.string("name").isBlank() ? referenced : Identifier.of(join.string("name"), source.delimitedIdentifiers()));
-            }
-            keys = List.copyOf(next);
         }
         return keys;
+    }
+
+    /** The primary key of the table of a joined subclass, from its primary key join columns and the key it joins to. */
+    private List<Identifier> joinedKeys(EntityModel entity, List<AnnotationInfo> joins, List<Identifier> keys) {
+        if (joins.size() != keys.size()) {
+            throw new PersistenceException("Primary key join column count differs from the key of " + entity.entityName());
+        }
+        List<Identifier> next = new ArrayList<>();
+        for (int k = 0; k < keys.size(); k++) {
+            Identifier referenced = keys.get(k);
+            var join = joins.stream().filter(a -> references(a, referenced))
+                .findFirst().orElse(joins.get(k).string("referencedColumnName").isBlank() ? joins.get(k) : null);
+            if (join == null) {
+                throw new PersistenceException("No primary key join column references " + referenced + " in " + entity.entityName());
+            }
+            next.add(join.string("name").isBlank() ? referenced : Identifier.of(join.string("name"), source.delimitedIdentifiers()));
+        }
+        return List.copyOf(next);
+    }
+
+    /** Whether a primary key join column names {@code referenced} as its referenced column. */
+    private boolean references(AnnotationInfo join, Identifier referenced) {
+        String name = join.string("referencedColumnName");
+        if (name.isBlank()) {
+            return false;
+        }
+        Identifier written = Identifier.of(name, source.delimitedIdentifiers());
+        return written.quoted() || referenced.quoted()
+            ? written.name().equals(referenced.name()) : written.name().equalsIgnoreCase(referenced.name());
     }
 
     public List<Identifier> secondaryKeys(SecondaryTableModel secondary, List<Identifier> rootKeys) {
@@ -262,29 +283,44 @@ public final class InheritanceMapping {
     }
 
     public ValueBinder binder(boolean entityTypes) {
-        return new ValueBinder() {
-            @Override
-            public void bind(Dialect dialect, PreparedStatement statement, int index, Object value) throws SQLException {
-                Object stored = value;
-                if (value instanceof Class<?> type) {
-                    EntityModel entity = hierarchy.stream().filter(e -> e.javaType() == type).findFirst().orElseThrow(() ->
-                        new IllegalArgumentException(type.getName() + " is not in the hierarchy of " + root().entityName()));
-                    stored = discriminator == null ? entity.entityName() : discriminatorValue(entity);
-                }
-                if (INTEGER.equals(discriminatorType) && discriminator != null) {
-                    if (stored == null) statement.setNull(index, java.sql.Types.INTEGER);
-                    else statement.setInt(index, ((Number) stored).intValue());
-                } else {
-                    statement.setString(index, stored == null ? null : stored.toString());
-                }
-            }
+        return new DiscriminatorBinder(entityTypes);
+    }
 
-            @Override
-            public Object read(ResultSet results, int column) throws SQLException {
-                Object stored = INTEGER.equals(discriminatorType) && discriminator != null
-                    ? results.getObject(column, Integer.class) : results.getString(column);
-                return stored == null || !entityTypes ? stored : concrete(stored);
+    /**
+     * Binds the discriminator column: an entity class as its discriminator value; and reads it, as the concrete entity
+     * class when {@code entityTypes}, else as the value.
+     */
+    private final class DiscriminatorBinder implements ValueBinder {
+        private final boolean entityTypes;
+
+        DiscriminatorBinder(boolean entityTypes) {
+            this.entityTypes = entityTypes;
+        }
+
+        @Override
+        public void bind(Dialect dialect, PreparedStatement statement, int index, Object value) throws SQLException {
+            Object stored = value;
+            if (value instanceof Class<?> type) {
+                EntityModel entity = hierarchy.stream().filter(e -> e.javaType() == type).findFirst().orElseThrow(() ->
+                    new IllegalArgumentException(type.getName() + " is not in the hierarchy of " + root().entityName()));
+                stored = discriminator == null ? entity.entityName() : discriminatorValue(entity);
             }
-        };
+            if (INTEGER.equals(discriminatorType) && discriminator != null) {
+                if (stored == null) {
+                    statement.setNull(index, java.sql.Types.INTEGER);
+                } else {
+                    statement.setInt(index, ((Number) stored).intValue());
+                }
+            } else {
+                statement.setString(index, stored == null ? null : stored.toString());
+            }
+        }
+
+        @Override
+        public Object read(ResultSet results, int column) throws SQLException {
+            Object stored = INTEGER.equals(discriminatorType) && discriminator != null
+                ? results.getObject(column, Integer.class) : results.getString(column);
+            return stored == null || !entityTypes ? stored : concrete(stored);
+        }
     }
 }

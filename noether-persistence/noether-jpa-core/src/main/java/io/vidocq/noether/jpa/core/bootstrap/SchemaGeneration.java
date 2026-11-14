@@ -47,26 +47,30 @@ public final class SchemaGeneration implements SchemaManager {
                 || drops(scripts) && settings.property(PREFIX + "scripts.drop-target") == null) {
             throw new PersistenceException("Schema script actions require their scripts.create-target / scripts.drop-target");
         }
-        withConnection(!"none".equals(database) || settings.string("jakarta.persistence.database-product-name") == null, connection -> {
-            Dialect dialect = dialect(connection);
-            SchemaPlan plan = new SchemaPlan(mapping);
-            boolean schemas = Boolean.parseBoolean(settings.string(PREFIX + "create-database-schemas"));
-            List<String> create = creates(database) || creates(scripts) ? statements(CREATE, plan.create(schemas), dialect) : List.of();
-            List<String> drop = drops(database) || drops(scripts) ? statements("drop", plan.drop(false), dialect) : List.of();
-            List<String> load = creates(database) || creates(scripts)
-                ? loadCommands() : List.of();
-            if (drops(scripts)) write(settings.property(PREFIX + "scripts.drop-target"), drop);
-            if (creates(scripts)) {
-                var commands = new ArrayList<>(create);
-                commands.addAll(load);
-                write(settings.property(PREFIX + "scripts.create-target"), commands);
-            }
-            if (drops(database)) execute(connection, drop);
-            if (creates(database)) {
-                execute(connection, create);
-                execute(connection, load);
-            }
-        });
+        withConnection(!"none".equals(database) || settings.string("jakarta.persistence.database-product-name") == null,
+            connection -> generate(connection, database, scripts));
+    }
+
+    /** Runs the {@code database} action on {@code connection} and writes the {@code scripts} action's targets. */
+    private void generate(Connection connection, String database, String scripts) throws SQLException {
+        Dialect dialect = dialect(connection);
+        SchemaPlan plan = new SchemaPlan(mapping);
+        boolean schemas = Boolean.parseBoolean(settings.string(PREFIX + "create-database-schemas"));
+        boolean creating = creates(database) || creates(scripts);
+        List<String> create = creating ? statements(CREATE, plan.create(schemas), dialect) : List.of();
+        List<String> drop = drops(database) || drops(scripts) ? statements("drop", plan.drop(false), dialect) : List.of();
+        List<String> load = creating ? loadCommands() : List.of();
+        if (drops(scripts)) write(settings.property(PREFIX + "scripts.drop-target"), drop);
+        if (creates(scripts)) {
+            var commands = new ArrayList<>(create);
+            commands.addAll(load);
+            write(settings.property(PREFIX + "scripts.create-target"), commands);
+        }
+        if (drops(database)) execute(connection, drop);
+        if (creates(database)) {
+            execute(connection, create);
+            execute(connection, load);
+        }
     }
 
     private String action(String name) {
@@ -187,37 +191,80 @@ public final class SchemaGeneration implements SchemaManager {
     static List<String> split(String contents) {
         List<String> statements = new ArrayList<>();
         StringBuilder current = new StringBuilder();
-        char quote = 0;
-        boolean lineComment = false;
-        boolean blockComment = false;
-        for (int i = 0; i < contents.length(); i++) {
+        int i = 0;
+        while (i < contents.length()) {
             char c = contents.charAt(i);
-            char next = i + 1 < contents.length() ? contents.charAt(i + 1) : 0;
-            if (lineComment) {
-                if (c == '\n' || c == '\r') { lineComment = false; current.append(' '); }
-                continue;
-            }
-            if (blockComment) {
-                if (c == '*' && next == '/') { blockComment = false; i++; current.append(' '); }
-                continue;
-            }
-            if (quote == 0 && c == '-' && next == '-') { lineComment = true; i++; continue; }
-            if (quote == 0 && c == '/' && next == '*') { blockComment = true; i++; continue; }
-            if (c == '\'' || c == '"') {
-                if (quote == 0) quote = c;
-                else if (quote == c) {
-                    if (next == c) { current.append(c).append(next); i++; continue; }
-                    quote = 0;
+            if (contents.startsWith("--", i)) {
+                i = afterLineComment(contents, i + 2, current);
+            } else if (contents.startsWith("/*", i)) {
+                i = afterBlockComment(contents, i + 2, current);
+            } else if (c == '\'' || c == '"') {
+                i = afterQuoted(contents, i, current);
+            } else {
+                if (c == ';') {
+                    endStatement(current, statements);
+                } else {
+                    current.append(c);
                 }
+                i++;
             }
-            if (c == ';' && quote == 0) {
-                if (!current.toString().isBlank()) statements.add(current.toString().strip());
-                current.setLength(0);
-            } else current.append(c);
         }
-        if (quote != 0 || blockComment) throw new PersistenceException("Unterminated SQL literal or block comment");
-        if (!current.toString().isBlank()) statements.add(current.toString().strip());
+        endStatement(current, statements);
         return statements;
+    }
+
+    /** Skips a comment up to the end of its line, which the statement reads as one space; the index after it. */
+    private static int afterLineComment(String contents, int from, StringBuilder current) {
+        for (int i = from; i < contents.length(); i++) {
+            char c = contents.charAt(i);
+            if (c == '\n' || c == '\r') {
+                current.append(' ');
+                return i + 1;
+            }
+        }
+        return contents.length();
+    }
+
+    /** Skips a block comment, which the statement reads as one space; the index after it. */
+    private static int afterBlockComment(String contents, int from, StringBuilder current) {
+        int end = contents.indexOf("*/", from);
+        if (end < 0) {
+            throw unterminated();
+        }
+        current.append(' ');
+        return end + 2;
+    }
+
+    /** Copies a quoted literal or identifier, its doubled quotes included; the index after its closing quote. */
+    private static int afterQuoted(String contents, int from, StringBuilder current) {
+        char quote = contents.charAt(from);
+        current.append(quote);
+        int i = from + 1;
+        while (i < contents.length()) {
+            char c = contents.charAt(i);
+            boolean doubled = c == quote && i + 1 < contents.length() && contents.charAt(i + 1) == quote;
+            current.append(c);
+            if (doubled) {
+                current.append(c);
+                i += 2;
+            } else if (c == quote) {
+                return i + 1;
+            } else {
+                i++;
+            }
+        }
+        throw unterminated();
+    }
+
+    private static void endStatement(StringBuilder current, List<String> statements) {
+        if (!current.toString().isBlank()) {
+            statements.add(current.toString().strip());
+        }
+        current.setLength(0);
+    }
+
+    private static PersistenceException unterminated() {
+        return new PersistenceException("Unterminated SQL literal or block comment");
     }
 
     private void write(Object target, List<String> statements) {
@@ -283,22 +330,29 @@ public final class SchemaGeneration implements SchemaManager {
         withConnection(true, connection -> {
             DatabaseMetaData metadata = connection.getMetaData();
             for (var statement : new SchemaPlan(mapping).create(false)) {
-                if (!(statement instanceof SchemaStatement table) || table.operation() != SchemaStatement.Operation.CREATE_TABLE) continue;
-                Set<String> found = new HashSet<>();
-                String name = storedName(table, metadata);
-                String schema = table.table().schema() == null ? connection.getSchema() : table.table().schema().name();
-                try (ResultSet columns = metadata.getColumns(connection.getCatalog(), schema, name, null)) {
-                    while (columns.next()) found.add(columns.getString("COLUMN_NAME").toLowerCase(Locale.ROOT));
-                }
-                for (var column : table.columns()) {
-                    if (!found.contains(column.name().name().toLowerCase(Locale.ROOT))) {
-                        failures.add(new Exception("Missing table/column " + table.table().name().name() + "." + column.name().name()));
-                    }
+                if (statement instanceof SchemaStatement table && table.operation() == SchemaStatement.Operation.CREATE_TABLE) {
+                    missingColumns(connection, metadata, table, failures);
                 }
             }
         });
         if (!failures.isEmpty()) throw new SchemaValidationException("Schema does not match the persistence unit",
             failures.toArray(Exception[]::new));
+    }
+
+    /** Adds a failure for every column of {@code table} the database does not have. */
+    private static void missingColumns(Connection connection, DatabaseMetaData metadata, SchemaStatement table,
+            List<Exception> failures) throws SQLException {
+        Set<String> found = new HashSet<>();
+        String name = storedName(table, metadata);
+        String schema = table.table().schema() == null ? connection.getSchema() : table.table().schema().name();
+        try (ResultSet columns = metadata.getColumns(connection.getCatalog(), schema, name, null)) {
+            while (columns.next()) found.add(columns.getString("COLUMN_NAME").toLowerCase(Locale.ROOT));
+        }
+        for (var column : table.columns()) {
+            if (!found.contains(column.name().name().toLowerCase(Locale.ROOT))) {
+                failures.add(new Exception("Missing table/column " + table.table().name().name() + "." + column.name().name()));
+            }
+        }
     }
 
     /** The name of the table as the database stores it: a quoted name as written, else in the case the database folds to. */

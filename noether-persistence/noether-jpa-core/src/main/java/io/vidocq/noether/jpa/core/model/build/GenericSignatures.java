@@ -29,6 +29,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Resolves the type arguments a class gives to a generic interface it implements, directly or through superclasses,
@@ -42,7 +43,7 @@ final class GenericSignatures {
 
     /** The erased type arguments given to {@code interfaceName}, or {@code null} if they cannot be resolved. */
     static List<Class<?>> typeArguments(String className, String interfaceName, ClassInfos source, ClassLoader loader) {
-        return search(className, interfaceName, Map.of(), source, loader);
+        return search(className, interfaceName, Map.of(), source, loader).orElse(null);
     }
 
     /**
@@ -60,11 +61,11 @@ final class GenericSignatures {
         return classType.typeArgs().stream().<Class<?>>map(a -> argument(a, Map.of(), loader)).toList();
     }
 
-    private static List<Class<?>> search(String className, String interfaceName, Map<String, Class<?>> bindings,
+    private static Optional<List<Class<?>>> search(String className, String interfaceName, Map<String, Class<?>> bindings,
             ClassInfos source, ClassLoader loader) {
         ClassInfo info = source.read(className).orElse(null);
         if (info == null || info.genericSignature() == null) {
-            return null;
+            return Optional.empty();
         }
         ClassSignature signature = ClassSignature.parseFrom(info.genericSignature());
         List<Signature.ClassTypeSig> supertypes = new ArrayList<>(signature.superinterfaceSignatures());
@@ -74,24 +75,34 @@ final class GenericSignatures {
         for (Signature.ClassTypeSig supertype : supertypes) {
             String name = supertype.className().replace('/', '.');
             if (name.equals(interfaceName)) {
-                return supertype.typeArgs().stream().<Class<?>>map(a -> argument(a, bindings, loader)).toList();
+                return Optional.of(supertype.typeArgs().stream().<Class<?>>map(a -> argument(a, bindings, loader)).toList());
             }
             if (!name.startsWith("java.")) {
-                Map<String, Class<?>> inner = new HashMap<>();
-                ClassInfo superInfo = source.read(name).orElse(null);
-                if (superInfo != null && superInfo.genericSignature() != null) {
-                    List<Signature.TypeParam> parameters = ClassSignature.parseFrom(superInfo.genericSignature()).typeParameters();
-                    for (int i = 0; i < parameters.size() && i < supertype.typeArgs().size(); i++) {
-                        inner.put(parameters.get(i).identifier(), argument(supertype.typeArgs().get(i), bindings, loader));
-                    }
-                }
-                List<Class<?>> found = search(name, interfaceName, inner, source, loader);
-                if (found != null) {
+                Optional<List<Class<?>>> found = search(name, interfaceName, bindings(supertype, bindings, source, loader), source,
+                    loader);
+                if (found.isPresent()) {
                     return found;
                 }
             }
         }
-        return null;
+        return Optional.empty();
+    }
+
+    /**
+     * The erased types a supertype reference gives to the type parameters of that supertype, by name, the type
+     * variables of the subclass being read with {@code bindings}.
+     */
+    private static Map<String, Class<?>> bindings(Signature.ClassTypeSig supertype, Map<String, Class<?>> bindings,
+            ClassInfos source, ClassLoader loader) {
+        Map<String, Class<?>> inner = new HashMap<>();
+        ClassInfo superInfo = source.read(supertype.className().replace('/', '.')).orElse(null);
+        if (superInfo != null && superInfo.genericSignature() != null) {
+            List<Signature.TypeParam> parameters = ClassSignature.parseFrom(superInfo.genericSignature()).typeParameters();
+            for (int i = 0; i < parameters.size() && i < supertype.typeArgs().size(); i++) {
+                inner.put(parameters.get(i).identifier(), argument(supertype.typeArgs().get(i), bindings, loader));
+            }
+        }
+        return inner;
     }
 
     private static Class<?> argument(Signature.TypeArg argument, Map<String, Class<?>> bindings, ClassLoader loader) {

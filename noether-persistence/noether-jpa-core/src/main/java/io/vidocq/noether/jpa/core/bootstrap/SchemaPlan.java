@@ -5,6 +5,7 @@ import io.vidocq.noether.jpa.core.model.*;
 import io.vidocq.noether.jpa.core.model.source.*;
 import io.vidocq.noether.jpa.dialect.sql.*;
 import jakarta.persistence.GenerationType;
+import jakarta.persistence.TemporalType;
 import java.sql.JDBCType;
 import java.util.*;
 import static io.vidocq.noether.jpa.dialect.sql.SchemaStatement.Operation.*;
@@ -15,6 +16,24 @@ final class SchemaPlan {
     private static final String JOIN_COLUMN = "jakarta.persistence.JoinColumn";
     private static final String FOREIGN_KEY = "foreignKey";
     private static final String VALUE = "value";
+    private static final java.util.regex.Pattern INDEX_COLUMN = java.util.regex.Pattern.compile("(?is)^(.*?)(?:\\s+(ASC|DESC))?$");
+    private static final Map<Class<?>, JDBCType> SQL_TYPES = Map.ofEntries(
+        Map.entry(boolean.class, JDBCType.BOOLEAN), Map.entry(Boolean.class, JDBCType.BOOLEAN),
+        Map.entry(byte.class, JDBCType.TINYINT), Map.entry(Byte.class, JDBCType.TINYINT),
+        Map.entry(short.class, JDBCType.SMALLINT), Map.entry(Short.class, JDBCType.SMALLINT),
+        Map.entry(int.class, JDBCType.INTEGER), Map.entry(Integer.class, JDBCType.INTEGER),
+        Map.entry(java.time.Year.class, JDBCType.INTEGER),
+        Map.entry(long.class, JDBCType.BIGINT), Map.entry(Long.class, JDBCType.BIGINT),
+        Map.entry(float.class, JDBCType.REAL), Map.entry(Float.class, JDBCType.REAL),
+        Map.entry(double.class, JDBCType.DOUBLE), Map.entry(Double.class, JDBCType.DOUBLE),
+        Map.entry(java.math.BigDecimal.class, JDBCType.NUMERIC), Map.entry(java.math.BigInteger.class, JDBCType.NUMERIC),
+        Map.entry(java.time.LocalDate.class, JDBCType.DATE), Map.entry(java.sql.Date.class, JDBCType.DATE),
+        Map.entry(java.time.LocalTime.class, JDBCType.TIME), Map.entry(java.sql.Time.class, JDBCType.TIME),
+        Map.entry(java.time.OffsetTime.class, JDBCType.TIME_WITH_TIMEZONE),
+        Map.entry(java.time.OffsetDateTime.class, JDBCType.TIMESTAMP_WITH_TIMEZONE),
+        Map.entry(java.time.Instant.class, JDBCType.TIMESTAMP_WITH_TIMEZONE),
+        Map.entry(java.time.LocalDateTime.class, JDBCType.TIMESTAMP),
+        Map.entry(byte[].class, JDBCType.VARBINARY), Map.entry(Byte[].class, JDBCType.VARBINARY));
     private final MappedUnit unit;
     private final Map<Table, LinkedHashMap<Identifier, SchemaStatement.Column>> tables = new LinkedHashMap<>();
     private final Map<Table, List<Identifier>> keys = new LinkedHashMap<>();
@@ -30,155 +49,220 @@ final class SchemaPlan {
             MappedEntity entity = unit.entity(semantic.javaType()).orElseThrow();
             EntityModel model = entity.model();
             var hierarchy = unit.inheritance(model.javaType());
-            if (hierarchy.tablePerClass() && hierarchy.abstractEntity(model)) continue;
-            EntityStatements statements = entity.statements();
-            List<EntityStatements.Column> columns = statements.columns();
-            List<EntityStatements.TableStatements> mappedTables = statements.tables();
-            for (int t = 0; t < mappedTables.size(); t++) {
-                var mapped = mappedTables.get(t);
-                Table table = mapped.select().table();
-                var target = tables.computeIfAbsent(table, _ -> new LinkedHashMap<>());
-                keys.putIfAbsent(table, mapped.select().conditions());
-                for (int c : mapped.selected()) {
-                    var column = columns.get(c);
-                    BasicAttribute basic = basic(entity, column);
-                    SchemaStatement.Column definition = definition(column.name(), basic, column.id(),
-                        column.name().equals(mapped.insert().generatedKey()));
-                    if (column.foreignKey() != null) {
-                        AssociationAttribute association = (AssociationAttribute) model.attributes().get(column.attribute());
-                        boolean nullable = association.joinColumns().stream()
-                            .filter(j -> j.name() == null || identifier(j.name()).equals(column.name()))
-                            .allMatch(JoinColumnModel::nullable);
-                        definition = new SchemaStatement.Column(definition.name(), definition.type(), definition.length(),
-                            definition.precision(), definition.scale(), !column.id() && association.optional() && nullable,
-                            definition.identity(), false, null);
-                    }
-                    if (column.attribute() < 0) {
-                        var inheritance = unit.inheritance(model.javaType());
-                        Class<?> discriminatorType = inheritance != null && inheritance.value() instanceof Number ? int.class : String.class;
-                        definition = new SchemaStatement.Column(column.name(),
-                            discriminatorType == int.class ? JDBCType.INTEGER : JDBCType.VARCHAR, 31, 0, 0, true, false, false, null);
-                    }
-                    target.merge(column.name(), definition, (previous, next) -> previous);
-                }
-                for (Identifier key : mapped.select().conditions()) {
-                    if (!target.containsKey(key)) {
-                        var first = statements.keyColumns().getFirst();
-                        target.put(key, definition(key, basic(model.attributes().get(first.attribute()), first.path()), true, false));
-                    }
+            if (!hierarchy.tablePerClass() || !hierarchy.abstractEntity(model)) {
+                plan(entity);
+            }
+        }
+    }
+
+    /** The tables, columns, keys, indexes and constraints one entity maps, in the order the schema creates them. */
+    private void plan(MappedEntity entity) {
+        EntityModel model = entity.model();
+        EntityStatements statements = entity.statements();
+        for (EntityStatements.TableStatements mapped : statements.tables()) {
+            entityTable(entity, mapped);
+        }
+        for (CollectionMapping collection : statements.collections()) {
+            collection(entity, collection);
+        }
+        for (EntityStatements.Reference reference : statements.references()) {
+            reference(entity, reference);
+        }
+        for (ElementCollectionMapping collection : statements.elementCollections()) {
+            elementCollection(entity, collection);
+        }
+        generators(model);
+        source.read(model.javaType().getName()).ifPresent(info -> tableConstraints(entity, info));
+    }
+
+    /** The columns of one table of an entity, with the primary key columns a joined subclass table repeats. */
+    private void entityTable(MappedEntity entity, EntityStatements.TableStatements mapped) {
+        EntityModel model = entity.model();
+        EntityStatements statements = entity.statements();
+        List<EntityStatements.Column> columns = statements.columns();
+        Table table = mapped.select().table();
+        var target = tables.computeIfAbsent(table, _ -> new LinkedHashMap<>());
+        keys.putIfAbsent(table, mapped.select().conditions());
+        for (int c : mapped.selected()) {
+            var column = columns.get(c);
+            target.merge(column.name(), columnDefinition(entity, mapped, column), (previous, next) -> previous);
+        }
+        for (Identifier key : mapped.select().conditions()) {
+            if (!target.containsKey(key)) {
+                var first = statements.keyColumns().getFirst();
+                target.put(key, definition(key, basic(model.attributes().get(first.attribute()), first.path()), true, false));
+            }
+        }
+    }
+
+    /** The definition of a column an entity table selects: a basic value, a foreign key, or the discriminator. */
+    private SchemaStatement.Column columnDefinition(MappedEntity entity, EntityStatements.TableStatements mapped,
+            EntityStatements.Column column) {
+        EntityModel model = entity.model();
+        BasicAttribute basic = basic(entity, column);
+        SchemaStatement.Column definition = definition(column.name(), basic, column.id(),
+            column.name().equals(mapped.insert().generatedKey()));
+        if (column.foreignKey() != null) {
+            AssociationAttribute association = (AssociationAttribute) model.attributes().get(column.attribute());
+            boolean nullable = association.joinColumns().stream()
+                .filter(j -> j.name() == null || identifier(j.name()).equals(column.name()))
+                .allMatch(JoinColumnModel::nullable);
+            definition = new SchemaStatement.Column(definition.name(), definition.type(), definition.length(),
+                definition.precision(), definition.scale(), !column.id() && association.optional() && nullable,
+                definition.identity(), false, null);
+        }
+        if (column.attribute() < 0) {
+            var inheritance = unit.inheritance(model.javaType());
+            Class<?> discriminatorType = inheritance != null && inheritance.value() instanceof Number ? int.class : String.class;
+            definition = new SchemaStatement.Column(column.name(),
+                discriminatorType == int.class ? JDBCType.INTEGER : JDBCType.VARCHAR, 31, 0, 0, true, false, false, null);
+        }
+        return definition;
+    }
+
+    /** The tables, columns and constraints a collection of entities maps. */
+    private void collection(MappedEntity entity, CollectionMapping collection) {
+        switch (collection) {
+            case CollectionMapping.JoinTable join -> joinTable(entity, join);
+            case CollectionMapping.ForeignKey foreign -> foreignKeyCollection(entity, foreign);
+            case CollectionMapping.MappedBy inverse when inverse.indexUpdate() != null -> {
+                var target = unit.entity(inverse.association().targetEntity()).orElseThrow();
+                for (Table table : unit.collectionTables(target, inverse.indexUpdate().table())) {
+                    addIndex(tables.computeIfAbsent(table, _ -> new LinkedHashMap<>()), inverse.index());
                 }
             }
-            for (var collection : statements.collections()) {
-                if (collection instanceof CollectionMapping.JoinTable join) {
-                    var columnsByName = tables.computeIfAbsent(join.table(), _ -> new LinkedHashMap<>());
-                    addKeys(columnsByName, join.ownerColumns(), entity);
-                    addKeys(columnsByName, join.targetColumns(), unit.entity(join.association().targetEntity()).orElseThrow());
-                    addIndex(columnsByName, join.index());
-                    AnnotationInfo annotation = attributeAnnotation(model, join.association(), JOIN_TABLE);
-                    foreignKey(join.table(), join.ownerColumns(), entity, nested(annotation, FOREIGN_KEY));
-                    foreignKey(join.table(), join.targetColumns(), unit.entity(join.association().targetEntity()).orElseThrow(),
-                        nested(annotation, "inverseForeignKey"));
-                    if (annotation != null) constraints(join.table(), annotation);
-                    if (join.association().singleValued()) {
-                        joinNullability(columnsByName, join.ownerColumns(), join.ownerJoins());
-                        joinNullability(columnsByName, join.targetColumns(), join.targetJoins());
-                        unique(join.table(), join.ownerColumns(), "_owner");
-                        if (join.association().kind() == AssociationAttribute.Kind.ONE_TO_ONE) {
-                            unique(join.table(), join.targetColumns(), "_target");
-                        }
-                    }
-                } else if (collection instanceof CollectionMapping.ForeignKey foreign) {
-                    var target = unit.entity(foreign.association().targetEntity()).orElseThrow();
-                    for (Table table : unit.collectionTables(target, foreign.table())) {
-                        var columnsByName = tables.computeIfAbsent(table, _ -> new LinkedHashMap<>());
-                        addKeys(columnsByName, foreign.ownerColumns(), entity);
-                        for (int k = 0; k < foreign.ownerColumns().size(); k++) {
-                            Identifier name = foreign.ownerColumns().get(k);
-                            var definition = columnsByName.get(name);
-                            columnsByName.put(name, new SchemaStatement.Column(name, definition.type(), definition.length(),
-                                definition.precision(), definition.scale(), foreign.joins().get(k).nullable(), false, false, null));
-                        }
-                        addIndex(columnsByName, foreign.index());
-                        AnnotationInfo annotation = attributeAnnotation(model, foreign.association(), JOIN_COLUMN);
-                        foreignKey(table, foreign.ownerColumns(), entity, nested(annotation, FOREIGN_KEY));
-                    }
-                } else if (collection instanceof CollectionMapping.MappedBy inverse && inverse.indexUpdate() != null) {
-                    var target = unit.entity(inverse.association().targetEntity()).orElseThrow();
-                    for (Table table : unit.collectionTables(target, inverse.indexUpdate().table())) {
-                        addIndex(tables.computeIfAbsent(table, _ -> new LinkedHashMap<>()), inverse.index());
-                    }
+            case CollectionMapping.MappedBy _, CollectionMapping.Unsupported _ -> {
+                // the owning side maps it, or nothing does
+            }
+        }
+    }
+
+    /** A collection mapped by a join table: the table, its keys, its index and its constraints. */
+    private void joinTable(MappedEntity entity, CollectionMapping.JoinTable join) {
+        var columnsByName = tables.computeIfAbsent(join.table(), _ -> new LinkedHashMap<>());
+        addKeys(columnsByName, join.ownerColumns(), entity);
+        addKeys(columnsByName, join.targetColumns(), unit.entity(join.association().targetEntity()).orElseThrow());
+        addIndex(columnsByName, join.index());
+        AnnotationInfo annotation = attributeAnnotation(entity.model(), join.association(), JOIN_TABLE);
+        foreignKey(join.table(), join.ownerColumns(), entity, nested(annotation, FOREIGN_KEY));
+        foreignKey(join.table(), join.targetColumns(), unit.entity(join.association().targetEntity()).orElseThrow(),
+            nested(annotation, "inverseForeignKey"));
+        if (annotation != null) constraints(join.table(), annotation);
+        if (join.association().singleValued()) {
+            joinNullability(columnsByName, join.ownerColumns(), join.ownerJoins());
+            joinNullability(columnsByName, join.targetColumns(), join.targetJoins());
+            unique(join.table(), join.ownerColumns(), "_owner");
+            if (join.association().kind() == AssociationAttribute.Kind.ONE_TO_ONE) {
+                unique(join.table(), join.targetColumns(), "_target");
+            }
+        }
+    }
+
+    /** A one-to-many mapped by a foreign key in the target tables: the key columns, the index and the foreign key. */
+    private void foreignKeyCollection(MappedEntity entity, CollectionMapping.ForeignKey foreign) {
+        var target = unit.entity(foreign.association().targetEntity()).orElseThrow();
+        for (Table table : unit.collectionTables(target, foreign.table())) {
+            var columnsByName = tables.computeIfAbsent(table, _ -> new LinkedHashMap<>());
+            addKeys(columnsByName, foreign.ownerColumns(), entity);
+            for (int k = 0; k < foreign.ownerColumns().size(); k++) {
+                Identifier name = foreign.ownerColumns().get(k);
+                var definition = columnsByName.get(name);
+                columnsByName.put(name, new SchemaStatement.Column(name, definition.type(), definition.length(),
+                    definition.precision(), definition.scale(), foreign.joins().get(k).nullable(), false, false, null));
+            }
+            addIndex(columnsByName, foreign.index());
+            AnnotationInfo annotation = attributeAnnotation(entity.model(), foreign.association(), JOIN_COLUMN);
+            foreignKey(table, foreign.ownerColumns(), entity, nested(annotation, FOREIGN_KEY));
+        }
+    }
+
+    /** The foreign key of a to-one reference, and the unique constraint of a one-to-one by business key. */
+    private void reference(MappedEntity entity, EntityStatements.Reference reference) {
+        EntityModel model = entity.model();
+        EntityStatements statements = entity.statements();
+        List<EntityStatements.Column> columns = statements.columns();
+        var association = (AssociationAttribute) model.attributes().get(reference.attribute());
+        AnnotationInfo annotation = attributeAnnotation(model, association, JOIN_COLUMN);
+        AnnotationInfo override = associationOverride(model, association);
+        var names = Arrays.stream(reference.columns()).mapToObj(c -> columns.get(c).name()).toList();
+        foreignKey(statements.select().table(), names, unit.entity(reference.target()).orElseThrow(),
+            override != null && override.isWritten(FOREIGN_KEY) ? override.annotation(FOREIGN_KEY) : nested(annotation, FOREIGN_KEY),
+            statements.referencedColumns(reference).stream().map(EntityStatements.Column::name).toList(),
+            statements.referencedTable(reference).select().table());
+        if (reference.businessKey() && association.kind() == AssociationAttribute.Kind.ONE_TO_ONE) {
+            unique(statements.select().table(), names, "_business_" + reference.attribute());
+        }
+    }
+
+    /** The collection table of an element collection: its keys, index, columns and foreign keys. */
+    private void elementCollection(MappedEntity entity, ElementCollectionMapping collection) {
+        var columnsByName = tables.computeIfAbsent(collection.table(), _ -> new LinkedHashMap<>());
+        addKeys(columnsByName, collection.ownerColumns(), entity);
+        addIndex(columnsByName, collection.index());
+        for (var column : collection.columns()) {
+            columnsByName.put(column.name(), elementColumn(collection, column));
+        }
+        Set<String> elementReferences = new HashSet<>();
+        for (var column : collection.columns()) {
+            if (column.foreignKey() != null && elementReferences.add(Arrays.toString(column.path()))) {
+                elementReference(collection, column, elementReferences.size());
+            }
+        }
+        foreignKey(collection.table(), collection.ownerColumns(), entity, null);
+    }
+
+    /** The definition of a column of an element: a basic value, or a column of a reference to an entity. */
+    private SchemaStatement.Column elementColumn(ElementCollectionMapping collection, EntityStatements.Column column) {
+        if (column.foreignKey() == null) {
+            return definition(column.name(), basic(collection.model().element(), column.path()), false, false);
+        }
+        var association = collection.association(column);
+        var target = unit.entity(column.foreignKey().target()).orElseThrow();
+        var key = target.statements().referencedColumn(column.foreignKey());
+        var definition = definition(column.name(), basic(target, key), false, false);
+        boolean nullable = association.optional()
+            && (association.joinColumns().isEmpty() || association.joinColumns().getFirst().nullable());
+        return new SchemaStatement.Column(column.name(), definition.type(), definition.length(), definition.precision(),
+            definition.scale(), nullable, false,
+            association.kind() == AssociationAttribute.Kind.ONE_TO_ONE && target.statements().keyColumns().size() == 1, null);
+    }
+
+    /**
+     * The foreign key of the reference of an element to an entity, from all its columns ({@code column} is the first
+     * one), and its unique constraint for a one-to-one; {@code count} numbers the references of the element.
+     */
+    private void elementReference(ElementCollectionMapping collection, EntityStatements.Column column, int count) {
+        var association = collection.association(column);
+        var target = unit.entity(column.foreignKey().target()).orElseThrow();
+        var reference = collection.columns().stream()
+            .filter(candidate -> candidate.foreignKey() != null
+                && candidate.foreignKey().target() == column.foreignKey().target()
+                && Arrays.equals(candidate.path(), column.path()))
+            .sorted(Comparator.comparingInt(candidate -> candidate.foreignKey().part())).toList();
+        List<Identifier> names = reference.stream().map(EntityStatements.Column::name).toList();
+        foreignKey(collection.table(), names, target, null);
+        if (association.kind() == AssociationAttribute.Kind.ONE_TO_ONE && names.size() > 1) {
+            unique(collection.table(), names, "_element_" + collection.attribute() + "_" + count);
+        }
+    }
+
+    /** The unique constraints and indexes of the {@code @Table} and {@code @SecondaryTable}s of an entity class. */
+    private void tableConstraints(MappedEntity entity, ClassInfo info) {
+        EntityModel model = entity.model();
+        for (AnnotationInfo annotation : info.annotations()) {
+            if (annotation.typeName().equals("jakarta.persistence.Table")) {
+                constraints(table(model.table()), annotation);
+            }
+            if (annotation.typeName().equals("jakarta.persistence.SecondaryTable")) {
+                constraints(annotationTable(annotation), annotation);
+                secondaryKey(entity, annotation);
+            }
+            if (annotation.typeName().equals("jakarta.persistence.SecondaryTables")) {
+                for (AnnotationInfo secondary : annotation.annotations(VALUE)) {
+                    constraints(annotationTable(secondary), secondary);
+                    secondaryKey(entity, secondary);
                 }
             }
-            for (var reference : statements.references()) {
-                var association = (AssociationAttribute) model.attributes().get(reference.attribute());
-                AnnotationInfo annotation = attributeAnnotation(model, association, JOIN_COLUMN);
-                AnnotationInfo override = associationOverride(model, association);
-                var names = Arrays.stream(reference.columns()).mapToObj(c -> columns.get(c).name()).toList();
-                foreignKey(statements.select().table(), names, unit.entity(reference.target()).orElseThrow(),
-                    override != null && override.isWritten(FOREIGN_KEY) ? override.annotation(FOREIGN_KEY) : nested(annotation, FOREIGN_KEY),
-                    statements.referencedColumns(reference).stream().map(EntityStatements.Column::name).toList(),
-                    statements.referencedTable(reference).select().table());
-                if (reference.businessKey() && association.kind() == AssociationAttribute.Kind.ONE_TO_ONE) {
-                    unique(statements.select().table(), names, "_business_" + reference.attribute());
-                }
-            }
-            for (var collection : statements.elementCollections()) {
-                var columnsByName = tables.computeIfAbsent(collection.table(), _ -> new LinkedHashMap<>());
-                addKeys(columnsByName, collection.ownerColumns(), entity);
-                addIndex(columnsByName, collection.index());
-                for (var column : collection.columns()) {
-                    if (column.foreignKey() == null) {
-                        columnsByName.put(column.name(), definition(column.name(),
-                            basic(collection.model().element(), column.path()), false, false));
-                    } else {
-                        var association = collection.association(column);
-                        var target = unit.entity(column.foreignKey().target()).orElseThrow();
-                        var key = target.statements().referencedColumn(column.foreignKey());
-                        var definition = definition(column.name(), basic(target, key), false, false);
-                        boolean nullable = association.optional()
-                            && (association.joinColumns().isEmpty() || association.joinColumns().getFirst().nullable());
-                        columnsByName.put(column.name(), new SchemaStatement.Column(column.name(), definition.type(),
-                            definition.length(), definition.precision(), definition.scale(), nullable, false,
-                            association.kind() == AssociationAttribute.Kind.ONE_TO_ONE
-                                && target.statements().keyColumns().size() == 1, null));
-                    }
-                }
-                Set<String> elementReferences = new HashSet<>();
-                for (var column : collection.columns()) {
-                    if (column.foreignKey() == null || !elementReferences.add(Arrays.toString(column.path()))) continue;
-                    var association = collection.association(column);
-                    var target = unit.entity(column.foreignKey().target()).orElseThrow();
-                    var reference = collection.columns().stream()
-                        .filter(candidate -> candidate.foreignKey() != null
-                            && candidate.foreignKey().target() == column.foreignKey().target()
-                            && Arrays.equals(candidate.path(), column.path()))
-                        .sorted(Comparator.comparingInt(candidate -> candidate.foreignKey().part())).toList();
-                    List<Identifier> names = reference.stream().map(EntityStatements.Column::name).toList();
-                    foreignKey(collection.table(), names, target, null);
-                    if (association.kind() == AssociationAttribute.Kind.ONE_TO_ONE && names.size() > 1) {
-                        unique(collection.table(), names, "_element_" + collection.attribute() + "_" + elementReferences.size());
-                    }
-                }
-                foreignKey(collection.table(), collection.ownerColumns(), entity, null);
-            }
-            generators(model);
-            source.read(model.javaType().getName()).ifPresent(info -> {
-                for (AnnotationInfo annotation : info.annotations()) {
-                    if (annotation.typeName().equals("jakarta.persistence.Table")) {
-                        constraints(table(model.table()), annotation);
-                    }
-                    if (annotation.typeName().equals("jakarta.persistence.SecondaryTable")) {
-                        constraints(annotationTable(annotation), annotation);
-                        secondaryKey(entity, annotation);
-                    }
-                    if (annotation.typeName().equals("jakarta.persistence.SecondaryTables")) {
-                        for (AnnotationInfo secondary : annotation.annotations(VALUE)) {
-                            constraints(annotationTable(secondary), secondary);
-                            secondaryKey(entity, secondary);
-                        }
-                    }
-                }
-            });
         }
     }
 
@@ -258,40 +342,36 @@ final class SchemaPlan {
     }
 
     private static JDBCType sqlType(BasicAttribute attribute) {
-        Class<?> type = attribute.javaType();
-        switch (attribute.conversion()) {
-            case ValueConversion.Converted converted -> type = converted.databaseType();
-            case ValueConversion.EnumOrdinal _ -> { return JDBCType.INTEGER; }
-            case ValueConversion.EnumString _ -> { return JDBCType.VARCHAR; }
-            case ValueConversion.EnumByValue value -> type = value.valueType();
-            case ValueConversion.Temporal(var temporalType) -> {
-                return switch (temporalType) {
-                    case DATE -> JDBCType.DATE;
-                    case TIME -> JDBCType.TIME;
-                    case TIMESTAMP -> JDBCType.TIMESTAMP;
-                };
-            }
-            default -> {
-                // no conversion: the attribute type decides
-            }
+        return switch (attribute.conversion()) {
+            case ValueConversion.Converted converted -> sqlType(converted.databaseType(), attribute.lob());
+            case ValueConversion.EnumOrdinal _ -> JDBCType.INTEGER;
+            case ValueConversion.EnumString _ -> JDBCType.VARCHAR;
+            case ValueConversion.EnumByValue value -> sqlType(value.valueType(), attribute.lob());
+            case ValueConversion.Temporal(var temporalType) -> sqlType(temporalType);
+            case ValueConversion.None _ -> sqlType(attribute.javaType(), attribute.lob());
+        };
+    }
+
+    private static JDBCType sqlType(TemporalType temporalType) {
+        return switch (temporalType) {
+            case DATE -> JDBCType.DATE;
+            case TIME -> JDBCType.TIME;
+            case TIMESTAMP -> JDBCType.TIMESTAMP;
+        };
+    }
+
+    /** The SQL type of the values of a Java type: a large object when {@code lob}, else by type, a string by default. */
+    private static JDBCType sqlType(Class<?> type, boolean lob) {
+        if (lob) {
+            return type == String.class || type == char[].class || type == Character[].class ? JDBCType.CLOB : JDBCType.BLOB;
         }
-        if (attribute.lob()) return type == String.class || type == char[].class || type == Character[].class
-            ? JDBCType.CLOB : JDBCType.BLOB;
-        if (type == boolean.class || type == Boolean.class) return JDBCType.BOOLEAN;
-        if (type == byte.class || type == Byte.class) return JDBCType.TINYINT;
-        if (type == short.class || type == Short.class) return JDBCType.SMALLINT;
-        if (type == int.class || type == Integer.class || type == java.time.Year.class) return JDBCType.INTEGER;
-        if (type == long.class || type == Long.class) return JDBCType.BIGINT;
-        if (type == float.class || type == Float.class) return JDBCType.REAL;
-        if (type == double.class || type == Double.class) return JDBCType.DOUBLE;
-        if (type == java.math.BigDecimal.class || type == java.math.BigInteger.class) return JDBCType.NUMERIC;
-        if (type == java.time.LocalDate.class || type == java.sql.Date.class) return JDBCType.DATE;
-        if (type == java.time.LocalTime.class || type == java.sql.Time.class) return JDBCType.TIME;
-        if (type == java.time.OffsetTime.class) return JDBCType.TIME_WITH_TIMEZONE;
-        if (type == java.time.OffsetDateTime.class || type == java.time.Instant.class) return JDBCType.TIMESTAMP_WITH_TIMEZONE;
-        if (java.util.Date.class.isAssignableFrom(type) || java.util.Calendar.class.isAssignableFrom(type)
-                || type == java.time.LocalDateTime.class) return JDBCType.TIMESTAMP;
-        if (type == byte[].class || type == Byte[].class) return JDBCType.VARBINARY;
+        JDBCType known = SQL_TYPES.get(type);
+        if (known != null) {
+            return known;
+        }
+        if (java.util.Date.class.isAssignableFrom(type) || Calendar.class.isAssignableFrom(type)) {
+            return JDBCType.TIMESTAMP;
+        }
         return JDBCType.VARCHAR;
     }
 
@@ -351,27 +431,33 @@ final class SchemaPlan {
         List<SchemaStatement.IndexColumn> columns = new ArrayList<>();
         boolean quoted = false;
         int start = 0;
-        for (int i = 0; i <= list.length(); i++) {
+        int i = 0;
+        while (i <= list.length()) {
             if (i < list.length() && list.charAt(i) == '"') {
                 if (quoted && i + 1 < list.length() && list.charAt(i + 1) == '"') {
-                    i++;
+                    i++; // a doubled quote inside a quoted identifier
                 } else {
                     quoted = !quoted;
                 }
             } else if (i == list.length() || !quoted && list.charAt(i) == ',') {
-                var part = java.util.regex.Pattern.compile("(?is)^(.*?)(?:\\s+(ASC|DESC))?$")
-                    .matcher(list.substring(start, i).strip());
-                if (!part.matches() || part.group(1).isBlank()) {
-                    throw new jakarta.persistence.PersistenceException("Invalid index column list: " + list);
-                }
-                columns.add(new SchemaStatement.IndexColumn(identifier(part.group(1)), "DESC".equalsIgnoreCase(part.group(2))));
+                columns.add(indexColumn(list.substring(start, i), list));
                 start = i + 1;
             }
+            i++;
         }
         if (quoted) {
             throw new jakarta.persistence.PersistenceException("Unclosed quoted identifier in index column list: " + list);
         }
         return columns;
+    }
+
+    /** One column of an index column list: its name, then {@code ASC} or {@code DESC}. */
+    private SchemaStatement.IndexColumn indexColumn(String part, String list) {
+        var matcher = INDEX_COLUMN.matcher(part.strip());
+        if (!matcher.matches() || matcher.group(1).isBlank()) {
+            throw new jakarta.persistence.PersistenceException("Invalid index column list: " + list);
+        }
+        return new SchemaStatement.IndexColumn(identifier(matcher.group(1)), "DESC".equalsIgnoreCase(matcher.group(2)));
     }
 
     List<Statement> create(boolean schemas) {
