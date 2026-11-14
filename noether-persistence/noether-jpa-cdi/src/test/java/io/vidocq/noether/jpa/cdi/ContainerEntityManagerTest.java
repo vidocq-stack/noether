@@ -292,6 +292,20 @@ class ContainerEntityManagerTest {
         }
     }
 
+    /** EntityManager.unwrap: the facade unwraps to itself, any other type to what its transaction context unwraps to. */
+    @Test
+    void unwrapReturnsTheFacadeElseWhatItsTransactionContextUnwrapsTo() throws Exception {
+        try (var factory = factory("p9-unwrap")) {
+            var em = facade(factory);
+            try {
+                assertThat(em.unwrap(ContainerEntityManager.class)).isSameAs(em);
+                tm.begin();
+                assertThat(em.unwrap(java.sql.Connection.class)).isNotNull();
+                tm.rollback();
+            } finally { em.destroy(); }
+        }
+    }
+
     @Test
     void defaultPersistenceUnitNameIsResolvedFromTheDeploymentDescriptor() {
         assertThat(PersistenceDescriptors.defaultUnitName(Thread.currentThread().getContextClassLoader())).isEqualTo("default-cdi");

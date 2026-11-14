@@ -205,7 +205,7 @@ public final class ContainerEntityManager implements EntityManager {
     @Override public StoredProcedureQuery createStoredProcedureQuery(String name, String... mappings) { return procedure(em -> em.createStoredProcedureQuery(name, mappings)); }
     @Override public void joinTransaction() { delegate().joinTransaction(); }
     @Override public boolean isJoinedToTransaction() { checkOpen(); return currentTransaction() != null && delegate().isJoinedToTransaction(); }
-    @Override public <T> T unwrap(Class<T> cls) { checkOpen(); if (cls.isInstance(this)) return cls.cast(this); return delegate().unwrap(cls); }
+    @Override public <T> T unwrap(Class<T> cls) { checkOpen(); return cls.isInstance(this) ? cls.cast(this) : delegate().unwrap(cls); }
     @Override public Object getDelegate() { return delegate().getDelegate(); }
     @Override public CriteriaBuilder getCriteriaBuilder() { checkOpen(); return factory.getCriteriaBuilder(); }
     @Override public Metamodel getMetamodel() { checkOpen(); return factory.getMetamodel(); }

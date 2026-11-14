@@ -55,7 +55,7 @@ final class ContextStoredProcedureQuery implements StoredProcedureQuery {
             try {
                 outputs.put(parameter, parameter.name() != null ? query.getOutputParameterValue(parameter.name())
                     : query.getOutputParameterValue(parameter.position()));
-            } catch (IllegalArgumentException input) {
+            } catch (IllegalArgumentException _) {
                 // a pre-registered named parameter whose mode is unknown here is an input one
             }
         }
