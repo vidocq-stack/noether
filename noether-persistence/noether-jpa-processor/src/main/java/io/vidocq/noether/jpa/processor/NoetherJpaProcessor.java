@@ -42,6 +42,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.Filer;
 import javax.annotation.processing.Messager;
@@ -109,7 +110,9 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
      * A constructor expression (§4.8.2) and the fully qualified name of its class. A string literal of the query that
      * looks like one only adds the constructors of a class of that name, if there is one.
      */
-    private static final Pattern SELECT_NEW = Pattern.compile("\\bnew\\s+([\\w$]+(?:\\.[\\w$]+)*)\\s*\\(",
+    private static final String VALUE = "value";
+
+    private static final Pattern SELECT_NEW = Pattern.compile("\\bnew\\s+([\\w$][\\w$.]*+)\\s*\\(",
         Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
 
     /** The source of a provider, filled with formatted(): package line, class name, SPI, kept accesses, instances. */
@@ -300,7 +303,7 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
     private void idClass(TypeElement entity, List<ClassInfo> hierarchy, List<Member> members, Set<Element> entityOrigins) {
         TypeElement type = hierarchy.stream().map(c -> c.annotation(ID_CLASS)).flatMap(Optional::stream)
             .reduce((first, second) -> second)
-            .map(idClass -> infos.element(AccessWriter.binaryName(idClass.type("value"))))
+            .map(idClass -> infos.element(AccessWriter.binaryName(idClass.type(VALUE))))
             .orElse(null);
         if (type == null || !elements.getModuleOf(type).equals(elements.getModuleOf(entity)) || !fromSource(type)) {
             return; // compiled elsewhere: its package is not ours to add classes to
@@ -522,9 +525,9 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
         for (AnnotationMirror annotation : origin.getAnnotationMirrors()) {
             switch (((TypeElement) annotation.getAnnotationType().asElement()).getQualifiedName().toString()) {
                 case NAMED_QUERY -> constructed(annotation, found);
-                case NAMED_QUERIES -> nested(annotation, "value").forEach(query -> constructed(query, found));
+                case NAMED_QUERIES -> nested(annotation, VALUE).forEach(query -> constructed(query, found));
                 case RESULT_SET_MAPPING -> mapped(annotation, found);
-                case RESULT_SET_MAPPINGS -> nested(annotation, "value").forEach(mapping -> mapped(mapping, found));
+                case RESULT_SET_MAPPINGS -> nested(annotation, VALUE).forEach(mapping -> mapped(mapping, found));
                 default -> {
                     // another annotation: no query
                 }
@@ -610,21 +613,11 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
     private void provider(String pkg, List<String> accesses) {
         Set<String> all = new LinkedHashSet<>(accesses);
         all.addAll(earlier(pkg));
-        StringBuilder instances = new StringBuilder();
-        StringBuilder constructors = new StringBuilder();
-        for (String access : all) {
-            StringBuilder list = access.endsWith(RESULT_CONSTRUCTORS) ? constructors : instances;
-            list.append(list.isEmpty() ? "" : ", ").append("new ").append(access).append("()");
-        }
+        String instances = instantiations(all, false);
+        String constructors = instantiations(all, true);
         Set<String> helpers = new LinkedHashSet<>(metamodelWriter.helpers());
-        TypeElement previous = elements.getTypeElement(qualified(pkg, PROVIDER));
-        if (previous != null) {
-            for (VariableElement field : ElementFilter.fieldsIn(previous.getEnclosedElements())) {
-                if (field.getSimpleName().contentEquals("METAMODELS") && field.getConstantValue() instanceof String list && !list.isEmpty()) {
-                    for (String helper : list.split(",")) if (elements.getTypeElement(helper) != null) helpers.add(helper);
-                }
-            }
-        }
+        earlierConstant(pkg, "METAMODELS").stream().filter(helper -> elements.getTypeElement(helper) != null)
+            .forEach(helpers::add);
         String source = PROVIDER_SOURCE.formatted(pkg.isEmpty() ? "" : "package " + pkg + ";\n\n", PROVIDER, SPI,
             String.join(",", all), instances, String.join(",", helpers));
         int closing = source.lastIndexOf('}');
@@ -640,21 +633,28 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
      * classes and whose accesses still exist: an incremental build recompiles only part of a package.
      */
     private List<String> earlier(String pkg) {
+        return earlierConstant(pkg, "ACCESSES").stream().filter(access -> stillManaged(pkg, access)).toList();
+    }
+
+    /** The names a constant of the provider of an earlier build of the package lists, comma-separated. */
+    private List<String> earlierConstant(String pkg, String constant) {
         TypeElement previous = elements.getTypeElement(qualified(pkg, PROVIDER));
         if (previous == null) {
             return List.of();
         }
-        List<String> kept = new ArrayList<>();
-        for (VariableElement field : ElementFilter.fieldsIn(previous.getEnclosedElements())) {
-            if (field.getSimpleName().contentEquals("ACCESSES") && field.getConstantValue() instanceof String list && !list.isEmpty()) {
-                for (String access : Arrays.asList(list.split(","))) {
-                    if (stillManaged(pkg, access)) {
-                        kept.add(access);
-                    }
-                }
-            }
-        }
-        return kept;
+        return ElementFilter.fieldsIn(previous.getEnclosedElements()).stream()
+            .filter(field -> field.getSimpleName().contentEquals(constant))
+            .map(VariableElement::getConstantValue)
+            .filter(String.class::isInstance).map(String.class::cast)
+            .filter(list -> !list.isEmpty())
+            .flatMap(list -> Arrays.stream(list.split(",")))
+            .toList();
+    }
+
+    /** The {@code new X()} of the accesses, or of the result constructors, of a provider, comma-separated. */
+    private static String instantiations(Set<String> accesses, boolean resultConstructors) {
+        return accesses.stream().filter(access -> access.endsWith(RESULT_CONSTRUCTORS) == resultConstructors)
+            .map(access -> "new " + access + "()").collect(Collectors.joining(", "));
     }
 
     private boolean stillManaged(String pkg, String access) {
