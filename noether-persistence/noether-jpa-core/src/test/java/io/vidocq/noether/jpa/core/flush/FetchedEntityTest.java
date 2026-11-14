@@ -39,8 +39,7 @@ class FetchedEntityTest {
         FetchedEntity first = fetched("Ada", false);
         FetchedEntity second = fetched("Ada", false);
 
-        assertThat(first).isEqualTo(second).hasSameHashCodeAs(second);
-        assertThat(first).hasToString(second.toString());
+        assertThat(first).isEqualTo(second).hasSameHashCodeAs(second).hasToString(second.toString());
         assertThat(first.toString()).contains("[Ada, 7]", "[false, false]");
     }
 

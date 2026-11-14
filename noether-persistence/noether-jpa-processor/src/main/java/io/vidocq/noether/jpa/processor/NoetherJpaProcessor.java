@@ -95,6 +95,8 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
     private static final String ID_CLASS = "jakarta.persistence.IdClass";
     private static final String ID = "jakarta.persistence.Id";
     private static final String ACCESS = "$$NoetherAccess";
+    private static final String FIELD_ACCESS = "$$NoetherFieldAccess";
+    private static final String PROPERTY_ACCESS = "$$NoetherPropertyAccess";
     private static final String ID_ACCESS = "$$NoetherIdAccess";
     private static final String RESULT_CONSTRUCTORS = "$$NoetherConstructors";
     private static final String NAMED_QUERY = "jakarta.persistence.NamedQuery";
@@ -103,7 +105,7 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
     private static final String RESULT_SET_MAPPINGS = "jakarta.persistence.SqlResultSetMappings";
     private static final String SERVICES = "META-INF/services/" + SPI;
     private static final List<String> SUFFIXES =
-        List.of(ACCESS, "$$NoetherFieldAccess", "$$NoetherPropertyAccess", ID_ACCESS, RESULT_CONSTRUCTORS);
+        List.of(ACCESS, FIELD_ACCESS, PROPERTY_ACCESS, ID_ACCESS, RESULT_CONSTRUCTORS);
     /** The suffixes of what is generated for a class without a mapping annotation: kept while the class exists. */
     private static final Set<String> UNANNOTATED = Set.of(ID_ACCESS, RESULT_CONSTRUCTORS);
     /**
@@ -293,6 +295,14 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
         return from;
     }
 
+    /** The suffix of an embeddable's access: one access for a record, else one per access type of its owners. */
+    private static String embeddableSuffix(boolean isRecord, AccessKind access) {
+        if (isRecord) {
+            return ACCESS;
+        }
+        return access == AccessKind.FIELD ? FIELD_ACCESS : PROPERTY_ACCESS;
+    }
+
     /**
      * The access of the id class of an entity (§2.4.1), which the bootstrap builds to read and to make its
      * identifiers: an id class of a package that is neither exported nor opened then needs no {@code opens}
@@ -414,7 +424,7 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
             }
             AccessKind access = AccessPlanner.embeddableAccess(info, member.access());
             boolean record = AccessWriter.isRecord(type);
-            String suffix = record ? ACCESS : access == AccessKind.FIELD ? "$$NoetherFieldAccess" : "$$NoetherPropertyAccess";
+            String suffix = embeddableSuffix(record, access);
             List<Member> members = planner.embeddableMembers(info, member.access());
             metamodelWriter.plan(type, members, null);
             // the access type of an embeddable may come from its owner: the owner is an origin of its access too
