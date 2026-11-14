@@ -88,6 +88,10 @@ final class AccessWriter {
 
     /** The start of a case of the switch of a generated method, indented. */
     private static final String CASE = "                case ";
+    /** The generated code's reference to a member of the entity instance. */
+    private static final String ENTITY_MEMBER = "entity.";
+    /** The suffix of a class literal. */
+    static final String CLASS_LITERAL = ".class";
     private static final String FIND_VIRTUAL = ".findVirtual(";
 
     /** The source of a result constructor access: package line, class name, class, parameter types, cases. */
@@ -347,9 +351,9 @@ final class AccessWriter {
             return "SET_" + i + ".invokeExact(instance, " + value + ")";
         }
         if (slot.member().access() == AccessKind.FIELD) {
-            return "entity." + slot.setter() + " = (" + slot.type() + ") " + value;
+            return ENTITY_MEMBER + slot.setter() + " = (" + slot.type() + ") " + value;
         }
-        return "entity." + slot.setter() + "((" + slot.type() + ") " + value + ")";
+        return ENTITY_MEMBER + slot.setter() + "((" + slot.type() + ") " + value + ")";
     }
 
     private Slot slot(TypeElement type, Member member, String pkg, boolean isRecord, boolean readOnly) throws Unsupported {
@@ -405,7 +409,7 @@ final class AccessWriter {
         boolean direct = visible(method.flags(), ownerPackage.equals(pkg));
         if (callback.listener() == null) {
             if (direct) {
-                return new CallbackSlot(callback, "entity." + callback.method() + "()", null, -1);
+                return new CallbackSlot(callback, ENTITY_MEMBER + callback.method() + "()", null, -1);
             }
             if (!sameModule) {
                 throw new Unsupported("the callback " + callback.descriptor() + " belongs to another module");
@@ -431,7 +435,7 @@ final class AccessWriter {
         if (!sameModule || !referenceable(ownerElement, pkg)) {
             throw new Unsupported("the listener method " + callback.descriptor() + " cannot be reached from " + pkg);
         }
-        String ownerClass = qualified(ownerElement) + ".class";
+        String ownerClass = qualified(ownerElement) + CLASS_LITERAL;
         return new CallbackSlot(callback, null, "java.lang.invoke.MethodHandles.privateLookupIn(" + ownerClass + ", own)" + FIND_VIRTUAL
             + ownerClass + ", \"" + callback.method() + "\", java.lang.invoke.MethodType.methodType(void.class, "
             + classLiteral(callback.parameter()) + ")).bindTo(" + field + ").asType(invoker)", -1);
@@ -487,7 +491,7 @@ final class AccessWriter {
     // ---- members ------------------------------------------------------------------------------------------
 
     private static String classOf(String self, int depth) {
-        return self + ".class" + ".getSuperclass()".repeat(depth);
+        return self + CLASS_LITERAL + ".getSuperclass()".repeat(depth);
     }
 
     /**
@@ -628,9 +632,9 @@ final class AccessWriter {
             return "GET_" + i + ".invokeExact(instance)";
         }
         if (slot.member().access() == AccessKind.FIELD && slot.setter() != null) {
-            return "entity." + slot.getter();
+            return ENTITY_MEMBER + slot.getter();
         }
-        return "entity." + slot.getter() + "()";
+        return ENTITY_MEMBER + slot.getter() + "()";
     }
 
     // ---- result constructors ------------------------------------------------------------------------------
@@ -708,16 +712,16 @@ final class AccessWriter {
     /** {@code T.class} for the erasure of a member type, as {@code findGetter} wants it. */
     private String classLiteral(ClassDesc desc) throws Unsupported {
         if (desc.isPrimitive()) {
-            return primitive(desc) + ".class";
+            return primitive(desc) + CLASS_LITERAL;
         }
         if (desc.isArray()) {
-            return classLiteral(desc.componentType()).replace(".class", "[].class");
+            return classLiteral(desc.componentType()).replace(CLASS_LITERAL, "[]" + CLASS_LITERAL);
         }
         TypeElement element = infos.element(binaryName(desc));
         if (element == null) {
             throw new Unsupported("the type " + desc.displayName() + " cannot be read");
         }
-        return qualified(element) + ".class";
+        return qualified(element) + CLASS_LITERAL;
     }
 
     private static String primitive(ClassDesc desc) {

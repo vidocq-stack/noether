@@ -35,6 +35,29 @@ class CanonicalLifecycleTest {
     }
 
     @Test
+    void rawCollectionsTakeTheTypesTheirMappingNamesElseObject(@TempDir Path out) throws Exception { // §6.2.1.1
+        Path source = Files.createDirectories(out.resolve("source"));
+        Files.writeString(source.resolve("Shelf.java"), """
+            package shelf;
+            @jakarta.persistence.Entity public class Shelf {
+                @jakarta.persistence.Id public long id;
+                @jakarta.persistence.OneToMany(targetEntity=Shelf.class) java.util.List children;
+                @jakarta.persistence.ManyToMany(targetEntity=Shelf.class) java.util.Collection peers;
+                @jakarta.persistence.ElementCollection(targetClass=String.class)
+                @jakarta.persistence.MapKeyClass(Integer.class) java.util.Map labels;
+                @jakarta.persistence.ElementCollection java.util.Map notes;
+            }
+            """);
+        Compilation compiled = Compilation.onClassPath(out.resolve("build"), source);
+        assertThat(compiled.success()).as("%s", compiled.diagnostics()).isTrue();
+        assertThat(compiled.source("shelf/Shelf_.java"))
+            .contains("ListAttribute<shelf.Shelf, shelf.Shelf> children")
+            .contains("CollectionAttribute<shelf.Shelf, shelf.Shelf> peers")
+            .contains("MapAttribute<shelf.Shelf, java.lang.Integer, java.lang.String> labels")
+            .contains("MapAttribute<shelf.Shelf, java.lang.Object, java.lang.Object> notes");
+    }
+
+    @Test
     void ownedCanonicalOutputIsRegeneratedAndRetainedHelpersAreRegistered(@TempDir Path out) throws Exception {
         Path source = Files.createDirectories(out.resolve("source"));
         Path first = source.resolve("First.java");

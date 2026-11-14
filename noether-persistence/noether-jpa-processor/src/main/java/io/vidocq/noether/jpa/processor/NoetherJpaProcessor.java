@@ -423,14 +423,14 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
                 return; // compiled elsewhere: its package is not ours to add classes to
             }
             AccessKind access = AccessPlanner.embeddableAccess(info, member.access());
-            boolean record = AccessWriter.isRecord(type);
-            String suffix = embeddableSuffix(record, access);
+            boolean isRecord = AccessWriter.isRecord(type);
+            String suffix = embeddableSuffix(isRecord, access);
             List<Member> members = planner.embeddableMembers(info, member.access());
             metamodelWriter.plan(type, members, null);
             // the access type of an embeddable may come from its owner: the owner is an origin of its access too
             Set<Element> from = new LinkedHashSet<>(ownerOrigins);
             from.add(type);
-            if (access(type, suffix, members, record, from, List.of())) {
+            if (access(type, suffix, members, isRecord, from, List.of())) {
                 for (Member nested : members) {
                     embedded(type, nested, from);
                 }
@@ -442,13 +442,13 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
         try {
             JavaFileObject file = elements.getFileObjectOf(type);
             return file != null && file.getKind() == JavaFileObject.Kind.SOURCE;
-        } catch (UnsupportedOperationException e) {
+        } catch (UnsupportedOperationException _) {
             return false; // a compiler that cannot tell: leave the class to the bootstrap
         }
     }
 
     /** Writes the access of {@code type} once; {@code false} if it cannot be generated. */
-    private boolean access(TypeElement type, String suffix, List<Member> members, boolean record, Set<Element> from,
+    private boolean access(TypeElement type, String suffix, List<Member> members, boolean isRecord, Set<Element> from,
             List<AccessPlanner.Callback> callbacks) {
         String pkg = AccessWriter.packageOf(type);
         String className = generatedName(type, pkg, suffix);
@@ -461,9 +461,9 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
         }
         String source;
         try {
-            source = writer.write(type, className, members, record, callbacks);
+            source = writer.write(type, className, members, isRecord, callbacks);
             var info = infos.read(type);
-            if (!record && type.getKind() == ElementKind.CLASS && !members.isEmpty() && !suffix.equals(ID_ACCESS)
+            if (!isRecord && type.getKind() == ElementKind.CLASS && !members.isEmpty() && !suffix.equals(ID_ACCESS)
                     && !type.getModifiers().contains(Modifier.SEALED)
                     && io.vidocq.noether.jpa.core.model.build.LazySubclassGenerator.supports(info, members)) {
                 String lazy = io.vidocq.noether.jpa.core.model.build.LazySubclassGenerator.name(info.name());
@@ -745,7 +745,7 @@ public final class NoetherJpaProcessor extends AbstractProcessor {
                     }
                 }
             }
-        } catch (IOException | IllegalArgumentException e) {
+        } catch (IOException | IllegalArgumentException _) {
             // no earlier registration
         }
         return kept;

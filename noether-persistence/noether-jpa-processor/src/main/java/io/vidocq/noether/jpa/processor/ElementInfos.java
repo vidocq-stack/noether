@@ -71,12 +71,8 @@ final class ElementInfos implements ClassInfos {
 
     @Override
     public Optional<ClassInfo> read(String binaryName) {
-        Optional<ClassInfo> known = cache.get(binaryName);
-        if (known == null) {
-            known = Optional.ofNullable(elements.getTypeElement(binaryName.replace('$', '.'))).map(this::read);
-            cache.put(binaryName, known);
-        }
-        return known;
+        return cache.computeIfAbsent(binaryName,
+            name -> Optional.ofNullable(elements.getTypeElement(name.replace('$', '.'))).map(this::read));
     }
 
     /**
@@ -108,6 +104,7 @@ final class ElementInfos implements ClassInfos {
                     flags(member.getModifiers()), annotations(member)));
                 case METHOD, CONSTRUCTOR -> methods.add(method((ExecutableElement) member));
                 default -> {
+                    // a nested type or an initializer: not an attribute of the class
                 }
             }
         }
