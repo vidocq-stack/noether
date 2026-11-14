@@ -85,7 +85,7 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
      * The open factories, for {@code PersistenceUtil} (§7.12), which asks the providers without a unit; weakly held, a
      * factory never closed does not stay for it.
      */
-    private static final Set<EntityManagerFactoryImpl> OPEN = java.util.Collections.synchronizedSet(
+    private static final Set<EntityManagerFactoryImpl> OPEN_FACTORIES = java.util.Collections.synchronizedSet(
         java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>()));
 
     /**
@@ -96,8 +96,8 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     public static jakarta.persistence.spi.LoadState loadState(Object entity, String attributeName) {
         if (entity == null) return jakarta.persistence.spi.LoadState.UNKNOWN;
         List<EntityManagerFactoryImpl> open;
-        synchronized (OPEN) {
-            open = List.copyOf(OPEN);
+        synchronized (OPEN_FACTORIES) {
+            open = List.copyOf(OPEN_FACTORIES);
         }
         for (EntityManagerFactoryImpl factory : open) {
             Optional<MappedEntity> type = factory.isOpen() ? factory.mapping.entity(entity.getClass()) : Optional.empty();
@@ -127,7 +127,7 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
         this.batchSize = batchSize(settings);
         this.fetchBatchSize = fetchBatchSize(settings);
         schemaGeneration = new io.vidocq.noether.jpa.core.bootstrap.SchemaGeneration(settings, connections, mapping, this::checkOpen);
-        OPEN.add(this);
+        OPEN_FACTORIES.add(this);
     }
 
     /** The batch size the unit sets, checked when the factory is created rather than at the first flush. */
@@ -160,7 +160,7 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
         try {
             int size = Integer.parseInt(value.strip());
             if (size >= 1 && size <= 256) return size;
-        } catch (NumberFormatException ignored) {
+        } catch (NumberFormatException _) {
             // Report the provider property rather than an implementation parsing exception.
         }
         throw new PersistenceException("The property " + FETCH_BATCH_SIZE + " must be an integer from 1 to 256, not '" + value + "'");
@@ -300,7 +300,7 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
         if (!open.compareAndSet(true, false)) {
             throw new IllegalStateException("The EntityManagerFactory of persistence unit " + settings.unitName() + " is already closed");
         }
-        OPEN.remove(this);
+        OPEN_FACTORIES.remove(this);
         for (ResourceLocalTransaction transaction : activeTransactions) {
             try {
                 transaction.abandon();

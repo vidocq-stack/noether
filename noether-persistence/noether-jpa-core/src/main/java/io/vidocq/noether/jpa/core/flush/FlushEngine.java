@@ -112,7 +112,7 @@ public final class FlushEngine {
 
     private final Dialect dialect;
     private final int batchSize;
-    private final Map<MappedEntity, Sql> sql = new ConcurrentHashMap<>();
+    private final Map<MappedEntity, Sql> sqlByType = new ConcurrentHashMap<>();
     private final Map<Statement, String> rendered = new ConcurrentHashMap<>();
 
     public FlushEngine(Dialect dialect, int batchSize) {
@@ -1174,11 +1174,11 @@ public final class FlushEngine {
     }
 
     Sql sql(MappedEntity type) {
-        Sql known = sql.get(type); // rendered at the first flush of the entity: no function to make for the others
+        Sql known = sqlByType.get(type); // rendered at the first flush of the entity: no function to make for the others
         if (known != null) {
             return known;
         }
-        return sql.computeIfAbsent(type, t -> {
+        return sqlByType.computeIfAbsent(type, t -> {
             EntityStatements statements = t.statements();
             List<TableSql> tables = new ArrayList<>();
             for (EntityStatements.TableStatements table : statements.tables()) {

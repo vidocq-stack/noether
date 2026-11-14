@@ -369,7 +369,7 @@ public final class ValueBinders {
     }
 
     private static ValueBinder object(int sqlType, Class<?> type) {
-        return new Simple(sqlType, (s, i, v) -> s.setObject(i, v), (r, c) -> r.getObject(c, type));
+        return new Simple(sqlType, PreparedStatement::setObject, (r, c) -> r.getObject(c, type));
     }
 
     /** {@code java.util.Date} and {@code Calendar} (§11.1.53): read back as their own class, not a {@code java.sql} one. */
@@ -497,7 +497,7 @@ public final class ValueBinders {
      */
     private ValueBinder lob(Class<?> type) {
         if (type == byte[].class) {
-            return blob(value -> (byte[]) value, bytes -> bytes);
+            return blob(byte[].class::cast, bytes -> bytes);
         }
         if (type == Byte[].class) {
             return blob(value -> unboxed((Byte[]) value), ValueBinders::boxed);
@@ -617,7 +617,7 @@ public final class ValueBinders {
         protected Class<?> resolveClass(ObjectStreamClass description) throws IOException, ClassNotFoundException {
             try {
                 return Class.forName(description.getName(), false, loader);
-            } catch (ClassNotFoundException e) {
+            } catch (ClassNotFoundException _) {
                 return super.resolveClass(description);
             }
         }

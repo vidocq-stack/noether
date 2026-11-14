@@ -50,6 +50,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.UnaryOperator;
 
 /** A factory-scoped, thread-safe cache of immutable entity-state graphs (§3.10). */
 final class SecondLevelCache implements Cache {
@@ -411,8 +412,7 @@ final class SecondLevelCache implements Cache {
         return collectionState(value, item -> encode(element, item, nodes), this::copyKey);
     }
 
-    private CollectionState collectionState(Object value, java.util.function.Function<Object, Object> values,
-            java.util.function.Function<Object, Object> keys) {
+    private CollectionState collectionState(Object value, UnaryOperator<Object> values, UnaryOperator<Object> keys) {
         if (value instanceof Map<?, ?> map) {
             List<Object> copiedKeys = new ArrayList<>(map.size());
             List<Object> copiedValues = new ArrayList<>(map.size());
@@ -475,8 +475,8 @@ final class SecondLevelCache implements Cache {
     }
 
     /** A collection of the declared {@code type} of its attribute: a sorted one sorts again (BUG-20261015-02). */
-    private Object collection(Class<?> type, CollectionState state, java.util.function.Function<Object, Object> values,
-            java.util.function.Function<Object, Object> keys) {
+    private Object collection(Class<?> type, CollectionState state, UnaryOperator<Object> values,
+            UnaryOperator<Object> keys) {
         if (state.map()) {
             Map<Object, Object> map = IndexMapping.newMap(type);
             for (int i = 0; i < state.keys().size(); i++) {
@@ -507,7 +507,7 @@ final class SecondLevelCache implements Cache {
     }
 
     private Object decodeKey(Object key, Map<EntityKey, Object> instances) {
-        return key instanceof EntityReference reference ? instances.get(reference.key()) : copyBasic(key);
+        return key instanceof EntityReference(EntityKey entityKey) ? instances.get(entityKey) : copyBasic(key);
     }
 
     private MappedEntity mapped(Object instance) {
@@ -572,7 +572,7 @@ final class SecondLevelCache implements Cache {
             try (ObjectInputStream in = new ObjectInputStream(new ByteArrayInputStream(bytes.toByteArray()))) {
                 return in.readObject();
             }
-        } catch (IOException | ClassNotFoundException e) {
+        } catch (IOException | ClassNotFoundException _) {
             throw new UnsupportedState();
         }
     }

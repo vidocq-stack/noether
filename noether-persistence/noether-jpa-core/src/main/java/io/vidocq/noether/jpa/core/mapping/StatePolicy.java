@@ -326,16 +326,24 @@ public final class StatePolicy {
                 ? converted(converters.converter(converter), byType(column))
                 : byType(basic.javaType());
             case EmbeddedAttribute embedded -> embedded(embedded.embeddable(), embeddables, converters);
-            case AssociationAttribute association when !association.singleValued() -> keyed(association.javaType(), association.index())
-                ? indexed(Map.class.isAssignableFrom(association.javaType()), keyCopier(association.index(), embeddables, converters),
-                    REFERENCE, association.owning())
-                : association.owning() ? OWNED_COLLECTION : INVERSE_COLLECTION;
+            case AssociationAttribute association when !association.singleValued() ->
+                associationCollection(association, embeddables, converters);
             case ElementCollectionAttribute elements when elements.element() != null -> keyed(elements.javaType(), elements.index())
                 ? indexed(Map.class.isAssignableFrom(elements.javaType()), keyCopier(elements.index(), embeddables, converters),
                     copier(elements.element(), embeddables, converters), true)
                 : elementCollection(copier(elements.element(), embeddables, converters));
             default -> REFERENCE;
         };
+    }
+
+    /** A collection of entities: indexed when it keeps keys or positions of its own, else a set of references. */
+    private static Copier associationCollection(AssociationAttribute association,
+            Function<EmbeddableModel, ManagedAccess> embeddables, ValueBinders converters) {
+        if (keyed(association.javaType(), association.index())) {
+            return indexed(Map.class.isAssignableFrom(association.javaType()), keyCopier(association.index(), embeddables, converters),
+                REFERENCE, association.owning());
+        }
+        return association.owning() ? OWNED_COLLECTION : INVERSE_COLLECTION;
     }
 
     /**
@@ -388,7 +396,7 @@ public final class StatePolicy {
 
     private static Copier keyCopier(CollectionIndex index, Function<EmbeddableModel, ManagedAccess> embeddables,
             ValueBinders converters) {
-        return index instanceof CollectionIndex.ByEmbedded key ? copier(key.key(), embeddables, converters) : IMMUTABLE;
+        return index instanceof CollectionIndex.ByEmbedded(EmbeddedAttribute key) ? copier(key, embeddables, converters) : IMMUTABLE;
     }
 
     /**

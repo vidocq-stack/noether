@@ -35,14 +35,17 @@ final class NoSecondLevelCache implements Cache {
 
     @Override
     public void evict(Class<?> cls, Object primaryKey) {
+        // no second-level cache: nothing is cached, so nothing to evict
     }
 
     @Override
     public void evict(Class<?> cls) {
+        // no second-level cache: nothing is cached, so nothing to evict
     }
 
     @Override
     public void evictAll() {
+        // no second-level cache: nothing is cached, so nothing to evict
     }
 
     @Override

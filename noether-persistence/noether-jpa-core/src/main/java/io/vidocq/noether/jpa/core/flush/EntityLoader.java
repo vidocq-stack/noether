@@ -24,7 +24,6 @@ import io.vidocq.noether.jpa.core.context.ManagedEntity;
 import io.vidocq.noether.jpa.core.context.PersistenceContext;
 import io.vidocq.noether.jpa.core.jdbc.type.ValueBinder;
 import io.vidocq.noether.jpa.core.mapping.CollectionMapping;
-import io.vidocq.noether.jpa.core.mapping.CompositeId;
 import io.vidocq.noether.jpa.core.mapping.ElementCollectionMapping;
 import io.vidocq.noether.jpa.core.mapping.IndexMapping;
 import io.vidocq.noether.jpa.core.mapping.LazyCollection;
@@ -59,7 +58,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.function.Function;
+import java.util.function.UnaryOperator;
 
 /**
  * Builds managed instances from their rows (§3.2.8): the select by identifier of an entity, its columns read through
@@ -412,7 +411,7 @@ public final class EntityLoader {
         EmbeddedAttribute embedded = e.element() instanceof EmbeddedAttribute b ? b : null;
         return assemble(e.javaType(), index, elements, null, e.orderBy(),
             embedded == null ? List.of() : embedded.embeddable().attributes(),
-            embedded == null ? null : unit.access(embedded.embeddable()), Function.identity(), e.name());
+            embedded == null ? null : unit.access(embedded.embeddable()), UnaryOperator.identity(), e.name());
     }
 
     /** Makes a new instance of {@code type} managed from its {@code row}, then resolves its relationships. */
@@ -695,7 +694,7 @@ public final class EntityLoader {
         MappedEntity type = entry.type();
         int i = lazy.attribute();
         if (batchSize > 1 && type.access().get(entry.instance(), i) == lazy
-                && batchable(type) && batchCollection(type, i, entry, lazy, connection, context)) return;
+                && batchable(type) && batchCollection(type, i, entry, connection, context)) return;
         Object value = collection(type, i, entry.key().id(), connection, context);
         if (value == NOT_MAPPED) {
             throw new PersistenceException("The collection " + lazy.attributeName() + " of " + type.model().entityName()
@@ -723,8 +722,8 @@ public final class EntityLoader {
         return Math.min(batchSize, 512 / Math.max(1, width));
     }
 
-    private boolean batchCollection(MappedEntity type, int attribute, ManagedEntity requested, LazyCollection lazy,
-            Connection connection, PersistenceContext context) {
+    private boolean batchCollection(MappedEntity type, int attribute, ManagedEntity requested, Connection connection,
+            PersistenceContext context) {
         AttributeModel model = type.model().attributes().get(attribute);
         ElementCollectionMapping elements = type.statements().elementCollection(attribute).orElse(null);
         MappedEntity target = model instanceof AssociationAttribute a ? entity(a.targetEntity()) : null;
@@ -974,9 +973,12 @@ public final class EntityLoader {
     /** The managed instance of {@code type} with identity {@code key}: the context's, else loaded; {@code null} if none. */
     private Object find(MappedEntity type, Object key, Connection connection, PersistenceContext context) {
         Optional<ManagedEntity> known = context.find(new EntityKey(type.root(), key));
-        if (known.isPresent()) LazyReference.initialize(known.get().instance());
-        return known.isPresent() ? type.model().javaType().isInstance(known.get().instance()) ? known.get().instance() : null
-            : load(type, key, connection, context);
+        if (known.isEmpty()) {
+            return load(type, key, connection, context);
+        }
+        Object instance = known.get().instance();
+        LazyReference.initialize(instance);
+        return type.model().javaType().isInstance(instance) ? instance : null;
     }
 
     /**
@@ -1081,7 +1083,7 @@ public final class EntityLoader {
      * @param target the entity of the elements of a relationship, {@code null} for an element collection
      */
     private Object assemble(Class<?> type, IndexMapping index, List<Indexed> read, MappedEntity target, String orderBy,
-            List<AttributeModel> attributes, ManagedAccess access, Function<Object, Object> natural, String where) {
+            List<AttributeModel> attributes, ManagedAccess access, UnaryOperator<Object> natural, String where) {
         // Element-collection rows may contain SQL NULL. Absent LEFT rows were removed before assembly.
         List<Indexed> elements = new ArrayList<>(target == null ? read
             : read.stream().filter(e -> e.element() != null).toList());
@@ -1176,9 +1178,9 @@ public final class EntityLoader {
         String where = "the element collection " + model.name() + " of " + model.declaringClass().getName();
         if (model.element() instanceof EmbeddedAttribute embedded) {
             return assemble(model.javaType(), index, elements, null, model.orderBy(), embedded.embeddable().attributes(),
-                unit.access(embedded.embeddable()), Function.identity(), where);
+                unit.access(embedded.embeddable()), UnaryOperator.identity(), where);
         }
-        return assemble(model.javaType(), index, elements, null, model.orderBy(), List.of(), null, Function.identity(), where);
+        return assemble(model.javaType(), index, elements, null, model.orderBy(), List.of(), null, UnaryOperator.identity(), where);
     }
 
     private Object loadElementTarget(Class<?> targetType, Object[] key, Connection connection, PersistenceContext context) {
@@ -1195,7 +1197,7 @@ public final class EntityLoader {
      *
      * @param attributes the attributes of the elements, and {@code access} reads them; none for basic elements
      */
-    private void order(String orderBy, List<AttributeModel> attributes, ManagedAccess access, Function<Object, Object> natural,
+    private void order(String orderBy, List<AttributeModel> attributes, ManagedAccess access, UnaryOperator<Object> natural,
             String where, List<Object> elements) {
         if (orderBy == null || elements.size() < 2) {
             return;
@@ -1204,8 +1206,8 @@ public final class EntityLoader {
         for (String item : orderBy.isEmpty() ? new String[] {""} : orderBy.split(",")) {
             String[] parts = item.trim().split("\\s+");
             boolean pathless = parts[0].isEmpty() || parts[0].equalsIgnoreCase("ASC") || parts[0].equalsIgnoreCase("DESC");
-            Function<Object, Object> key = pathless ? natural : path(parts[0], attributes, access, where);
-            String direction = pathless ? parts[0] : parts.length > 1 ? parts[1] : "";
+            UnaryOperator<Object> key = pathless ? natural : path(parts[0], attributes, access, where);
+            String direction = pathless ? parts[0] : direction(parts);
             Comparator<Object> by = (a, b) -> compare(key.apply(a), key.apply(b));
             if (direction.equalsIgnoreCase("DESC")) {
                 by = by.reversed();
@@ -1215,8 +1217,13 @@ public final class EntityLoader {
         elements.sort(comparator);
     }
 
+    /** The direction of an {@code @OrderBy} item that names a path: the word after it, ascending without one. */
+    private static String direction(String[] parts) {
+        return parts.length > 1 ? parts[1] : "";
+    }
+
     /** Reads the attribute at the dotted {@code path} of an element, through its embeddables. */
-    private Function<Object, Object> path(String path, List<AttributeModel> attributes, ManagedAccess access, String where) {
+    private UnaryOperator<Object> path(String path, List<AttributeModel> attributes, ManagedAccess access, String where) {
         int dot = path.indexOf('.');
         String name = dot < 0 ? path : path.substring(0, dot);
         int index = -1;
@@ -1233,7 +1240,7 @@ public final class EntityLoader {
             return element -> element == null ? null : access.get(element, attribute);
         }
         EmbeddableModel embeddable = ((EmbeddedAttribute) attributes.get(index)).embeddable();
-        Function<Object, Object> rest = path(path.substring(dot + 1), embeddable.attributes(), unit.access(embeddable), where);
+        UnaryOperator<Object> rest = path(path.substring(dot + 1), embeddable.attributes(), unit.access(embeddable), where);
         return element -> element == null ? null : rest.apply(access.get(element, attribute));
     }
 
@@ -1244,8 +1251,11 @@ public final class EntityLoader {
     /** Compares two values of an attribute, {@code null} first; values that are not comparable keep their order. */
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static int compare(Object a, Object b) {
-        if (a == null || b == null) {
-            return a == null ? (b == null ? 0 : -1) : 1;
+        if (a == null) {
+            return b == null ? 0 : -1;
+        }
+        if (b == null) {
+            return 1;
         }
         return a instanceof Comparable comparable ? comparable.compareTo(b) : 0;
     }

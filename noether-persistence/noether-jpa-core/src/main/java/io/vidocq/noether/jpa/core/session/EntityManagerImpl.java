@@ -265,13 +265,13 @@ final class EntityManagerImpl implements EntityManager {
     }
 
     private void loadLazy(LazyCollection lazy) {
-        String what = lazy.owner().getClass().getSimpleName() + "." + lazy.attributeName();
+        String cannotLoad = "The LAZY collection " + lazy.owner().getClass().getSimpleName() + "." + lazy.attributeName()
+            + " cannot be loaded: ";
         if (closed && !transaction.isActive() || !factory.isOpen()) {
-            throw failed(new PersistenceException("The LAZY collection " + what
-                + " cannot be loaded: its entity manager is closed"));
+            throw failed(new PersistenceException(cannotLoad + "its entity manager is closed"));
         }
         ManagedEntity entry = context.entry(lazy.owner()).orElseThrow(() -> failed(new PersistenceException(
-            "The LAZY collection " + what + " cannot be loaded: its owner is detached")));
+            cannotLoad + "its owner is detached")));
         try {
             onConnection(connection -> {
                 factory.loader(connection).initialize(entry, lazy, connection, context);
@@ -280,7 +280,7 @@ final class EntityManagerImpl implements EntityManager {
         } catch (PersistenceException e) {
             throw failed(e);
         } catch (RuntimeException e) {
-            throw failed(new PersistenceException("The LAZY collection " + what + " cannot be loaded: " + e.getMessage(), e));
+            throw failed(new PersistenceException(cannotLoad + e.getMessage(), e));
         }
     }
 
@@ -658,7 +658,7 @@ final class EntityManagerImpl implements EntityManager {
         }
         try {
             return value instanceof Number number ? number.intValue() : Integer.parseInt(value.toString().strip());
-        } catch (NumberFormatException e) {
+        } catch (NumberFormatException _) {
             return null; // §3.11: a hint that cannot be used is ignored
         }
     }
@@ -1001,9 +1001,9 @@ final class EntityManagerImpl implements EntityManager {
             throw new IllegalArgumentException("Entity graph belongs to another provider");
         }
         // 3.2: the graph is applied as a fetch graph, its attribute nodes loaded with the instance
-        Map<String, Object> properties = new HashMap<>();
-        properties.put(FETCH_GRAPH, graph);
-        return find(graph.type, primaryKey, properties, options);
+        Map<String, Object> hints = new HashMap<>();
+        hints.put(FETCH_GRAPH, graph);
+        return find(graph.type, primaryKey, hints, options);
     }
 
     /**
@@ -1031,15 +1031,17 @@ final class EntityManagerImpl implements EntityManager {
             }
             FetchPlan targets = attribute.getValue();
             if (targets.isEmpty() || LazyCollection.unloaded(value)) continue;
-            if (value instanceof Map<?, ?> map) {
-                for (Map.Entry<?, ?> element : map.entrySet()) {
-                    fetch(element.getKey(), targets, connection);
-                    fetch(element.getValue(), targets, connection);
+            switch (value) {
+                case Map<?, ?> map -> {
+                    for (Map.Entry<?, ?> element : map.entrySet()) {
+                        fetch(element.getKey(), targets, connection);
+                        fetch(element.getValue(), targets, connection);
+                    }
                 }
-            } else if (value instanceof java.util.Collection<?> elements) {
-                for (Object element : elements) fetch(element, targets, connection);
-            } else {
-                fetch(value, targets, connection);
+                case java.util.Collection<?> elements -> {
+                    for (Object element : elements) fetch(element, targets, connection);
+                }
+                case null, default -> fetch(value, targets, connection);
             }
         }
     }
@@ -1116,13 +1118,13 @@ final class EntityManagerImpl implements EntityManager {
 
     @Override
     public void lock(Object entity, LockModeType lockMode, LockOption... options) {
-        Map<String, Object> properties = new HashMap<>();
+        Map<String, Object> hints = new HashMap<>();
         for (LockOption option : options) {
             if (option instanceof Timeout timeout) {
-                properties.put(LOCK_TIMEOUT, timeout.milliseconds());
+                hints.put(LOCK_TIMEOUT, timeout.milliseconds());
             }
         }
-        lock(entity, lockMode, properties);
+        lock(entity, lockMode, hints);
     }
 
     @Override
@@ -1330,9 +1332,9 @@ final class EntityManagerImpl implements EntityManager {
             }
             if (!cacheInvalidationPending && loadRetrieveMode() == CacheRetrieveMode.USE
                     && loadStoreMode() != CacheStoreMode.REFRESH) {
-                Optional<Object> cached = factory.cache().restore(type, id, context);
-                if (cached.isPresent()) {
-                    return cached.get();
+                Optional<Object> restored = factory.cache().restore(type, id, context);
+                if (restored.isPresent()) {
+                    return restored.get();
                 }
             }
             long cacheGeneration = factory.cache().generation();

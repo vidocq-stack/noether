@@ -120,6 +120,29 @@ public final class IdGenerators {
                 return fresh[0];
             }
         }
+
+        /** A generated value as the identifier type: §2.4 integral types, their wrappers, BigInteger, BigDecimal. */
+        private static Object convert(long value, Class<?> type) {
+            if (type == long.class || type == Long.class) {
+                return value;
+            }
+            if (type == int.class || type == Integer.class) {
+                return Math.toIntExact(value);
+            }
+            if (type == short.class || type == Short.class) {
+                return (short) Math.toIntExact(value);
+            }
+            if (type == BigInteger.class) {
+                return BigInteger.valueOf(value);
+            }
+            if (type == BigDecimal.class) {
+                return BigDecimal.valueOf(value);
+            }
+            if (type == String.class) {
+                return Long.toString(value);
+            }
+            throw new PersistenceException("A generated identifier cannot be a " + type.getName());
+        }
     }
 
     private final Dialect dialect;
@@ -285,7 +308,7 @@ public final class IdGenerators {
             identifier(model.catalog()));
         Identifier key = identifier(model.pkColumnName() != null ? model.pkColumnName() : "SEQ_NAME");
         Identifier value = identifier(model.valueColumnName() != null ? model.valueColumnName() : "SEQ_COUNT");
-        String row = model.pkColumnValue() != null ? model.pkColumnValue() : model.name() != null ? model.name() : "SEQ_GEN";
+        String row = rowName(model);
         String increment = dialect.render(new Increment(table, value, key));
         String select = dialect.render(new Select(table, List.of(value), List.of(key)));
         String insert = dialect.render(new Insert(table, List.of(key, value), null));
@@ -304,6 +327,14 @@ public final class IdGenerators {
                 }
             }
         }));
+    }
+
+    /** The generator row: {@code pkColumnValue}, else the generator name, else the default {@code SEQ_GEN}. */
+    private static String rowName(TableGeneratorModel model) {
+        if (model.pkColumnValue() != null) {
+            return model.pkColumnValue();
+        }
+        return model.name() != null ? model.name() : "SEQ_GEN";
     }
 
     private static long[] tableBlock(Connection own, String increment, String select, String insert, String row, int initial,
@@ -332,28 +363,5 @@ public final class IdGenerators {
 
     private Identifier identifier(String name) {
         return name == null || name.isBlank() ? null : identifiers.apply(name);
-    }
-
-    /** A generated value as the identifier type: §2.4 integral types, their wrappers, BigInteger, BigDecimal. */
-    private static Object convert(long value, Class<?> type) {
-        if (type == long.class || type == Long.class) {
-            return value;
-        }
-        if (type == int.class || type == Integer.class) {
-            return Math.toIntExact(value);
-        }
-        if (type == short.class || type == Short.class) {
-            return (short) Math.toIntExact(value);
-        }
-        if (type == BigInteger.class) {
-            return BigInteger.valueOf(value);
-        }
-        if (type == BigDecimal.class) {
-            return BigDecimal.valueOf(value);
-        }
-        if (type == String.class) {
-            return Long.toString(value);
-        }
-        throw new PersistenceException("A generated identifier cannot be a " + type.getName());
     }
 }

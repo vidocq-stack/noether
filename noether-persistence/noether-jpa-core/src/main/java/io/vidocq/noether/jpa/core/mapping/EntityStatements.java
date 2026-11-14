@@ -202,9 +202,9 @@ public final class EntityStatements {
                 mapsIds.put(association.mapsId(), i);
             }
         }
-        Identifier generated = model.id() instanceof IdModel.Single single
-            && single.generation().map(g -> g.strategy() == GenerationType.IDENTITY).orElse(false)
-            ? Identifier.of(single.attribute().column().name(), delimited) : null;
+        Identifier generated = model.id() instanceof IdModel.Single(BasicAttribute single, var generation)
+            && generation.map(g -> g.strategy() == GenerationType.IDENTITY).orElse(false)
+            ? Identifier.of(single.column().name(), delimited) : null;
         List<SecondaryTableModel> tableModels = inheritance == null
             ? new ArrayList<>() : new ArrayList<>(inheritance.tables());
         if (inheritance == null) {
@@ -220,13 +220,13 @@ public final class EntityStatements {
         for (int i = 0; i < attributes.size(); i++) {
             boolean id = ids.contains(i);
             switch (attributes.get(i)) {
-                case BasicAttribute basic when id && mapsIds.containsKey("") -> {
+                case BasicAttribute _ when id && mapsIds.containsKey("") -> {
                     // its value is the parent's key, which the columns of the relationship hold
                 }
                 case BasicAttribute basic -> columns.add(new Column(Identifier.of(basic.column().name(), delimited), binders.apply(basic), i,
                     new int[0], new ManagedAccess[0], id, basic.version(), basic.column().insertable(), basic.column().updatable(),
                     tableIndex(basic.column().table(), tableNames), null));
-                case EmbeddedAttribute embedded when id && mapsIds.containsKey("") -> {
+                case EmbeddedAttribute _ when id && mapsIds.containsKey("") -> {
                     // the whole identifier is the parent's key
                 }
                 case EmbeddedAttribute embedded -> flatten(embedded, embedded.embeddable(), "", i, new int[0], new ManagedAccess[0], id,
@@ -314,11 +314,11 @@ public final class EntityStatements {
 
     private static RecordIdentifier recordIdentifier(EntityModel model, Map<String, Integer> mapsIds,
             List<Reference> references, List<Column> columns, Function<EmbeddableModel, ManagedAccess> embeddables) {
-        if (!(model.id() instanceof IdModel.Embedded embedded) || !embedded.attribute().embeddable().isRecord()
+        if (!(model.id() instanceof IdModel.Embedded(EmbeddedAttribute embedded)) || !embedded.embeddable().isRecord()
                 || mapsIds.isEmpty() || mapsIds.containsKey("")) return null;
-        int attribute = model.attributes().indexOf(embedded.attribute());
+        int attribute = model.attributes().indexOf(embedded);
         Map<Integer, Integer> scalars = new HashMap<>();
-        List<AttributeModel> parts = embedded.attribute().embeddable().attributes();
+        List<AttributeModel> parts = embedded.embeddable().attributes();
         for (int part = 0; part < parts.size(); part++) {
             if (!(parts.get(part) instanceof BasicAttribute)) continue;
             Integer relationship = mapsIds.get(parts.get(part).name());
@@ -333,7 +333,7 @@ public final class EntityStatements {
                 scalars.put(part, foreignKey.getFirst());
             }
         }
-        return new RecordIdentifier(attribute, embeddables.apply(embedded.attribute().embeddable()), Map.copyOf(scalars));
+        return new RecordIdentifier(attribute, embeddables.apply(embedded.embeddable()), Map.copyOf(scalars));
     }
 
     /**
@@ -350,12 +350,12 @@ public final class EntityStatements {
         }
         switch (model.id()) {
             case IdModel.Single single -> keys.add(columnOf(model.attributes().indexOf(single.attribute()), -1, columns));
-            case IdModel.Derived derived -> {
-                return referenceColumns(model.attributes().indexOf(derived.relationship()), references);
+            case IdModel.Derived(AssociationAttribute relationship) -> {
+                return referenceColumns(model.attributes().indexOf(relationship), references);
             }
-            case IdModel.Embedded embedded -> {
-                int attribute = model.attributes().indexOf(embedded.attribute());
-                List<AttributeModel> components = embedded.attribute().embeddable().attributes();
+            case IdModel.Embedded(EmbeddedAttribute embedded) -> {
+                int attribute = model.attributes().indexOf(embedded);
+                List<AttributeModel> components = embedded.embeddable().attributes();
                 for (int c = 0; c < components.size(); c++) {
                     Integer mapped = mapsIds.get(components.get(c).name());
                     List<Integer> part = mapped != null ? referenceColumns(mapped, references) : List.of(columnOf(attribute, c, columns));
@@ -430,7 +430,7 @@ public final class EntityStatements {
         List<KeyColumn> keys = relationalKeys(target, models, binders, inheritances, delimited);
         if (keys == null) {
             if (association.joinColumns().stream().anyMatch(j -> j.referencedColumnName() != null
-                    && target.attributes().stream().filter(a -> a instanceof BasicAttribute).map(a -> (BasicAttribute) a)
+                    && target.attributes().stream().filter(BasicAttribute.class::isInstance).map(BasicAttribute.class::cast)
                         .anyMatch(a -> sameColumn(Identifier.of(a.column().name(), delimited), Identifier.of(j.referencedColumnName(), delimited))))) {
                 throw new PersistenceException("Business-key joins do not support derived or nested target identifiers");
             }
@@ -455,8 +455,8 @@ public final class EntityStatements {
                 if (!join.insertable() || !join.updatable()) {
                     throw new PersistenceException("Business-key joins require writable join columns (insertable=true, updatable=true)");
                 }
-                BasicAttribute basic = target.attributes().stream().filter(a -> a instanceof BasicAttribute)
-                    .map(a -> (BasicAttribute) a)
+                BasicAttribute basic = target.attributes().stream().filter(BasicAttribute.class::isInstance)
+                    .map(BasicAttribute.class::cast)
                     .filter(a -> join.referencedColumnName() != null
                         && sameColumn(Identifier.of(a.column().name(), delimited), Identifier.of(join.referencedColumnName(), delimited)))
                     .findFirst().orElseThrow(() -> new PersistenceException("Business-key join " + describe(association)
@@ -708,6 +708,11 @@ public final class EntityStatements {
     private record Indexing(IndexMapping index, String problem) {
     }
 
+    /** The default name of the key column {@code k} of a map key entity (§11.1.35): {@code <attribute>_KEY[_<key>]}. */
+    private static String defaultKeyColumn(String name, List<KeyColumn> keys, int k) {
+        return keys.size() == 1 ? name + "_KEY" : name + "_KEY_" + keys.get(k).name();
+    }
+
     /**
      * The index of the collection {@code name}: for a {@code @MapKey}, the attribute of {@code target} it names; for a
      * key or a position, its column; for a key entity, its foreign key columns, by default {@code <attribute>_KEY}
@@ -719,15 +724,15 @@ public final class EntityStatements {
             boolean delimited) {
         return switch (index) {
             case null -> new Indexing(null, null);
-            case CollectionIndex.Unsupported unsupported -> new Indexing(null, unsupported.feature());
-            case CollectionIndex.ByAttribute byAttribute -> {
+            case CollectionIndex.Unsupported(String feature) -> new Indexing(null, feature);
+            case CollectionIndex.ByAttribute(String mapKey) -> {
                 if (target == null) {
                     yield new Indexing(null, "a @MapKey on an element collection");
                 }
                 int key = -1;
-                if (!byAttribute.name().isEmpty()) {
-                    key = target.attributes().indexOf(target.attribute(byAttribute.name()).orElseThrow(() -> new PersistenceException(
-                        "The @MapKey of " + relationship + " names " + byAttribute.name() + ", which " + target.entityName()
+                if (!mapKey.isEmpty()) {
+                    key = target.attributes().indexOf(target.attribute(mapKey).orElseThrow(() -> new PersistenceException(
+                        "The @MapKey of " + relationship + " names " + mapKey + ", which " + target.entityName()
                             + " does not have")));
                 }
                 yield new Indexing(new IndexMapping(index, key, null, List.of(), List.of(), false, false), null);
@@ -763,8 +768,7 @@ public final class EntityStatements {
                 }
                 List<Identifier> columns = new ArrayList<>();
                 for (int k = 0; k < keys.size(); k++) {
-                    String column = joins[k].name() != null ? joins[k].name()
-                        : keys.size() == 1 ? name + "_KEY" : name + "_KEY_" + keys.get(k).name();
+                    String column = joins[k].name() != null ? joins[k].name() : defaultKeyColumn(name, keys, k);
                     columns.add(Identifier.of(column, delimited));
                 }
                 yield new Indexing(new IndexMapping(index, -1, entity, columns, keys.stream().map(KeyColumn::binder).toList(),
@@ -913,11 +917,11 @@ public final class EntityStatements {
             if (target.id() instanceof IdModel.Single) {
                 if (mapsIds.size() != 1 || !derived.mapsId().isEmpty()
                         || derived.kind() != AssociationAttribute.Kind.ONE_TO_ONE) return false;
-            } else if (target.id() instanceof IdModel.Embedded embedded) {
-                List<AttributeModel> parts = embedded.attribute().embeddable().attributes();
+            } else if (target.id() instanceof IdModel.Embedded(EmbeddedAttribute embedded)) {
+                List<AttributeModel> parts = embedded.embeddable().attributes();
                 EntityModel parent = models.apply(derived.targetEntity());
                 Class<?> parentKey = parent == null ? null : switch (parent.id()) {
-                    case IdModel.Embedded parentId -> parentId.attribute().javaType();
+                    case IdModel.Embedded(EmbeddedAttribute parentId) -> parentId.javaType();
                     case IdModel.ByIdClass parentId -> parentId.idClass();
                     default -> null;
                 };
@@ -937,7 +941,7 @@ public final class EntityStatements {
                 }
                 if (derived.mapsId().isEmpty()) {
                     return mapsIds.size() == 1 && derived.kind() == AssociationAttribute.Kind.ONE_TO_ONE
-                        && parentKey == embedded.attribute().javaType()
+                        && parentKey == embedded.javaType()
                         && eligibleBasicElementParent(derived, false, models, inheritances);
                 }
                 if (parts.stream().map(AttributeModel::name).noneMatch(derived.mapsId()::equals)) return false;
@@ -964,8 +968,8 @@ public final class EntityStatements {
         if (parent == null) return false;
         boolean basicKey = switch (parent.id()) {
             case IdModel.Single _ -> true;
-            case IdModel.Embedded embedded ->
-                embedded.attribute().embeddable().attributes().stream().allMatch(BasicAttribute.class::isInstance);
+            case IdModel.Embedded(EmbeddedAttribute embedded) ->
+                embedded.embeddable().attributes().stream().allMatch(BasicAttribute.class::isInstance);
             case IdModel.ByIdClass idClass -> idClass.attributes().stream().allMatch(BasicAttribute.class::isInstance);
             case IdModel.Derived _ -> false;
         };
@@ -1005,7 +1009,7 @@ public final class EntityStatements {
             Function<Class<?>, InheritanceMapping> inheritances, boolean delimited) {
         List<KeyColumn> keys = switch (entity.id()) {
             case IdModel.ByIdClass idClass -> idClassKeyColumns(idClass, models, binders, delimited);
-            case IdModel.Embedded embedded -> embeddedRelationalKeys(entity, embedded.attribute(), models, binders, delimited);
+            case IdModel.Embedded(EmbeddedAttribute embedded) -> embeddedRelationalKeys(entity, embedded, models, binders, delimited);
             default -> keyColumns(entity, binders);
         };
         if (keys == null) return null;
@@ -1053,14 +1057,16 @@ public final class EntityStatements {
             Function<Class<?>, EntityModel> models, Function<BasicAttribute, ValueBinder> binders, boolean delimited) {
         List<KeyColumn> keys = new ArrayList<>();
         for (AttributeModel attribute : idClass.attributes()) {
-            if (attribute instanceof BasicAttribute basic) {
-                keys.add(new KeyColumn(basic.column().name(), binders.apply(basic)));
-            } else if (attribute instanceof AssociationAttribute association) {
-                List<KeyColumn> parentKeys = associationKeyColumns(association, models, binders, delimited);
-                if (parentKeys == null) return null;
-                keys.addAll(parentKeys);
-            } else {
-                return null;
+            switch (attribute) {
+                case BasicAttribute basic -> keys.add(new KeyColumn(basic.column().name(), binders.apply(basic)));
+                case AssociationAttribute association -> {
+                    List<KeyColumn> parentKeys = associationKeyColumns(association, models, binders, delimited);
+                    if (parentKeys == null) return null;
+                    keys.addAll(parentKeys);
+                }
+                case null, default -> {
+                    return null;
+                }
             }
         }
         return keys;
@@ -1099,13 +1105,13 @@ public final class EntityStatements {
     private static List<KeyColumn> keyColumns(EntityModel entity, Function<BasicAttribute, ValueBinder> binders) {
         return switch (entity.id()) {
             case IdModel.Single single -> List.of(new KeyColumn(single.attribute().column().name(), binders.apply(single.attribute())));
-            case IdModel.Embedded embedded -> {
+            case IdModel.Embedded(EmbeddedAttribute embedded) -> {
                 List<KeyColumn> keys = new ArrayList<>();
-                for (AttributeModel part : embedded.attribute().embeddable().attributes()) {
+                for (AttributeModel part : embedded.embeddable().attributes()) {
                     if (!(part instanceof BasicAttribute basic)) {
                         yield null;
                     }
-                    ColumnModel column = embedded.attribute().column(basic.name()).orElse(basic.column());
+                    ColumnModel column = embedded.column(basic.name()).orElse(basic.column());
                     keys.add(new KeyColumn(column.name(), binders.apply(basic)));
                 }
                 yield keys;
@@ -1550,7 +1556,7 @@ public final class EntityStatements {
     /** The values of the key columns of {@code id}: the identifier, or the parts of a {@link CompositeId}. */
     public Object[] keyValues(Object id) {
         check();
-        return id instanceof CompositeId composite ? composite.values().toArray() : new Object[] {id};
+        return id instanceof CompositeId(List<Object> values) ? values.toArray() : new Object[] {id};
     }
 
     public Insert insert() {

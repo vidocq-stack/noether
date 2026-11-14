@@ -50,6 +50,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.UnaryOperator;
 
 /**
  * The entity operations of §3.2 on the persistence context of one entity manager — persist, remove, merge, refresh,
@@ -62,6 +63,10 @@ final class EntityOperations {
     interface Connections {
         <T> T on(Function<Connection, T> work);
     }
+
+    /** The §3.6.3 callback before a persist, and the Bean Validation event (§3.6.1.2) of the same moment. */
+    private static final String PRE_PERSIST = "PrePersist";
+    private static final String PRE_PERSIST_EVENT = "pre-persist";
 
     private final EntityManagerFactoryImpl factory;
     private final PersistenceContext context;
@@ -94,14 +99,14 @@ final class EntityOperations {
         MappedEntity type = type(entity);
         Optional<ManagedEntity> known = context.entry(entity);
         if (known.isEmpty()) {
-            type.callback("PrePersist", entity); // §3.6.3: before the persist operation, so before the identifier
-            factory.validator().validate("pre-persist", entity);
+            type.callback(PRE_PERSIST, entity); // §3.6.3: before the persist operation, so before the identifier
+            factory.validator().validate(PRE_PERSIST_EVENT, entity);
             generateId(type, entity);
             type.deriveId(entity); // §2.4.1: what an @MapsId maps is the parent's key
             context.persist(entity, type); // a detached instance fails at flush: its identity exists (§3.2.2)
         } else if (known.get().status() == ManagedEntity.Status.REMOVED) {
-            type.callback("PrePersist", entity);
-            factory.validator().validate("pre-persist", entity);
+            type.callback(PRE_PERSIST, entity);
+            factory.validator().validate(PRE_PERSIST_EVENT, entity);
             context.persist(entity, type);
         }
         cascade(entity, type, CascadeType.PERSIST, target -> persist(target, visited));
@@ -190,8 +195,8 @@ final class EntityOperations {
             // a new instance: a new managed copy (§3.2.7.1)
             managed = type.access().instantiate();
             copy(type, entity, managed);
-            type.callback("PrePersist", managed); // §3.6.3: the managed copy is the instance persisted
-            factory.validator().validate("pre-persist", managed);
+            type.callback(PRE_PERSIST, managed); // §3.6.3: the managed copy is the instance persisted
+            factory.validator().validate(PRE_PERSIST_EVENT, managed);
             generateId(type, managed);
             type.deriveId(managed);
             context.persist(managed, type);
@@ -289,7 +294,7 @@ final class EntityOperations {
                 state[i] = copy(embedded.embeddable(), state[i]);
             } else if (attributes.get(i) instanceof ElementCollectionAttribute elements) {
                 // values, not instances: a collection of its own, embeddables copied
-                Function<Object, Object> value = v -> v != null && elements.element() instanceof EmbeddedAttribute embedded
+                UnaryOperator<Object> value = v -> v != null && elements.element() instanceof EmbeddedAttribute embedded
                     ? copy(embedded.embeddable(), v) : v;
                 if (state[i] instanceof Collection<?> values) {
                     Collection<Object> copy = CollectionMapping.newCollection(elements.javaType());
@@ -298,8 +303,8 @@ final class EntityOperations {
                 } else if (state[i] instanceof Map<?, ?> map) {
                     Map<Object, Object> copy = IndexMapping.newMap(elements.javaType());
                     map.forEach((k, v) -> copy.put(elements.index()
-                        instanceof CollectionIndex.ByEmbedded key
-                            ? copy(key.key().embeddable(), k) : k, value.apply(v)));
+                        instanceof CollectionIndex.ByEmbedded(EmbeddedAttribute key)
+                            ? copy(key.embeddable(), k) : k, value.apply(v)));
                     state[i] = copy;
                 }
             } else if (attributes.get(i) instanceof AssociationAttribute association) {
@@ -322,7 +327,7 @@ final class EntityOperations {
 
     /** A new collection of the declared type of {@code association}, of the elements of {@code collection} mapped. */
     private static Collection<Object> mapped(AssociationAttribute association, Collection<?> collection,
-            Function<Object, Object> mapping) {
+            UnaryOperator<Object> mapping) {
         Collection<Object> mapped = CollectionMapping.newCollection(association.javaType());
         for (Object element : List.copyOf(collection.stream().filter(Objects::nonNull).toList())) {
             mapped.add(mapping.apply(element));
@@ -333,8 +338,8 @@ final class EntityOperations {
     /**
      * A new map of the declared type of {@code association}, of the entries of {@code map}, keys and values mapped.
      */
-    private static Map<Object, Object> mappedMap(AssociationAttribute association, Map<?, ?> map, Function<Object, Object> keys,
-            Function<Object, Object> values) {
+    private static Map<Object, Object> mappedMap(AssociationAttribute association, Map<?, ?> map, UnaryOperator<Object> keys,
+            UnaryOperator<Object> values) {
         Map<Object, Object> mapped = IndexMapping.newMap(association.javaType());
         for (Map.Entry<?, ?> entry : List.copyOf(map.entrySet())) {
             mapped.put(keys.apply(entry.getKey()), entry.getValue() == null ? null : values.apply(entry.getValue()));
@@ -344,8 +349,8 @@ final class EntityOperations {
 
     /** A managed entity key, a copied embeddable key, or an unchanged basic key. */
     private Object managedKey(AssociationAttribute association, Object key) {
-        if (association.index() instanceof CollectionIndex.ByEmbedded embedded) {
-            return copy(embedded.key().embeddable(), key);
+        if (association.index() instanceof CollectionIndex.ByEmbedded(EmbeddedAttribute embedded)) {
+            return copy(embedded.embeddable(), key);
         }
         return key != null && factory.mapping().entity(key.getClass()).isPresent() ? managedReference(key) : key;
     }
@@ -659,6 +664,7 @@ final class EntityOperations {
     private static void targets(Object value, Consumer<Object> apply) {
         switch (value) {
             case null -> {
+                // no instance: nothing to apply the operation to
             }
             case Collection<?> collection -> List.copyOf(collection.stream().filter(Objects::nonNull).toList()).forEach(apply);
             case Map<?, ?> map -> List.copyOf(map.values().stream().filter(Objects::nonNull).toList()).forEach(apply);

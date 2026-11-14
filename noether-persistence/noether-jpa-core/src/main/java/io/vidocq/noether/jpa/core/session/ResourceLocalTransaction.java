@@ -197,7 +197,6 @@ final class ResourceLocalTransaction implements SessionTransaction {
         return timeout;
     }
 
-    /** The connection of the active transaction; the entity manager runs its statements on it. */
     /** Runs {@code work} on the connection of the active transaction, which no closing factory can release meanwhile. */
     public <T> T onConnection(Function<Connection, T> work) {
         lock.lock();
@@ -208,6 +207,7 @@ final class ResourceLocalTransaction implements SessionTransaction {
         }
     }
 
+    /** The connection of the active transaction; the entity manager runs its statements on it. */
     public Connection connection() {
         return activeConnection();
     }
@@ -220,7 +220,7 @@ final class ResourceLocalTransaction implements SessionTransaction {
             if (current != null) {
                 try {
                     current.rollback();
-                } catch (SQLException ignored) {
+                } catch (SQLException _) {
                     // the factory is closing: nothing more can be done for this transaction
                 }
                 end(current, null);
@@ -282,7 +282,7 @@ final class ResourceLocalTransaction implements SessionTransaction {
         if (connection != null) {
             try {
                 connection.close();
-            } catch (SQLException ignored) {
+            } catch (SQLException _) {
                 // already failing
             }
         }

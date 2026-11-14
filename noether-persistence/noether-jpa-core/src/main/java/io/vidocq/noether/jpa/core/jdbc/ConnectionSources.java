@@ -180,7 +180,7 @@ public final class ConnectionSources {
         try {
             DriverManager.getDriver(url);
             return true;
-        } catch (SQLException notFound) {
+        } catch (SQLException _) {
             if (driverClassName != null && !driverClassName.isBlank()) {
                 instantiate(driverClassName.strip(), loader); // fails now if the driver cannot even be loaded
                 LOGGER.log(System.Logger.Level.WARNING, "The JDBC driver {0} is not visible to DriverManager: the "
