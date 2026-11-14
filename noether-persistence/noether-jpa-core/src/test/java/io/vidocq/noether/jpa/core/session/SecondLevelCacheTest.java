@@ -32,12 +32,16 @@ import java.sql.Statement;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.util.Map;
+import java.util.stream.Stream;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 /** Jakarta Persistence 3.2, §3.10: shared cache state is committed, isolated and explicitly evictable. */
 class SecondLevelCacheTest {
@@ -252,6 +256,53 @@ class SecondLevelCacheTest {
         cache.evict(CacheEntry.class, 1L);
         assertThat(cache.contains(CacheEntry.class, 1L)).isFalse();
         first.close();
+    }
+
+    @Test
+    void cachedArraysAreCopiedWhenPublishedAndWhenRead() throws Exception {
+        EntityManager writer = emf.createEntityManager();
+        CacheBlob blob = new CacheBlob(1L, new byte[] {1, 2}, new Character[] {'a', 'b'});
+        writer.getTransaction().begin();
+        writer.persist(blob);
+        writer.getTransaction().commit();
+        blob.payload[0] = 9;
+        blob.letters[0] = 'z';
+        writer.close();
+        try (Statement sql = database.createStatement()) {
+            sql.execute("delete from CacheBlob"); // from now on, only the cache holds the row
+        }
+
+        EntityManager reader = emf.createEntityManager();
+        CacheBlob read = reader.find(CacheBlob.class, 1L);
+        assertThat(read.payload).containsExactly(1, 2);
+        assertThat(read.letters).containsExactly('a', 'b');
+        read.payload[1] = 8;
+        read.letters[1] = 'y';
+        reader.close();
+
+        EntityManager again = emf.createEntityManager();
+        CacheBlob reread = again.find(CacheBlob.class, 1L);
+        assertThat(reread.payload).containsExactly(1, 2);
+        assertThat(reread.letters).containsExactly('a', 'b');
+        again.close();
+    }
+
+    static Stream<Object> arraysOfEachKind() {
+        return Stream.of(new byte[] {1}, new char[] {'a'}, new short[] {2}, new int[] {3}, new long[] {4L},
+            new float[] {5f}, new double[] {6d}, new boolean[] {true},
+            Arguments.of((Object) new String[] {"seven"})); // an Object[] alone would be spread into arguments
+    }
+
+    @ParameterizedTest
+    @MethodSource("arraysOfEachKind")
+    void anArrayIsCopiedIntoANewArrayOfTheSameType(Object array) {
+        Object copy = SecondLevelCache.copyArray(array);
+        assertThat(copy).isNotSameAs(array).isExactlyInstanceOf(array.getClass()).isEqualTo(array);
+    }
+
+    @Test
+    void aValueThatIsNotAnArrayIsNotCopiedAsOne() {
+        assertThatThrownBy(() -> SecondLevelCache.copyArray("text")).isInstanceOf(RuntimeException.class);
     }
 
     @Test
@@ -485,11 +536,12 @@ class SecondLevelCacheTest {
             ddl.execute("create table CacheEntry (id bigint primary key, name varchar(100), DTYPE varchar(31) default 'CacheEntry')");
             ddl.execute("create table CacheTarget (id bigint primary key, name varchar(100))");
             ddl.execute("create table CacheOwner (id bigint primary key, target_id bigint)");
+            ddl.execute("create table CacheBlob (id bigint primary key, payload varbinary(16), letters varchar(16))");
         }
         PersistenceConfiguration configuration = new PersistenceConfiguration("cache-" + DATABASES.get())
             .provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
             .managedClass(CacheEntry.class).managedClass(CacheChild.class).managedClass(CacheSibling.class)
-            .managedClass(CacheOwner.class).managedClass(CacheTarget.class)
+            .managedClass(CacheOwner.class).managedClass(CacheTarget.class).managedClass(CacheBlob.class)
             .property(PersistenceConfiguration.JDBC_URL, url)
             .property(PersistenceConfiguration.JDBC_USER, "sa")
             .sharedCacheMode(mode);
@@ -553,6 +605,24 @@ class SecondLevelCacheTest {
         CacheOwner(Long id, CacheTarget target) {
             this.id = id;
             this.target = target;
+        }
+    }
+
+    @Entity
+    @Cacheable
+    public static class CacheBlob {
+        @Id
+        public Long id;
+        public byte[] payload;
+        public Character[] letters;
+
+        public CacheBlob() {
+        }
+
+        CacheBlob(Long id, byte[] payload, Character[] letters) {
+            this.id = id;
+            this.payload = payload;
+            this.letters = letters;
         }
     }
 }

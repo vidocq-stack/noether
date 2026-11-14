@@ -32,7 +32,6 @@ import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
-import java.lang.reflect.Array;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.time.temporal.Temporal;
@@ -426,10 +425,6 @@ final class SecondLevelCache implements Cache {
         List<Object> copied = new ArrayList<>();
         if (value instanceof Iterable<?> iterable) {
             iterable.forEach(item -> copied.add(values.apply(item)));
-        } else if (value.getClass().isArray()) {
-            for (int i = 0; i < Array.getLength(value); i++) {
-                copied.add(values.apply(Array.get(value, i)));
-            }
         } else {
             throw new UnsupportedState();
         }
@@ -530,21 +525,34 @@ final class SecondLevelCache implements Cache {
             return calendar.clone();
         }
         if (value.getClass().isArray()) {
-            int length = Array.getLength(value);
-            Object copy = Array.newInstance(value.getClass().getComponentType(), length);
-            if (value.getClass().getComponentType().isPrimitive()) {
-                System.arraycopy(value, 0, copy, 0, length);
-            } else {
-                for (int i = 0; i < length; i++) {
-                    Array.set(copy, i, copyBasic(Array.get(value, i)));
-                }
-            }
-            return copy;
+            return copyArray(value);
         }
         if (value instanceof Serializable serializable) {
             return serializedCopy(serializable);
         }
         throw new UnsupportedState();
+    }
+
+    /** A copy of an array: a primitive array is cloned, an object array copied element by element. */
+    static Object copyArray(Object array) {
+        return switch (array) {
+            case Object[] objects -> {
+                Object[] copy = objects.clone(); // keeps the component type, which copyBasic keeps for each element
+                for (int i = 0; i < copy.length; i++) {
+                    copy[i] = copyBasic(copy[i]);
+                }
+                yield copy;
+            }
+            case byte[] bytes -> bytes.clone();
+            case char[] chars -> chars.clone();
+            case short[] shorts -> shorts.clone();
+            case int[] ints -> ints.clone();
+            case long[] longs -> longs.clone();
+            case float[] floats -> floats.clone();
+            case double[] doubles -> doubles.clone();
+            case boolean[] booleans -> booleans.clone();
+            default -> throw new UnsupportedState();
+        };
     }
 
     private static boolean immutable(Class<?> type) {

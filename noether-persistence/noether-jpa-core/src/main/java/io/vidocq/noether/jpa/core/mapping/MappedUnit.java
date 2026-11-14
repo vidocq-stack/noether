@@ -162,7 +162,7 @@ public final class MappedUnit {
         ClassFileSource classes = new ClassFileSource(loader);
         AccessPlanner planner = new AccessPlanner(classes);
         for (MappedEntity owner : mapped.values()) {
-            if (owner.model().javaType().accessFlags().contains(java.lang.reflect.AccessFlag.FINAL)) continue;
+            if (java.lang.reflect.Modifier.isFinal(owner.model().javaType().getModifiers())) continue;
             for (AttributeModel attribute : owner.model().attributes()) {
                 if (!(attribute instanceof AssociationAttribute association) || !association.singleValued()
                         || !association.owning() || association.fetch() != FetchType.LAZY

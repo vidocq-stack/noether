@@ -45,7 +45,7 @@ import java.lang.constant.MethodTypeDesc;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
-import java.lang.reflect.AccessFlag;
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -95,7 +95,7 @@ final class AccessGenerator {
             int lazyCreator = -1;
             if (record) {
                 creator = add(handles, canonicalConstructor(lookup, type, attributes));
-            } else if (!type.accessFlags().contains(AccessFlag.ABSTRACT)) {
+            } else if (!Modifier.isAbstract(type.getModifiers())) {
                 creator = add(handles, lookup.findConstructor(type, MethodType.methodType(void.class))
                     .asType(MethodType.methodType(Object.class)));
                 lazyCreator = lazyCreator(type, lookup, handles);
