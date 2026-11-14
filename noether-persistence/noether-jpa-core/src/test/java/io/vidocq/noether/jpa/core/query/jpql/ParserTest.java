@@ -220,4 +220,29 @@ class ParserTest {
             .hasMessageContaining("string");
         assertThatThrownBy(() -> Parser.parse("SELEC e FROM Emp e")).isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void localNamesAVariableWhenNoDateOrTimeFollowsIt() { // 3.1: LOCAL DATE, LOCAL TIME, LOCAL DATETIME only
+        Select select = select("SELECT local.name, CURRENT_DATE() FROM Emp local");
+        assertThat(select.items()).extracting(Ast.Item::expression).containsExactly(
+            new Path(List.of("local", "name")), new Ast.Function("CURRENT_DATE", List.of()));
+    }
+
+    @Test
+    void aCastNeedsAKnownTargetTypeName() { // 3.2 §4.6.17.6: CAST(expression AS type)
+        assertThatThrownBy(() -> Parser.parse("SELECT CAST(e.age AS 1) FROM Emp e"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("CAST target type");
+        assertThatThrownBy(() -> Parser.parse("SELECT CAST(e.age AS TEMPERATURE) FROM Emp e"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Unknown CAST target type TEMPERATURE");
+    }
+
+    @Test
+    void aSubqueryOrAParenthesizedConditionAfterAnOpeningParenthesis() { // §4.6.16, §4.6.2
+        Select select = select("SELECT e FROM Emp e WHERE (e.age > 3) AND e.id IN (SELECT m.id FROM Emp m)");
+        Binary where = (Binary) select.where();
+        assertThat(where.left()).isEqualTo(new Binary(new Path(List.of("e", "age")), Op.GT, new Literal(3)));
+        assertThat(where.right()).isInstanceOf(In.class);
+    }
 }
