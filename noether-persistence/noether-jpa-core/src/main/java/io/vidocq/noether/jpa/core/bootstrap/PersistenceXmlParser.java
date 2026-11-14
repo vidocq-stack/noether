@@ -211,17 +211,17 @@ public final class PersistenceXmlParser {
                 }
             }
         }
-    }
 
-    private static String text(XMLStreamReader r) throws XMLStreamException {
-        return r.getElementText().strip();
-    }
+        private static String text(XMLStreamReader r) throws XMLStreamException {
+            return r.getElementText().strip();
+        }
 
-    private static URL resolve(URL rootUrl, String path) {
-        try {
-            return rootUrl == null ? new java.net.URI(path).toURL() : rootUrl.toURI().resolve(path).toURL();
-        } catch (URISyntaxException | MalformedURLException | IllegalArgumentException e) {
-            throw new PersistenceException("Invalid <jar-file> " + path + " in persistence.xml at " + rootUrl, e);
+        private static URL resolve(URL rootUrl, String path) {
+            try {
+                return rootUrl == null ? new java.net.URI(path).toURL() : rootUrl.toURI().resolve(path).toURL();
+            } catch (URISyntaxException | MalformedURLException | IllegalArgumentException e) {
+                throw new PersistenceException("Invalid <jar-file> " + path + " in persistence.xml at " + rootUrl, e);
+            }
         }
     }
 

@@ -146,6 +146,39 @@ final class ValidationXmlParser {
             return new XmlBootstrapConfiguration(provider, validatorFactory, interpolator, resolver, parameterNames,
                 clock, extractors, mappings, executableEnabled, executableTypes, properties);
         }
+
+        /**
+         * ALL wins over everything (NONE included); NONE alone gives no executable type; NONE next to
+         * other types is dropped; an empty list is invalid.
+         */
+        private static Set<ExecutableType> readExecutableTypes(XMLStreamReader r) throws XMLStreamException {
+            Set<ExecutableType> types = EnumSet.noneOf(ExecutableType.class);
+            int count = 0;
+            while (r.hasNext()) {
+                int event = r.next();
+                if (event == XMLStreamConstants.END_ELEMENT && "default-validated-executable-types".equals(r.getLocalName())) {
+                    break;
+                }
+                if (event == XMLStreamConstants.START_ELEMENT && "executable-type".equals(r.getLocalName())) {
+                    String name = r.getElementText().strip();
+                    try {
+                        types.add(ExecutableType.valueOf(name));
+                    } catch (IllegalArgumentException e) {
+                        throw new ValidationException("Unknown executable type in validation.xml: " + name, e);
+                    }
+                    count++;
+                }
+            }
+            if (count == 0) {
+                throw new ValidationException("<default-validated-executable-types> of validation.xml is empty");
+            }
+            if (types.contains(ExecutableType.ALL)) {
+                return EnumSet.of(ExecutableType.CONSTRUCTORS, ExecutableType.GETTER_METHODS, ExecutableType.NON_GETTER_METHODS);
+            }
+            types.remove(ExecutableType.NONE);
+            types.remove(ExecutableType.IMPLICIT);
+            return types;
+        }
     }
 
     /**
@@ -163,38 +196,5 @@ final class ValidationXmlParser {
         if (!expected.equals(namespace)) {
             throw new ValidationException("validation.xml version " + declared + " does not match the namespace " + namespace);
         }
-    }
-
-    /**
-     * ALL wins over everything (NONE included); NONE alone gives no executable type; NONE next to
-     * other types is dropped; an empty list is invalid.
-     */
-    private static Set<ExecutableType> readExecutableTypes(XMLStreamReader r) throws XMLStreamException {
-        Set<ExecutableType> types = EnumSet.noneOf(ExecutableType.class);
-        int count = 0;
-        while (r.hasNext()) {
-            int event = r.next();
-            if (event == XMLStreamConstants.END_ELEMENT && "default-validated-executable-types".equals(r.getLocalName())) {
-                break;
-            }
-            if (event == XMLStreamConstants.START_ELEMENT && "executable-type".equals(r.getLocalName())) {
-                String name = r.getElementText().strip();
-                try {
-                    types.add(ExecutableType.valueOf(name));
-                } catch (IllegalArgumentException e) {
-                    throw new ValidationException("Unknown executable type in validation.xml: " + name, e);
-                }
-                count++;
-            }
-        }
-        if (count == 0) {
-            throw new ValidationException("<default-validated-executable-types> of validation.xml is empty");
-        }
-        if (types.contains(ExecutableType.ALL)) {
-            return EnumSet.of(ExecutableType.CONSTRUCTORS, ExecutableType.GETTER_METHODS, ExecutableType.NON_GETTER_METHODS);
-        }
-        types.remove(ExecutableType.NONE);
-        types.remove(ExecutableType.IMPLICIT);
-        return types;
     }
 }

@@ -111,14 +111,6 @@ final class OrmXmlReader {
         return tree.root();
     }
 
-    /** The namespace an element is validated in: the 3.2 one for the elements of the document's orm namespace. */
-    private static String validationNamespace(String namespace, String documentNamespace) {
-        if (documentNamespace.equals(namespace)) {
-            return JAKARTA;
-        }
-        return namespace == null ? "" : namespace;
-    }
-
     static PersistenceException error(MappingFile file, int line, String message, Throwable cause) {
         String where = "Mapping file " + file.name() + (line > 0 ? ", line " + line : "");
         return new PersistenceException(where + ": " + message, cause);
@@ -210,6 +202,14 @@ final class OrmXmlReader {
             }
             validation.end();
             return root;
+        }
+
+        /** The namespace an element is validated in: the 3.2 one for the elements of the document's orm namespace. */
+        private static String validationNamespace(String namespace, String documentNamespace) {
+            if (documentNamespace.equals(namespace)) {
+                return JAKARTA;
+            }
+            return namespace == null ? "" : namespace;
         }
     }
 
