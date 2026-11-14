@@ -74,6 +74,7 @@ jobs:
             noether-validation
             noether-validation-core
             noether-validation-core-module-it
+            noether-architecture-tests
           central-username: ${{ secrets.CENTRAL_USERNAME }}
           central-password: ${{ secrets.CENTRAL_PASSWORD }}
           gpg-private-key:  ${{ secrets.GPG_PRIVATE_KEY }}

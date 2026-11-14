@@ -14,6 +14,16 @@ access, dynamic proxies or bytecode libraries. Write failing tests before
 behavioral changes. Use the wrapper from the root for the unit reactor; invoke
 official TCKs only through the standalone runner scripts.
 
+Generate at compile time whatever can be: reflection at start time is only the
+fallback for archives `noether-jpa-processor` did not process. The test-only
+module `noether-architecture-tests` runs the shared `vidocq-archrules` library of
+`vidocq-parent` (test scope, brings ArchUnit, Apache-2.0) on the classes of every
+shipped module (Vidocq/vidocq#289): allowed dependencies per module, layers, no
+foundational brick, Mansart's pool through its adapter only, no reflection outside
+the documented fallbacks, no platform thread, no `ThreadLocal`. Each entry of
+`ArchitectureRules.REFLECTIVE_FALLBACKS` carries its reason; never add one without
+it, and drop it once its class stops reflecting (the self-test fails otherwise).
+
 Keep production dependencies limited to specification APIs and the justified
 Vidocq integrations. Preserve official TCK inputs and fixture checksum guards.
 Historical Mansart evidence is labelled and preserved verbatim; record new

@@ -65,6 +65,7 @@
         <module>noether-persistence</module>
         <module>noether-validation</module>
         <module>noether-it-other-containers</module>
+        <module>noether-architecture-tests</module>
     </modules>
 
     <properties>

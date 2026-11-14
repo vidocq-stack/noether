@@ -25,6 +25,7 @@ All Noether artifacts are under `io.vidocq.noether`, version `{project-version}`
 | `noether-jpa` | | Aggregator POM of the Persistence modules (directory `noether-persistence`), not a dependency
 | `noether-root` | | Reactor of the repository
 | `noether-validation`, `noether-validation-core` | `io.vidocq.noether.validation.*` | Provisional Validation provider for Noether's own tests, not published
+| `noether-architecture-tests` | | **Test only**, never released. Runs Noether's architecture rules on the classes of every shipped module: allowed dependencies per module, layers, no foundational brick (`noether-jpa-cdi` stays free of Vauban), Mansart's pool through `noether-jpa-pool-mansart` only, no reflection outside the documented fallbacks, no platform thread, no `ThreadLocal`. The rules come from `io.vidocq:vidocq-archrules`, the shared build and test library of `vidocq-parent`, in test scope; it brings ArchUnit (Apache-2.0), also test scope. The reflective fallbacks are listed, each with its reason, in `ArchitectureRules.REFLECTIVE_FALLBACKS` (xref:internals.adoc#reflective-fallbacks[Internals])
 |===
 
 External dependencies stay under `io.vidocq.mansart` (Pool, Transactions) and `io.vidocq.vauban`. In the Noether
