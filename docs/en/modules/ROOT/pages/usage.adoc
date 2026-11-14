@@ -70,7 +70,8 @@ A source returns one `PersistenceUnitDeclaration` per unit. Its attributes fall 
   to (with their sub-packages), the classes it lists (then those alone, as with `<exclude-unlisted-classes>`), its
   transaction type, qualifiers and scope. A unit of the same name in a `persistence.xml` or in another source fails
   with the duplicate `PersistenceException`, which names the file and the source.
-* Those that override it: its JTA and non-JTA data sources and its properties, which differ between deployments. A
+* Those that override it: its data source, which is the JTA data source of a JTA unit and the non-JTA one of a
+  resource-local unit, its JTA and non-JTA data sources by name, and its properties, which differ between deployments. A
   declaration that sets only these overrides the unit of that name that a `persistence.xml` declares, its properties
   winning over the file's. When no file declares the unit, the declaration declares it, at its default root and
   with its default transaction type, which declare nothing themselves.

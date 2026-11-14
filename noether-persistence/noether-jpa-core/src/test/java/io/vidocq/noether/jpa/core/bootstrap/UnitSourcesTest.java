@@ -153,6 +153,33 @@ class UnitSourcesTest {
     }
 
     @Test
+    void theDataSourceOfAUnitIsTheOneOfItsTransactionType() throws Exception {
+        URL application = directory.resolve("application").toUri().toURL();
+        Path module = moduleWith("""
+            <persistence-unit name="local" transaction-type="RESOURCE_LOCAL"/>
+            <persistence-unit name="managed" transaction-type="JTA"><non-jta-data-source>ids</non-jta-data-source>
+            </persistence-unit>""");
+        PersistenceUnitSource source = loader -> List.of(
+            PersistenceUnitDeclaration.builder("local", KEYS).dataSource("production").build(),
+            PersistenceUnitDeclaration.builder("managed", KEYS).dataSource("production").build(),
+            PersistenceUnitDeclaration.builder("ledger", KEYS).defaultRoot(application)
+                .defaultTransactionType(PersistenceUnitTransactionType.JTA).dataSource("production")
+                .nonJtaDataSource("identifiers").build());
+
+        try (URLClassLoader loader = loader(module)) {
+            PersistenceUnitDefinition local = PersistenceUnits.find("local", loader, List.of(source)).orElseThrow();
+            assertThat(local.nonJtaDataSourceName()).isEqualTo("production");
+            assertThat(local.jtaDataSourceName()).isNull();
+            PersistenceUnitDefinition managed = PersistenceUnits.find("managed", loader, List.of(source)).orElseThrow();
+            assertThat(managed.jtaDataSourceName()).isEqualTo("production");
+            assertThat(managed.nonJtaDataSourceName()).isEqualTo("ids");
+            PersistenceUnitDefinition ledger = PersistenceUnits.find("ledger", loader, List.of(source)).orElseThrow();
+            assertThat(ledger.jtaDataSourceName()).isEqualTo("production");
+            assertThat(ledger.nonJtaDataSourceName()).isEqualTo("identifiers");
+        }
+    }
+
+    @Test
     void aSourceThatDeclaresAUnitOfAFileAgainIsADuplicate() throws Exception {
         Path module = moduleWith("<persistence-unit name=\"ledger\"/>");
         PersistenceUnitSource source = loader -> List.of(PersistenceUnitDeclaration.builder("ledger", KEYS)

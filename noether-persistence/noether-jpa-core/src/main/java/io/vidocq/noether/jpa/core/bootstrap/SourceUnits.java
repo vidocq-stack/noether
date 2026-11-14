@@ -27,6 +27,7 @@ import java.net.URL;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /** The definitions of the units a {@code PersistenceUnitSource} declares or overrides. */
 final class SourceUnits {
@@ -40,10 +41,10 @@ final class SourceUnits {
      */
     static PersistenceUnitDefinition definition(PersistenceUnitDeclaration declaration, ClassLoader loader) {
         URL root = declaration.root().or(declaration::defaultRoot).orElse(null);
-        return new PersistenceUnitDefinition(declaration.name(), null, null,
-            declaration.transactionType().or(declaration::defaultTransactionType)
-                .orElse(PersistenceUnitTransactionType.RESOURCE_LOCAL),
-            declaration.jtaDataSource().orElse(null), declaration.nonJtaDataSource().orElse(null), List.of(), List.of(),
+        PersistenceUnitTransactionType type = declaration.transactionType().or(declaration::defaultTransactionType)
+            .orElse(PersistenceUnitTransactionType.RESOURCE_LOCAL);
+        return new PersistenceUnitDefinition(declaration.name(), null, null, type,
+            jta(declaration, type).orElse(null), nonJta(declaration, type).orElse(null), List.of(), List.of(),
             declaration.classes(), !declaration.classes().isEmpty(), SharedCacheMode.UNSPECIFIED, ValidationMode.AUTO,
             declaration.properties(), root, null, declaration.qualifiers(), declaration.scope().orElse(null), loader,
             declaration.packages());
@@ -54,10 +55,22 @@ final class SourceUnits {
         Map<String, Object> properties = new LinkedHashMap<>(unit.properties());
         properties.putAll(declaration.properties());
         return new PersistenceUnitDefinition(unit.name(), unit.description(), unit.providerClassName(),
-            unit.transactionType(), declaration.jtaDataSource().orElse(unit.jtaDataSourceName()),
-            declaration.nonJtaDataSource().orElse(unit.nonJtaDataSourceName()), unit.mappingFileNames(),
+            unit.transactionType(), jta(declaration, unit.transactionType()).orElse(unit.jtaDataSourceName()),
+            nonJta(declaration, unit.transactionType()).orElse(unit.nonJtaDataSourceName()), unit.mappingFileNames(),
             unit.jarFileUrls(), unit.managedClassNames(), unit.excludeUnlistedClasses(), unit.sharedCacheMode(),
             unit.validationMode(), properties, unit.rootUrl(), unit.schemaVersion(), unit.qualifierAnnotationNames(),
             unit.scopeAnnotationName(), unit.classLoader(), unit.managedPackages());
+    }
+
+    /** The JTA data source a declaration sets: its own, else its data source when the unit is a JTA one. */
+    private static Optional<String> jta(PersistenceUnitDeclaration declaration, PersistenceUnitTransactionType type) {
+        return declaration.jtaDataSource()
+            .or(() -> type == PersistenceUnitTransactionType.JTA ? declaration.dataSource() : Optional.empty());
+    }
+
+    /** The non-JTA data source a declaration sets: its own, else its data source when the unit is resource-local. */
+    private static Optional<String> nonJta(PersistenceUnitDeclaration declaration, PersistenceUnitTransactionType type) {
+        return declaration.nonJtaDataSource()
+            .or(() -> type == PersistenceUnitTransactionType.JTA ? Optional.empty() : declaration.dataSource());
     }
 }

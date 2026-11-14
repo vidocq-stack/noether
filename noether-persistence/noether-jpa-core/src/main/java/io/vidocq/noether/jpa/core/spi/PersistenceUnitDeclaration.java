@@ -59,6 +59,7 @@ public final class PersistenceUnitDeclaration {
     private final PersistenceUnitTransactionType defaultTransactionType;
     private final List<String> qualifiers;
     private final String scope;
+    private final String dataSource;
     private final String jtaDataSource;
     private final String nonJtaDataSource;
     private final Map<String, Object> properties;
@@ -75,6 +76,7 @@ public final class PersistenceUnitDeclaration {
         this.defaultTransactionType = builder.defaultTransactionType;
         this.qualifiers = List.copyOf(builder.qualifiers);
         this.scope = builder.scope;
+        this.dataSource = builder.dataSource;
         this.jtaDataSource = builder.jtaDataSource;
         this.nonJtaDataSource = builder.nonJtaDataSource;
         this.properties = Collections.unmodifiableMap(new LinkedHashMap<>(builder.properties));
@@ -148,6 +150,15 @@ public final class PersistenceUnitDeclaration {
         return Optional.ofNullable(scope);
     }
 
+    /**
+     * The name of the data source of the unit by its transaction type, if the declaration sets one: the JTA data source
+     * of a JTA unit, the non-JTA one of a resource-local unit. {@link #jtaDataSource} and {@link #nonJtaDataSource} win
+     * over it.
+     */
+    public Optional<String> dataSource() {
+        return Optional.ofNullable(dataSource);
+    }
+
     /** The name of the JTA data source, if the declaration sets one. */
     public Optional<String> jtaDataSource() {
         return Optional.ofNullable(jtaDataSource);
@@ -189,6 +200,7 @@ public final class PersistenceUnitDeclaration {
         private PersistenceUnitTransactionType defaultTransactionType;
         private final List<String> qualifiers = new ArrayList<>();
         private String scope;
+        private String dataSource;
         private String jtaDataSource;
         private String nonJtaDataSource;
         private final Map<String, Object> properties = new LinkedHashMap<>();
@@ -246,6 +258,15 @@ public final class PersistenceUnitDeclaration {
         /** The scope annotation of the unit's entity manager bean, by its qualified name. */
         public Builder scope(String scope) {
             this.scope = Objects.requireNonNull(scope, "scope");
+            return this;
+        }
+
+        /**
+         * The data source of the unit by its transaction type, which the declaration may not know (a unit a
+         * {@code persistence.xml} declares): its JTA data source if it is a JTA unit, its non-JTA one otherwise.
+         */
+        public Builder dataSource(String name) {
+            this.dataSource = Objects.requireNonNull(name, "name");
             return this;
         }
 
