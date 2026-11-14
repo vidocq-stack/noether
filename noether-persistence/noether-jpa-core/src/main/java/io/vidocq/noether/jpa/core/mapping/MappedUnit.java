@@ -48,6 +48,7 @@ import io.vidocq.noether.jpa.core.model.build.LazySubclassGenerator;
 import io.vidocq.noether.jpa.core.model.build.Types;
 import io.vidocq.noether.jpa.core.model.source.ClassFileSource;
 import io.vidocq.noether.jpa.core.model.source.ClassInfos;
+import io.vidocq.noether.jpa.core.model.source.FieldInfo;
 import io.vidocq.noether.jpa.core.model.source.AnnotationInfo;
 import io.vidocq.noether.jpa.core.spi.ManagedAccess;
 import io.vidocq.noether.jpa.core.spi.ManagedAccessProvider;
@@ -559,7 +560,8 @@ public final class MappedUnit {
      * order, read by field when the id class declares a field of that name, else by property. The part for a
      * relationship of a derived identity has the type the id class declares (the parent's key, §2.4.1.1).
      * {@code null} when a relationship part has no field of its name: the id class is then the parent's, the
-     * relationship the whole identifier (§2.4.1.3 example 5a).
+     * relationship the whole identifier (§2.4.1.3 example 5a). A record is built from these attributes whatever the
+     * order of its components (BUG-20261114-05).
      */
     private static ManagedAccess idClassAccess(IdModel.ByIdClass id, ClassLoader loader) {
         ClassFileSource source = new ClassFileSource(loader);
@@ -580,7 +582,13 @@ public final class MappedUnit {
                 owner != null ? owner : id.idClass(), ColumnModel.defaultFor(part.name()), true, FetchType.EAGER, false,
                 new ValueConversion.None(), false));
         }
-        return Accesses.of(id.idClass(), id.idClass().isRecord(), attributes);
+        if (id.idClass().isRecord()) {
+            // the canonical constructor takes the components in their order, which the class file keeps for its fields
+            List<String> components = source.read(id.idClass().getName()).orElseThrow().fields().stream()
+                .filter(field -> !field.isStatic()).map(FieldInfo::name).toList();
+            return Accesses.ofRecord(id.idClass(), attributes, components);
+        }
+        return Accesses.of(id.idClass(), false, attributes);
     }
 
     /** The class of {@code type}'s hierarchy that declares the field {@code name}, or {@code null}. */

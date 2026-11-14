@@ -23,6 +23,7 @@ import io.vidocq.noether.jpa.core.model.AttributeModel;
 import io.vidocq.noether.jpa.core.model.EmbeddableModel;
 import io.vidocq.noether.jpa.core.model.EntityModel;
 import io.vidocq.noether.jpa.core.spi.ManagedAccess;
+import java.util.HashSet;
 import java.util.List;
 
 /** The accesses Noether generates at bootstrap, and the descriptor that tells whether an access fits a model. */
@@ -44,6 +45,22 @@ public final class Accesses {
     /** The access of a class that is neither an entity nor an embeddable of the model (an {@code @IdClass}). */
     public static ManagedAccess of(Class<?> type, boolean record, List<AttributeModel> attributes) {
         return AccessGenerator.generate(type, record, attributes, List.of());
+    }
+
+    /**
+     * The access of a record whose components come in another order than {@code attributes}, the order its owner
+     * lists them in (a record {@code @IdClass}, §2.4.1): it lists {@code attributes} and builds the record from them.
+     *
+     * @param components the names of the components, in the order of the canonical constructor
+     */
+    public static ManagedAccess ofRecord(Class<?> type, List<AttributeModel> attributes, List<String> components) {
+        List<String> names = attributes.stream().map(AttributeModel::name).toList();
+        if (names.equals(components) || !new HashSet<>(names).equals(new HashSet<>(components))) {
+            return of(type, true, attributes);
+        }
+        int[] component = names.stream().mapToInt(components::indexOf).toArray();
+        List<AttributeModel> ordered = components.stream().map(name -> attributes.get(names.indexOf(name))).toList();
+        return new ReorderedAccess(of(type, true, ordered), descriptor(attributes), component);
     }
 
     /** The attributes as {@link ManagedAccess#attributes()} lists them: {@code name:FIELD} or {@code name:PROPERTY}. */

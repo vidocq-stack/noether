@@ -1708,3 +1708,25 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     every unit for the CDI extension, refuses any duplicate. A file the class loader lists twice (through a parent
     loader) is read once and is not a duplicate. `find` now reads every `persistence.xml` of the loader, where it
     used to stop at the first match.
+
+## BUG-20261114-05 — A record id class whose components follow another order gets the identifier values swapped
+
+- **Date**: 2026-11-14
+- **Status**: FIXED on `fix/record-idclass-order`: the access of a record id class whose components come in another
+  order is built in component order (read from the class file's fields) and wrapped in a `ReorderedAccess` that lists
+  the identifier attributes in the entity's order.
+- **Affected module**: `noether-jpa-core` (`MappedUnit.idClassAccess`, `AccessGenerator.canonicalConstructor`)
+- **Symptom**: an entity with `@Id String aisle; @Id String place;` and `@IdClass(BoothKey.class)`, where
+  `record BoothKey(String place, String aisle)`: `PersistenceUnitUtil.getIdentifier(new Booth("A", "7"))` returns
+  `BoothKey[place=A, aisle=7]` instead of `BoothKey[place=7, aisle=A]`. `find` with the right key works: it reads
+  the key field by field.
+- **Minimal reproduction**: `RecordIdClassTest.theIdentifierOfAnEntityIsTheRecordOfItsOwnValues`.
+- **Hypothesised cause**: the access of the id class lists its attributes in the order of the entity's identifier
+  attributes, and `construct` passes them to the canonical constructor in that order, found by the parameter types:
+  with components of the same types in another order, the constructor is found and fed the values swapped. With
+  components of different types, the constructor is not found and the bootstrap fails.
+- **Investigations**:
+  - 2026-11-14: found while generating id class accesses (BUG-20261114-03, the processor leaves such a record to the
+    bootstrap); reproduced red.
+  - 2026-11-14: fixed; also covers components of other types in another order, which failed the bootstrap
+    (`RecordIdClassTest.aRecordKeyWhoseComponentsHaveOtherTypesBuildsTheIdentifier`).
