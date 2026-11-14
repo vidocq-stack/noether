@@ -36,5 +36,6 @@ public class Shop {
     private Geo location;
 
     protected Shop() {
+        // Jakarta Persistence needs a no-arg constructor (§2.1)
     }
 }

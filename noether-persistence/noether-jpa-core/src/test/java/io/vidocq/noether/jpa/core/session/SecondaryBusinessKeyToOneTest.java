@@ -67,7 +67,9 @@ class SecondaryBusinessKeyToOneTest {
         @OneToOne(cascade = CascadeType.PERSIST)
         @JoinColumn(name = "customer_code", referencedColumnName = "business_code")
         public Customer customer;
-        public Badge() {}
+        public Badge() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     private PersistenceConfiguration configuration(boolean xml, Class<?>... types) {
@@ -208,13 +210,17 @@ class SecondaryBusinessKeyToOneTest {
         @Column(table = "sb_converted", unique = true, nullable = false, updatable = false)
         public BusinessKeyToOneTest.Code code;
         @Column(table = "sb_converted", nullable = false, updatable = false) public int revision;
-        public Converted() {}
+        public Converted() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity public static class ConvertedOwner {
         @Id public long id;
         @ManyToOne(cascade = CascadeType.PERSIST) @JoinColumn(referencedColumnName = "code")
         public Converted target;
-        public ConvertedOwner() {}
+        public ConvertedOwner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Test
@@ -241,12 +247,16 @@ class SecondaryBusinessKeyToOneTest {
     public static class Invalid {
         @Id public long id;
         @Column(table = "sb_invalid", nullable = false, updatable = false) public String code;
-        public Invalid() {}
+        public Invalid() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity public static class InvalidOwner {
         @Id public long id;
         @ManyToOne @JoinColumn(referencedColumnName = "code") public Invalid target;
-        public InvalidOwner() {}
+        public InvalidOwner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Test
@@ -274,24 +284,32 @@ class SecondaryBusinessKeyToOneTest {
     public static class Mutable {
         @Id public long id;
         @Column(table = "sb_mutable", unique = true, nullable = false) public String code;
-        public Mutable() {}
+        public Mutable() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity public static class MutableOwner {
         @Id public long id;
         @ManyToOne @JoinColumn(referencedColumnName = "code") public Mutable target;
-        public MutableOwner() {}
+        public MutableOwner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity @SecondaryTable(name = "sb_ambiguous")
     public static class Ambiguous {
         @Id public long id;
         @Column(name = "code", table = "sb_ambiguous", unique = true, nullable = false, updatable = false) public String code;
         @Column(name = "code", unique = true, nullable = false, updatable = false) public String primaryCode;
-        public Ambiguous() {}
+        public Ambiguous() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity public static class AmbiguousOwner {
         @Id public long id;
         @ManyToOne @JoinColumn(referencedColumnName = "code") public Ambiguous target;
-        public AmbiguousOwner() {}
+        public AmbiguousOwner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity @SecondaryTable(name = "sb_composite")
     @IdClass(CompositeId.class)
@@ -299,19 +317,25 @@ class SecondaryBusinessKeyToOneTest {
         @Id public long id;
         @Id public long part;
         @Column(table = "sb_composite", unique = true, nullable = false, updatable = false) public String code;
-        public Composite() {}
+        public Composite() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     public static class CompositeId implements java.io.Serializable {
         public long id;
         public long part;
-        public CompositeId() {}
+        public CompositeId() {
+            // Jakarta Persistence needs a public no-arg constructor on a primary key class (§2.4)
+        }
         @Override public boolean equals(Object other) { return other instanceof CompositeId k && id == k.id && part == k.part; }
         @Override public int hashCode() { return java.util.Objects.hash(id, part); }
     }
     @Entity public static class CompositeOwner {
         @Id public long id;
         @ManyToOne @JoinColumn(referencedColumnName = "code") public Composite target;
-        public CompositeOwner() {}
+        public CompositeOwner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity public static class MultipleOwner {
         @Id public long id;
@@ -319,17 +343,23 @@ class SecondaryBusinessKeyToOneTest {
         @JoinColumn(name = "a", referencedColumnName = "business_code")
         @JoinColumn(name = "b", referencedColumnName = "label")
         public Customer target;
-        public MultipleOwner() {}
+        public MultipleOwner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity public static class PrimaryReference {
         @Id public long id;
         @ManyToOne(cascade = CascadeType.PERSIST) @JoinColumn(referencedColumnName = "id") public Customer target;
-        public PrimaryReference() {}
+        public PrimaryReference() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity public static class OwnerTableSelector {
         @Id public long id;
         @ManyToOne @JoinColumn(table = "sb_details", referencedColumnName = "business_code") public Customer target;
-        public OwnerTableSelector() {}
+        public OwnerTableSelector() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Test
@@ -396,7 +426,9 @@ class SecondaryBusinessKeyToOneTest {
         @JoinColumn(name = "part_code", referencedColumnName = "part_code")
         @JoinColumn(name = "part_revision", referencedColumnName = "revision")
         public Part part;
-        public PartBadge() {}
+        public PartBadge() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     private PersistenceConfiguration compositeConfiguration(boolean xml) {
@@ -602,7 +634,9 @@ class SecondaryBusinessKeyToOneTest {
         @JoinColumn(name = "converted_revision", referencedColumnName = "revision")
         @JoinColumn(name = "converted_code", referencedColumnName = "code")
         public Converted target;
-        public ConvertedTupleOwner() {}
+        public ConvertedTupleOwner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Test
@@ -636,7 +670,9 @@ class SecondaryBusinessKeyToOneTest {
         @Id public long id;
         @Column(table = "sb_split_first", unique = true, nullable = false, updatable = false) public String code;
         @Column(table = "sb_split_second", unique = true, nullable = false, updatable = false) public int revision;
-        public SplitTarget() {}
+        public SplitTarget() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity public static class SplitOwner {
         @Id public long id;
@@ -644,7 +680,9 @@ class SecondaryBusinessKeyToOneTest {
         @JoinColumn(name = "split_code", referencedColumnName = "code")
         @JoinColumn(name = "split_revision", referencedColumnName = "revision")
         public SplitTarget target;
-        public SplitOwner() {}
+        public SplitOwner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity public static class ReversedSplitOwner {
         @Id public long id;
@@ -652,14 +690,18 @@ class SecondaryBusinessKeyToOneTest {
         @JoinColumn(name = "split_revision", referencedColumnName = "revision")
         @JoinColumn(name = "split_code", referencedColumnName = "code")
         public SplitTarget target;
-        public ReversedSplitOwner() {}
+        public ReversedSplitOwner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity @SecondaryTable(name = "sb_mixed")
     public static class MixedTableTarget {
         @Id public long id;
         @Column(table = "sb_mixed", unique = true, nullable = false, updatable = false) public String code;
         @Column(unique = true, nullable = false, updatable = false) public int revision;
-        public MixedTableTarget() {}
+        public MixedTableTarget() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity public static class MixedTableOwner {
         @Id public long id;
@@ -667,7 +709,9 @@ class SecondaryBusinessKeyToOneTest {
         @JoinColumn(name = "mixed_code", referencedColumnName = "code")
         @JoinColumn(name = "mixed_revision", referencedColumnName = "revision")
         public MixedTableTarget target;
-        public MixedTableOwner() {}
+        public MixedTableOwner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity public static class ReversedMixedTableOwner {
         @Id public long id;
@@ -675,7 +719,9 @@ class SecondaryBusinessKeyToOneTest {
         @JoinColumn(name = "mixed_revision", referencedColumnName = "revision")
         @JoinColumn(name = "mixed_code", referencedColumnName = "code")
         public MixedTableTarget target;
-        public ReversedMixedTableOwner() {}
+        public ReversedMixedTableOwner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Test

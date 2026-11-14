@@ -696,7 +696,9 @@ class MapsIdToOneTest {
     public static class PropertyParent {
         private long id;
         private String name;
-        public PropertyParent() {}
+        public PropertyParent() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
         @Id public long getId() { return id; }
         public void setId(long id) { this.id = id; }
         public String getName() { return name; }
@@ -706,7 +708,9 @@ class MapsIdToOneTest {
     public static class PropertyDependent {
         private long id;
         private PropertyParent parent;
-        public PropertyDependent() {}
+        public PropertyDependent() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
         @Id public long getId() { return id; }
         public void setId(long id) { this.id = id; }
         @MapsId @OneToOne(cascade = CascadeType.PERSIST, fetch = FetchType.LAZY)

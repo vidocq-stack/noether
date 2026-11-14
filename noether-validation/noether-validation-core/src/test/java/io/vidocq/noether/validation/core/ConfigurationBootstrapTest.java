@@ -81,6 +81,7 @@ class ConfigurationBootstrapTest {
 
     public static class NoDefaultConstructorInterpolator extends XmlMessageInterpolator {
         public NoDefaultConstructorInterpolator(String ignored) {
+            // a constructor with a parameter only: the bootstrap must reject the class
         }
     }
 

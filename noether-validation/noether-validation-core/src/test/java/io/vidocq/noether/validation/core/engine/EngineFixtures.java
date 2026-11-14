@@ -40,6 +40,7 @@ import java.util.Set;
 public final class EngineFixtures {
 
     private EngineFixtures() {
+        // holds static members only: never instantiated
     }
 
     public interface Strict {
@@ -158,6 +159,7 @@ public final class EngineFixtures {
     public static class RunnableComparable implements Runnable, Comparable<RunnableComparable> {
         @Override
         public void run() {
+            // a fixture type: never run
         }
 
         @Override

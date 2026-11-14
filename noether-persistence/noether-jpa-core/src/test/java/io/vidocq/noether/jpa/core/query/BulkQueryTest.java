@@ -62,11 +62,15 @@ class BulkQueryTest {
     public static class ConvertedAmount {
         @jakarta.persistence.Id public long id;
         @jakarta.persistence.Convert(converter=NumberText.class) public String amount;
-        public ConvertedAmount() {}
+        public ConvertedAmount() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @jakarta.persistence.Converter
     public static class NumberText implements jakarta.persistence.AttributeConverter<String,Double> {
-        public NumberText() {}
+        public NumberText() {
+            // Jakarta Persistence creates the attribute converter through its no-arg constructor
+        }
         @Override public Double convertToDatabaseColumn(String value) {
             return value==null?null:Double.valueOf(value.replace("#",""));
         }

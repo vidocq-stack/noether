@@ -28,6 +28,7 @@ public final class Journal {
     public static final List<String> ENTRIES = new ArrayList<>();
 
     private Journal() {
+        // holds static members only: never instantiated
     }
 
     public static void write(String entry) {

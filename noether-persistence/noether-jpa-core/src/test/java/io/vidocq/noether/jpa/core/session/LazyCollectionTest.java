@@ -641,7 +641,9 @@ class LazyCollectionTest {
         public long id;
         public List<String> eager = new ArrayList<>();
         public List<String> lazy = new ArrayList<>();
-        public XmlFetch() {}
+        public XmlFetch() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Entity(name = "LazyAsset") @Inheritance(strategy = InheritanceType.TABLE_PER_CLASS)
@@ -654,6 +656,8 @@ class LazyCollectionTest {
 
     @Entity(name = "LazyBook")
     public static class Book extends Asset {
-        public Book() {}
+        public Book() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 }

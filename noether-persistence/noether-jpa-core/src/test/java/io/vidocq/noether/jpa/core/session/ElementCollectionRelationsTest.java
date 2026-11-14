@@ -2716,7 +2716,9 @@ class ElementCollectionRelationsTest {
     public static class IdClassTarget {
         @Id public long region;
         @Id public long serial;
-        public IdClassTarget() {}
+        public IdClassTarget() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Embeddable public static class IdClassKey implements java.io.Serializable {
         public long region;
@@ -3210,7 +3212,9 @@ class ElementCollectionRelationsTest {
     public static class CompositeParentsKey implements java.io.Serializable {
         public CompositeKey composite;
         public long simple;
-        public CompositeParentsKey() {}
+        public CompositeParentsKey() {
+            // Jakarta Persistence needs a public no-arg constructor on a primary key class (§2.4)
+        }
         @Override public boolean equals(Object other) {
             return other instanceof CompositeParentsKey key && simple == key.simple
                 && java.util.Objects.equals(composite, key.composite);
@@ -3232,7 +3236,9 @@ class ElementCollectionRelationsTest {
     public static class NestedParentTargetKey implements java.io.Serializable {
         public NestedParentKey parent;
         public String code;
-        public NestedParentTargetKey() {}
+        public NestedParentTargetKey() {
+            // Jakarta Persistence needs a public no-arg constructor on a primary key class (§2.4)
+        }
         @Override public boolean equals(Object other) {
             return other instanceof NestedParentTargetKey key && java.util.Objects.equals(parent, key.parent)
                 && java.util.Objects.equals(code, key.code);
@@ -3243,7 +3249,9 @@ class ElementCollectionRelationsTest {
     @Embeddable public static class NestedParentKey implements java.io.Serializable {
         @Embedded public CompositeKey nested;
         public String code;
-        public NestedParentKey() {}
+        public NestedParentKey() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
         @Override public boolean equals(Object other) {
             return other instanceof NestedParentKey key && java.util.Objects.equals(nested, key.nested)
                 && java.util.Objects.equals(code, key.code);
@@ -3264,7 +3272,9 @@ class ElementCollectionRelationsTest {
     public static class ChainedParentsKey implements java.io.Serializable {
         public long derived;
         public long simple;
-        public ChainedParentsKey() {}
+        public ChainedParentsKey() {
+            // Jakarta Persistence needs a public no-arg constructor on a primary key class (§2.4)
+        }
         @Override public boolean equals(Object other) {
             return other instanceof ChainedParentsKey key && derived == key.derived && simple == key.simple;
         }

@@ -870,7 +870,9 @@ class FetchJoinTest {
         private Part part;
         private Car car;
         private Vehicle vehicle;
-        public Shipment() {}
+        public Shipment() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
         @Id public long getId() { return id; }
         public void setId(long id) { this.id = id; }
         @ManyToOne(fetch = FetchType.LAZY)
@@ -891,7 +893,9 @@ class FetchJoinTest {
     public static class CompositeOrder {
         @EmbeddedId PartKey key;
         @ManyToOne(fetch = FetchType.LAZY) Customer customer;
-        public CompositeOrder() {}
+        public CompositeOrder() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Entity(name = "FjCustomer")
@@ -943,7 +947,9 @@ class FetchJoinTest {
 
     @Converter
     public static class CityConverter implements AttributeConverter<String, String> {
-        public CityConverter() {}
+        public CityConverter() {
+            // Jakarta Persistence creates the attribute converter through its no-arg constructor
+        }
         @Override public String convertToDatabaseColumn(String city) { return city == null ? null : "city:" + city; }
         @Override public String convertToEntityAttribute(String column) { return column == null ? null : column.substring(5); }
     }
@@ -981,7 +987,9 @@ class FetchJoinTest {
     @DiscriminatorValue("V")
     public static class Vehicle {
         @Id long id;
-        public Vehicle() {}
+        public Vehicle() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Entity(name = "FjCar")

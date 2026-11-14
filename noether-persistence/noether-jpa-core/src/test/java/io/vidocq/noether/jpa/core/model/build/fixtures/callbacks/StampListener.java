@@ -26,6 +26,7 @@ import jakarta.persistence.PreUpdate;
 public class StampListener {
 
     public StampListener() {
+        // Jakarta Persistence creates the entity listener through its no-arg constructor
     }
 
     @PrePersist

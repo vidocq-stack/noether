@@ -524,7 +524,9 @@ class LazyBatchTest {
         private List<Part> parts = new ArrayList<>();
         private List<CompositeOwner> composites = new ArrayList<>();
         private List<EagerOwner> eagerGroups = new ArrayList<>();
-        public Owner() {}
+        public Owner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
         @Id public long getId() { return id; }
         public void setId(long id) { this.id = id; }
         public String getName() { return name; }
@@ -560,7 +562,9 @@ class LazyBatchTest {
         private long id;
         private String name;
         private int counter;
-        public Target() {}
+        public Target() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
         @Id public long getId() { return id; }
         public void setId(long id) { this.id = id; }
         public String getName() { return name; }
@@ -573,7 +577,9 @@ class LazyBatchTest {
     public static class Child {
         @Id long id;
         @ManyToOne Owner owner;
-        public Child() {}
+        public Child() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Embeddable @Access(AccessType.FIELD)
@@ -602,14 +608,18 @@ class LazyBatchTest {
         @EmbeddedId CompositeKey id;
         @ElementCollection @OrderColumn List<String> items = new ArrayList<>();
         @ElementCollection @MapKeyColumn(name = "label_key") Map<String, String> labels = new LinkedHashMap<>();
-        public CompositeOwner() {}
+        public CompositeOwner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Entity(name = "BatchCompositeRoot")
     public static class CompositeRoot {
         @Id long id;
         @ManyToOne(fetch = FetchType.LAZY) CompositeOwner owner;
-        public CompositeRoot() {}
+        public CompositeRoot() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Entity(name = "BatchEagerOwner")
@@ -619,7 +629,9 @@ class LazyBatchTest {
         @ElementCollection @OrderColumn @Column(name = "first_value") List<String> first = new ArrayList<>();
         @ElementCollection @OrderColumn @Column(name = "second_value") List<String> second = new ArrayList<>();
         @ElementCollection(fetch = FetchType.EAGER) @OrderColumn List<String> eager = new ArrayList<>();
-        public EagerOwner() {}
+        public EagerOwner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Entity(name = "BatchBaseOwner")
@@ -627,11 +639,15 @@ class LazyBatchTest {
     public static class BaseOwner {
         @Id long id;
         @ElementCollection @OrderColumn List<String> items = new ArrayList<>();
-        public BaseOwner() {}
+        public BaseOwner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Entity(name = "BatchSpecialOwner")
     public static class SpecialOwner extends BaseOwner {
-        public SpecialOwner() {}
+        public SpecialOwner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 }

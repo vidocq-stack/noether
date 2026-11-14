@@ -27,5 +27,6 @@ public final class Events {
     public static final List<String> LOG = new ArrayList<>();
 
     private Events() {
+        // holds static members only: never instantiated
     }
 }

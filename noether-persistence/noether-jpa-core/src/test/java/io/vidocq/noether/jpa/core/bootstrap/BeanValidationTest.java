@@ -132,6 +132,7 @@ class BeanValidationTest {
                 return new java.net.URLConnection(url) {
                     @Override
                     public void connect() {
+                        // the fixture stream needs no connection
                     }
 
                     @Override

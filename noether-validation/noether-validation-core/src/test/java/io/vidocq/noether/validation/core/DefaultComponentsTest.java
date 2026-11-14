@@ -68,6 +68,7 @@ class DefaultComponentsTest {
 
     public static class NoDefaultConstructorValidator implements ConstraintValidator<Deprecated, Object> {
         public NoDefaultConstructorValidator(String ignored) {
+            // a constructor with a parameter only: the factory must reject the class
         }
 
         @Override
@@ -116,6 +117,7 @@ class DefaultComponentsTest {
     }
 
     void sample(String first, int second) {
+        // only its parameter names are read
     }
 
     @Test

@@ -221,9 +221,9 @@ class TablePerClassTest {
     @Entity(name = "IntermediateRecord")
     public abstract static class IntermediateRecord extends Record { protected IntermediateRecord() {} }
     @Entity(name = "NumberRecord")
-    public static class NumberRecord extends IntermediateRecord { public int payload; public NumberRecord() {} }
+    public static class NumberRecord extends IntermediateRecord { public int payload; public NumberRecord() { /* no-arg constructor required by §2.1 */ } }
     @Entity(name = "TextRecord")
-    public static class TextRecord extends Record { public String payload; public TextRecord() {} }
+    public static class TextRecord extends Record { public String payload; public TextRecord() { /* no-arg constructor required by §2.1 */ } }
 
     public record RecordKey(long left, long right) implements java.io.Serializable {}
     @Entity(name = "Record") @Table(name = "BaseRecord")
@@ -232,16 +232,20 @@ class TablePerClassTest {
         @Id @Column(name = "left_id") public long left;
         @Id @Column(name = "right_id") public long right;
         public String label;
-        public Record() {}
+        public Record() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity(name = "DetailedRecord")
-    public static class DetailedRecord extends Record { public int detail; public DetailedRecord() {} }
+    public static class DetailedRecord extends Record { public int detail; public DetailedRecord() { /* no-arg constructor required by §2.1 */ } }
     @Entity(name = "Holder")
     public static class Holder {
         @Id public long id;
         @ManyToOne @JoinTable(name = "Favorite") public Record favorite;
         @OneToMany @JoinTable(name = "HeldRecords") public List<Record> records = new ArrayList<>();
-        public Holder() {}
+        public Holder() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Entity(name = "Asset") @Inheritance(strategy = InheritanceType.TABLE_PER_CLASS)
@@ -264,12 +268,16 @@ class TablePerClassTest {
         public int pages;
         @Column(table = "BookNotes") public String notes;
         @OneToMany @JoinColumn(name = "borrowed_book") public List<Shelf> borrowers = new ArrayList<>();
-        public Book() {}
+        public Book() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity(name = "Film")
     public static class Film extends Asset {
         public int duration;
-        public Film() {}
+        public Film() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity(name = "Shelf")
     public static class Shelf {
@@ -277,12 +285,14 @@ class TablePerClassTest {
         @OneToMany(mappedBy = "shelf") public List<Asset> assets = new ArrayList<>();
         @OneToMany @JoinColumn(name = "selected_shelf") @OrderColumn(name = "selected_position")
         public List<Asset> selected = new ArrayList<>();
-        public Shelf() {}
+        public Shelf() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity @Inheritance(strategy = InheritanceType.TABLE_PER_CLASS)
     public abstract static class IdentityRoot {
         @Id @GeneratedValue(strategy = GenerationType.IDENTITY) public long id;
         protected IdentityRoot() {}
     }
-    @Entity public static class IdentityLeaf extends IdentityRoot { public IdentityLeaf() {} }
+    @Entity public static class IdentityLeaf extends IdentityRoot { public IdentityLeaf() { /* no-arg constructor required by §2.1 */ } }
 }

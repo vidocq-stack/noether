@@ -21,18 +21,24 @@ class SchemaGenerationTest {
     public static class Record {
         @Id @GeneratedValue(strategy = GenerationType.IDENTITY) public long id;
         @Column(name = "description", length = 42, nullable = false) public String text;
-        public Record() {}
+        public Record() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Entity @jakarta.persistence.DiscriminatorColumn(name = "kind")
     public static class Parent {
         @Id public int id;
         @Column(name = "year_value") public java.time.Year year;
-        public Parent() {}
+        public Parent() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity public static class Child extends Parent {
         public String label;
-        public Child() {}
+        public Child() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Test

@@ -35,6 +35,7 @@ import java.lang.annotation.RetentionPolicy;
 public final class ConstraintFixtures {
 
     private ConstraintFixtures() {
+        // holds static members only: never instantiated
     }
 
     public static class RequiredValidator implements ConstraintValidator<Required, Object> {

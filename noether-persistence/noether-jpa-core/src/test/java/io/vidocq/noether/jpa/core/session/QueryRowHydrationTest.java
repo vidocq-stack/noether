@@ -304,7 +304,9 @@ class QueryRowHydrationTest {
 
     @Converter
     public static class LabelConverter implements AttributeConverter<String, String> {
-        public LabelConverter() {}
+        public LabelConverter() {
+            // Jakarta Persistence creates the attribute converter through its no-arg constructor
+        }
         @Override public String convertToDatabaseColumn(String value) { return value == null ? null : "db:" + value; }
         @Override public String convertToEntityAttribute(String value) { return value == null ? null : value.substring(3); }
     }

@@ -26,6 +26,7 @@ import jakarta.persistence.PrePersist;
 public class AuditListener {
 
     public AuditListener() {
+        // Jakarta Persistence creates the entity listener through its no-arg constructor
     }
 
     @PrePersist

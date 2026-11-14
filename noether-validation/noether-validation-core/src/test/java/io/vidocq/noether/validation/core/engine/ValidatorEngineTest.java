@@ -14,9 +14,7 @@ import jakarta.validation.Validation;
 import jakarta.validation.ValidationException;
 import jakarta.validation.Validator;
 import jakarta.validation.ValidatorFactory;
-import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Size;
 import jakarta.validation.groups.Default;
 import java.util.List;
 import java.util.Set;
@@ -391,6 +389,7 @@ class ValidatorEngineTest {
 
                     @Override
                     public void releaseInstance(jakarta.validation.ConstraintValidator<?, ?> instance) {
+                        // getInstance creates nothing, so nothing is released
                     }
                 }).buildValidatorFactory()) {
             var customValidator = custom.getValidator();
@@ -676,9 +675,5 @@ class ValidatorEngineTest {
         List<Path.Node> nodes = new java.util.ArrayList<>();
         violation.getPropertyPath().forEach(nodes::add);
         return nodes;
-    }
-
-    @SuppressWarnings("unused")
-    private static void unused(Size size, Min min) {
     }
 }

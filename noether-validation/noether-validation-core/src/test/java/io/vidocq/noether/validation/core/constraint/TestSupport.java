@@ -40,6 +40,7 @@ final class TestSupport {
     static final ConstraintValidatorContext CONTEXT = new StubContext();
 
     private TestSupport() {
+        // holds static members only: never instantiated
     }
 
     static <A extends Annotation> A annotation(Class<?> holder, String field, Class<A> type) {

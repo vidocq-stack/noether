@@ -60,10 +60,12 @@ public class CountingDataSource implements DataSource {
 
     @Override
     public void setLogWriter(PrintWriter out) {
+        // the counting data source writes no log
     }
 
     @Override
     public void setLoginTimeout(int seconds) {
+        // the counting data source has no login timeout
     }
 
     @Override

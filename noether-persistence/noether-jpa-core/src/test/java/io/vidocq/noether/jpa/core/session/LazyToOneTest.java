@@ -379,7 +379,9 @@ class LazyToOneTest {
         private long id;
         private String name;
         private Target target;
-        public Owner() {}
+        public Owner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
         @Id public long getId() { return id; }
         public void setId(long id) { this.id = id; }
         public String getName() { return name; }
@@ -395,7 +397,9 @@ class LazyToOneTest {
     public static class Target {
         private long id;
         private String name;
-        public Target() {}
+        public Target() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
         @Id public long getId() { return id; }
         public void setId(long id) { this.id = id; }
         public String getName() { return name; }
@@ -414,7 +418,9 @@ class LazyToOneTest {
     public static class OneOwner {
         private long id;
         private Target target;
-        public OneOwner() {}
+        public OneOwner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
         @Id public long getId() { return id; }
         public void setId(long id) { this.id = id; }
         @OneToOne(fetch = FetchType.LAZY) public Target getTarget() { return target; }
@@ -425,7 +431,9 @@ class LazyToOneTest {
     public static final class FinalTarget {
         private long id;
         private String name;
-        public FinalTarget() {}
+        public FinalTarget() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
         @Id public long getId() { return id; }
         public void setId(long id) { this.id = id; }
         public String getName() { return name; }
@@ -436,7 +444,9 @@ class LazyToOneTest {
     public static class FinalMethodTarget {
         private long id;
         private String name;
-        public FinalMethodTarget() {}
+        public FinalMethodTarget() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
         @Id public long getId() { return id; }
         public void setId(long id) { this.id = id; }
         public final String getName() { return name; }
@@ -449,7 +459,9 @@ class LazyToOneTest {
         private FinalTarget first;
         private FinalMethodTarget second;
         private Target third;
-        public FallbackOwner() {}
+        public FallbackOwner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
         @Id public long getId() { return id; }
         public void setId(long id) { this.id = id; }
         @ManyToOne(fetch = FetchType.LAZY) public FinalTarget getFirst() { return first; }
@@ -464,7 +476,9 @@ class LazyToOneTest {
     public static class PairOwner {
         private long id;
         private PairInverse inverse;
-        public PairOwner() {}
+        public PairOwner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
         @Id public long getId() { return id; }
         public void setId(long id) { this.id = id; }
         @OneToOne(fetch = FetchType.LAZY) public PairInverse getInverse() { return inverse; }
@@ -475,7 +489,9 @@ class LazyToOneTest {
     public static class PairInverse {
         private long id;
         private PairOwner owner;
-        public PairInverse() {}
+        public PairInverse() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
         @Id public long getId() { return id; }
         public void setId(long id) { this.id = id; }
         @OneToOne(mappedBy = "inverse", fetch = FetchType.LAZY) public PairOwner getOwner() { return owner; }

@@ -65,6 +65,7 @@ public class Purchase {
     public enum Status { OPEN, CLOSED }
 
     protected Purchase() {
+        // Jakarta Persistence needs a no-arg constructor (§2.1)
     }
 
     public String getLabel() {

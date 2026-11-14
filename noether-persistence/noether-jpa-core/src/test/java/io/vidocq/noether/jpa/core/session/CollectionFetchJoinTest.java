@@ -764,7 +764,9 @@ class CollectionFetchJoinTest {
         @Id long id;
         @ElementCollection(fetch = FetchType.EAGER) @OrderBy("DESC")
         List<String> tags = new ArrayList<>();
-        public Inventory() {}
+        public Inventory() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
         @PostLoad void loaded() { loadedSize = tags.size(); }
         @Override public boolean equals(Object other) { return other instanceof Inventory; }
         @Override public int hashCode() { return 1; }
@@ -774,7 +776,9 @@ class CollectionFetchJoinTest {
         static int loadedSize;
         private long id;
         private List<Member> members = new ArrayList<>();
-        public Group() {}
+        public Group() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
         @Id public long getId() { return id; }
         public void setId(long id) { this.id = id; }
         @OneToMany(mappedBy = "group") public List<Member> getMembers() { return members; }
@@ -787,7 +791,9 @@ class CollectionFetchJoinTest {
         private long id;
         private String name;
         private Group group;
-        public Member() {}
+        public Member() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
         @Id public long getId() { return id; }
         public void setId(long id) { this.id = id; }
         public String getName() { return name; }
@@ -801,7 +807,9 @@ class CollectionFetchJoinTest {
         private long id;
         private Member member;
         private Group group;
-        public Holder() {}
+        public Holder() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
         @Id public long getId() { return id; }
         public void setId(long id) { this.id = id; }
         @ManyToOne(fetch = FetchType.LAZY) public Member getMember() { return member; }

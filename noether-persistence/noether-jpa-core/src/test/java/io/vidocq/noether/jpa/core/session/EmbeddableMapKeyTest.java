@@ -231,14 +231,18 @@ class EmbeddableMapKeyTest {
         @AttributeOverride(name = "key.code", column = @Column(name = "DEPOT_CODE"))
         @AttributeOverride(name = "key.region.label", column = @Column(name = "DEPOT_REGION"))
         public Map<Zip, Warehouse> depots = new LinkedHashMap<>();
-        public Parcel() {}
+        public Parcel() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Entity(name = "Warehouse")
     public static class Warehouse {
         @Id public long id;
         @Embedded public Address address;
-        public Warehouse() {}
+        public Warehouse() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Embeddable
@@ -246,7 +250,9 @@ class EmbeddableMapKeyTest {
         @ElementCollection public Map<Zip, String> codes = new LinkedHashMap<>();
         @ElementCollection public List<Zip> list = new ArrayList<>();
         @ElementCollection public Set<Zip> set = new LinkedHashSet<>();
-        public Address() {}
+        public Address() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Embeddable
@@ -269,7 +275,9 @@ class EmbeddableMapKeyTest {
 
     @Converter
     public static class LabelConverter implements AttributeConverter<String, String> {
-        public LabelConverter() {}
+        public LabelConverter() {
+            // Jakarta Persistence creates the attribute converter through its no-arg constructor
+        }
         @Override public String convertToDatabaseColumn(String label) { return label == null ? null : "db:" + label; }
         @Override public String convertToEntityAttribute(String label) { return label == null ? null : label.substring(3); }
     }

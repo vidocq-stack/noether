@@ -619,69 +619,89 @@ class InheritanceTest {
         @Id public long id;
         @OneToMany(mappedBy = "owner") @OrderColumn(name = "position")
         public List<OrderedLeaf> leaves = new java.util.ArrayList<>();
-        public OrderedOwner() {}
+        public OrderedOwner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity(name = "OrderedBase")
     public static class OrderedBase {
         @Id public long id;
         @ManyToOne public OrderedOwner owner;
-        public OrderedBase() {}
+        public OrderedBase() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity(name = "OrderedLeaf")
     public static class OrderedLeaf extends OrderedBase {
         public int detail;
-        public OrderedLeaf() {}
+        public OrderedLeaf() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Entity(name = "Hobby")
     public static class Hobby {
         @Id public long id;
-        public Hobby() {}
+        public Hobby() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity(name = "HobbyOwner")
     public static class HobbyOwner {
         @Id public long id;
         @ManyToMany(cascade = CascadeType.ALL) public List<Hobby> hobbies = new java.util.ArrayList<>();
         @ElementCollection public List<String> tags = new java.util.ArrayList<>();
-        public HobbyOwner() {}
+        public HobbyOwner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity(name = "HobbyChild")
     public static class HobbyChild extends HobbyOwner {
         public int detail;
-        public HobbyChild() {}
+        public HobbyChild() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity(name = "WorkerReference")
     public static class WorkerReference {
         @Id public long id;
         @ManyToOne public Worker worker;
-        public WorkerReference() {}
+        public WorkerReference() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Entity(name = "SecondaryWorker") @PrimaryKeyJoinColumn(name = "employee_id")
     @SecondaryTable(name = "EmployeeDetails")
     public static class SecondaryWorker extends Person {
         @Column(table = "EmployeeDetails") public String detail;
-        public SecondaryWorker() {}
+        public SecondaryWorker() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Entity(name = "NumericBase") @Inheritance
     @DiscriminatorColumn(name = "kind", discriminatorType = DiscriminatorType.INTEGER)
     public static class NumericBase {
         @Id public long id;
-        public NumericBase() {}
+        public NumericBase() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity(name = "NumericLeaf")
-    public static class NumericLeaf extends NumericBase { public NumericLeaf() {} }
+    public static class NumericLeaf extends NumericBase { public NumericLeaf() { /* no-arg constructor required by §2.1 */ } }
     @Entity(name = "NumericExplicit") @DiscriminatorValue("1")
-    public static class NumericExplicit extends NumericBase { public NumericExplicit() {} }
+    public static class NumericExplicit extends NumericBase { public NumericExplicit() { /* no-arg constructor required by §2.1 */ } }
     @Entity(name = "LetterBase") @Inheritance
     @DiscriminatorColumn(name = "kind", discriminatorType = DiscriminatorType.CHAR)
     public static class LetterBase {
         @Id public long id;
-        public LetterBase() {}
+        public LetterBase() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity(name = "LetterLeaf")
-    public static class LetterLeaf extends LetterBase { public LetterLeaf() {} }
+    public static class LetterLeaf extends LetterBase { public LetterLeaf() { /* no-arg constructor required by §2.1 */ } }
 
     @SqlResultSetMapping(name = "animal-quoted", entities = @EntityResult(entityClass = Animal.class,
         discriminatorColumn = "\"Kind\"\"Label\"", fields = @FieldResult(name = "id", column = "\"Key\"")))
@@ -719,16 +739,22 @@ class InheritanceTest {
     public static class Worker extends Person {
         public int salary;
         @ManyToOne public Department department;
-        public Worker() {}
+        public Worker() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity(name = "Manager") @PrimaryKeyJoinColumn(name = "manager_id", referencedColumnName = "worker_id")
     public static class Manager extends Worker {
         public String office;
-        public Manager() {}
+        public Manager() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity(name = "EmptyManager")
     public static class EmptyManager extends Manager {
-        public EmptyManager() {}
+        public EmptyManager() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity(name = "Vehicle") @Inheritance
     @DiscriminatorColumn(name = "KIND", discriminatorType = DiscriminatorType.INTEGER)
@@ -741,12 +767,16 @@ class InheritanceTest {
     @Entity(name = "Bicycle") @DiscriminatorValue("7")
     public static class Bicycle extends Vehicle {
         public int wheels;
-        public Bicycle() {}
+        public Bicycle() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity(name = "Unsupported") @Inheritance(strategy = InheritanceType.TABLE_PER_CLASS)
     public static class Unsupported {
         @Id public long id;
-        public Unsupported() {}
+        public Unsupported() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @MappedSuperclass
     public abstract static class GeneratedId {
@@ -765,25 +795,33 @@ class InheritanceTest {
     @Entity(name = "GeneratedLeaf")
     public static class GeneratedLeaf extends NonentityGap {
         public String detail;
-        public GeneratedLeaf() {}
+        public GeneratedLeaf() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity(name = "Department")
     public static class Department {
         @Id public long id;
         @ManyToOne public Person boss;
         @OneToMany(mappedBy = "department") public List<Worker> workers = new java.util.ArrayList<>();
-        public Department() {}
+        public Department() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity(name = "CharBase") @Inheritance(strategy = InheritanceType.JOINED)
     @DiscriminatorColumn(name = "tag", discriminatorType = DiscriminatorType.CHAR) @DiscriminatorValue("B")
     public static class CharBase {
         @Id public long id;
-        public CharBase() {}
+        public CharBase() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     @Entity(name = "CharLeaf") @DiscriminatorValue("L")
     public static class CharLeaf extends CharBase {
         public String detail;
-        public CharLeaf() {}
+        public CharLeaf() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
     public record PairId(long leftId, long rightId) implements java.io.Serializable {}
     @Entity(name = "PairBase") @Inheritance(strategy = InheritanceType.JOINED) @IdClass(PairId.class)
@@ -797,6 +835,8 @@ class InheritanceTest {
     @PrimaryKeyJoinColumn(name = "k1", referencedColumnName = "leftId")
     public static class PairLeaf extends PairBase {
         public String valueText;
-        public PairLeaf() {}
+        public PairLeaf() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 }

@@ -251,7 +251,9 @@ class PostLoadCollectionCycleTest {
         private List<Member> members = new ArrayList<>();
         int loads;
         List<Long> seen;
-        public Group() {}
+        public Group() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
         @Id public long getId() { return id; }
         public void setId(long id) { this.id = id; }
         public String getName() { return name; }

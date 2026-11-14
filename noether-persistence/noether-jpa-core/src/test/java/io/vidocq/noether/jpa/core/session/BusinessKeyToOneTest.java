@@ -305,14 +305,18 @@ class BusinessKeyToOneTest {
             @Id public long id;
             @Column(unique = true, nullable = false, updatable = false) public String code;
             @ElementCollection public java.util.List<String> tags = new java.util.ArrayList<>();
-            public GraphCustomer() {}
+            public GraphCustomer() {
+                // Jakarta Persistence needs a no-arg constructor (§2.1)
+            }
         }
         @Entity(name = "BusinessGraphOrder")
         public static class GraphOrder {
             @Id public long id;
             @ManyToOne(cascade = CascadeType.PERSIST, fetch = FetchType.LAZY)
             @JoinColumn(referencedColumnName = "code") public GraphCustomer customer;
-            public GraphOrder() {}
+            public GraphOrder() {
+                // Jakarta Persistence needs a no-arg constructor (§2.1)
+            }
         }
 
         @Test
@@ -340,7 +344,9 @@ class BusinessKeyToOneTest {
         public static class PropertyCustomer {
             private long id;
             private String code;
-            public PropertyCustomer() {}
+            public PropertyCustomer() {
+                // Jakarta Persistence needs a no-arg constructor (§2.1)
+            }
             @Id public long getId() { return id; }
             public void setId(long id) { this.id = id; }
             @Column(unique = true, nullable = false, updatable = false) public String getCode() { return code; }
@@ -350,7 +356,9 @@ class BusinessKeyToOneTest {
         public static class PropertyOrder {
             private long id;
             private PropertyCustomer customer;
-            public PropertyOrder() {}
+            public PropertyOrder() {
+                // Jakarta Persistence needs a no-arg constructor (§2.1)
+            }
             @Id public long getId() { return id; }
             public void setId(long id) { this.id = id; }
             @ManyToOne(cascade = CascadeType.PERSIST, fetch = FetchType.LAZY)
@@ -376,14 +384,18 @@ class BusinessKeyToOneTest {
         public static class GeneratedCustomer {
             @Id @GeneratedValue(strategy = GenerationType.IDENTITY) public Long id;
             @Column(unique = true, nullable = false, updatable = false) public String code;
-            public GeneratedCustomer() {}
+            public GeneratedCustomer() {
+                // Jakarta Persistence needs a no-arg constructor (§2.1)
+            }
         }
         @Entity(name = "GeneratedBusinessOrder")
         public static class GeneratedOrder {
             @Id public long id;
             @ManyToOne(cascade = CascadeType.PERSIST)
             @JoinColumn(referencedColumnName = "code") public GeneratedCustomer customer;
-            public GeneratedOrder() {}
+            public GeneratedOrder() {
+                // Jakarta Persistence needs a no-arg constructor (§2.1)
+            }
         }
 
         @Test
@@ -491,14 +503,18 @@ class BusinessKeyToOneTest {
             @Id public long id;
             @Convert(converter = CodeConverter.class)
             @Column(unique = true, nullable = false, updatable = false) public Code code;
-            public ConvertedCustomer() {}
+            public ConvertedCustomer() {
+                // Jakarta Persistence needs a no-arg constructor (§2.1)
+            }
         }
         @Entity(name = "ConvertedOrder")
         public static class ConvertedOrder {
             @Id public long id;
             @ManyToOne(cascade = CascadeType.PERSIST)
             @JoinColumn(name = "customer_code", referencedColumnName = "code") public ConvertedCustomer customer;
-            public ConvertedOrder() {}
+            public ConvertedOrder() {
+                // Jakarta Persistence needs a no-arg constructor (§2.1)
+            }
         }
 
         @Test
@@ -535,52 +551,68 @@ class BusinessKeyToOneTest {
             @Column(nullable = false, updatable = false) public String code;
             @Column(unique = true, nullable = false) public String mutableCode;
             @Column(unique = true, updatable = false) public String nullableCode;
-            public InvalidTarget() {}
+            public InvalidTarget() {
+                // Jakarta Persistence needs a no-arg constructor (§2.1)
+            }
         }
         @Entity
         public static class NonUniqueOwner {
             @Id public long id;
             @ManyToOne @JoinColumn(referencedColumnName = "code") public InvalidTarget target;
-            public NonUniqueOwner() {}
+            public NonUniqueOwner() {
+                // Jakarta Persistence needs a no-arg constructor (§2.1)
+            }
         }
         @Entity
         public static class MissingOwner {
             @Id public long id;
             @ManyToOne @JoinColumn(referencedColumnName = "missing") public InvalidTarget target;
-            public MissingOwner() {}
+            public MissingOwner() {
+                // Jakarta Persistence needs a no-arg constructor (§2.1)
+            }
         }
         @Entity
         public static class MutableOwner {
             @Id public long id;
             @ManyToOne @JoinColumn(referencedColumnName = "mutableCode") public InvalidTarget target;
-            public MutableOwner() {}
+            public MutableOwner() {
+                // Jakarta Persistence needs a no-arg constructor (§2.1)
+            }
         }
         @Entity
         public static class NullableOwner {
             @Id public long id;
             @ManyToOne @JoinColumn(referencedColumnName = "nullableCode") public InvalidTarget target;
-            public NullableOwner() {}
+            public NullableOwner() {
+                // Jakarta Persistence needs a no-arg constructor (§2.1)
+            }
         }
         @Entity
         public static class MixedOwner {
             @Id public long id;
             @ManyToOne @JoinColumn(referencedColumnName = "id") @JoinColumn(referencedColumnName = "code")
             public Customer target;
-            public MixedOwner() {}
+            public MixedOwner() {
+                // Jakarta Persistence needs a no-arg constructor (§2.1)
+            }
         }
         @Entity
         public static class DuplicateOwner {
             @Id public long id;
             @ManyToOne @JoinColumn(referencedColumnName = "code") @JoinColumn(referencedColumnName = "code")
             public Customer target;
-            public DuplicateOwner() {}
+            public DuplicateOwner() {
+                // Jakarta Persistence needs a no-arg constructor (§2.1)
+            }
         }
         @Entity
         public static class UnnamedOwner {
             @Id public long id;
             @ManyToOne @JoinColumn(referencedColumnName = "code") @JoinColumn
             public Customer target;
-            public UnnamedOwner() {}
+            public UnnamedOwner() {
+                // Jakarta Persistence needs a no-arg constructor (§2.1)
+            }
         }
 
         @Entity
@@ -590,32 +622,42 @@ class BusinessKeyToOneTest {
             @JoinColumn(referencedColumnName = "code", nullable = false)
             @JoinColumn(referencedColumnName = "code")
             public Customer target;
-            public NonUniformOwner() {}
+            public NonUniformOwner() {
+                // Jakarta Persistence needs a no-arg constructor (§2.1)
+            }
         }
         @Entity
         public static class JoinTableOwner {
             @Id public long id;
             @ManyToOne @JoinTable(inverseJoinColumns = @JoinColumn(referencedColumnName = "code")) public Customer target;
-            public JoinTableOwner() {}
+            public JoinTableOwner() {
+                // Jakarta Persistence needs a no-arg constructor (§2.1)
+            }
         }
         @Entity
         public static class ReadOnlyOwner {
             @Id public long id;
             @ManyToOne @JoinColumn(referencedColumnName = "code", updatable = false) public Customer target;
-            public ReadOnlyOwner() {}
+            public ReadOnlyOwner() {
+                // Jakarta Persistence needs a no-arg constructor (§2.1)
+            }
         }
         @Entity
         public static class InverseTarget {
             @Id public long id;
             @Column(unique = true, nullable = false, updatable = false) public String code;
             @OneToMany(mappedBy = "target") public java.util.List<InverseOwner> owners;
-            public InverseTarget() {}
+            public InverseTarget() {
+                // Jakarta Persistence needs a no-arg constructor (§2.1)
+            }
         }
         @Entity
         public static class InverseOwner {
             @Id public long id;
             @ManyToOne @JoinColumn(referencedColumnName = "code") public InverseTarget target;
-            public InverseOwner() {}
+            public InverseOwner() {
+                // Jakarta Persistence needs a no-arg constructor (§2.1)
+            }
         }
 
         @Test
@@ -660,7 +702,9 @@ class BusinessKeyToOneTest {
                 @Id public long id;
                 @ManyToOne(optional = false)
                 @JoinColumn(name = "customer_code", referencedColumnName = "code", nullable = false) public Customer customer;
-                public StrictOrder() {}
+                public StrictOrder() {
+                    // Jakarta Persistence needs a no-arg constructor (§2.1)
+                }
             }
 
             @Test

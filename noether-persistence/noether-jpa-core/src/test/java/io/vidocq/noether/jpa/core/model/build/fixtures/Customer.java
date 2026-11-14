@@ -59,6 +59,7 @@ public class Customer {
     private String biography;
 
     protected Customer() {
+        // Jakarta Persistence needs a no-arg constructor (§2.1)
     }
 
     /** A getter that is not a persistent property: field access. */

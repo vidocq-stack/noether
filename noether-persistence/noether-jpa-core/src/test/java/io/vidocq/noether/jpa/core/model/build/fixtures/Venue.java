@@ -35,6 +35,7 @@ public class Venue {
     private final List<String> notes = new ArrayList<>();
 
     protected Venue() {
+        // Jakarta Persistence needs a no-arg constructor (§2.1)
     }
 
     public String name() {

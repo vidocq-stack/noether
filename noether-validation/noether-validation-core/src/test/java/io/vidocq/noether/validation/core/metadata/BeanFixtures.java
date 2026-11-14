@@ -28,6 +28,7 @@ import jakarta.validation.constraints.Size;
 public final class BeanFixtures {
 
     private BeanFixtures() {
+        // holds static members only: never instantiated
     }
 
     @Deprecated
@@ -73,6 +74,7 @@ public final class BeanFixtures {
         /** Not a getter: void. */
         @NotNull
         public void getNothing() {
+            // not a getter, since it returns void: the body does not matter
         }
 
         @NotNull

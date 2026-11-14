@@ -364,7 +364,9 @@ class AssociationTablesTest {
         @Id public long id;
         @ManyToOne @JoinTable(inverseJoinColumns = @JoinColumn(name = "target_key", insertable = false))
         public Target target;
-        public LaterOwner() {}
+        public LaterOwner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Entity(name = "SecondaryParent")
@@ -372,7 +374,9 @@ class AssociationTablesTest {
         @Id public long id;
         @OneToMany @JoinColumn(name = "parent_key", table = "secondary_child")
         public List<SecondaryChild> children = new ArrayList<>();
-        public SecondaryParent() {}
+        public SecondaryParent() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Entity(name = "SecondaryChild")
@@ -380,7 +384,9 @@ class AssociationTablesTest {
     public static class SecondaryChild {
         @Id public long id;
         @Column(table = "secondary_child") public String label;
-        public SecondaryChild() {}
+        public SecondaryChild() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Entity(name = "JoinedParent")
@@ -389,18 +395,24 @@ class AssociationTablesTest {
         @OneToMany @JoinColumn(name = "parent_key", nullable = false)
         public List<BaseChild> children = new ArrayList<>();
         @ManyToOne @JoinTable public JoinedChild target;
-        public JoinedParent() {}
+        public JoinedParent() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Entity(name = "BaseChild") @Inheritance(strategy = InheritanceType.JOINED)
     public static class BaseChild {
         @Id public long id;
-        public BaseChild() {}
+        public BaseChild() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Entity(name = "JoinedChild") @PrimaryKeyJoinColumn(name = "child_key")
     public static class JoinedChild extends BaseChild {
-        public JoinedChild() {}
+        public JoinedChild() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Entity(name = "FlagOwner")
@@ -410,7 +422,9 @@ class AssociationTablesTest {
             inverseJoinColumns = { @JoinColumn(name = "target_number", referencedColumnName = "number"),
                 @JoinColumn(name = "target_code", referencedColumnName = "code", updatable = false) })
         public CompositeTarget target;
-        public FlagOwner() {}
+        public FlagOwner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Entity(name = "FlagParent")
@@ -420,20 +434,26 @@ class AssociationTablesTest {
         public List<Child> fixed = new ArrayList<>();
         @OneToMany @JoinColumn(name = "later_parent", insertable = false)
         public List<Child> later = new ArrayList<>();
-        public FlagParent() {}
+        public FlagParent() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     public static class XmlOwner {
         public long id;
         public XmlTarget target;
         public List<XmlTarget> children = new ArrayList<>();
-        public XmlOwner() {}
+        public XmlOwner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     public static class XmlTarget {
         public long id;
         public XmlOwner owner;
-        public XmlTarget() {}
+        public XmlTarget() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Embeddable
@@ -461,13 +481,17 @@ class AssociationTablesTest {
         @JoinColumn(name = "parent_number", referencedColumnName = "number")
         @JoinColumn(name = "parent_code", referencedColumnName = "code")
         public List<CompositeTarget> children = new ArrayList<>();
-        public CompositeOwner() {}
+        public CompositeOwner() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Entity(name = "CompositeTarget")
     public static class CompositeTarget {
         @EmbeddedId public Pair id;
-        public CompositeTarget() {}
+        public CompositeTarget() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Entity(name = "RequiredParent")
@@ -475,7 +499,9 @@ class AssociationTablesTest {
         @Id @GeneratedValue(strategy = GenerationType.IDENTITY) public long id;
         @OneToMany(cascade = CascadeType.ALL, orphanRemoval = true) @JoinColumn(name = "required_parent", nullable = false)
         public List<Child> children = new ArrayList<>();
-        public RequiredParent() {}
+        public RequiredParent() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
     }
 
     @Entity(name = "TableOwner")
