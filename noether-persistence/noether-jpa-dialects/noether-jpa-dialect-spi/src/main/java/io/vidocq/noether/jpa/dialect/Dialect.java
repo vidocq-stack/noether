@@ -22,7 +22,6 @@ package io.vidocq.noether.jpa.dialect;
 import io.vidocq.noether.jpa.dialect.sql.Expression;
 import io.vidocq.noether.jpa.dialect.sql.Identifier;
 import io.vidocq.noether.jpa.dialect.sql.DeleteQuery;
-import io.vidocq.noether.jpa.dialect.sql.Query;
 import io.vidocq.noether.jpa.dialect.sql.SelectStatement;
 import io.vidocq.noether.jpa.dialect.sql.UpdateQuery;
 import io.vidocq.noether.jpa.dialect.sql.Statement;

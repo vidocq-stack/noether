@@ -88,16 +88,15 @@ public record Identifier(String name, boolean quoted) {
     }
 
     private static int quotedPart(String name, int start, StringBuilder text) {
-        for (int i = start + 1; i < name.length(); i++) {
+        int i = start + 1;
+        while (i < name.length()) {
             char c = name.charAt(i);
-            if (c != '"') {
-                text.append(c);
-            } else if (i + 1 < name.length() && name.charAt(i + 1) == '"') {
-                text.append('"');
-                i++;
-            } else {
+            boolean doubled = c == '"' && i + 1 < name.length() && name.charAt(i + 1) == '"';
+            if (c == '"' && !doubled) {
                 return i + 1;
             }
+            text.append(c);
+            i += doubled ? 2 : 1;
         }
         throw new IllegalArgumentException("Unclosed delimited SQL identifier: " + name);
     }
