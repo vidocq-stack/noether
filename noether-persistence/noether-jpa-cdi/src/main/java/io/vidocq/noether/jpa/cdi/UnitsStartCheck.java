@@ -32,6 +32,7 @@ public final class UnitsStartCheck implements SyntheticObserver<Startup> {
     static final int PRIORITY = 1;
 
     private static final String SEPARATOR = "|";
+    private static final String UNIT = "persistence unit ";
 
     @Override
     public void observe(EventContext<Startup> event, Parameters params) {
@@ -59,11 +60,11 @@ public final class UnitsStartCheck implements SyntheticObserver<Startup> {
             String then = before.get(name);
             String now = after.get(name);
             if (then == null) {
-                problems.add("persistence unit " + name + " is declared at start, not when the beans were built");
+                problems.add(UNIT + name + " is declared at start, not when the beans were built");
             } else if (now == null) {
-                problems.add("persistence unit " + name + " was declared when the beans were built, not at start");
+                problems.add(UNIT + name + " was declared when the beans were built, not at start");
             } else if (!then.equals(now)) {
-                problems.add("persistence unit " + name + " was " + readable(then) + " when the beans were built, and is "
+                problems.add(UNIT + name + " was " + readable(then) + " when the beans were built, and is "
                     + readable(now) + " at start");
             }
         }

@@ -185,8 +185,10 @@ class UnitSourcesTest {
         PersistenceUnitSource source = loader -> List.of(PersistenceUnitDeclaration.builder("ledger", KEYS)
             .qualifiers(List.of("org.acme.Ledger")).build());
 
+        List<PersistenceUnitSource> sources = List.of(source);
+
         try (URLClassLoader loader = loader(module)) {
-            assertThatThrownBy(() -> PersistenceUnits.find("ledger", loader, List.of(source)))
+            assertThatThrownBy(() -> PersistenceUnits.find("ledger", loader, sources))
                 .isInstanceOf(PersistenceException.class)
                 .hasMessageContaining("Persistence unit ledger is declared 2 times")
                 .hasMessageContaining(module.toUri().toURL() + "META-INF/persistence.xml")
@@ -203,8 +205,10 @@ class UnitSourcesTest {
         PersistenceUnitSource second = loader -> List.of(PersistenceUnitDeclaration.builder("ledger", "another runtime")
             .transactionType(PersistenceUnitTransactionType.JTA).build());
 
+        List<PersistenceUnitSource> sources = List.of(first, second);
+
         try (URLClassLoader loader = loader()) {
-            assertThatThrownBy(() -> PersistenceUnits.all(loader, List.of(first, second)))
+            assertThatThrownBy(() -> PersistenceUnits.all(loader, sources))
                 .isInstanceOf(PersistenceException.class)
                 .hasMessageContaining("Persistence unit ledger is declared 2 times, in " + KEYS + ", another runtime");
         }
