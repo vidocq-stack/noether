@@ -25,8 +25,12 @@ import static io.vidocq.noether.tests.architecture.NoetherClasses.SHIPPED_AND_FI
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Named.named;
 
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.nio.charset.Charset;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -113,6 +117,9 @@ class ArchitectureRulesSelfTest {
                 ruleWith("NO_REFLECTION", ArchitectureRules.NO_REFLECTION, ReadsAMethodReflectively.class),
                 ruleWith("NO_REFLECTION", ArchitectureRules.NO_REFLECTION, ReadsAnAnnotationReflectively.class),
                 ruleWith("NO_REFLECTION", ArchitectureRules.NO_REFLECTION, CopiesAnArrayReflectively.class),
+                ruleWith("NO_DEEP_LOOKUP", ArchitectureRules.NO_DEEP_LOOKUP, OpensAClassPrivately.class),
+                ruleWith("NO_DEEP_LOOKUP", ArchitectureRules.NO_DEEP_LOOKUP, FindsAMethodByName.class),
+                ruleWith("NO_DEEP_LOOKUP", ArchitectureRules.NO_DEEP_LOOKUP, UnreflectsAConstructor.class),
                 ruleWith("NO_PLATFORM_THREADS", ArchitectureRules.NO_PLATFORM_THREADS, UsesAFixedThreadPool.class),
                 ruleWith("NO_PLATFORM_THREADS", ArchitectureRules.NO_PLATFORM_THREADS, SchedulesOnAPlatformThread.class),
                 ruleWith("NO_PLATFORM_THREADS", ArchitectureRules.NO_PLATFORM_THREADS, BuildsAThreadPoolExecutor.class),
@@ -132,6 +139,8 @@ class ArchitectureRulesSelfTest {
         return Stream.of(
                 ruleWith("NO_REFLECTION", ArchitectureRules.NO_REFLECTION, LooksUpACharsetByName.class),
                 ruleWith("NO_REFLECTION", ArchitectureRules.NO_REFLECTION, ReadsTheModifiersOfAClass.class),
+                ruleWith("NO_DEEP_LOOKUP", ArchitectureRules.NO_DEEP_LOOKUP, DefinesAHiddenClass.class),
+                ruleWith("NO_DEEP_LOOKUP", ArchitectureRules.NO_DEEP_LOOKUP, CombinesHandles.class),
                 ruleWith("NO_PLATFORM_THREADS", ArchitectureRules.NO_PLATFORM_THREADS, UsesVirtualThreads.class),
                 ruleWith("NO_THREAD_LOCAL", ArchitectureRules.NO_THREAD_LOCAL, UsesVirtualThreads.class));
     }
@@ -151,6 +160,17 @@ class ArchitectureRulesSelfTest {
         for (String allowed : ArchitectureRules.REFLECTIVE_FALLBACKS.keySet()) {
             assertTrue(SHIPPED.contain(allowed), () -> allowed + " is not a shipped class");
             assertTrue(report.contains(allowed), () -> allowed + " no longer uses reflection: drop its entry");
+        }
+    }
+
+    @Test
+    void theDeepLookupAdaptersAreShippedClassesThatStillLookUp() {
+        // Same guard as the reflective fallbacks: the rule with no adapter must report each listed class.
+        ArchRule unexempted = ArchitectureRules.noDeepLookup(Set.of());
+        String report = String.join("\n", unexempted.evaluate(SHIPPED).getFailureReport().getDetails());
+        for (String adapter : ArchitectureRules.DEEP_LOOKUP_ADAPTERS.keySet()) {
+            assertTrue(SHIPPED.contain(adapter), () -> adapter + " is not a shipped class");
+            assertTrue(report.contains(adapter), () -> adapter + " no longer looks members up: drop its entry");
         }
     }
 
@@ -187,6 +207,36 @@ class ArchitectureRulesSelfTest {
     static final class CopiesAnArrayReflectively {
         Object copy(Object array) {
             return java.lang.reflect.Array.newInstance(array.getClass().getComponentType(), 1);
+        }
+    }
+
+    static final class OpensAClassPrivately {
+        MethodHandle field(Class<?> owner, String name) throws ReflectiveOperationException {
+            return MethodHandles.privateLookupIn(owner, MethodHandles.lookup()).findGetter(owner, name, String.class);
+        }
+    }
+
+    static final class FindsAMethodByName {
+        MethodHandle method(Class<?> owner, String name) throws ReflectiveOperationException {
+            return MethodHandles.publicLookup().findVirtual(owner, name, MethodType.methodType(void.class));
+        }
+    }
+
+    static final class UnreflectsAConstructor {
+        MethodHandle constructor(Class<?> type) throws ReflectiveOperationException {
+            return MethodHandles.lookup().unreflectConstructor(type.getConstructor());
+        }
+    }
+
+    static final class DefinesAHiddenClass {
+        Class<?> define(byte[] bytes) throws IllegalAccessException {
+            return MethodHandles.lookup().defineHiddenClass(bytes, true).lookupClass();
+        }
+    }
+
+    static final class CombinesHandles {
+        MethodHandle ignoringItsFirstArgument(MethodHandle handle) {
+            return MethodHandles.dropArguments(handle, 0, Object.class);
         }
     }
 

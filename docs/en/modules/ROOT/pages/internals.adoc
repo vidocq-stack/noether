@@ -100,9 +100,23 @@ loader.
 checks their meta-annotations.
 |===
 
-The rule does not see `MethodHandles` lookups. The deep access of the start-time path (`Handles`, a private lookup
-into the package of an entity, a converter or an enum) goes through the access checks of Java Modules instead, which
-is why a package the processor did not serve must be opened to `io.vidocq.noether.jpa.core`.
+The shared rule does not see the `java.lang.invoke` route to the same members (Vidocq/vidocq-parent#34). Until it
+does, the local rule `NO_DEEP_LOOKUP` holds that route: a private lookup (`MethodHandles.privateLookupIn`), a member
+or a class found by name (`Lookup.find*`) or an unreflected member (`Lookup.unreflect*`) is allowed only in the
+reflective fallbacks above and in the classes that `ArchitectureRules.DEEP_LOOKUP_ADAPTERS` lists with their reason.
+Defining a hidden class, and combining or invoking method handles, stay free.
+
+[cols="2,3"]
+|===
+| Class | Why it looks members up
+
+| `Handles`
+| Creates the converter that `@Convert` names (§3.9) and reads the value field of an `@EnumeratedValue` enum through a
+private lookup in their package.
+|===
+
+That deep access, and the one of the start-time path into the package of an entity, goes through the access checks
+of Java Modules, which is why a package the processor did not serve must be opened to `io.vidocq.noether.jpa.core`.
 
 == From a query to the database
 

@@ -19,7 +19,19 @@
  */
 package io.vidocq.noether.tests.architecture;
 
+import static com.tngtech.archunit.core.domain.JavaCall.Predicates.target;
+import static com.tngtech.archunit.core.domain.JavaClass.Predicates.type;
+import static com.tngtech.archunit.core.domain.properties.HasName.Predicates.name;
+import static com.tngtech.archunit.core.domain.properties.HasName.Predicates.nameMatching;
+import static com.tngtech.archunit.core.domain.properties.HasOwner.Predicates.With.owner;
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
+
+import java.lang.invoke.MethodHandles;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import io.vidocq.archrules.Jdk;
@@ -29,6 +41,8 @@ import io.vidocq.archrules.PlatformThreads;
 import io.vidocq.archrules.ReflectionExceptions;
 import io.vidocq.archrules.VidocqArchRules;
 
+import com.tngtech.archunit.base.DescribedPredicate;
+import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.lang.ArchRule;
 
 /**
@@ -202,6 +216,57 @@ final class ArchitectureRules {
     static final ArchRule NO_REFLECTION = VidocqArchRules.noReflection(
             inClasses(REFLECTIVE_FALLBACKS),
             "workspace AGENTS.md, static code generation; internals.adoc, Reflective fallbacks");
+
+    /**
+     * The classes beyond the reflective fallbacks that reach a member of user code through {@code java.lang.invoke},
+     * each with its reason (internals.adoc, "Reflective fallbacks"). Nested classes share the entry of their
+     * top-level class.
+     */
+    static final Map<String, String> DEEP_LOOKUP_ADAPTERS = Map.of(
+            "io.vidocq.noether.jpa.core.access.Handles", "creates the converter that @Convert names (§3.9) and reads"
+                    + " the value field of an @EnumeratedValue enum through a private lookup in their package, which"
+                    + " the application opens to noether-jpa-core");
+
+    /**
+     * Workspace AGENTS.md, "Maximum static code generation": the {@code java.lang.invoke} route to the members of
+     * user code, which {@link #NO_REFLECTION} does not see (Vidocq/vidocq-parent#34). A private lookup
+     * ({@code MethodHandles.privateLookupIn}), a member or class found by name ({@code Lookup.find*}) or a
+     * reflective member turned into a handle ({@code Lookup.unreflect*}) is reflection under another name: only
+     * the reflective fallbacks and the {@link #DEEP_LOOKUP_ADAPTERS} use one. Defining a class
+     * ({@code Lookup.defineHiddenClass}) and combining or invoking handles stay free. Goes once the shared rule
+     * covers this route.
+     */
+    static final ArchRule NO_DEEP_LOOKUP = noDeepLookup(
+            Stream.concat(REFLECTIVE_FALLBACKS.keySet().stream(), DEEP_LOOKUP_ADAPTERS.keySet().stream())
+                    .collect(Collectors.toUnmodifiableSet()));
+
+    /** The deep-lookup rule, sparing the given top-level classes and their nested classes. */
+    static ArchRule noDeepLookup(Set<String> adapters) {
+        DescribedPredicate<JavaClass> notAnAdapter = DescribedPredicate.describe(
+                "are not a documented deep-lookup adapter", type -> !adapters.contains(topLevel(type).getName()));
+        return noClasses()
+                .that(notAnAdapter)
+                .should()
+                .callMethodWhere(target(owner(type(MethodHandles.class))).and(target(name("privateLookupIn"))))
+                .orShould()
+                .callMethodWhere(target(owner(type(MethodHandles.Lookup.class)))
+                        .and(target(nameMatching("find.*|unreflect.*"))))
+                .because("a private lookup, a member found by name or an unreflected member is reflection on user"
+                        + " code, kept to the documented adapters (" + String.join(", ", new TreeSet<>(adapters))
+                        + "); to document one, add it with its reason to DEEP_LOOKUP_ADAPTERS (workspace AGENTS.md,"
+                        + " static code generation; internals.adoc, Reflective fallbacks; local until"
+                        + " Vidocq/vidocq-parent#34)");
+    }
+
+    private static JavaClass topLevel(JavaClass type) {
+        JavaClass top = type;
+        Optional<JavaClass> enclosing = type.getEnclosingClass();
+        while (enclosing.isPresent()) {
+            top = enclosing.get();
+            enclosing = top.getEnclosingClass();
+        }
+        return top;
+    }
 
     /** Workspace AGENTS.md, "Virtual Threads everywhere for I/O". */
     static final ArchRule NO_PLATFORM_THREADS = VidocqArchRules.noPlatformThreads(

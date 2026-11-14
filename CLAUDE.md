@@ -20,9 +20,11 @@ module `noether-architecture-tests` runs the shared `vidocq-archrules` library o
 `vidocq-parent` (test scope, brings ArchUnit, Apache-2.0) on the classes of every
 shipped module (Vidocq/vidocq#289): allowed dependencies per module, layers, no
 foundational brick, Mansart's pool through its adapter only, no reflection outside
-the documented fallbacks, no platform thread, no `ThreadLocal`. Each entry of
-`ArchitectureRules.REFLECTIVE_FALLBACKS` carries its reason; never add one without
-it, and drop it once its class stops reflecting (the self-test fails otherwise).
+the documented fallbacks (nor its `java.lang.invoke` form: a private lookup, a
+member found by name), no platform thread, no `ThreadLocal`. Each entry of
+`ArchitectureRules.REFLECTIVE_FALLBACKS` and `DEEP_LOOKUP_ADAPTERS` carries its
+reason; never add one without it, and drop it once its class stops reflecting
+(the self-test fails otherwise).
 
 Keep production dependencies limited to specification APIs and the justified
 Vidocq integrations. Preserve official TCK inputs and fixture checksum guards.

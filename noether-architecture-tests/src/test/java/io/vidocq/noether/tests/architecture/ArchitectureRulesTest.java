@@ -73,6 +73,7 @@ class ArchitectureRulesTest {
                 named("FOUNDATIONAL_BRICKS", ArchitectureRules.FOUNDATIONAL_BRICKS),
                 named("MANSART_THROUGH_ITS_ADAPTER", ArchitectureRules.MANSART_THROUGH_ITS_ADAPTER),
                 named("NO_REFLECTION", ArchitectureRules.NO_REFLECTION),
+                named("NO_DEEP_LOOKUP", ArchitectureRules.NO_DEEP_LOOKUP),
                 named("NO_PLATFORM_THREADS", ArchitectureRules.NO_PLATFORM_THREADS),
                 named("NO_THREAD_LOCAL", ArchitectureRules.NO_THREAD_LOCAL));
     }
