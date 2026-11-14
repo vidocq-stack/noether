@@ -67,42 +67,57 @@ public final class BeanMetadata {
         List<PropertyMetadata> found = new ArrayList<>();
         Set<String> names = new LinkedHashSet<>();
         for (FieldModel field : model.fields()) {
-            if (isStaticOrSynthetic(field.flags().flagsMask())) {
-                continue;
-            }
-            names.add(field.fieldName().stringValue());
-            List<java.lang.classfile.Annotation> raw = field.findAttribute(Attributes.runtimeVisibleAnnotations())
-                .map(a -> a.annotations()).orElse(List.of());
-            List<ConstraintDef> constraints = constraintsOf(raw, loader);
-            boolean cascaded = hasValid(raw);
-            if (!constraints.isEmpty() || cascaded) {
-                String name = field.fieldName().stringValue();
-                found.add(new PropertyMetadata(type, name, PropertyMetadata.Kind.FIELD, name,
-                    ClassFiles.load(field.fieldTypeSymbol(), loader), cascaded, constraints));
+            if (!isStaticOrSynthetic(field.flags().flagsMask())) {
+                readField(type, field, loader, names, found);
             }
         }
         for (MethodModel method : model.methods()) {
-            int flags = method.flags().flagsMask();
-            if (isStaticOrSynthetic(flags) || (flags & ClassFile.ACC_BRIDGE) != 0 || method.methodTypeSymbol().parameterCount() != 0) {
-                continue;
-            }
-            Class<?> returnType = ClassFiles.load(method.methodTypeSymbol().returnType(), loader);
-            String propertyName = propertyName(method.methodName().stringValue(), returnType);
-            if (propertyName == null) {
-                continue;
-            }
-            names.add(propertyName);
-            List<java.lang.classfile.Annotation> raw = method.findAttribute(Attributes.runtimeVisibleAnnotations())
-                .map(a -> a.annotations()).orElse(List.of());
-            List<ConstraintDef> constraints = constraintsOf(raw, loader);
-            boolean cascaded = hasValid(raw);
-            if (!constraints.isEmpty() || cascaded) {
-                found.add(new PropertyMetadata(type, propertyName, PropertyMetadata.Kind.GETTER, method.methodName().stringValue(),
-                    returnType, cascaded, constraints));
+            if (mayBeGetter(method)) {
+                readGetter(type, method, loader, names, found);
             }
         }
         this.properties = List.copyOf(found);
         this.declaredPropertyNames = Set.copyOf(names);
+    }
+
+    /** Adds the name of a field to {@code names} and, when it is constrained or cascaded, its metadata to {@code found}. */
+    private static void readField(Class<?> type, FieldModel field, ClassLoader loader, Set<String> names,
+            List<PropertyMetadata> found) {
+        String name = field.fieldName().stringValue();
+        names.add(name);
+        List<java.lang.classfile.Annotation> raw = field.findAttribute(Attributes.runtimeVisibleAnnotations())
+            .map(a -> a.annotations()).orElse(List.of());
+        List<ConstraintDef> constraints = constraintsOf(raw, loader);
+        boolean cascaded = hasValid(raw);
+        if (!constraints.isEmpty() || cascaded) {
+            found.add(new PropertyMetadata(type, name, PropertyMetadata.Kind.FIELD, name,
+                ClassFiles.load(field.fieldTypeSymbol(), loader), cascaded, constraints));
+        }
+    }
+
+    /** An instance method without parameters, neither synthetic nor a bridge: a getter if its name says so. */
+    private static boolean mayBeGetter(MethodModel method) {
+        int flags = method.flags().flagsMask();
+        return !isStaticOrSynthetic(flags) && (flags & ClassFile.ACC_BRIDGE) == 0 && method.methodTypeSymbol().parameterCount() == 0;
+    }
+
+    /** Adds the property of a getter to {@code names} and, when it is constrained or cascaded, its metadata to {@code found}. */
+    private static void readGetter(Class<?> type, MethodModel method, ClassLoader loader, Set<String> names,
+            List<PropertyMetadata> found) {
+        Class<?> returnType = ClassFiles.load(method.methodTypeSymbol().returnType(), loader);
+        String propertyName = propertyName(method.methodName().stringValue(), returnType);
+        if (propertyName == null) {
+            return;
+        }
+        names.add(propertyName);
+        List<java.lang.classfile.Annotation> raw = method.findAttribute(Attributes.runtimeVisibleAnnotations())
+            .map(a -> a.annotations()).orElse(List.of());
+        List<ConstraintDef> constraints = constraintsOf(raw, loader);
+        boolean cascaded = hasValid(raw);
+        if (!constraints.isEmpty() || cascaded) {
+            found.add(new PropertyMetadata(type, propertyName, PropertyMetadata.Kind.GETTER, method.methodName().stringValue(),
+                returnType, cascaded, constraints));
+        }
     }
 
     public static BeanMetadata of(Class<?> type) {

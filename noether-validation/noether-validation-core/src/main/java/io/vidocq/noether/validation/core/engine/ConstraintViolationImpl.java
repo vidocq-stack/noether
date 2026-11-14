@@ -40,17 +40,17 @@ public final class ConstraintViolationImpl<T> implements ConstraintViolation<T> 
     private final Object invalidValue;
     private final ConstraintDescriptor<?> descriptor;
 
-    public ConstraintViolationImpl(String message, String messageTemplate, T rootBean, Class<T> rootBeanClass, Object leafBean,
-            Object[] executableParameters, Object executableReturnValue, Path propertyPath, Object invalidValue,
-            ConstraintDescriptor<?> descriptor) {
+    /** A violation of a bean: {@code message} interpolates the template of {@code draft}, reported at its path. */
+    ConstraintViolationImpl(String message, ViolationDraft draft, T rootBean, Class<T> rootBeanClass, Object leafBean,
+            Object invalidValue, ConstraintDescriptor<?> descriptor) {
         this.message = message;
-        this.messageTemplate = messageTemplate;
+        this.messageTemplate = draft.messageTemplate();
         this.rootBean = rootBean;
         this.rootBeanClass = rootBeanClass;
         this.leafBean = leafBean;
-        this.executableParameters = executableParameters;
-        this.executableReturnValue = executableReturnValue;
-        this.propertyPath = propertyPath;
+        this.executableParameters = null; // the violation of a bean: executable validation comes with V4
+        this.executableReturnValue = null;
+        this.propertyPath = draft.path();
         this.invalidValue = invalidValue;
         this.descriptor = descriptor;
     }

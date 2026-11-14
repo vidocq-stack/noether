@@ -104,7 +104,7 @@ abstract class GeneratedAnnotation implements Annotation {
     @Override
     public final String toString() {
         StringBuilder out = new StringBuilder("@").append(info.type().getCanonicalName()).append('(');
-        boolean single = values.length == 1 && info.members().get(0).name().equals("value");
+        boolean single = values.length == 1 && info.members().get(0).name().equals(AnnotationTypeInfo.VALUE);
         for (int i = 0; i < values.length; i++) {
             if (i > 0) {
                 out.append(", ");

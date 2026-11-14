@@ -40,6 +40,9 @@ import java.util.stream.Collectors;
  */
 final class AnnotationTypeInfo {
 
+    /** The member of a single-element annotation, and of a multi-valued constraint container. */
+    static final String VALUE = "value";
+
     /** One member of the annotation type; {@code defaultValue} is meaningful only if {@code hasDefault}. */
     record Member(String name, Class<?> type, boolean hasDefault, Object defaultValue) {
     }
@@ -55,12 +58,7 @@ final class AnnotationTypeInfo {
     private final Class<? extends Annotation> type;
     private final List<Member> members;
     private final Map<String, Integer> indexes;
-    private final ClassValue<MethodHandle[]> accessors = new ClassValue<>() {
-        @Override
-        protected MethodHandle[] computeValue(Class<?> ignored) {
-            return buildAccessors();
-        }
-    };
+    private final ClassValue<MethodHandle[]> accessors = new Accessors();
 
     private AnnotationTypeInfo(Class<? extends Annotation> type) {
         this.type = type;
@@ -79,7 +77,7 @@ final class AnnotationTypeInfo {
             found.add(new Member(method.methodName().stringValue(), returnType, defaultAttribute.isPresent(), defaultValue));
         }
         this.members = List.copyOf(found);
-        this.indexes = members.stream().collect(Collectors.toUnmodifiableMap(Member::name, m -> members.indexOf(m)));
+        this.indexes = members.stream().collect(Collectors.toUnmodifiableMap(Member::name, members::indexOf));
     }
 
     static AnnotationTypeInfo of(Class<? extends Annotation> type) {
@@ -122,25 +120,29 @@ final class AnnotationTypeInfo {
      * exported (or opened) to this module; a non-public annotation type needs {@code privateLookupIn},
      * i.e. its package opened to this module.
      */
-    private MethodHandle[] buildAccessors() {
-        Modules.canRead(type);
-        MethodHandle[] handles = new MethodHandle[members.size()];
-        try {
-            MethodHandles.Lookup lookup = MethodHandles.lookup();
-            for (int i = 0; i < handles.length; i++) {
-                Member member = members.get(i);
-                MethodType memberType = MethodType.methodType(member.type());
-                MethodHandle handle;
-                try {
-                    handle = lookup.findVirtual(type, member.name(), memberType);
-                } catch (IllegalAccessException notAccessible) {
-                    handle = MethodHandles.privateLookupIn(type, lookup).findVirtual(type, member.name(), memberType);
+    private final class Accessors extends ClassValue<MethodHandle[]> {
+        @Override
+        protected MethodHandle[] computeValue(Class<?> ignored) {
+            Modules.canRead(type);
+            MethodHandle[] handles = new MethodHandle[members.size()];
+            try {
+                MethodHandles.Lookup lookup = MethodHandles.lookup();
+                for (int i = 0; i < handles.length; i++) {
+                    handles[i] = accessor(lookup, members.get(i)).asType(MethodType.methodType(Object.class, Annotation.class));
                 }
-                handles[i] = handle.asType(MethodType.methodType(Object.class, Annotation.class));
+                return handles;
+            } catch (ReflectiveOperationException e) {
+                throw new ValidationException("Unable to access the members of " + type.getName(), e);
             }
-            return handles;
-        } catch (ReflectiveOperationException e) {
-            throw new ValidationException("Unable to access the members of " + type.getName(), e);
+        }
+
+        private MethodHandle accessor(MethodHandles.Lookup lookup, Member member) throws ReflectiveOperationException {
+            MethodType memberType = MethodType.methodType(member.type());
+            try {
+                return lookup.findVirtual(type, member.name(), memberType);
+            } catch (IllegalAccessException _) {
+                return MethodHandles.privateLookupIn(type, lookup).findVirtual(type, member.name(), memberType);
+            }
         }
     }
 

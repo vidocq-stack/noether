@@ -41,54 +41,61 @@ public final class NodeImpl implements Path.PropertyNode, Path.BeanNode, Path.Co
     private final List<Class<?>> parameterTypes;
     private final int parameterIndex;
 
-    private NodeImpl(String name, ElementKind kind, boolean inIterable, Integer index, Object key, Class<?> containerClass,
-            Integer typeArgumentIndex, List<Class<?>> parameterTypes, int parameterIndex) {
+    /** Where a node sits in a container: whether it is an element, at which index or key, of which container type. */
+    private record Position(boolean inIterable, Integer index, Object key, Class<?> containerClass, Integer typeArgumentIndex) {
+        /** Outside any container. */
+        static final Position NONE = new Position(false, null, null, null, null);
+    }
+
+    private NodeImpl(String name, ElementKind kind, Position position, List<Class<?>> parameterTypes, int parameterIndex) {
         this.name = name;
         this.kind = kind;
-        this.inIterable = inIterable;
-        this.index = index;
-        this.key = key;
-        this.containerClass = containerClass;
-        this.typeArgumentIndex = typeArgumentIndex;
+        this.inIterable = position.inIterable();
+        this.index = position.index();
+        this.key = position.key();
+        this.containerClass = position.containerClass();
+        this.typeArgumentIndex = position.typeArgumentIndex();
         this.parameterTypes = parameterTypes;
         this.parameterIndex = parameterIndex;
     }
 
     public static NodeImpl property(String name) {
-        return new NodeImpl(name, ElementKind.PROPERTY, false, null, null, null, null, null, -1);
+        return new NodeImpl(name, ElementKind.PROPERTY, Position.NONE, null, -1);
     }
 
     /** A bean node: the validated bean itself, whose name is {@code null}. */
     public static NodeImpl bean() {
-        return new NodeImpl(null, ElementKind.BEAN, false, null, null, null, null, null, -1);
+        return new NodeImpl(null, ElementKind.BEAN, Position.NONE, null, -1);
     }
 
     public static NodeImpl containerElement(String name, Class<?> containerClass, Integer typeArgumentIndex) {
-        return new NodeImpl(name, ElementKind.CONTAINER_ELEMENT, false, null, null, containerClass, typeArgumentIndex, null, -1);
+        return new NodeImpl(name, ElementKind.CONTAINER_ELEMENT, new Position(false, null, null, containerClass, typeArgumentIndex),
+            null, -1);
     }
 
     public static NodeImpl method(String name, List<Class<?>> parameterTypes) {
-        return new NodeImpl(name, ElementKind.METHOD, false, null, null, null, null, List.copyOf(parameterTypes), -1);
+        return new NodeImpl(name, ElementKind.METHOD, Position.NONE, List.copyOf(parameterTypes), -1);
     }
 
     public static NodeImpl constructor(String simpleName, List<Class<?>> parameterTypes) {
-        return new NodeImpl(simpleName, ElementKind.CONSTRUCTOR, false, null, null, null, null, List.copyOf(parameterTypes), -1);
+        return new NodeImpl(simpleName, ElementKind.CONSTRUCTOR, Position.NONE, List.copyOf(parameterTypes), -1);
     }
 
     public static NodeImpl parameter(String name, int parameterIndex) {
-        return new NodeImpl(name, ElementKind.PARAMETER, false, null, null, null, null, null, parameterIndex);
+        return new NodeImpl(name, ElementKind.PARAMETER, Position.NONE, null, parameterIndex);
     }
 
     public static NodeImpl returnValue() {
-        return new NodeImpl("<return value>", ElementKind.RETURN_VALUE, false, null, null, null, null, null, -1);
+        return new NodeImpl("<return value>", ElementKind.RETURN_VALUE, Position.NONE, null, -1);
     }
 
     public static NodeImpl crossParameter() {
-        return new NodeImpl("<cross-parameter>", ElementKind.CROSS_PARAMETER, false, null, null, null, null, null, -1);
+        return new NodeImpl("<cross-parameter>", ElementKind.CROSS_PARAMETER, Position.NONE, null, -1);
     }
 
     private NodeImpl copy(boolean inIterable, Integer index, Object key, Class<?> containerClass, Integer typeArgumentIndex) {
-        return new NodeImpl(name, kind, inIterable, index, key, containerClass, typeArgumentIndex, parameterTypes, parameterIndex);
+        return new NodeImpl(name, kind, new Position(inIterable, index, key, containerClass, typeArgumentIndex), parameterTypes,
+            parameterIndex);
     }
 
     /** The same node, marked as an element of a container: at {@code index} (list, array) or under {@code key} (map). */

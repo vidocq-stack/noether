@@ -94,27 +94,15 @@ final class ValidationRun<T> {
         }
     }
 
+    /** The class constraints of the whole hierarchy, then its property constraints, then its cascades. */
     private void validateBeanOnce(Object bean, Class<?> group, Cursor at) {
         List<BeanMetadata> hierarchy = BeanMetadata.hierarchy(bean.getClass());
         for (BeanMetadata metadata : hierarchy) {
-            for (ConstraintDef constraint : metadata.classConstraints()) {
-                if (appliesTo(constraint, group)) {
-                    Cursor beanNode = at.add(NodeImpl.bean());
-                    evaluate(constraint, bean, metadata.type(), at.path(), beanNode.path(), at.slot(), bean);
-                }
-            }
+            validateClassConstraints(bean, metadata, group, at);
         }
         for (BeanMetadata metadata : hierarchy) {
             for (PropertyMetadata property : metadata.properties()) {
-                if (property.constraints().stream().anyMatch(c -> appliesTo(c, group)) && isReachable(bean, property, at)) {
-                    Object value = property.get(bean);
-                    Cursor atProperty = at.add(NodeImpl.property(property.name()));
-                    for (ConstraintDef constraint : property.constraints()) {
-                        if (appliesTo(constraint, group)) {
-                            evaluate(constraint, value, property.valueType(), atProperty.path(), atProperty.path(), null, bean);
-                        }
-                    }
-                }
+                validateProperty(bean, property, group, at);
             }
         }
         for (BeanMetadata metadata : hierarchy) {
@@ -126,6 +114,29 @@ final class ValidationRun<T> {
         }
     }
 
+    private void validateClassConstraints(Object bean, BeanMetadata metadata, Class<?> group, Cursor at) {
+        for (ConstraintDef constraint : metadata.classConstraints()) {
+            if (appliesTo(constraint, group)) {
+                Cursor beanNode = at.add(NodeImpl.bean());
+                evaluate(constraint, bean, metadata.type(), at.path(), beanNode.path(), at.slot(), bean);
+            }
+        }
+    }
+
+    /** The constraints of one property in {@code group}; its value is read only when one applies and it is reachable. */
+    private void validateProperty(Object bean, PropertyMetadata property, Class<?> group, Cursor at) {
+        if (property.constraints().stream().noneMatch(c -> appliesTo(c, group)) || !isReachable(bean, property, at)) {
+            return;
+        }
+        Object value = property.get(bean);
+        Cursor atProperty = at.add(NodeImpl.property(property.name()));
+        for (ConstraintDef constraint : property.constraints()) {
+            if (appliesTo(constraint, group)) {
+                evaluate(constraint, value, property.valueType(), atProperty.path(), atProperty.path(), null, bean);
+            }
+        }
+    }
+
     /** {@code value} is the value of {@code property}; {@code at} is the path of the property. */
     private void cascade(Object value, PropertyMetadata property, Class<?> group, Cursor at) {
         if (value == null) {
@@ -133,35 +144,47 @@ final class ValidationRun<T> {
         }
         Class<?> declared = property.valueType();
         switch (value) {
-            case Map<?, ?> map -> {
-                for (Map.Entry<?, ?> entry : map.entrySet()) {
-                    if (entry.getValue() != null) {
-                        validateElement(entry.getValue(), group, at.into(new Slot(declared, 1, null, entry.getKey())));
-                    }
-                }
-            }
-            case List<?> list -> {
-                for (int i = 0; i < list.size(); i++) {
-                    if (list.get(i) != null) {
-                        validateElement(list.get(i), group, at.into(new Slot(declared, 0, i, null)));
-                    }
-                }
-            }
-            case Iterable<?> iterable -> {
-                for (Object element : iterable) {
-                    if (element != null) {
-                        validateElement(element, group, at.into(new Slot(declared, 0, null, null)));
-                    }
-                }
-            }
-            case Object[] array -> {
-                for (int i = 0; i < array.length; i++) {
-                    if (array[i] != null) {
-                        validateElement(array[i], group, at.into(new Slot(Object[].class, null, i, null)));
-                    }
-                }
-            }
+            case Map<?, ?> map -> cascadeValues(map, declared, group, at);
+            case List<?> list -> cascadeList(list, declared, group, at);
+            case Iterable<?> iterable -> cascadeIterable(iterable, declared, group, at);
+            case Object[] array -> cascadeArray(array, group, at);
             default -> validateElement(value, group, at);
+        }
+    }
+
+    /** The values of a cascaded map, each at the key of its entry. */
+    private void cascadeValues(Map<?, ?> map, Class<?> declared, Class<?> group, Cursor at) {
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            if (entry.getValue() != null) {
+                validateElement(entry.getValue(), group, at.into(new Slot(declared, 1, null, entry.getKey())));
+            }
+        }
+    }
+
+    /** The elements of a cascaded list, each at its index. */
+    private void cascadeList(List<?> list, Class<?> declared, Class<?> group, Cursor at) {
+        for (int i = 0; i < list.size(); i++) {
+            if (list.get(i) != null) {
+                validateElement(list.get(i), group, at.into(new Slot(declared, 0, i, null)));
+            }
+        }
+    }
+
+    /** The elements of a cascaded iterable that is not a list: they have no index. */
+    private void cascadeIterable(Iterable<?> iterable, Class<?> declared, Class<?> group, Cursor at) {
+        for (Object element : iterable) {
+            if (element != null) {
+                validateElement(element, group, at.into(new Slot(declared, 0, null, null)));
+            }
+        }
+    }
+
+    /** The elements of a cascaded array, each at its index. */
+    private void cascadeArray(Object[] array, Class<?> group, Cursor at) {
+        for (int i = 0; i < array.length; i++) {
+            if (array[i] != null) {
+                validateElement(array[i], group, at.into(new Slot(Object[].class, null, i, null)));
+            }
         }
     }
 
@@ -258,18 +281,24 @@ final class ValidationRun<T> {
         }
         boolean valid = composingValid && mainValid;
         if (!valid) {
-            if (constraint.isReportAsSingleViolation()) {
-                report(constraint, value, leafBean, new ViolationDraft(constraint.getMessageTemplate(), defaultPath));
-            } else {
-                for (Violation v : fromComposing) {
-                    report(v.constraint(), value, leafBean, v.draft());
-                }
-                for (ViolationDraft draft : mine) {
-                    report(constraint, value, leafBean, draft);
-                }
-            }
+            reportFailure(constraint, value, leafBean, defaultPath, fromComposing, mine);
         }
         return valid;
+    }
+
+    /** One violation for a constraint reported as a single one, else those of its composing constraints and its own. */
+    private void reportFailure(ConstraintDef constraint, Object value, Object leafBean, PathImpl defaultPath,
+            List<Violation> fromComposing, List<ViolationDraft> mine) {
+        if (constraint.isReportAsSingleViolation()) {
+            report(constraint, value, leafBean, new ViolationDraft(constraint.getMessageTemplate(), defaultPath));
+            return;
+        }
+        for (Violation v : fromComposing) {
+            report(v.constraint(), value, leafBean, v.draft());
+        }
+        for (ViolationDraft draft : mine) {
+            report(constraint, value, leafBean, draft);
+        }
     }
 
     private record Violation(ConstraintDef constraint, ViolationDraft draft) {
@@ -308,7 +337,7 @@ final class ValidationRun<T> {
         } finally {
             try {
                 components.constraintValidatorFactory().releaseInstance(validator);
-            } catch (RuntimeException ignored) {
+            } catch (RuntimeException _) {
                 // releasing is best effort
             }
         }
@@ -339,8 +368,7 @@ final class ValidationRun<T> {
         } catch (RuntimeException e) {
             throw new ValidationException("Unable to interpolate the message " + draft.messageTemplate(), e);
         }
-        violations.add(new ConstraintViolationImpl<>(message, draft.messageTemplate(), rootBean, rootBeanClass, leafBean, null, null,
-            draft.path(), value, constraint));
+        violations.add(new ConstraintViolationImpl<>(message, draft, rootBean, rootBeanClass, leafBean, value, constraint));
     }
 
     /** What a message interpolator learns about the violation being reported. */

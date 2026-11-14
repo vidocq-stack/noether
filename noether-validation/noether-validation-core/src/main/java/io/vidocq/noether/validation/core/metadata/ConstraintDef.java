@@ -79,44 +79,62 @@ public final class ConstraintDef implements ConstraintDescriptor<Annotation> {
     public static List<ConstraintDef> fromRaw(List<java.lang.classfile.Annotation> raw, ClassLoader loader) {
         List<ConstraintDef> defs = new ArrayList<>();
         for (java.lang.classfile.Annotation annotation : raw) {
-            Class<?> type;
-            try {
-                type = ClassFiles.load(annotation.classSymbol(), loader);
-            } catch (ValidationException | LinkageError absent) {
-                continue;
+            Optional<Class<? extends Annotation>> type = annotationType(annotation, loader);
+            if (type.isPresent()) {
+                addConstraints(annotation, type.get(), loader, defs);
             }
-            if (!type.isAnnotation()) {
-                continue;
-            }
-            Class<? extends Annotation> annotationType = (Class<? extends Annotation>) type;
-            Optional<ConstraintTypeInfo> typeInfo = ConstraintTypeInfo.of(annotationType);
-            if (typeInfo.isPresent()) {
-                defs.add(new ConstraintDef(AnnotationFactory.of(annotation, loader), typeInfo.get()));
-            } else if (isContainer(annotationType)) {
-                for (java.lang.classfile.AnnotationElement element : annotation.elements()) {
-                    if (element.name().stringValue().equals("value") && element.value() instanceof AnnotationValue.OfArray array) {
-                        List<java.lang.classfile.Annotation> contained = new ArrayList<>();
-                        for (AnnotationValue value : array.values()) {
-                            if (value instanceof AnnotationValue.OfAnnotation nested) {
-                                contained.add(nested.annotation());
-                            }
-                        }
-                        defs.addAll(fromRaw(contained, loader));
+        }
+        return defs;
+    }
+
+    /** The type of a raw annotation; empty when that class cannot be loaded or is not an annotation type. */
+    @SuppressWarnings("unchecked")
+    private static Optional<Class<? extends Annotation>> annotationType(java.lang.classfile.Annotation annotation,
+            ClassLoader loader) {
+        Class<?> type;
+        try {
+            type = ClassFiles.load(annotation.classSymbol(), loader);
+        } catch (ValidationException | LinkageError _) {
+            return Optional.empty();
+        }
+        return type.isAnnotation() ? Optional.of((Class<? extends Annotation>) type) : Optional.empty();
+    }
+
+    /** Adds the constraint a raw annotation is, or the constraints it holds when it is a multi-valued container. */
+    private static void addConstraints(java.lang.classfile.Annotation annotation, Class<? extends Annotation> annotationType,
+            ClassLoader loader, List<ConstraintDef> defs) {
+        Optional<ConstraintTypeInfo> typeInfo = ConstraintTypeInfo.of(annotationType);
+        if (typeInfo.isPresent()) {
+            defs.add(new ConstraintDef(AnnotationFactory.of(annotation, loader), typeInfo.get()));
+        } else if (isContainer(annotationType)) {
+            defs.addAll(fromRaw(contained(annotation), loader));
+        }
+    }
+
+    /** The annotations the {@code value} array of a container holds. */
+    private static List<java.lang.classfile.Annotation> contained(java.lang.classfile.Annotation container) {
+        List<java.lang.classfile.Annotation> contained = new ArrayList<>();
+        for (java.lang.classfile.AnnotationElement element : container.elements()) {
+            if (element.name().stringValue().equals(AnnotationTypeInfo.VALUE)
+                    && element.value() instanceof AnnotationValue.OfArray array) {
+                for (AnnotationValue value : array.values()) {
+                    if (value instanceof AnnotationValue.OfAnnotation nested) {
+                        contained.add(nested.annotation());
                     }
                 }
             }
         }
-        return defs;
+        return contained;
     }
 
     /** A multi-valued container: {@code value()} returns an array of constraint annotations. */
     @SuppressWarnings("unchecked")
     private static boolean isContainer(Class<? extends Annotation> type) {
         AnnotationTypeInfo info = AnnotationTypeInfo.of(type);
-        if (!info.hasMember("value")) {
+        if (!info.hasMember(AnnotationTypeInfo.VALUE)) {
             return false;
         }
-        Class<?> value = info.member("value").type();
+        Class<?> value = info.member(AnnotationTypeInfo.VALUE).type();
         return value.isArray() && value.getComponentType().isAnnotation()
             && ConstraintTypeInfo.of((Class<? extends Annotation>) value.getComponentType()).isPresent();
     }

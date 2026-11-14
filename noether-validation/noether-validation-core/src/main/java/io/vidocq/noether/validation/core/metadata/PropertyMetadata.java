@@ -91,9 +91,7 @@ public final class PropertyMetadata {
     public Object get(Object bean) {
         try {
             return handle().invoke(bean);
-        } catch (Error e) {
-            throw e;
-        } catch (ValidationException e) {
+        } catch (Error | ValidationException e) {
             throw e;
         } catch (Throwable e) {
             throw new ValidationException("Unable to read " + declaringClass.getName() + "." + memberName, e);
@@ -115,16 +113,21 @@ public final class PropertyMetadata {
      */
     private MethodHandle resolve() {
         Modules.canRead(declaringClass);
-        MethodHandles.Lookup own = MethodHandles.lookup();
         try {
-            try {
-                return find(own).asType(MethodType.methodType(Object.class, Object.class));
-            } catch (IllegalAccessException notAccessible) {
-                return find(MethodHandles.privateLookupIn(declaringClass, own)).asType(MethodType.methodType(Object.class, Object.class));
-            }
+            return lookUp().asType(MethodType.methodType(Object.class, Object.class));
         } catch (ReflectiveOperationException e) {
             throw new ValidationException("Unable to access " + declaringClass.getName() + "." + memberName
                 + ": its package must be opened to " + PropertyMetadata.class.getModule().getName(), e);
+        }
+    }
+
+    /** The member through our own lookup, else through a private lookup of its declaring class. */
+    private MethodHandle lookUp() throws ReflectiveOperationException {
+        MethodHandles.Lookup own = MethodHandles.lookup();
+        try {
+            return find(own);
+        } catch (IllegalAccessException _) {
+            return find(MethodHandles.privateLookupIn(declaringClass, own));
         }
     }
 

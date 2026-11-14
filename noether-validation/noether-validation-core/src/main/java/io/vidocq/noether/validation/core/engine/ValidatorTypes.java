@@ -58,30 +58,41 @@ final class ValidatorTypes {
             return null;
         }
         ClassLoader loader = type.getClassLoader();
-        java.util.ArrayList<Signature.ClassTypeSig> supertypes = new java.util.ArrayList<>();
-        if (signature.superclassSignature() != null) {
-            supertypes.add(signature.superclassSignature());
-        }
-        supertypes.addAll(signature.superinterfaceSignatures());
-        for (Signature.ClassTypeSig supertype : supertypes) {
+        for (Signature.ClassTypeSig supertype : supertypes(signature)) {
             Class<?> raw = load(supertype, loader);
             if (raw == ConstraintValidator.class) {
                 return supertype.typeArgs().size() < 2 ? Object.class : argument(supertype.typeArgs().get(1), bindings, loader);
             }
             if (ConstraintValidator.class.isAssignableFrom(raw)) {
-                Map<String, Class<?>> inner = new HashMap<>();
-                List<Signature.TypeParam> parameters = io.vidocq.noether.validation.core.metadata.Classes.parse(raw)
-                    .findAttribute(Attributes.signature()).map(a -> a.asClassSignature().typeParameters()).orElse(List.of());
-                for (int i = 0; i < parameters.size() && i < supertype.typeArgs().size(); i++) {
-                    inner.put(parameters.get(i).identifier(), argument(supertype.typeArgs().get(i), bindings, loader));
-                }
-                Class<?> found = search(raw, inner);
+                Class<?> found = search(raw, bindings(raw, supertype, bindings, loader));
                 if (found != null) {
                     return found;
                 }
             }
         }
         return null;
+    }
+
+    /** The superclass, if any, then the interfaces of a class signature. */
+    private static List<Signature.ClassTypeSig> supertypes(ClassSignature signature) {
+        java.util.ArrayList<Signature.ClassTypeSig> supertypes = new java.util.ArrayList<>();
+        if (signature.superclassSignature() != null) {
+            supertypes.add(signature.superclassSignature());
+        }
+        supertypes.addAll(signature.superinterfaceSignatures());
+        return supertypes;
+    }
+
+    /** The classes {@code supertype} binds to the type parameters of {@code raw}, its type variables read in {@code outer}. */
+    private static Map<String, Class<?>> bindings(Class<?> raw, Signature.ClassTypeSig supertype, Map<String, Class<?>> outer,
+            ClassLoader loader) {
+        Map<String, Class<?>> inner = new HashMap<>();
+        List<Signature.TypeParam> parameters = io.vidocq.noether.validation.core.metadata.Classes.parse(raw)
+            .findAttribute(Attributes.signature()).map(a -> a.asClassSignature().typeParameters()).orElse(List.of());
+        for (int i = 0; i < parameters.size() && i < supertype.typeArgs().size(); i++) {
+            inner.put(parameters.get(i).identifier(), argument(supertype.typeArgs().get(i), outer, loader));
+        }
+        return inner;
     }
 
     private static Class<?> argument(Signature.TypeArg argument, Map<String, Class<?>> bindings, ClassLoader loader) {

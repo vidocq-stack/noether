@@ -30,19 +30,10 @@ import jakarta.validation.executable.ExecutableValidator;
 import jakarta.validation.metadata.BeanDescriptor;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Function;
 
 /** The {@link Validator}: beans, properties and values. Executables and the metadata API come later. */
-public final class ValidatorImpl implements Validator {
-
-    private final Components components;
-
-    public ValidatorImpl(Components components) {
-        this.components = components;
-    }
-
-    public Components components() {
-        return components;
-    }
+public record ValidatorImpl(Components components) implements Validator {
 
     @Override
     @SuppressWarnings("unchecked")
@@ -86,28 +77,35 @@ public final class ValidatorImpl implements Validator {
         if (hierarchy.stream().noneMatch(m -> m.declaredPropertyNames().contains(propertyName))) {
             throw new IllegalArgumentException("The type " + type.getName() + " has no property " + propertyName);
         }
+        List<PropertyMetadata> named = hierarchy.stream().flatMap(m -> m.properties().stream())
+            .filter(p -> p.name().equals(propertyName)).toList();
+        Function<PropertyMetadata, Object> valueOf = explicit ? _ -> given : p -> p.get(bean);
         ValidationRun<T> run = new ValidationRun<>(components, bean, type);
         PathImpl path = PathImpl.root().add(NodeImpl.property(propertyName));
         for (Class<?> group : requested) {
-            for (BeanMetadata metadata : hierarchy) {
-                for (PropertyMetadata property : metadata.properties()) {
-                    if (!property.name().equals(propertyName)) {
-                        continue;
-                    }
-                    if (property.constraints().stream().noneMatch(c -> ValidationRun.appliesTo(c, group))
-                            || !ValidationRun.isReachable(bean, property, PathImpl.root(), components, type)) {
-                        continue;
-                    }
-                    for (ConstraintDef constraint : property.constraints()) {
-                        if (ValidationRun.appliesTo(constraint, group)) {
-                            Object value = explicit ? given : property.get(bean);
-                            run.evaluate(constraint, value, property.valueType(), path, path, null, bean);
-                        }
-                    }
+            for (PropertyMetadata property : named) {
+                if (inGroupAndReachable(bean, type, property, group)) {
+                    evaluate(run, property, group, valueOf, path, bean);
                 }
             }
         }
         return run.violations();
+    }
+
+    /** Whether a constraint of {@code property} is in {@code group} and the traversable resolver reaches it. */
+    private <T> boolean inGroupAndReachable(T bean, Class<T> type, PropertyMetadata property, Class<?> group) {
+        return property.constraints().stream().anyMatch(c -> ValidationRun.appliesTo(c, group))
+            && ValidationRun.isReachable(bean, property, PathImpl.root(), components, type);
+    }
+
+    /** Evaluates the constraints of {@code property} in {@code group}, reading its value for each one. */
+    private static <T> void evaluate(ValidationRun<T> run, PropertyMetadata property, Class<?> group,
+            Function<PropertyMetadata, Object> valueOf, PathImpl path, Object bean) {
+        for (ConstraintDef constraint : property.constraints()) {
+            if (ValidationRun.appliesTo(constraint, group)) {
+                run.evaluate(constraint, valueOf.apply(property), property.valueType(), path, path, null, bean);
+            }
+        }
     }
 
     @Override

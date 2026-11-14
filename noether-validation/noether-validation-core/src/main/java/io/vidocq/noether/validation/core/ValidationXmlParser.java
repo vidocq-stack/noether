@@ -70,6 +70,25 @@ final class ValidationXmlParser {
     }
 
     private static XmlBootstrapConfiguration read(XMLStreamReader r) throws XMLStreamException {
+        moveToRoot(r);
+        checkVersion(r.getNamespaceURI(), r.getAttributeValue(null, "version"));
+        Contents contents = new Contents();
+        while (r.hasNext()) {
+            int event = r.next();
+            if (event == XMLStreamConstants.DTD) {
+                throw new ValidationException("A DTD is not allowed in validation.xml");
+            }
+            if (event == XMLStreamConstants.START_ELEMENT) {
+                contents.read(r);
+            } else if (event == XMLStreamConstants.END_ELEMENT && ROOT.equals(r.getLocalName())) {
+                break;
+            }
+        }
+        return contents.configuration();
+    }
+
+    /** Moves the reader to the root element, which must be {@code <validation-config>}; a DTD before it is rejected. */
+    private static void moveToRoot(XMLStreamReader r) throws XMLStreamException {
         while (r.hasNext() && r.getEventType() != XMLStreamConstants.START_ELEMENT) {
             if (r.next() == XMLStreamConstants.DTD) {
                 throw new ValidationException("A DTD is not allowed in validation.xml");
@@ -78,31 +97,24 @@ final class ValidationXmlParser {
         if (r.getEventType() != XMLStreamConstants.START_ELEMENT || !ROOT.equals(r.getLocalName())) {
             throw new ValidationException("validation.xml must have a <" + ROOT + "> root element");
         }
-        checkVersion(r.getNamespaceURI(), r.getAttributeValue(null, "version"));
+    }
 
-        String provider = null;
-        String validatorFactory = null;
-        String interpolator = null;
-        String resolver = null;
-        String parameterNames = null;
-        String clock = null;
-        Set<String> extractors = new HashSet<>();
-        Set<String> mappings = new HashSet<>();
-        Map<String, String> properties = new HashMap<>();
-        boolean executableEnabled = true;
-        Set<ExecutableType> executableTypes = XmlBootstrapConfiguration.DEFAULT_EXECUTABLE_TYPES;
+    /** What the child elements of {@code <validation-config>} declare, read one element at a time. */
+    private static final class Contents {
+        private String provider;
+        private String validatorFactory;
+        private String interpolator;
+        private String resolver;
+        private String parameterNames;
+        private String clock;
+        private final Set<String> extractors = new HashSet<>();
+        private final Set<String> mappings = new HashSet<>();
+        private final Map<String, String> properties = new HashMap<>();
+        private boolean executableEnabled = true;
+        private Set<ExecutableType> executableTypes = XmlBootstrapConfiguration.DEFAULT_EXECUTABLE_TYPES;
 
-        while (r.hasNext()) {
-            int event = r.next();
-            if (event == XMLStreamConstants.DTD) {
-                throw new ValidationException("A DTD is not allowed in validation.xml");
-            }
-            if (event == XMLStreamConstants.END_ELEMENT && ROOT.equals(r.getLocalName())) {
-                break;
-            }
-            if (event != XMLStreamConstants.START_ELEMENT) {
-                continue;
-            }
+        /** Reads the element the reader is on. */
+        void read(XMLStreamReader r) throws XMLStreamException {
             switch (r.getLocalName()) {
                 case "default-provider" -> provider = r.getElementText().strip();
                 case "message-interpolator" -> interpolator = r.getElementText().strip();
@@ -129,8 +141,11 @@ final class ValidationXmlParser {
                 }
             }
         }
-        return new XmlBootstrapConfiguration(provider, validatorFactory, interpolator, resolver, parameterNames,
-            clock, extractors, mappings, executableEnabled, executableTypes, properties);
+
+        XmlBootstrapConfiguration configuration() {
+            return new XmlBootstrapConfiguration(provider, validatorFactory, interpolator, resolver, parameterNames,
+                clock, extractors, mappings, executableEnabled, executableTypes, properties);
+        }
     }
 
     /**
