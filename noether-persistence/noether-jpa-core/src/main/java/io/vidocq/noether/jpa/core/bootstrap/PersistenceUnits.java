@@ -160,9 +160,8 @@ public final class PersistenceUnits {
 
     /**
      * The sources of the module layer of Noether (and its parents), those of Noether's own class loader, then those of
-     * the application's, each once. Noether's loader serves a build tool that runs Noether on its own class path and
-     * hands it a loader that lists the resources of the application alone: the sources of the runtime sit next to
-     * Noether there ({@code vidocq:generate}).
+     * the application's, each once. Noether's loader serves a build tool that runs Noether on its own class path, with
+     * the sources of its runtime, and hands it a loader that lists the resources of the application alone.
      */
     private static List<PersistenceUnitSource> sources(ClassLoader loader) {
         try {

@@ -88,7 +88,7 @@ public final class PersistenceUnitDeclaration {
      *
      * @param name the name of the unit
      * @param origin where the declaration comes from, as an error message names it (the
-     *        {@code vidocq.persistence."ledger".* keys}, for instance)
+     *        {@code vidocq.persistence.ledger.*} keys, for instance)
      */
     public static Builder builder(String name, String origin) {
         return new Builder(name, origin);

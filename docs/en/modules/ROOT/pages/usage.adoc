@@ -59,10 +59,10 @@ The properties of a unit come from its `<properties>`, overridden by the map pas
 A runtime can declare units from its own configuration, beside the `persistence.xml` files: it implements
 `io.vidocq.noether.jpa.core.spi.PersistenceUnitSource` and provides it, with `provides ... with ...` in its
 `module-info.java` or a `META-INF/services` entry on the class path. Noether finds the sources in its own module
-layer, in its own class loader (a build tool that runs Noether on its class path, as `vidocq:generate` does), then
-through the application's class loader. Noether reads no key of any runtime. It asks every source wherever it looks
+layer, in its own class loader (for a build tool that runs Noether on its own class path and hands it a loader of the
+application's files alone), then through the application's class loader. Noether reads no key of any runtime. It asks every source wherever it looks
 for units, in the provider and in `noether-jpa-cdi`. The Vidocq runtime declares the
-units of its `vidocq.persistence."<unit>".*` keys this way (Vidocq/vidocq#551).
+units of its `vidocq.persistence.<unit>.*` keys this way (Vidocq/vidocq#551).
 
 A source returns one `PersistenceUnitDeclaration` per unit. Its attributes fall in two groups:
 

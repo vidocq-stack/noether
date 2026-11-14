@@ -23,7 +23,7 @@ import java.util.List;
 
 /**
  * A source of persistence units besides the {@code META-INF/persistence.xml} files: a runtime declares units from its
- * own configuration, the Vidocq runtime from its {@code vidocq.persistence."<unit>".*} keys for instance. Noether knows
+ * own configuration, the Vidocq runtime from its {@code vidocq.persistence.<unit>.*} keys for instance. Noether knows
  * no key of any runtime: it merges what the sources return with the units of the files, wherever it looks for units
  * (the provider, {@link PersistenceDescriptors}).
  *
