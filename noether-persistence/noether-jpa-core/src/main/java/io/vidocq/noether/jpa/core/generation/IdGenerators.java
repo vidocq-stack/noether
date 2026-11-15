@@ -35,6 +35,7 @@ import io.vidocq.noether.jpa.dialect.sql.NextValue;
 import io.vidocq.noether.jpa.dialect.sql.Select;
 import io.vidocq.noether.jpa.dialect.sql.Table;
 import jakarta.persistence.GenerationType;
+import jakarta.persistence.PersistenceConfiguration;
 import jakarta.persistence.PersistenceException;
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -84,15 +85,34 @@ public final class IdGenerators {
         long[] block(Connection caller) throws SQLException;
     }
 
+    /** A block the database could not hand out; {@link #next} names the entity, the strategy and the ways out. */
+    private static final class AllocationFailure extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
+        private final String source;
+        private final String kind;
+
+        AllocationFailure(String source, String kind, SQLException cause) {
+            super(cause);
+            this.source = source;
+            this.kind = kind;
+        }
+    }
+
     /** Hands out the values of blocks, lock-free. */
     private static final class Blocks implements Generator {
         private record Block(long next, long last) {
         }
 
         private final AtomicReference<Block> current = new AtomicReference<>();
+        private final String source;
+        private final String kind;
         private final Fetch fetch;
 
-        Blocks(Fetch fetch) {
+        /** {@code source} says where the blocks come from, {@code kind} what to create: a sequence or a table. */
+        Blocks(String source, String kind, Fetch fetch) {
+            this.source = source;
+            this.kind = kind;
             this.fetch = fetch;
         }
 
@@ -114,7 +134,7 @@ public final class IdGenerators {
                 try {
                     fresh = fetch.block(caller); // the round trip, outside any critical section
                 } catch (SQLException e) {
-                    throw new PersistenceException("Unable to generate an identifier: " + e.getMessage(), e);
+                    throw new AllocationFailure(source, kind, e);
                 }
                 current.compareAndSet(block, new Block(fresh[0] + 1, fresh[1])); // else another block won: keep ours
                 return fresh[0];
@@ -249,7 +269,38 @@ public final class IdGenerators {
         IdModel.Single id = (IdModel.Single) type.model().id();
         Class<?> idType = id.attribute().javaType();
         GenerationModel generation = id.generation().orElseThrow();
-        return generator(generation, idType).next(caller, idType);
+        try {
+            return generator(generation, idType).next(caller, idType);
+        } catch (AllocationFailure failure) {
+            throw new PersistenceException("Unable to generate the identifier of " + type.model().entityName()
+                + ": GenerationType." + generation.strategy() + " allocates from " + failure.source
+                + ", which failed: " + failure.getCause().getMessage() + ". " + remedy(failure.kind, generation.strategy()),
+                failure.getCause());
+        }
+    }
+
+    /**
+     * The ways out of a failed allocation: create the sequence or table, let schema generation create it, and for
+     * {@code AUTO} — a generator table, unless a sequence is named — an identifier the database generates itself.
+     */
+    private static String remedy(String kind, GenerationType strategy) {
+        String create = "Create that " + kind + ", or let schema generation create it ("
+            + PersistenceConfiguration.SCHEMAGEN_DATABASE_ACTION + ")";
+        if (strategy == GenerationType.AUTO) {
+            return create + ", or map an identifier the database generates with GenerationType.IDENTITY.";
+        }
+        return create + ".";
+    }
+
+    /** {@code name}, after its schema and catalog when the generator names them. */
+    private static String qualified(String catalog, String schema, String name) {
+        StringBuilder qualified = new StringBuilder();
+        for (String part : new String[] {catalog, schema}) {
+            if (part != null && !part.isEmpty()) {
+                qualified.append(part).append('.');
+            }
+        }
+        return qualified.append(name).toString();
     }
 
     private Generator generator(GenerationModel generation, Class<?> idType) {
@@ -289,7 +340,8 @@ public final class IdGenerators {
         String name = model.sequenceName() != null ? model.sequenceName() : model.name();
         String sql = dialect.render(new NextValue(identifier(name), identifier(model.schema()), identifier(model.catalog())));
         int allocation = Math.max(1, model.allocationSize());
-        return generators.computeIfAbsent("sequence:" + sql, k -> new Blocks(caller -> {
+        String source = "the sequence " + qualified(model.catalog(), model.schema(), name);
+        return generators.computeIfAbsent("sequence:" + sql, k -> new Blocks(source, "sequence", caller -> {
             try (PreparedStatement next = caller.prepareStatement(sql); ResultSet value = next.executeQuery()) {
                 value.next();
                 long first = value.getLong(1);
@@ -304,17 +356,21 @@ public final class IdGenerators {
      * row is created at {@code initialValue}.
      */
     private Generator table(TableGeneratorModel model) {
-        Table table = new Table(identifier(model.table() != null ? model.table() : "SEQUENCE"), identifier(model.schema()),
-            identifier(model.catalog()));
-        Identifier key = identifier(model.pkColumnName() != null ? model.pkColumnName() : "SEQ_NAME");
-        Identifier value = identifier(model.valueColumnName() != null ? model.valueColumnName() : "SEQ_COUNT");
+        String tableName = model.table() != null ? model.table() : "SEQUENCE";
+        String keyName = model.pkColumnName() != null ? model.pkColumnName() : "SEQ_NAME";
+        String valueName = model.valueColumnName() != null ? model.valueColumnName() : "SEQ_COUNT";
+        Table table = new Table(identifier(tableName), identifier(model.schema()), identifier(model.catalog()));
+        Identifier key = identifier(keyName);
+        Identifier value = identifier(valueName);
         String row = rowName(model);
+        String source = "the generator table " + qualified(model.catalog(), model.schema(), tableName) + " (columns "
+            + keyName + ", " + valueName + "), row " + row;
         String increment = dialect.render(new Increment(table, value, key));
         String select = dialect.render(new Select(table, List.of(value), List.of(key)));
         String insert = dialect.render(new Insert(table, List.of(key, value), null));
         int allocation = Math.max(1, model.allocationSize());
         int initial = model.initialValue();
-        return generators.computeIfAbsent("table:" + increment + "/" + row, k -> new Blocks(caller -> {
+        return generators.computeIfAbsent("table:" + increment + "/" + row, k -> new Blocks(source, "table", caller -> {
             try (Connection own = allocations.acquire()) {
                 own.setAutoCommit(false);
                 try {

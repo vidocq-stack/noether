@@ -20,14 +20,17 @@
 package io.vidocq.noether.jpa.core.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.vidocq.noether.jpa.core.model.build.fixtures.Account;
 import io.vidocq.noether.jpa.core.model.build.fixtures.Badge;
 import io.vidocq.noether.jpa.core.model.build.fixtures.Stamp;
+import io.vidocq.noether.jpa.core.model.build.fixtures.Coupon;
 import io.vidocq.noether.jpa.core.model.build.fixtures.Token;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.PersistenceConfiguration;
+import jakarta.persistence.PersistenceException;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -69,6 +72,7 @@ class IdGenerationTest {
         }
         emf = new PersistenceConfiguration("ids").provider("io.vidocq.noether.jpa.core.NoetherPersistenceProvider")
             .managedClass(Account.class).managedClass(Badge.class).managedClass(Token.class).managedClass(Stamp.class)
+            .managedClass(Coupon.class)
             .property(PersistenceConfiguration.JDBC_URL, url).property(PersistenceConfiguration.JDBC_USER, "sa")
             .createEntityManagerFactory();
     }
@@ -134,6 +138,57 @@ class IdGenerationTest {
         em.getTransaction().commit();
         assertThat(stamp.id()).isEqualTo(1L);
         assertThat(scalar("select SEQ_COUNT from SEQUENCE where SEQ_NAME = 'SEQ_GEN'")).isEqualTo(50);
+    }
+
+    /** BUG-20261115-01: the failure names the strategy, the generator table and its row, and the ways out. */
+    @Test
+    void anAutoIdentifierWithoutItsGeneratorTableNamesTheTableAndTheWaysOut() throws SQLException {
+        try (Statement ddl = database.createStatement()) {
+            ddl.execute("drop table SEQUENCE");
+        }
+        EntityManager em = emf.createEntityManager();
+        em.getTransaction().begin();
+        Stamp stamp = new Stamp();
+
+        assertThatThrownBy(() -> em.persist(stamp))
+            .isInstanceOf(PersistenceException.class)
+            .hasMessageContaining("identifier of Stamp")
+            .hasMessageContaining("GenerationType.AUTO allocates from the generator table SEQUENCE (columns SEQ_NAME, "
+                + "SEQ_COUNT), row SEQ_GEN")
+            .hasMessageContaining("jakarta.persistence.schema-generation.database.action")
+            .hasMessageContaining("GenerationType.IDENTITY");
+        em.getTransaction().rollback();
+    }
+
+    @Test
+    void aSequenceThatDoesNotExistIsNamedInTheFailure() throws SQLException {
+        try (Statement ddl = database.createStatement()) {
+            ddl.execute("drop sequence ACCT_SEQ");
+        }
+        EntityManager em = emf.createEntityManager();
+        em.getTransaction().begin();
+        Account account = new Account();
+
+        assertThatThrownBy(() -> em.persist(account))
+            .isInstanceOf(PersistenceException.class)
+            .hasMessageContaining("GenerationType.SEQUENCE allocates from the sequence ACCT_SEQ")
+            .hasMessageContaining("jakarta.persistence.schema-generation.database.action")
+            .hasMessageNotContaining("GenerationType.IDENTITY");
+        em.getTransaction().rollback();
+    }
+
+    @Test
+    void aGeneratorTableIsNamedAfterItsSchema() {
+        EntityManager em = emf.createEntityManager();
+        em.getTransaction().begin();
+        Coupon coupon = new Coupon();
+
+        assertThatThrownBy(() -> em.persist(coupon))
+            .isInstanceOf(PersistenceException.class)
+            .hasMessageContaining("GenerationType.TABLE allocates from the generator table BANK.COUPON_IDS (columns "
+                + "SEQ_NAME, SEQ_COUNT), row coupon_ids")
+            .hasMessageNotContaining("GenerationType.IDENTITY");
+        em.getTransaction().rollback();
     }
 
     @Test
