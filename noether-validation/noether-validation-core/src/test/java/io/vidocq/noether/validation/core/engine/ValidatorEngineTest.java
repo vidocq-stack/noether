@@ -421,6 +421,40 @@ class ValidatorEngineTest {
         }
     }
 
+    public static class Child {
+        @NotNull
+        public String name;
+    }
+
+    public static class Holder {
+        @jakarta.validation.Valid
+        public Child a;
+        @jakarta.validation.Valid
+        public Child b;
+    }
+
+    /** BUG-20261018-01: the resolver's answer depends on the path, so a shared instance is asked again at each path. */
+    @Test
+    void aSharedCascadedInstanceIsReachableOrNotAtEachPathOnItsOwn() {
+        try (ValidatorFactory custom = Validation.byProvider(NoetherValidationProvider.class).configure()
+                .traversableResolver(new jakarta.validation.TraversableResolver() {
+                    @Override
+                    public boolean isReachable(Object o, Path.Node n, Class<?> r, Path p, java.lang.annotation.ElementType t) {
+                        return !p.toString().startsWith("b");
+                    }
+
+                    @Override
+                    public boolean isCascadable(Object o, Path.Node n, Class<?> r, Path p, java.lang.annotation.ElementType t) {
+                        return true;
+                    }
+                }).buildValidatorFactory()) {
+            Holder holder = new Holder();
+            holder.a = new Child();
+            holder.b = holder.a;
+            assertThat(paths(custom.getValidator().validate(holder))).containsExactly("a.name");
+        }
+    }
+
 
     @Test
     void theTraversableResolverSeesTheRootPathAsAnUnnamedBeanNode() {

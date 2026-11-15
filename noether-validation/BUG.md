@@ -6,7 +6,7 @@ Convention: workspace `AGENTS.md`. Status: OPEN → INVESTIGATING → FIXED → 
 ## BUG-20261018-01 — TraversableResolver reachability cache ignores the bean path
 
 - **Date**: 2026-10-18
-- **Status**: OPEN
+- **Status**: FIXED on fix/traversable-path-cache
 - **Affected module**: `noether-validation-core`, `engine.ValidationRun.reachable`
 - **Symptom**: a path-dependent resolver answer for a shared cascaded instance
   is reused at another path, producing violations for a path the resolver forbids.
@@ -22,3 +22,6 @@ Convention: workspace `AGENTS.md`. Status: OPEN → INVESTIGATING → FIXED → 
     child's second path. Evidence: session artifact
     `java25-review/b/src/repro/PathReachabilityRepro.java` and `b/output.txt`.
     No production fix or tracked regression has been applied.
+  - 2026-11-15: reproduced by `ValidatorEngineTest.aSharedCascadedInstanceIsReachableOrNotAtEachPathOnItsOwn`
+    (red: `a.name` and `b.name`). Fixed: the per-bean cache is now keyed by the property kind, its member
+    name and the path it is reached at, so the resolver is asked once per property and path.

@@ -31,6 +31,7 @@ import java.lang.annotation.Annotation;
 import java.lang.annotation.ElementType;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -65,7 +66,12 @@ final class ValidationRun<T> {
     private final Set<ConstraintViolation<T>> violations = new LinkedHashSet<>();
     /** The beans being validated, with their group: the chain from the root to the bean under validation. */
     private final Map<Object, Set<Class<?>>> inProgress = new IdentityHashMap<>();
-    private final Map<Object, Map<String, Boolean>> reachable = new IdentityHashMap<>();
+    /** The answers of the traversable resolver, per bean: asked once per property and path (BUG-20261018-01). */
+    private final Map<Object, Map<Reach, Boolean>> reachable = new IdentityHashMap<>();
+
+    /** A question to the traversable resolver: a property of a bean reached at {@code path}. */
+    private record Reach(PropertyMetadata.Kind kind, String member, PathImpl path) {
+    }
 
     ValidationRun(Components components, T rootBean, Class<T> rootBeanClass) {
         this.components = components;
@@ -206,8 +212,9 @@ final class ValidationRun<T> {
     }
 
     private boolean isReachable(Object bean, PropertyMetadata property, Cursor at) {
-        String key = property.kind() + ":" + property.memberName();
-        return reachable.computeIfAbsent(bean, b -> new java.util.HashMap<>()).computeIfAbsent(key, k -> isReachable(bean, property, at.path(), components));
+        Reach key = new Reach(property.kind(), property.memberName(), at.path());
+        return reachable.computeIfAbsent(bean, b -> new HashMap<>())
+            .computeIfAbsent(key, k -> isReachable(bean, property, at.path(), components));
     }
 
     /** Asks the traversable resolver; the path of the root bean is a single unnamed bean node. */
