@@ -34,7 +34,7 @@
   `anAbstractTablePerClassRootHasNoTable` (Task 2).
 - **A schema-qualified table** is named `SCHEMA.NAME`, in entities and tables alike. Test:
   `aSchemaQualifiedTableKeepsItsSchema` (Task 2).
-- **A unit whose create source is a script.** `create()` returns what schema generation would run, so the script
+- **A unit whose create source is a script.** `createScript()` returns what schema generation would run, so the script
   too. Test: `theCreateScriptFollowsTheConfiguredSource` (Task 3).
 - **A closed factory** refuses `unwrap`, as today: `IllegalStateException`. Test:
   `aClosedFactoryDescribesNothing` (Task 1).
@@ -182,8 +182,8 @@
 - Produces:
   ```java
   public interface SchemaScripts {
-      List<String> create();   // what scripts.create-target would receive: create statements then load script
-      List<String> drop();     // what scripts.drop-target would receive
+      List<String> createScript();   // what scripts.create-target would receive: create statements then load script
+      List<String> dropScript();     // what scripts.drop-target would receive
   }
   ```
   - Both follow the unit's `create-source` / `drop-source` settings and its dialect.
@@ -194,16 +194,17 @@
 
 - [ ] **Step 1: Write the failing tests.**
   - `scriptsRenderTheSchemaWithoutRunningIt`, with `Shelf` and `rel.Team`:
-    - `create()` has a statement that starts, ignoring case, with `create table shelf`;
-    - `drop()` has one containing, ignoring case, `drop table`;
+    - `createScript()` has a statement that starts, ignoring case, with `create table shelf`;
+    - `dropScript()` has one containing, ignoring case, `drop table`;
     - afterwards `select count(*) from information_schema.tables where table_name = 'SHELF'` on the same H2 URL
       returns 0.
   - `theCreateScriptFollowsTheConfiguredSource`: with `create-source=script` and `create-script-source` pointing to
     the test resource `orm/schema-file.xml`'s sibling script (or a new `src/test/resources/scripts/create.sql`
-    holding `create table HANDMADE (id int)`), `create()` equals `["create table HANDMADE (id int)"]`.
+    holding `create table HANDMADE (id int)`), `createScript()` equals `["create table HANDMADE (id int)"]`.
 - [ ] **Step 2: Run them, expect a compilation failure** (`SchemaScripts` missing).
 - [ ] **Step 3: Implement.** Extract from `generate(Connection, String, String)` the statement building into
-  `create()` and `drop()`, sharing `statements(...)`, `loadCommands()` and `dialect(...)`. `generate()` keeps its
+  `createScript()` and `dropScript()` (not `create()` / `drop()`: `SchemaGeneration` is also the `SchemaManager`, whose
+  `create(boolean)` / `drop(boolean)` execute), sharing `statements(...)`, `loadCommands()` and `dialect(...)`. `generate()` keeps its
   behaviour, so `SchemaGenerationTest` must stay green unchanged.
 - [ ] **Step 4: Run `UnitDescriptionTest` and `SchemaGenerationTest`, expect PASS.**
 - [ ] **Step 5: Commit** `feat(core): render a unit's create and drop scripts without running them`.

@@ -379,6 +379,9 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
             return cls.cast(description.updateAndGet(built -> built != null ? built
                 : io.vidocq.noether.jpa.core.bootstrap.UnitDescriptions.of(settings.unitName(), mapping)));
         }
+        if (cls == io.vidocq.noether.jpa.core.spi.SchemaScripts.class) {
+            return cls.cast(schemaGeneration);
+        }
         if (cls.isInstance(this)) {
             return cls.cast(this);
         }

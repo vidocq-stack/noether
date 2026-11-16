@@ -16,7 +16,7 @@ import java.sql.*;
 import java.util.*;
 
 /** §9.4/§7.12 schema lifecycle; owns only resources it opens, never supplied JDBC connections, readers or writers. */
-public final class SchemaGeneration implements SchemaManager {
+public final class SchemaGeneration implements SchemaManager, io.vidocq.noether.jpa.core.spi.SchemaScripts {
     private static final String PREFIX = "jakarta.persistence.schema-generation.";
     /** The actions (§8.2.1.10) and sources of the schema generation properties that are read more than once. */
     private static final String CREATE = "create";
@@ -51,13 +51,36 @@ public final class SchemaGeneration implements SchemaManager {
             connection -> generate(connection, database, scripts));
     }
 
+    @Override
+    public List<String> createScript() {
+        return rendered(dialect -> {
+            List<String> commands = new ArrayList<>(
+                statements(CREATE, new SchemaPlan(mapping).create(createsSchemas()), dialect));
+            commands.addAll(loadCommands());
+            return commands;
+        });
+    }
+
+    @Override
+    public List<String> dropScript() {
+        return rendered(dialect -> statements("drop", new SchemaPlan(mapping).drop(false), dialect));
+    }
+
+    /** A script rendered with the unit's dialect and never executed; a connection is opened only to detect the database. */
+    private List<String> rendered(java.util.function.Function<Dialect, List<String>> render) {
+        checkOpen.run();
+        List<List<String>> script = new ArrayList<>(1);
+        withConnection(settings.string("jakarta.persistence.database-product-name") == null,
+            connection -> script.add(render.apply(dialect(connection))));
+        return List.copyOf(script.getFirst());
+    }
+
     /** Runs the {@code database} action on {@code connection} and writes the {@code scripts} action's targets. */
     private void generate(Connection connection, String database, String scripts) throws SQLException {
         Dialect dialect = dialect(connection);
         SchemaPlan plan = new SchemaPlan(mapping);
-        boolean schemas = Boolean.parseBoolean(settings.string(PREFIX + "create-database-schemas"));
         boolean creating = creates(database) || creates(scripts);
-        List<String> create = creating ? statements(CREATE, plan.create(schemas), dialect) : List.of();
+        List<String> create = creating ? statements(CREATE, plan.create(createsSchemas()), dialect) : List.of();
         List<String> drop = drops(database) || drops(scripts) ? statements("drop", plan.drop(false), dialect) : List.of();
         List<String> load = creating ? loadCommands() : List.of();
         if (drops(scripts)) write(settings.property(PREFIX + "scripts.drop-target"), drop);
@@ -71,6 +94,11 @@ public final class SchemaGeneration implements SchemaManager {
             execute(connection, create);
             execute(connection, load);
         }
+    }
+
+    /** Whether the create statements begin with the schemas of the tables and sequences (§8.2.1.10). */
+    private boolean createsSchemas() {
+        return Boolean.parseBoolean(settings.string(PREFIX + "create-database-schemas"));
     }
 
     private String action(String name) {

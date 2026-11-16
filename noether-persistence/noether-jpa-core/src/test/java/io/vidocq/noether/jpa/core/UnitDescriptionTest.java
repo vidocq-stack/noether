@@ -35,6 +35,7 @@ import io.vidocq.noether.jpa.core.model.build.fixtures.rel.Emp;
 import io.vidocq.noether.jpa.core.model.build.fixtures.rel.Player;
 import io.vidocq.noether.jpa.core.model.build.fixtures.rel.Skill;
 import io.vidocq.noether.jpa.core.model.build.fixtures.rel.Team;
+import io.vidocq.noether.jpa.core.spi.SchemaScripts;
 import io.vidocq.noether.jpa.core.spi.UnitDescription;
 import io.vidocq.noether.jpa.core.spi.UnitDescription.Attribute;
 import io.vidocq.noether.jpa.core.spi.UnitDescription.Attribute.Kind;
@@ -43,15 +44,18 @@ import io.vidocq.noether.jpa.core.spi.UnitDescription.Inheritance;
 import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.Id;
 import jakarta.persistence.PersistenceConfiguration;
+import java.io.StringReader;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 /** A running unit described for development tools, through {@code unwrap(UnitDescription.class)}. */
 class UnitDescriptionTest {
-
-    private static final AtomicInteger DATABASES = new AtomicInteger();
 
     @jakarta.persistence.Entity
     public static class Animal {
@@ -110,14 +114,23 @@ class UnitDescriptionTest {
         }
     }
 
-    static EntityManagerFactory factory(String name, Class<?>... classes) {
+    /** The H2 database of the unit {@code name}: one per test, each test naming its unit after itself. */
+    static String url(String name) {
+        return "jdbc:h2:mem:describe-" + name + ";DB_CLOSE_DELAY=-1";
+    }
+
+    static PersistenceConfiguration configuration(String name, Class<?>... classes) {
         PersistenceConfiguration configuration = new PersistenceConfiguration(name)
-            .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:describe-" + DATABASES.incrementAndGet() + ";DB_CLOSE_DELAY=-1")
+            .property(PersistenceConfiguration.JDBC_URL, url(name))
             .property(PersistenceConfiguration.JDBC_USER, "sa");
         for (Class<?> type : classes) {
             configuration.managedClass(type);
         }
-        return configuration.createEntityManagerFactory();
+        return configuration;
+    }
+
+    static EntityManagerFactory factory(String name, Class<?>... classes) {
+        return configuration(name, classes).createEntityManagerFactory();
     }
 
     static Entity entity(UnitDescription unit, String name) {
@@ -308,6 +321,36 @@ class UnitDescriptionTest {
             assertThat(entity(unit, "Bike").inheritance()).isEqualTo(Inheritance.TABLE_PER_CLASS);
             assertThat(unit.tables()).extracting(t -> t.name().toUpperCase(Locale.ROOT)).contains("BIKE")
                 .doesNotContain("VEHICLE");
+        }
+    }
+
+    @Test
+    void scriptsRenderTheSchemaWithoutRunningIt() throws SQLException {
+        try (EntityManagerFactory emf = factory("scripts", Rack.class, Shelf.class)) {
+            SchemaScripts scripts = emf.unwrap(SchemaScripts.class);
+
+            assertThat(scripts.createScript()).anySatisfy(sql -> assertThat(sql).containsIgnoringCase("create table")
+                .containsIgnoringCase("shelf"));
+            assertThat(scripts.dropScript()).anySatisfy(sql -> assertThat(sql).containsIgnoringCase("drop table"));
+            try (Connection database = DriverManager.getConnection(url("scripts"), "sa", "");
+                    Statement query = database.createStatement();
+                    ResultSet count = query.executeQuery(
+                        "select count(*) from information_schema.tables where upper(table_name) = 'SHELF'")) {
+                count.next();
+                assertThat(count.getInt(1)).isZero();
+            }
+        }
+    }
+
+    @Test
+    void theCreateScriptFollowsTheConfiguredSource() {
+        try (EntityManagerFactory emf = configuration("script-source", Rack.class)
+                .property("jakarta.persistence.schema-generation.create-source", "script")
+                .property("jakarta.persistence.schema-generation.create-script-source",
+                    new StringReader("create table HANDMADE (id int);"))
+                .createEntityManagerFactory()) {
+
+            assertThat(emf.unwrap(SchemaScripts.class).createScript()).containsExactly("create table HANDMADE (id int)");
         }
     }
 }
