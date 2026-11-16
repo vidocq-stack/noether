@@ -4,7 +4,7 @@
 [.lead]
 Noether runs the official Jakarta Persistence TCK 3.2.1 on PostgreSQL 17. The latest full run passes 2131 of its
 2135 tests, with no failure and no error; the four others are skipped by the TCK itself. This is a local run with
-one fixture backported from upstream, not a certification: Noether does not seek one.
+one fixture backported from upstream, not a certification. Jakarta Persistence 3.2 certification is a target of Vidocq (planned for 1.0.0), not yet claimed.
 
 == Status
 
@@ -616,5 +616,6 @@ and
 link:{repo-noether}/src/branch/main/noether-validation/noether-validation-tck/TCK.md[Validation evidence]
 retain historical sections with pre-extraction names and results; those historical sections
 are not measurements on Noether.
-No formal Persistence certification is sought; the Web Profile is not a target.
+Vidocq targets Jakarta EE Web Profile 11 certification, which requires Persistence 3.2 certification;
+it is planned, not claimed (it will need the unmodified TCK or accepted challenges).
 The provisional Validation provider is not claimed conformant.

@@ -68,8 +68,12 @@ noether-persistence/check-validation-neutrality.sh
 
 The fixture tool retains the pinned official checksums and the documented
 TCK-BUG-001 derived-jar patch. Official artifacts are never modified.
-No formal Persistence certification is sought; the Web Profile is not a target.
-Validation is a test/TCK stopgap, not a conformant Validation claim.
+Vidocq targets Jakarta EE Web Profile 11 certification, which requires a certified
+Jakarta Persistence 3.2 implementation; Noether is that implementation (certification
+planned for Vidocq 1.0.0, see the Vidocq roadmap). It is not certified today: the
+2131 / 2135 TCK result runs on a locally patched fixture and is not an official result.
+Certification will need the unmodified TCK, or challenges accepted by the Jakarta EE
+Platform project. Validation remains a test/TCK stopgap, not a conformant Validation claim.
 
 Current comparative harness and modular Leyden AOT smoke commands are:
 

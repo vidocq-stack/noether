@@ -4,7 +4,7 @@ Noether owns the implementations extracted from Mansart on 2026-10-11.
 
 | Building block | Status | Detailed roadmap |
 | --- | --- | --- |
-| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D43); backlog below; no formal certification | [Persistence](noether-persistence/ROADMAP.md) |
+| Jakarta Persistence 3.2 | P0–P12 delivered under the historical scope-based engineering gate, plus dated bounded follow-ups (D5, D9–D43); backlog below; Jakarta Persistence 3.2 certification is a target (Vidocq 1.0.0), not yet claimed | [Persistence](noether-persistence/ROADMAP.md) |
 | Jakarta Validation 3.1 | V0–V2 provisional local test/TCK stopgap; not published | [Validation](noether-validation/ROADMAP.md) |
 
 The extraction changes repository, artifact, package and provider names, not
@@ -25,8 +25,11 @@ The intended first Noether release is a bounded **JVM/Java Modules Persistence
 provider**, with APT-generated access for application sources and documented
 bootstrap generation/`opens` for opaque entities. H2 and PostgreSQL are the
 supported dialects. Validation is a non-published local test/TCK stopgap.
-No untouched-TCK certification, full portable-mapping coverage, GraalVM
-native-image, precompiled-JAR Maven generator or Data/JPA bridge is claimed.
+Persistence 3.2 certification is a stated target (Vidocq targets Web Profile 11
+certification since 2026-11-09; first certified release planned in Vidocq 1.0.0),
+but this closure lot claims no untouched-TCK result and no certification, nor full
+portable-mapping coverage, GraalVM native-image, precompiled-JAR Maven generator or
+Data/JPA bridge.
 
 | Exit criterion | Evidence / remaining action | Status |
 | --- | --- | --- |

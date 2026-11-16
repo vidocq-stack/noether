@@ -26,8 +26,8 @@
 - **Strict Java Modules**: one `module-info.java` per module, minimal `exports`, internal packages
   never exported, the provider published through `provides … with`, no unjustified `opens`.
 - Conformance evidence is the **official Jakarta Persistence 3.2 TCK**, with results and fixture
-  provenance recorded in `TCK.md`. The maintainer does not seek formal certification and the Web
-  Profile is not a target. P12 comparative JMH and Leyden AOT evidence is recorded separately; it
+  provenance recorded in `TCK.md`. Persistence 3.2 certification is a target since 2026-11-09 (Vidocq
+  targets Web Profile 11) but is not claimed. P12 comparative JMH and Leyden AOT evidence is recorded separately; it
   does not change TCK claims.
 
 ## Real Code State to Know Before Modifying
@@ -53,8 +53,7 @@
   The untouched official TCK reports 2096 / 2135 passes: 10 P11 cache errors, 25 delimited-fixture/unquoted-DDL
   incompatibilities and 4 official skips. With the default local fixture patch TCK-BUG-001 (byte-exact backport of
   upstream commit `1fea05e`, derived jar only) it reports 2131 / 2135, zero failures/errors and four skips; this is
-  a local result, not an official result or certification. No formal certification is sought; the Web Profile is
-  not a target.
+  a local result, not an official result or certification. Certification (Web Profile 11 target) is planned, not claimed.
   Do not ignore the default, fold quoted names or modify official DDL to recover that score.
   The integration runs against a local Vauban snapshot carrying an upstream fix not yet released.
   The two real-container injection regressions are green after the upstream Vauban fix (pending release); the independent Arquillian gate and Vidocq extension

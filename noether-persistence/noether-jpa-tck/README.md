@@ -46,8 +46,9 @@ PostgreSQL DDL creates them unquoted (folded to lower case) and the tests' nativ
 provider fails these 25 tests against the 3.2.1 fixtures; see TCK-BUG-001 in
 [`../../PERSISTENCE_TCK_PROPOSALS.md`](../../PERSISTENCE_TCK_PROPOSALS.md). The provider is **not** changed: it keeps
 honouring `<delimited-identifiers/>` (its own regression tests prove it); only the two fixtures are adapted. The
-maintainer decided this adoption; Noether does not seek a certification, and a patched score is never presented as
-an official result.
+maintainer decided this adoption as a local measure (when certification was not yet a target); a patched score is
+never presented as an official result. Certification, now a target, will need the unmodified fixtures or an
+accepted challenge.
 
 **How.** `tools/tck_fixture_patch.py` (Python standard library only), called by the script:
 
