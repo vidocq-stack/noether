@@ -37,7 +37,10 @@ import io.vidocq.noether.jpa.core.spi.UnitDescription;
 import io.vidocq.noether.jpa.core.spi.UnitDescription.Attribute;
 import io.vidocq.noether.jpa.core.spi.UnitDescription.Attribute.Kind;
 import io.vidocq.noether.jpa.core.spi.UnitDescription.Inheritance;
+import io.vidocq.noether.jpa.dialect.sql.ForeignKeyStatement;
 import io.vidocq.noether.jpa.dialect.sql.Identifier;
+import io.vidocq.noether.jpa.dialect.sql.SchemaStatement;
+import io.vidocq.noether.jpa.dialect.sql.Statement;
 import io.vidocq.noether.jpa.dialect.sql.Table;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -62,7 +65,7 @@ public final class UnitDescriptions {
         List<UnitDescription.Entity> entities = mapping.model().entities().stream().map(builder::entity).toList();
         List<UnitDescription.NamedQuery> queries = mapping.model().namedQueries().stream()
             .map(q -> new UnitDescription.NamedQuery(q.name(), q.query(), q.nativeQuery())).toList();
-        return new UnitDescription(unitName, entities, List.copyOf(builder.embeddables.values()), queries, List.of());
+        return new UnitDescription(unitName, entities, List.copyOf(builder.embeddables.values()), queries, tables(mapping));
     }
 
     private UnitDescription.Entity entity(EntityModel semantic) {
@@ -175,6 +178,57 @@ public final class UnitDescriptions {
                 collection.javaType().getName(), collection.declaringClass().getName(), Kind.ELEMENT_COLLECTION,
                 List.of(), collection.element().javaType().getName(), null, null);
         };
+    }
+
+    /** The tables schema generation creates, with their indexes, unique constraints and foreign keys. */
+    private static List<UnitDescription.Table> tables(MappedUnit mapping) {
+        Map<Table, TableShape> shapes = new LinkedHashMap<>();
+        for (Statement statement : new SchemaPlan(mapping).create(false)) {
+            switch (statement) {
+                case SchemaStatement create when create.operation() == SchemaStatement.Operation.CREATE_TABLE ->
+                    shapes.put(create.table(), new TableShape(create));
+                case SchemaStatement index when index.operation() == SchemaStatement.Operation.CREATE_INDEX
+                        || index.operation() == SchemaStatement.Operation.ADD_UNIQUE_CONSTRAINT -> {
+                    TableShape shape = shapes.get(index.table());
+                    if (shape != null) shape.indexes.add(new UnitDescription.Index(index.objectName().name(),
+                        index.indexColumns().stream().map(c -> c.name().name()).toList(), index.unique()));
+                }
+                case ForeignKeyStatement key when !key.drop() -> {
+                    TableShape shape = shapes.get(key.table());
+                    if (shape != null) shape.foreignKeys.add(new UnitDescription.ForeignKey(
+                        key.name() == null ? null : key.name().name(), names(key.columns()), name(key.referencedTable()),
+                        names(key.referencedColumns())));
+                }
+                default -> {
+                    // sequences, schemas: not tables
+                }
+            }
+        }
+        return shapes.values().stream().map(TableShape::table).toList();
+    }
+
+    /** A table being described: its creation, then the indexes and foreign keys created after it. */
+    private static final class TableShape {
+        private final SchemaStatement create;
+        private final List<UnitDescription.Index> indexes = new ArrayList<>();
+        private final List<UnitDescription.ForeignKey> foreignKeys = new ArrayList<>();
+
+        TableShape(SchemaStatement create) {
+            this.create = create;
+            create.columns().stream().filter(SchemaStatement.Column::unique)
+                .forEach(c -> indexes.add(new UnitDescription.Index(null, List.of(c.name().name()), true)));
+        }
+
+        UnitDescription.Table table() {
+            List<UnitDescription.Column> columns = create.columns().stream().map(c -> new UnitDescription.Column(
+                c.name().name(), c.type().getName(), c.length(), c.precision(), c.scale(), c.nullable())).toList();
+            return new UnitDescription.Table(name(create.table()), columns, names(create.primaryKey()), indexes,
+                foreignKeys);
+        }
+    }
+
+    private static List<String> names(List<Identifier> identifiers) {
+        return identifiers.stream().map(Identifier::name).toList();
     }
 
     /** The name of {@code table}, qualified by its schema and catalog when it has them. */

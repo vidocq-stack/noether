@@ -22,6 +22,7 @@ package io.vidocq.noether.jpa.core;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.vidocq.noether.jpa.core.model.build.fixtures.Account;
 import io.vidocq.noether.jpa.core.model.build.fixtures.Addr;
 import io.vidocq.noether.jpa.core.model.build.fixtures.Shop;
 import io.vidocq.noether.jpa.core.model.build.fixtures.Stamp;
@@ -65,6 +66,46 @@ class UnitDescriptionTest {
     public static class Dog extends Animal {
         public boolean barks;
         public Dog() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
+    }
+
+    @jakarta.persistence.Entity
+    public static class Rack {
+        @Id public long id;
+        public Rack() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
+    }
+
+    @jakarta.persistence.Entity
+    @jakarta.persistence.Table(name = "SHELF",
+        indexes = @jakarta.persistence.Index(name = "SHELF_LABEL", columnList = "label"),
+        uniqueConstraints = @jakarta.persistence.UniqueConstraint(name = "SHELF_CODE", columnNames = "code"))
+    public static class Shelf {
+        @Id public long id;
+        public String label;
+        public String code;
+        @jakarta.persistence.Column(unique = true) public String serial;
+        @jakarta.persistence.ManyToOne public Rack rack;
+        public Shelf() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
+    }
+
+    @jakarta.persistence.Entity
+    @jakarta.persistence.Inheritance(strategy = jakarta.persistence.InheritanceType.TABLE_PER_CLASS)
+    public abstract static class Vehicle {
+        @Id public long id;
+        protected Vehicle() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
+    }
+
+    @jakarta.persistence.Entity
+    public static class Bike extends Vehicle {
+        public int gears;
+        public Bike() {
             // Jakarta Persistence needs a no-arg constructor (§2.1)
         }
     }
@@ -205,5 +246,68 @@ class UnitDescriptionTest {
         emf.close();
 
         assertThatThrownBy(() -> emf.unwrap(UnitDescription.class)).isInstanceOf(IllegalStateException.class);
+    }
+
+    static UnitDescription.Table table(UnitDescription unit, String name) {
+        return unit.tables().stream().filter(t -> t.name().equalsIgnoreCase(name)).findFirst().orElseThrow();
+    }
+
+    @Test
+    void tablesCarryTheirKeysIndexesAndForeignKeys() {
+        try (EntityManagerFactory emf = factory("tables", Rack.class, Shelf.class)) {
+            UnitDescription unit = emf.unwrap(UnitDescription.class);
+
+            UnitDescription.Table shelf = table(unit, "SHELF");
+            assertThat(upper(shelf.primaryKey())).containsExactly("ID");
+            assertThat(shelf.columns()).extracting(c -> c.name().toUpperCase(Locale.ROOT))
+                .contains("ID", "LABEL", "CODE", "SERIAL", "RACK_ID");
+            assertThat(shelf.columns()).filteredOn(c -> c.name().equalsIgnoreCase("ID")).singleElement()
+                .satisfies(c -> assertThat(c.sqlType()).isEqualTo("BIGINT"));
+            assertThat(shelf.indexes()).anySatisfy(i -> {
+                assertThat(i.name()).isEqualTo("SHELF_LABEL");
+                assertThat(upper(i.columns())).containsExactly("LABEL");
+                assertThat(i.unique()).isFalse();
+            });
+            assertThat(shelf.indexes()).anySatisfy(i -> {
+                assertThat(i.name()).isEqualTo("SHELF_CODE");
+                assertThat(upper(i.columns())).containsExactly("CODE");
+                assertThat(i.unique()).isTrue();
+            });
+            assertThat(shelf.indexes()).anySatisfy(i -> {
+                assertThat(i.name()).isNull();
+                assertThat(upper(i.columns())).containsExactly("SERIAL");
+                assertThat(i.unique()).isTrue();
+            });
+            assertThat(shelf.foreignKeys()).singleElement().satisfies(k -> {
+                assertThat(upper(k.columns())).containsExactly("RACK_ID");
+                assertThat(k.referencedTable()).isEqualToIgnoringCase("Rack");
+                assertThat(upper(k.referencedColumns())).containsExactly("ID");
+            });
+            assertThat(entity(unit, "Shelf").table()).isEqualTo("SHELF");
+        }
+    }
+
+    @Test
+    void aSchemaQualifiedTableKeepsItsSchema() {
+        try (EntityManagerFactory emf = factory("schema", Account.class)) {
+            UnitDescription unit = emf.unwrap(UnitDescription.class);
+
+            assertThat(entity(unit, "Acct").table()).isEqualTo("BANK.ACCOUNTS");
+            assertThat(unit.tables()).extracting(UnitDescription.Table::name).contains("BANK.ACCOUNTS");
+        }
+    }
+
+    @Test
+    void anAbstractTablePerClassRootHasNoTable() {
+        try (EntityManagerFactory emf = factory("per-class", Vehicle.class, Bike.class)) {
+            UnitDescription unit = emf.unwrap(UnitDescription.class);
+
+            assertThat(entity(unit, "Vehicle").table()).isNull();
+            assertThat(entity(unit, "Vehicle").isAbstract()).isTrue();
+            assertThat(entity(unit, "Vehicle").inheritance()).isEqualTo(Inheritance.TABLE_PER_CLASS);
+            assertThat(entity(unit, "Bike").inheritance()).isEqualTo(Inheritance.TABLE_PER_CLASS);
+            assertThat(unit.tables()).extracting(t -> t.name().toUpperCase(Locale.ROOT)).contains("BIKE")
+                .doesNotContain("VEHICLE");
+        }
     }
 }
