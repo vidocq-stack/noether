@@ -5,6 +5,16 @@
 The changes to Noether that an application sees, newest first. An entry says what to check when an upgrade asks
 for a look.
 
+== 2026-11-16 — A unit described for tools
+
+`emf.unwrap(UnitDescription.class)` returns a read-only description of a running unit: its entities with their
+attributes, columns, relationships and inheritance, its embeddables, its named queries, and the tables schema
+generation creates, with their keys, indexes and foreign keys. `emf.unwrap(SchemaScripts.class)` renders the create
+and drop scripts without running them. The Persistence panel of the Vidocq dev console reads both; see
+xref:reference.adoc#tools[Describing a unit for tools].
+
+Nothing to check when you upgrade: both are new, and no existing behaviour changes.
+
 == 2026-11-13 — A persistence unit name is unique
 
 Two units of the same name, in one `persistence.xml` or in the files of two modules, now fail with a

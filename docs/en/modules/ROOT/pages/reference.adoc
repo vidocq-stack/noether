@@ -446,6 +446,54 @@ count of table rows. Under `TABLE_PER_CLASS`, bulk statements operate on the sel
 * A pessimistic entity query locks the concrete result rows after selection and pagination. A purely scalar
   pessimistic query over a union range is refused: select and lock the entities instead.
 
+[#tools]
+== Describing a unit for tools
+
+A development tool reads a running unit through `EntityManagerFactory.unwrap`, the standard way to reach what a
+provider offers beyond the specification. Both types live in `io.vidocq.noether.jpa.core.spi`, the package Noether
+exports for integrations. The Persistence panel of the Vidocq dev console is their first user.
+
+[cols="1,3"]
+|===
+| `unwrap(...)` | Returns
+
+| `UnitDescription.class`
+| A read-only description of the unit, built once per factory:
+
+* *Entities*: entity name, class, primary table, the entity it extends, the inheritance strategy of its hierarchy.
+* *Attributes*: kind (`ID`, `EMBEDDED_ID`, `VERSION`, `BASIC`, `EMBEDDED`, `ELEMENT_COLLECTION` or a relationship),
+  columns, target, `mappedBy` and join or collection table.
+* *Embeddables*, each listed once, and the *named queries*, JPQL and native.
+* *Tables*: those schema generation creates, with their columns, primary key, indexes, unique constraints and foreign
+  keys.
+
+It holds names only, never a class of the application, so a tool may keep it across a reload of the application's
+classes.
+
+| `SchemaScripts.class`
+| `createScript()` and `dropScript()`: the statements `scripts.create-target` and `scripts.drop-target` would receive.
+They are rendered for the unit's database, follow its `create-source`, `drop-source` and load script, and are never
+executed. A call opens a connection only to detect the database, unless the unit sets
+`jakarta.persistence.database-product-name`.
+|===
+
+[source,java]
+----
+UnitDescription unit = emf.unwrap(UnitDescription.class);
+for (UnitDescription.Entity entity : unit.entities()) {
+    for (UnitDescription.Attribute attribute : entity.attributes()) {
+        switch (attribute.kind()) {
+            case ONE_TO_ONE, MANY_TO_ONE, ONE_TO_MANY, MANY_TO_MANY -> System.out.println(entity.name() + "."
+                + attribute.name() + " -> " + attribute.target() + (attribute.owning() ? "" : " (inverse side)"));
+            default -> { }
+        }
+    }
+}
+List<String> ddl = emf.unwrap(SchemaScripts.class).createScript();
+----
+
+A closed factory refuses both, with `IllegalStateException`, as it refuses any `unwrap`.
+
 [#boundaries]
 == Mapping and loading boundaries
 
