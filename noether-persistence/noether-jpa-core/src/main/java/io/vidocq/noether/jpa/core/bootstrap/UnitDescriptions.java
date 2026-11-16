@@ -21,7 +21,6 @@ package io.vidocq.noether.jpa.core.bootstrap;
 
 import io.vidocq.noether.jpa.core.mapping.CollectionMapping;
 import io.vidocq.noether.jpa.core.mapping.ElementCollectionMapping;
-import io.vidocq.noether.jpa.core.mapping.EntityStatements;
 import io.vidocq.noether.jpa.core.mapping.InheritanceMapping;
 import io.vidocq.noether.jpa.core.mapping.MappedEntity;
 import io.vidocq.noether.jpa.core.mapping.MappedUnit;

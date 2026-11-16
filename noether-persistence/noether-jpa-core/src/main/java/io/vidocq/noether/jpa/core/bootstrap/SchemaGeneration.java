@@ -18,6 +18,7 @@ import java.util.*;
 /** §9.4/§7.12 schema lifecycle; owns only resources it opens, never supplied JDBC connections, readers or writers. */
 public final class SchemaGeneration implements SchemaManager, io.vidocq.noether.jpa.core.spi.SchemaScripts {
     private static final String PREFIX = "jakarta.persistence.schema-generation.";
+    private static final String DATABASE_PRODUCT_NAME = "jakarta.persistence.database-product-name";
     /** The actions (§8.2.1.10) and sources of the schema generation properties that are read more than once. */
     private static final String CREATE = "create";
     private static final String DROP_AND_CREATE = "drop-and-create";
@@ -47,7 +48,7 @@ public final class SchemaGeneration implements SchemaManager, io.vidocq.noether.
                 || drops(scripts) && settings.property(PREFIX + "scripts.drop-target") == null) {
             throw new PersistenceException("Schema script actions require their scripts.create-target / scripts.drop-target");
         }
-        withConnection(!"none".equals(database) || settings.string("jakarta.persistence.database-product-name") == null,
+        withConnection(!"none".equals(database) || settings.string(DATABASE_PRODUCT_NAME) == null,
             connection -> generate(connection, database, scripts));
     }
 
@@ -70,7 +71,7 @@ public final class SchemaGeneration implements SchemaManager, io.vidocq.noether.
     private List<String> rendered(java.util.function.Function<Dialect, List<String>> render) {
         checkOpen.run();
         List<List<String>> script = new ArrayList<>(1);
-        withConnection(settings.string("jakarta.persistence.database-product-name") == null,
+        withConnection(settings.string(DATABASE_PRODUCT_NAME) == null,
             connection -> script.add(render.apply(dialect(connection))));
         return List.copyOf(script.getFirst());
     }
@@ -135,7 +136,7 @@ public final class SchemaGeneration implements SchemaManager, io.vidocq.noether.
 
     private Dialect dialect(Connection connection) {
         return connection != null ? Dialects.resolve(connection, settings.string(Dialects.PROPERTY), mapping.loader())
-            : Dialects.resolve(settings.string("jakarta.persistence.database-product-name"),
+            : Dialects.resolve(settings.string(DATABASE_PRODUCT_NAME),
                 integer("jakarta.persistence.database-major-version"), integer("jakarta.persistence.database-minor-version"),
                 settings.string(Dialects.PROPERTY), mapping.loader());
     }
