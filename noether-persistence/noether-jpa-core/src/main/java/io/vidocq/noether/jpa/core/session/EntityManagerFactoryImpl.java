@@ -80,6 +80,8 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     private final Metamodel metamodel;
     private final EntityGraphs entityGraphs;
     private final io.vidocq.noether.jpa.core.bootstrap.SchemaGeneration schemaGeneration;
+    /** The description of the unit for tools, built on the first {@code unwrap(UnitDescription.class)}. */
+    private final AtomicReference<io.vidocq.noether.jpa.core.spi.UnitDescription> description = new AtomicReference<>();
 
     /**
      * The open factories, for {@code PersistenceUtil} (§7.12), which asks the providers without a unit; weakly held, a
@@ -373,6 +375,10 @@ public final class EntityManagerFactoryImpl implements EntityManagerFactory {
     @Override
     public <T> T unwrap(Class<T> cls) {
         checkOpen();
+        if (cls == io.vidocq.noether.jpa.core.spi.UnitDescription.class) {
+            return cls.cast(description.updateAndGet(built -> built != null ? built
+                : io.vidocq.noether.jpa.core.bootstrap.UnitDescriptions.of(settings.unitName(), mapping)));
+        }
         if (cls.isInstance(this)) {
             return cls.cast(this);
         }
