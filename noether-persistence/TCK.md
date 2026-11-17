@@ -1,3 +1,38 @@
+## Rerun on main after the pool split (D7 amended) — 2026-11-17
+
+The first full run since PERF2 (2026-10-22), on `main` at `d055dfd`. It covers everything merged since then. That
+includes the pool split of D7 amended: the TCK units now get their `mansart-pool` pool through
+`noether-jpa-pool-mansart`. The result is the same as on 2026-10-22.
+
+Commands from `noether-persistence/noether-jpa-tck`, Temurin **25.0.3+9-LTS** (not the 25.0.4 that `.sdkmanrc` pins),
+Maven **3.9.16** (wrapper):
+
+```sh
+TCK_FIXTURES=patched  TCK_VALIDATION=off ./run-official-tck-persistence-3.2.sh
+TCK_FIXTURES=official TCK_VALIDATION=off ./run-official-tck-persistence-3.2.sh
+```
+
+- TCK bundle `jakarta-persistence-tck-3.2.1.zip`, SHA-256 `1d282675f43fa13cf8ab2537d6dbfb1e1c95f7b838ab7cdd053e185c363a6519`
+  verified by `install-tck.sh`. Spec-tests jar
+  `a6ad07d4442aace8630348f7aae990d31d79a31692e14ed463f482c58b364024`.
+- Database: the script's own `postgres:17-alpine` container, PostgreSQL **17.11**.
+- Mansart: `0.4.0-SNAPSHOT` from the local repository, as the script resolves it. The pool is
+  `mansart-pool-core-0.4.0-20261117.085424-77` and the transactions are `mansart-transactions-core-0.4.0-20261114.114309-76`.
+- **Locally patched fixtures (TCK-BUG-001)**: **2135 tests / 2131 passed / 0 failures / 4 official skips**
+  (execution 1: 2134 / 2130 / 0 / 4, execution 2: 1 / 1 / 0 / 0), 259 reports. The derived spec-tests jar is
+  `1f7e82bac32a04a903d41fc5755f5c3f348a08865ccf89792ee28d08b1e4d9a4`, and its two patched `orm.xml` have the same
+  hashes as in the runner's fixture manifest. This run is not an official TCK result and does not support a
+  certification claim.
+- **Official fixtures, unmodified**: **2135 tests / 2106 passed / 25 failures / 4 skips**, 259 reports. Every failure
+  belongs to TCK-BUG-001, the unit-wide `<delimited-identifiers/>` that contradicts the unquoted DDL and native SQL of
+  the same tests:
+  - 14 in `ee.jakarta.tck.persistence.core.entitytest.apitests`;
+  - 11 in `ee.jakarta.tck.persistence.core.annotations.nativequery`.
+- Both runs skip the same four official tests as PERF2: `Client6.resultContainsFetchReference`,
+  `Client.getDeclaredSingularAttributes`, `Client2.createEntityManagerFactoryStringMapTest` and
+  `Client.tableGeneratorTest`.
+- The counts were aggregated again from the failsafe XML reports, independently of the script's report.
+
 ## D7 amended — the runner adds noether-jpa-pool-mansart — 2026-11-11
 
 `noether-jpa-core` no longer carries the pool of decision D7 (Vidocq/noether#45, finding F7). The runner declares

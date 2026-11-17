@@ -12,7 +12,7 @@ one fixture backported from upstream, not a certification. Jakarta Persistence 3
 |===
 | Suite | Tests | Passed | Failures and errors | Skipped
 
-| Jakarta Persistence TCK 3.2.1, full suite, TCK-BUG-001 fixture, PostgreSQL 17 (2026-10-22)
+| Jakarta Persistence TCK 3.2.1, full suite, TCK-BUG-001 fixture, PostgreSQL 17 (2026-11-17)
 | 2135 | **2131** | 0 | 4
 |===
 
