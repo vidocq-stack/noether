@@ -24,8 +24,16 @@ final class ContextQuery<X> implements TypedQuery<X> {
     }
 
     private ContextQuery<X> configure(Consumer<Query> setting) {
-        setting.accept(metadata);
-        configuration.add(setting);
+        return configure(setting, setting);
+    }
+
+    /** Applies {@code now} to the metadata query, and {@code later} to each query that runs. */
+    private ContextQuery<X> configure(Consumer<Query> now, Consumer<Query> later) {
+        owner.marking(() -> {
+            now.accept(metadata);
+            return null;
+        });
+        configuration.add(later);
         return this;
     }
 
@@ -48,28 +56,22 @@ final class ContextQuery<X> implements TypedQuery<X> {
     @Override public ContextQuery<X> setHint(String name, Object value) { return configure(q -> q.setHint(name, value)); }
     @Override public Map<String,Object> getHints() { return metadata.getHints(); }
     @Override public <T> ContextQuery<X> setParameter(Parameter<T> parameter, T value) {
-        metadata.setParameter(parameter, value);
-        configuration.add(q -> {
+        return configure(q -> q.setParameter(parameter, value), q -> {
             if (parameter.getName() != null) q.setParameter(parameter.getName(), value);
             else q.setParameter(parameter.getPosition(), value);
         });
-        return this;
     }
     @Override public ContextQuery<X> setParameter(Parameter<Calendar> parameter, Calendar value, TemporalType temporal) {
-        metadata.setParameter(parameter, value, temporal);
-        configuration.add(q -> {
+        return configure(q -> q.setParameter(parameter, value, temporal), q -> {
             if (parameter.getName() != null) q.setParameter(parameter.getName(), value, temporal);
             else q.setParameter(parameter.getPosition(), value, temporal);
         });
-        return this;
     }
     @Override public ContextQuery<X> setParameter(Parameter<Date> parameter, Date value, TemporalType temporal) {
-        metadata.setParameter(parameter, value, temporal);
-        configuration.add(q -> {
+        return configure(q -> q.setParameter(parameter, value, temporal), q -> {
             if (parameter.getName() != null) q.setParameter(parameter.getName(), value, temporal);
             else q.setParameter(parameter.getPosition(), value, temporal);
         });
-        return this;
     }
     @Override public ContextQuery<X> setParameter(String name, Object value) { return configure(q -> q.setParameter(name, value)); }
     @Override public ContextQuery<X> setParameter(String name, Calendar value, TemporalType temporal) { return configure(q -> q.setParameter(name, value, temporal)); }

@@ -165,6 +165,39 @@ class ContainerEntityManagerTest {
         }
     }
 
+    /** §3.1.1: a query the facade cannot create marks the transaction its context joins for rollback. */
+    @Test
+    void aQueryTheFacadeCannotCreateMarksTheTransactionForRollback() throws Exception { // BUG-20261118-68
+        try (var factory = factory("p9-facade-create-rollback")) {
+            var em = facade(factory);
+            try {
+                tm.begin();
+                assertThatThrownBy(() -> em.createNamedQuery("no such query")).isInstanceOf(IllegalArgumentException.class);
+                assertThat(registry.getRollbackOnly()).isTrue();
+                tm.rollback();
+            } finally {
+                em.destroy();
+            }
+        }
+    }
+
+    /** §3.11.1: a query that fails to run marks the transaction its context joins for rollback. */
+    @Test
+    void aQueryThatFailsToRunMarksTheTransactionForRollback() throws Exception { // BUG-20261118-68
+        try (var factory = factory("p9-facade-run-rollback")) {
+            var em = facade(factory);
+            try {
+                tm.begin();
+                var select = em.createQuery("SELECT r FROM Record r");
+                assertThatThrownBy(select::executeUpdate).isInstanceOf(IllegalStateException.class);
+                assertThat(registry.getRollbackOnly()).isTrue();
+                tm.rollback();
+            } finally {
+                em.destroy();
+            }
+        }
+    }
+
     private static void alias(String name, String definition) throws Exception {
         try (var connection = java.sql.DriverManager.getConnection(url(name), "sa", "");
              var statement = connection.createStatement()) {

@@ -9,6 +9,7 @@ import jakarta.transaction.TransactionSynchronizationRegistry;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * §7.7 container facade: transaction identity is shared per factory; an extended context belongs to its owner. The
@@ -122,15 +123,40 @@ public final class ContainerEntityManager implements EntityManager {
         return operation.apply(delegate());
     }
 
-    <T> T readContext(Function<EntityManager, T> operation) { return read(operation); }
-    <T> T writeContext(Function<EntityManager, T> operation) { return operation.apply(delegate()); }
+    <T> T readContext(Function<EntityManager, T> operation) { return marking(() -> read(operation)); }
+    <T> T writeContext(Function<EntityManager, T> operation) { return marking(() -> operation.apply(delegate())); }
 
     private <T> ContextQuery<T> query(Function<EntityManager, ? extends Query> creator) {
-        return metadataWork(em -> new ContextQuery<>(this, creator, creator.apply(em)));
+        return marking(() -> metadataWork(em -> new ContextQuery<>(this, creator, creator.apply(em))));
     }
 
     private ContextStoredProcedureQuery procedure(Function<EntityManager, StoredProcedureQuery> creator) {
-        return metadataWork(em -> new ContextStoredProcedureQuery(this, creator, creator.apply(em)));
+        return marking(() -> metadataWork(em -> new ContextStoredProcedureQuery(this, creator, creator.apply(em))));
+    }
+
+    /**
+     * Runs a method of this facade or of one of its queries, and marks the transaction the persistence context joins
+     * for rollback when it throws (§3.1.1, §3.11.1). A query is created and configured on a context no transaction
+     * joins, and runs on another one: the provider cannot mark the transaction of the caller's context, so the facade
+     * does.
+     */
+    <T> T marking(Supplier<T> work) {
+        try {
+            return work.get();
+        } catch (RuntimeException failure) {
+            if (!(failure instanceof LockTimeoutException || failure instanceof QueryTimeoutException
+                    || failure instanceof NoResultException || failure instanceof NonUniqueResultException)
+                    && joinedContext()) {
+                registry.setRollbackOnly();
+            }
+            throw failure;
+        }
+    }
+
+    /** Whether the persistence context of this facade is joined to the current transaction (§7.6.1). */
+    private boolean joinedContext() {
+        if (!isOpen() || currentTransaction() == null) return false;
+        return synchronization == SynchronizationType.SYNCHRONIZED || delegate().isJoinedToTransaction();
     }
 
     void ensureOpen() { checkOpen(); }

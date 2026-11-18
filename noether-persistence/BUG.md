@@ -1930,3 +1930,27 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
   - 2026-11-18: reproduced red with the test above, with the TCK's error.
   - 2026-11-18: fixed. The columns of a table are kept by a key that folds an undelimited name to upper case and
     keeps a delimited one as it is (`SchemaPlan.TableColumns`).
+
+## BUG-20261118-68 — A query of a container persistence context that fails does not mark the transaction for rollback
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/schema-from-platform-tck`: the container facade marks the transaction its context joins.
+- **Affected module**: `noether-jpa-cdi` (`ContainerEntityManager`, `ContextQuery`, `ContextStoredProcedureQuery`)
+- **Symptom**: found by the Jakarta EE 11 Platform TCK for Persistence on the Vidocq runtime:
+  `core.entityManager2.Client1#entityManagerMethodsRuntimeExceptionsCauseRollback{2,3,5,6,7,9,12}Test` (both
+  servlet vehicles) log `RuntimeException Caught as Expected.` then `Transaction was not marked for rollback`.
+  `createNamedQuery` of an unknown name, `createQuery` with a wrong result class, `executeUpdate` of a select query,
+  `createStoredProcedureQuery` with an unknown result set mapping: the exception is thrown, the JTA transaction stays
+  active.
+- **Minimal reproduction**: `ContainerEntityManagerTest.aQueryTheFacadeCannotCreateMarksTheTransactionForRollback`
+  and `aQueryThatFailsToRunMarksTheTransactionForRollback`.
+- **Hypothesised cause**: Jakarta Persistence 3.2 §3.1.1 and §3.11.1: a runtime exception of a method of the entity
+  manager or of a query (other than `NoResultException`, `NonUniqueResultException`, `QueryTimeoutException`,
+  `LockTimeoutException`) marks the transaction the persistence context joins for rollback. The provider marks it
+  for its own entity manager, but the facade creates and configures a query on a template context that no transaction
+  joins, then runs it on the transaction's context, and passed the exception through.
+- **Investigations**:
+  - 2026-11-18: an application-managed JTA entity manager created in the transaction marks it (it joins at
+    creation); the facade does not. Reproduced red with the two tests above.
+  - 2026-11-18: fixed. `ContainerEntityManager.marking` runs query creation, configuration and execution, and marks
+    the transaction when the context is joined to it (a synchronized context in a transaction, or one that joined).

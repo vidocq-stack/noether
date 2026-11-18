@@ -79,7 +79,10 @@ final class ContextStoredProcedureQuery implements StoredProcedureQuery {
     }
 
     private StoredProcedureQuery configure(Consumer<StoredProcedureQuery> setting) {
-        setting.accept(metadata);
+        owner.marking(() -> {
+            setting.accept(metadata);
+            return null;
+        });
         configuration.add(setting);
         return this;
     }
