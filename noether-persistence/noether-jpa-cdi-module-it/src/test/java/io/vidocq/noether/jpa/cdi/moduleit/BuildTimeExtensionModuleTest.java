@@ -2,7 +2,9 @@ package io.vidocq.noether.jpa.cdi.moduleit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.vidocq.noether.jpa.cdi.PersistenceReferences;
 import io.vidocq.vauban.core.container.VaubanContainer;
+import jakarta.persistence.EntityManager;
 import jakarta.transaction.TransactionManager;
 import org.junit.jupiter.api.Test;
 
@@ -24,6 +26,18 @@ class BuildTimeExtensionModuleTest {
             repository.manager.persist(new Record(41));
             tm.commit();
             assertThat(repository.manager.find(Record.class, 41)).isNotNull();
+        }
+    }
+
+    @Test
+    void theReferencesAClassDeclaresComeFromTheExtensionTheBuildRan() {
+        try (var container = VaubanContainer.builder().scanClasspath().build()) {
+            var references = container.select(PersistenceReferences.class).references();
+            assertThat(references).extracting(PersistenceReferences.Reference::name).containsExactly(
+                "persistence/container", "persistence/container-factory", "persistence/container-unsynchronized");
+            var context = references.getFirst();
+            assertThat(container.getBeanManager().createInstance().select(context.type(), context.qualifier()).get())
+                .isInstanceOf(EntityManager.class);
         }
     }
 }

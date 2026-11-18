@@ -1863,3 +1863,33 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     `IdGenerators.next` adds the entity and the strategy and the ways out: create the table or sequence, let schema
     generation create it (`jakarta.persistence.schema-generation.database.action`), and for `AUTO` map a
     database-generated key with `GenerationType.IDENTITY`. The getting-started page says what `AUTO` uses.
+
+## BUG-20261118-64 — A persistence context declared on a class with a name is no reference
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `feat/persistence-references`.
+- **Affected module**: `noether-jpa-cdi` (`NoetherPersistenceExtension`)
+- **Symptom**: found by the Jakarta EE 11 Platform TCK for Persistence on the Vidocq runtime. Its `pmservlet`
+  vehicle declares `@PersistenceContext(name = "persistence/CTS-EM", unitName = "CTS-EM")` (and a second one in
+  `@PersistenceContexts`) on its class, then looks `java:comp/env/persistence/CTS-EM` up: every test of that vehicle
+  fails, nothing being bound. The extension read the annotations of fields and setters only, so no bean existed for
+  a runtime's naming service to bind, nor any list of the declared names.
+- **Minimal reproduction**: `PersistenceReferencesModuleTest` (`noether-jpa-cdi-module-it`): a `@Dependent` class
+  with two `@PersistenceContext` and one `@PersistenceUnit` on itself; no `PersistenceReferences` bean, and a class
+  reference without a name was accepted.
+- **Hypothesised cause**: Jakarta EE 11 Platform §5.13 and §5.14 make such a declaration a reference under
+  `java:comp/env`, not an injection point; the extension had no notion of it.
+- **Investigations**:
+  - 2026-11-18: reproduced red (10 tests, the frozen path of `BuildTimeExtensionModuleTest` included).
+  - 2026-11-18: fixed. The extension reads the repeatable `@PersistenceContext` and `@PersistenceUnit` of each class.
+    A context reference gets one `@Singleton` transaction-scoped `EntityManager` bean that every lookup shares (a
+    lookup cannot destroy a `@Dependent` instance), a unit reference the unit's `@Singleton` factory; the one
+    `PersistenceReferences` bean lists name, type and qualifier, sorted by name. A reference without a name, an
+    `EXTENDED` one (a stateful component's) and a name declared for two beans fail the deployment with a
+    `DefinitionException`. The Vidocq runtime binds the names (Vidocq `feat/persistence-references`).
+  - 2026-11-18: the Platform TCK spike still found `java:comp/env/persistence/CTS-EM` bound to nothing: the
+    container held two `PersistenceReferences` beans, so a single selection was ambiguous. The extension runs on each
+    part of a deployment, there a module processed at build (the runner's tests, which declare no reference) and the
+    war's classes at start, and each run added its listing, even an empty one. Fixed: a part without references adds
+    no listing (`aDeploymentWithoutReferencesHasNoListing`, red with one empty bean before), and the type's Javadoc and
+    Usage say that a container can hold several listings, which a consumer reads all.

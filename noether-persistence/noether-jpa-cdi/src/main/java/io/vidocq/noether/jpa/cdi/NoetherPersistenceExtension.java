@@ -7,7 +7,9 @@ import jakarta.enterprise.context.Dependent;
 import jakarta.enterprise.event.Startup;
 import jakarta.enterprise.inject.Default;
 import jakarta.enterprise.inject.build.compatible.spi.*;
+import jakarta.enterprise.inject.spi.DefinitionException;
 import jakarta.enterprise.lang.model.AnnotationInfo;
+import jakarta.enterprise.lang.model.declarations.ClassInfo;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import jakarta.persistence.*;
@@ -26,6 +28,10 @@ public final class NoetherPersistenceExtension implements BuildCompatibleExtensi
     private record Context(String unit, String type, String synchronization, Map<String,String> properties) {}
     private final Set<String> units = new LinkedHashSet<>();
     private final Map<String, Context> contexts = new LinkedHashMap<>();
+    /** A reference a class declares: the kind and the qualifier of the bean its name is bound to, and who declared it. */
+    private record Declared(String kind, String qualifier, String declaredBy) {}
+    private final Map<String, Declared> references = new TreeMap<>();
+    private final Map<String, Context> sharedContexts = new LinkedHashMap<>();
 
     /**
      * The binding qualifier lives in this jar, which a container need not index (Quarkus indexes the application, not
@@ -60,10 +66,71 @@ public final class NoetherPersistenceExtension implements BuildCompatibleExtensi
         }
     }
 
+    /**
+     * Jakarta EE 11 Platform §5.13 and §5.14: a persistence context or unit declared on a class, with a name, is a
+     * reference the component looks up under {@code java:comp/env}. Each one has a {@code @Singleton} bean, which a
+     * lookup can return without anyone having to destroy it: the unit's factory, or one transaction-scoped context
+     * that every lookup shares. {@link PersistenceReferences} lists them for a naming service.
+     */
+    @Enhancement(types = Object.class, withSubtypes = true,
+        withAnnotations = {PersistenceContext.class, PersistenceContexts.class, PersistenceUnit.class, PersistenceUnits.class})
+    public void persistenceReferences(ClassConfig clazz) {
+        ClassInfo declaring = clazz.info();
+        for (AnnotationInfo context : declaring.repeatableAnnotation(PersistenceContext.class)) {
+            String name = referenceName(declaring, context, "context");
+            Context definition = definition(context);
+            if (PersistenceContextType.EXTENDED.name().equals(definition.type)) {
+                throw new DefinitionException(declaring.name() + " declares the persistence context " + name
+                    + " EXTENDED on its class: an extended context belongs to a stateful component, a reference is"
+                    + " transaction-scoped (Jakarta Persistence 3.2, §7.6.3)");
+            }
+            String shared = "shared:" + contextBinding(definition.unit, definition.type, definition.synchronization, definition.properties);
+            sharedContexts.putIfAbsent(shared, definition);
+            declare(name, new Declared(PersistenceReferencesCreator.CONTEXT, shared, declaring.name()));
+        }
+        for (AnnotationInfo unit : declaring.repeatableAnnotation(PersistenceUnit.class)) {
+            String name = referenceName(declaring, unit, "unit");
+            declare(name, new Declared(PersistenceReferencesCreator.UNIT, unitBinding(unit), declaring.name()));
+        }
+    }
+
+    private static String referenceName(ClassInfo declaring, AnnotationInfo annotation, String what) {
+        String name = string(annotation, "name", "").strip();
+        if (name.isEmpty()) {
+            throw new DefinitionException(declaring.name() + " declares a persistence " + what + " on its class without"
+                + " a name: a reference declared on a class is looked up under java:comp/env by its name"
+                + " (Jakarta EE 11 Platform §5.13)");
+        }
+        return name;
+    }
+
+    /** A name of {@code java:comp/env} is bound once: two classes may declare it only for the same bean. */
+    private void declare(String name, Declared reference) {
+        Declared first = references.putIfAbsent(name, reference);
+        if (first != null && (!first.kind.equals(reference.kind) || !first.qualifier.equals(reference.qualifier))) {
+            throw new DefinitionException("The persistence reference " + name + " is declared by " + first.declaredBy
+                + " and, for another " + reference.kind + ", by " + reference.declaredBy
+                + ": a name of java:comp/env is bound to one bean");
+        }
+    }
+
     private String binding(AnnotationInfo context, AnnotationInfo unitAnnotation) {
-        String unit = string(context != null ? context : unitAnnotation, "unitName", "");
+        if (context == null) return unitBinding(unitAnnotation);
+        Context definition = definition(context);
+        String binding = contextBinding(definition.unit, definition.type, definition.synchronization, definition.properties);
+        contexts.putIfAbsent(binding, definition);
+        return binding;
+    }
+
+    private String unitBinding(AnnotationInfo unitAnnotation) {
+        String unit = string(unitAnnotation, "unitName", "");
         units.add(unit);
-        if (context == null) return "unit:" + unit;
+        return "unit:" + unit;
+    }
+
+    private Context definition(AnnotationInfo context) {
+        String unit = string(context, "unitName", "");
+        units.add(unit);
         String type = enumeration(context, "type", "TRANSACTION");
         String synchronization = enumeration(context, SYNCHRONIZATION, "SYNCHRONIZED");
         Map<String,String> properties = new TreeMap<>();
@@ -73,10 +140,7 @@ public final class NoetherPersistenceExtension implements BuildCompatibleExtensi
                 properties.put(string(property, "name", ""), string(property, "value", ""));
             }
         }
-        Context definition = new Context(unit, type, synchronization, Map.copyOf(properties));
-        String binding = contextBinding(unit, type, synchronization, properties);
-        contexts.putIfAbsent(binding, definition);
-        return binding;
+        return new Context(unit, type, synchronization, Map.copyOf(properties));
     }
 
     /**
@@ -121,18 +185,33 @@ public final class NoetherPersistenceExtension implements BuildCompatibleExtensi
                 .name(factoryName(unit))
                 .withParam(UNIT, unit).createWith(PersistenceFactoryCreator.class).disposeWith(PersistenceFactoryDisposer.class);
         }
-        contexts.forEach((binding, definition) -> components.addBean(EntityManager.class).type(EntityManager.class)
-            .scope(Dependent.class).qualifier(AnnotationBuilder.of(PersistenceBinding.class).value(binding).build())
-            .withParam(UNIT, definition.unit).withParam(CONTEXT_TYPE, definition.type)
-            .withParam(SYNCHRONIZATION, definition.synchronization)
-            .withParam("propertyNames", definition.properties.keySet().toArray(String[]::new))
-            .withParam("propertyValues", definition.properties.values().toArray(String[]::new))
-            .createWith(PersistenceContextCreator.class).disposeWith(PersistenceContextDisposer.class));
+        contexts.forEach((binding, definition) -> contextBean(components, binding, definition, Dependent.class));
+        sharedContexts.forEach((binding, definition) -> contextBean(components, binding, definition, Singleton.class));
+        if (!references.isEmpty()) { // one listing per part of the deployment that declares references
+            components.addBean(PersistenceReferences.class).type(PersistenceReferences.class).scope(Singleton.class)
+                .withParam(PersistenceReferencesCreator.NAMES, references.keySet().toArray(String[]::new))
+                .withParam(PersistenceReferencesCreator.KINDS,
+                    references.values().stream().map(Declared::kind).toArray(String[]::new))
+                .withParam(PersistenceReferencesCreator.QUALIFIERS,
+                    references.values().stream().map(Declared::qualifier).toArray(String[]::new))
+                .createWith(PersistenceReferencesCreator.class);
+        }
         if (!declared.isEmpty()) { // Vauban's annotation processor reads no persistence.xml: nothing to compare then
             components.addObserver(Startup.class).priority(UnitsStartCheck.PRIORITY)
                 .withParam(UnitsStartCheck.UNITS, declared.stream().map(UnitsStartCheck::describe).toArray(String[]::new))
                 .observeWith(UnitsStartCheck.class);
         }
+    }
+
+    private static void contextBean(SyntheticComponents components, String binding, Context definition,
+            Class<? extends Annotation> scope) {
+        components.addBean(EntityManager.class).type(EntityManager.class)
+            .scope(scope).qualifier(AnnotationBuilder.of(PersistenceBinding.class).value(binding).build())
+            .withParam(UNIT, definition.unit).withParam(CONTEXT_TYPE, definition.type)
+            .withParam(SYNCHRONIZATION, definition.synchronization)
+            .withParam("propertyNames", definition.properties.keySet().toArray(String[]::new))
+            .withParam("propertyValues", definition.properties.values().toArray(String[]::new))
+            .createWith(PersistenceContextCreator.class).disposeWith(PersistenceContextDisposer.class);
     }
 
     /**
