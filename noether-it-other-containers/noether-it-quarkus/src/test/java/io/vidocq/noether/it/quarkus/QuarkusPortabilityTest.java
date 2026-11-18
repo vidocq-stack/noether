@@ -116,7 +116,6 @@ class QuarkusPortabilityTest {
 
         assertEquals("library", factory.getName());
         assertEquals(PersistenceUnitTransactionType.JTA, factory.getTransactionType());
-        assertThrows(IllegalStateException.class, factory::close);
     }
 
     /**

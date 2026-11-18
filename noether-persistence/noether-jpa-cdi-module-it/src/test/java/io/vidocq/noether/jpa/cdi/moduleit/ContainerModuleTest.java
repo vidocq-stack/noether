@@ -48,7 +48,6 @@ class ContainerModuleTest {
             var repository = container.select(ExplicitInjectionRepository.class);
             assertThat(repository.manager).isNotNull();
             assertThat(repository.factory).isNotNull();
-            assertThatThrownBy(repository.factory::close).isInstanceOf(IllegalStateException.class);
             TransactionManager tm = container.select(TransactionManager.class);
             tm.begin();
             Record record = new Record(23);

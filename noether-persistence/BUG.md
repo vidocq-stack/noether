@@ -2072,3 +2072,26 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     through the class loader of the deployment, as `persistence.xml` is read. The extension declares each one as it
     declares the reference of a class: one shared `@Singleton` context, or the unit's factory. An `Extended` context, a
     name declared for two beans and an `injection-target`, which Noether does not inject, fail the deployment.
+
+## BUG-20261118-86 — An application cannot close the factory the container injected
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/platform-tck-mapping-and-locks`: the factory of the unit closes.
+- **Affected module**: `noether-jpa-cdi` (`ContainerEntityManagerFactory`)
+- **Symptom**: found by the Jakarta EE 11 Platform TCK for Persistence on the Vidocq runtime.
+  `core.entityManagerFactoryCloseExceptions.Client#exceptionsTest`, in the `pmservlet` and `puservlet` vehicles,
+  closes the factory the servlet got from `@PersistenceUnit`, then expects every method but `isOpen` to throw
+  `IllegalStateException`. `close()` threw `IllegalStateException: An application must not close a
+  container-managed entity manager factory`, so the test stopped there.
+- **Minimal reproduction**: `ContainerEntityManagerTest.anApplicationClosesAContainerFactoryThenEveryCallButIsOpenIsRefused`.
+- **Hypothesised cause**: the facade applied to the factory the rule of `EntityManager.close()`, which throws for a
+  container-managed entity manager. The Javadoc of `EntityManagerFactory.close()` has no such exception: after
+  `close()`, every method but `isOpen` throws `IllegalStateException`, and every entity manager of the factory is
+  closed.
+- **Investigations**:
+  - 2026-11-18: reproduced red with the test above (the TCK's message).
+  - 2026-11-18: fixed. `close()` closes the factory of the unit, so the contexts of the unit are closed too, and
+    `unwrap` refuses the facade itself once closed. The container's own close when the deployment stops already
+    skips a closed factory. Three tests asserted the refusal. `ContainerModuleTest` and `QuarkusPortabilityTest` no
+    longer close the factory they share with the rest of the test. `InjectedUnitModuleTest` now closes the injected
+    factory and checks that the factory `@PersistenceUnit` injects is closed with it.

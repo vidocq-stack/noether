@@ -446,13 +446,50 @@ class ContainerEntityManagerTest {
         assertThat(PersistenceDescriptors.defaultUnitName(Thread.currentThread().getContextClassLoader())).isEqualTo("default-cdi");
     }
 
+    /**
+     * {@code EntityManagerFactory.close()} leaves no exception for a factory of the container, unlike
+     * {@code EntityManager.close()}; the Platform TCK closes the factory a servlet got by injection
+     * ({@code core.entityManagerFactoryCloseExceptions}, BUG-20261118-86).
+     */
+    @Test
+    void anApplicationClosesAContainerFactoryThenEveryCallButIsOpenIsRefused() throws Exception {
+        var factory = new ContainerEntityManagerFactory(factory("p9-container-close"));
+        var em = new ContainerEntityManager(factory, registry, PersistenceContextType.TRANSACTION,
+            SynchronizationType.SYNCHRONIZED, java.util.Map.of());
+        try {
+            assertThat(factory.unwrap(ContainerEntityManagerFactory.class)).isSameAs(factory);
+            assertThat(factory.unwrap(io.vidocq.noether.jpa.core.spi.UnitDescription.class)).isNotNull();
+            factory.close();
+            assertThat(factory.isOpen()).isFalse();
+            assertThatThrownBy(factory::getMetamodel).isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(factory::getProperties).isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(factory::getPersistenceUnitUtil).isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(factory::getCache).isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(factory::getCriteriaBuilder).isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(factory::createEntityManager).isInstanceOf(IllegalStateException.class);
+            var noProperties = java.util.Map.of();
+            assertThatThrownBy(() -> factory.createEntityManager(noProperties)).isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(() -> factory.unwrap(ContainerEntityManagerFactory.class))
+                .isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(factory::close).isInstanceOf(IllegalStateException.class);
+            tm.begin();
+            try {
+                assertThatThrownBy(() -> em.find(Record.class, 1)).isInstanceOf(IllegalStateException.class);
+            } finally {
+                tm.rollback();
+            }
+        } finally {
+            em.destroy();
+            factory.destroy();
+        }
+    }
+
     @Test
     void containerFactoryOwnershipAndContextConfigurationDoNotRequireATransaction() throws Exception {
         var factory = new ContainerEntityManagerFactory(factory("p9-container-ownership"));
         var em = new ContainerEntityManager(factory, registry, PersistenceContextType.TRANSACTION,
             SynchronizationType.SYNCHRONIZED, java.util.Map.of());
         try {
-            assertThatThrownBy(factory::close).isInstanceOf(IllegalStateException.class);
             em.setFlushMode(FlushModeType.COMMIT);
             em.setProperty("query.setting", "kept");
             assertThat(em.getFlushMode()).isEqualTo(FlushModeType.COMMIT);
