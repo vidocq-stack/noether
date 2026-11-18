@@ -37,10 +37,13 @@ public final class H2Dialect extends StandardDialect {
         return column.quoted() ? column.name() : column.name().toUpperCase(Locale.ROOT);
     }
 
-    /** H2 has no shared row lock: a shared lock is an exclusive one; it has no NOWAIT either. */
+    /**
+     * H2 has no shared row lock: a shared lock is an exclusive one; it has no NOWAIT either. Both the lock of an entity
+     * and the lock of a query come here (BUG-20261118-81).
+     */
     @Override
-    protected String lock(Select select) {
-        return select.lock() == Select.Lock.NONE ? "" : " FOR UPDATE";
+    protected String lock(Select.Lock lock, boolean noWait) {
+        return lock == Select.Lock.NONE ? "" : " FOR UPDATE";
     }
 
     /** H2 reports a lock timeout as 50200, a deadlock as 40001. */

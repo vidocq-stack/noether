@@ -1995,3 +1995,20 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
   - 2026-11-18: fixed. Noether's entity manager implements the new SPI `QueryCopies`: it creates again a query string
     or criteria query another entity manager of the unit created, as it was created, with the same parameter objects.
     The facade creates a criteria query once and copies it into the context that runs it (`QueryCopiesTest`).
+
+## BUG-20261118-81 — A query with a pessimistic read lock fails on H2: FOR SHARE
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/platform-tck-mapping-and-locks`: the H2 dialect renders every shared lock `FOR UPDATE`.
+- **Affected module**: `noether-jpa-dialect-h2` (`H2Dialect`)
+- **Symptom**: found by the Jakarta EE 11 Platform TCK for Persistence on the Vidocq runtime (H2). A query run with
+  `LockModeType.PESSIMISTIC_READ` fails: `The lock failed: Syntax error in SQL statement "SELECT t0.ID FROM EMPLOYEE t0
+  WHERE t0.ID < 10 FOR [*]SHARE"` (`lock.query`, `entityManager.addNamedQueryLockModeTest`, `entitytest.apitests`,
+  eight errors).
+- **Minimal reproduction**: `H2DialectFactoryTest.aQueryWithASharedLockLocksItsRowsForUpdate`.
+- **Hypothesised cause**: `StandardDialect` renders a lock through `lock(Select.Lock, boolean)`, from `lock(Select)`
+  for an entity and directly for a query. `H2Dialect` overrode `lock(Select)` only, so the lock of a query kept the
+  standard `FOR SHARE`, which H2 does not parse.
+- **Investigations**:
+  - 2026-11-18: reproduced red with the test above (`FOR SHARE NOWAIT`).
+  - 2026-11-18: fixed. `H2Dialect` overrides `lock(Select.Lock, boolean)`, which both paths reach.

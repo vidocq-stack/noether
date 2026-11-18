@@ -95,4 +95,14 @@ class H2DialectFactoryTest {
             .isEqualTo(io.vidocq.noether.jpa.dialect.Dialect.LockFailure.TIMEOUT);
         assertThat(dialect.lockTimeout(100)).isNull();
     }
+
+    /** A query run with a shared lock (PESSIMISTIC_READ) locks its rows as H2 can: H2 has no FOR SHARE. */
+    @Test
+    void aQueryWithASharedLockLocksItsRowsForUpdate() {
+        var id = new Expression.Column("t0", Identifier.of("ID"));
+        var query = Query.from(new Query.From(Table.of("EMPLOYEE"), "t0", List.of())).select(id).build()
+            .locked(io.vidocq.noether.jpa.dialect.sql.Select.Lock.SHARED, true);
+        assertThat(new H2DialectFactory().create(2, 3).render(query))
+            .isEqualTo("SELECT t0.ID FROM EMPLOYEE t0 FOR UPDATE");
+    }
 }
