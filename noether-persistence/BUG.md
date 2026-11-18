@@ -1893,3 +1893,26 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     war's classes at start, and each run added its listing, even an empty one. Fixed: a part without references adds
     no listing (`aDeploymentWithoutReferencesHasNoListing`, red with one empty bean before), and the type's Javadoc and
     Usage say that a container can hold several listings, which a consumer reads all.
+
+## BUG-20261118-85 — The persistence references of web.xml are not bound under java:comp/env
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/persistence-references-in-web-xml`: Noether lists them with the references of the classes.
+- **Affected module**: `noether-jpa-cdi` (`NoetherPersistenceExtension`), `noether-jpa-core` (`PersistenceDescriptors`)
+- **Symptom**: found by the Jakarta EE 11 Platform TCK for Persistence on the Vidocq runtime.
+  `ee.packaging.web.scope.ClientTest#test1` and `ee.packaging.web.standalone.ClientTest#test1` declare a
+  `persistence-context-ref` (`persistence/MyEM`) and a `persistence-unit-ref` (`persistence/MyPersistenceUnit`) in
+  `web.xml` and look them up under `java:comp/env`: the servlet got `null`, then a `NullPointerException` on
+  `entityManager.getEntityManagerFactory()` and `entityManagerFactory.getCache()`.
+- **Minimal reproduction**: `PersistenceReferencesModuleTest.theReferencesOfWebXmlAreListedWithThoseOfTheClasses`
+  (a `WEB-INF/web.xml` the class loader of the deployment finds, with one reference of each kind).
+- **Hypothesised cause**: the extension listed the references the classes declare on themselves only (BUG-20261118-64);
+  no part of the runtime read the descriptor form of the same references (Jakarta EE 11 Platform §5.13.1.2,
+  §5.14.1.2). Foy reads `web.xml` but leaves its environment references to the runtime.
+- **Investigations**:
+  - 2026-11-18: reproduced red with the test above (the two references of `web.xml` were not listed).
+  - 2026-11-18: fixed. `PersistenceDescriptors.references` reads the `persistence-context-ref` and
+    `persistence-unit-ref` elements of `WEB-INF/web.xml`, else `META-INF/web.xml`, as a servlet container finds them,
+    through the class loader of the deployment, as `persistence.xml` is read. The extension declares each one as it
+    declares the reference of a class: one shared `@Singleton` context, or the unit's factory. An `Extended` context, a
+    name declared for two beans and an `injection-target`, which Noether does not inject, fail the deployment.

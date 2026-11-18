@@ -21,15 +21,18 @@ package io.vidocq.noether.jpa.core.spi;
 
 import io.vidocq.noether.jpa.core.bootstrap.PersistenceUnits;
 import io.vidocq.noether.jpa.core.bootstrap.UnitSettings;
+import jakarta.persistence.PersistenceContextType;
 import jakarta.persistence.PersistenceException;
 import jakarta.persistence.PersistenceUnitTransactionType;
+import jakarta.persistence.SynchronizationType;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
 /**
- * The persistence units a deployment declares, read by the provider's own {@code persistence.xml} parser, for the
- * container integrations: they never parse a descriptor themselves.
+ * The persistence units a deployment declares, read by the provider's own {@code persistence.xml} parser, and the
+ * persistence references of its {@code web.xml}, for the container integrations: they never parse a descriptor
+ * themselves.
  */
 public final class PersistenceDescriptors {
 
@@ -67,7 +70,52 @@ public final class PersistenceDescriptors {
         }
     }
 
+    /** What a persistence reference of a deployment descriptor names. */
+    public enum ReferenceKind {
+        /** A {@code persistence-context-ref}: a container-managed entity manager. */
+        CONTEXT,
+        /** A {@code persistence-unit-ref}: the factory of a unit. */
+        UNIT
+    }
+
+    /**
+     * A persistence reference a deployment descriptor declares (Jakarta EE 11 Platform §5.13.1.2, §5.14.1.2): a
+     * {@code persistence-context-ref} or {@code persistence-unit-ref} of {@code web.xml}, which a component looks up
+     * under {@code java:comp/env} by its name.
+     *
+     * @param name the {@code persistence-context-ref-name} or {@code persistence-unit-ref-name}, relative to
+     *        {@code java:comp/env}
+     * @param kind a context or a unit
+     * @param unitName the {@code persistence-unit-name}, empty when the reference names none
+     * @param type the {@code persistence-context-type} of a context, {@code TRANSACTION} when it names none;
+     *        {@code null} for a unit
+     * @param synchronization the {@code persistence-context-synchronization} of a context, {@code SYNCHRONIZED} when it
+     *        names none; {@code null} for a unit
+     * @param properties the {@code persistence-property} elements of a context, name to value
+     * @param injectionTargets the {@code injection-target} elements, each as {@code class#name}
+     * @param source the descriptor that declares it, such as {@code WEB-INF/web.xml}
+     */
+    public record DescriptorReference(String name, ReferenceKind kind, String unitName, PersistenceContextType type,
+            SynchronizationType synchronization, Map<String, String> properties, List<String> injectionTargets,
+            String source) {
+        public DescriptorReference {
+            properties = Map.copyOf(properties);
+            injectionTargets = List.copyOf(injectionTargets);
+        }
+    }
+
     private PersistenceDescriptors() {
+    }
+
+    /**
+     * The persistence references of the {@code web.xml} of {@code loader}: {@code WEB-INF/web.xml}, else
+     * {@code META-INF/web.xml}, the one a servlet container reads; in their order. Empty without either.
+     *
+     * @throws PersistenceException if the file cannot be read, or declares a reference without a name or with a value
+     *         its schema does not have
+     */
+    public static List<DescriptorReference> references(ClassLoader loader) {
+        return WebXmlReferences.of(loader);
     }
 
     /**

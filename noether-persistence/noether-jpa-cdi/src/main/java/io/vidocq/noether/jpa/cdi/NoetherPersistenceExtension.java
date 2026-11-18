@@ -1,6 +1,7 @@
 package io.vidocq.noether.jpa.cdi;
 
 import io.vidocq.noether.jpa.core.spi.PersistenceDescriptors;
+import io.vidocq.noether.jpa.core.spi.PersistenceDescriptors.DescriptorReference;
 import io.vidocq.noether.jpa.core.spi.PersistenceDescriptors.UnitInjection;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.Dependent;
@@ -25,6 +26,8 @@ public final class NoetherPersistenceExtension implements BuildCompatibleExtensi
     private static final String UNIT = "unit";
     private static final String CONTEXT_TYPE = "contextType";
     private static final String SYNCHRONIZATION = "synchronization";
+    /** The binding of a unit's factory: this prefix, then the unit name. */
+    private static final String UNIT_BINDING = "unit:";
     private record Context(String unit, String type, String synchronization, Map<String,String> properties) {}
     private final Set<String> units = new LinkedHashSet<>();
     private final Map<String, Context> contexts = new LinkedHashMap<>();
@@ -78,20 +81,50 @@ public final class NoetherPersistenceExtension implements BuildCompatibleExtensi
         ClassInfo declaring = clazz.info();
         for (AnnotationInfo context : declaring.repeatableAnnotation(PersistenceContext.class)) {
             String name = referenceName(declaring, context, "context");
-            Context definition = definition(context);
-            if (PersistenceContextType.EXTENDED.name().equals(definition.type)) {
-                throw new DefinitionException(declaring.name() + " declares the persistence context " + name
-                    + " EXTENDED on its class: an extended context belongs to a stateful component, a reference is"
-                    + " transaction-scoped (Jakarta Persistence 3.2, §7.6.3)");
-            }
-            String shared = "shared:" + contextBinding(definition.unit, definition.type, definition.synchronization, definition.properties);
-            sharedContexts.putIfAbsent(shared, definition);
-            declare(name, new Declared(PersistenceReferencesCreator.CONTEXT, shared, declaring.name()));
+            contextReference(name, definition(context), declaring.name() + " declares on its class", declaring.name());
         }
         for (AnnotationInfo unit : declaring.repeatableAnnotation(PersistenceUnit.class)) {
             String name = referenceName(declaring, unit, "unit");
             declare(name, new Declared(PersistenceReferencesCreator.UNIT, unitBinding(unit), declaring.name()));
         }
+    }
+
+    /**
+     * Jakarta EE 11 Platform §5.13.1.2 and §5.14.1.2: a {@code persistence-context-ref} or {@code persistence-unit-ref}
+     * of {@code web.xml} is a reference like one a class declares, read through the class loader of the deployment as
+     * {@code persistence.xml} is (BUG-20261118-85). Noether binds the name only: an {@code injection-target} fails the
+     * deployment rather than leave a field empty.
+     */
+    private void descriptorReferences(ClassLoader loader) {
+        for (DescriptorReference reference : PersistenceDescriptors.references(loader)) {
+            String declaredBy = reference.source();
+            if (!reference.injectionTargets().isEmpty()) {
+                throw new DefinitionException("The persistence reference " + reference.name() + " of " + declaredBy
+                    + " has the injection-target " + reference.injectionTargets() + ", which Noether does not inject:"
+                    + " declare @PersistenceContext or @PersistenceUnit on that field or setter instead");
+            }
+            units.add(reference.unitName());
+            if (reference.kind() == PersistenceDescriptors.ReferenceKind.UNIT) {
+                String unit = UNIT_BINDING + reference.unitName();
+                declare(reference.name(), new Declared(PersistenceReferencesCreator.UNIT, unit, declaredBy));
+            } else {
+                contextReference(reference.name(), new Context(reference.unitName(), reference.type().name(),
+                    reference.synchronization().name(), reference.properties()), declaredBy + " declares",
+                    declaredBy);
+            }
+        }
+    }
+
+    /** A context reference: one {@code @Singleton} transaction-scoped context that every lookup of its name shares. */
+    private void contextReference(String name, Context definition, String declares, String declaredBy) {
+        if (PersistenceContextType.EXTENDED.name().equals(definition.type)) {
+            throw new DefinitionException(declares + " the persistence context " + name + " EXTENDED: an extended"
+                + " context belongs to a stateful component, a reference is transaction-scoped (Jakarta Persistence 3.2,"
+                + " §7.6.3)");
+        }
+        String shared = "shared:" + contextBinding(definition.unit, definition.type, definition.synchronization, definition.properties);
+        sharedContexts.putIfAbsent(shared, definition);
+        declare(name, new Declared(PersistenceReferencesCreator.CONTEXT, shared, declaredBy));
     }
 
     private static String referenceName(ClassInfo declaring, AnnotationInfo annotation, String what) {
@@ -125,7 +158,7 @@ public final class NoetherPersistenceExtension implements BuildCompatibleExtensi
     private String unitBinding(AnnotationInfo unitAnnotation) {
         String unit = string(unitAnnotation, "unitName", "");
         units.add(unit);
-        return "unit:" + unit;
+        return UNIT_BINDING + unit;
     }
 
     private Context definition(AnnotationInfo context) {
@@ -172,6 +205,7 @@ public final class NoetherPersistenceExtension implements BuildCompatibleExtensi
     @Synthesis
     public void persistenceBeans(SyntheticComponents components) {
         ClassLoader loader = PersistenceFactoryCreator.loader();
+        descriptorReferences(loader);
         List<UnitInjection> declared = PersistenceDescriptors.injections(loader);
         Set<String> factories = new LinkedHashSet<>(units);
         for (UnitInjection unit : declared) {
@@ -181,7 +215,7 @@ public final class NoetherPersistenceExtension implements BuildCompatibleExtensi
         }
         for (String unit : factories) {
             components.addBean(EntityManagerFactory.class).type(EntityManagerFactory.class).scope(Singleton.class)
-                .qualifier(AnnotationBuilder.of(PersistenceBinding.class).value("unit:" + unit).build())
+                .qualifier(AnnotationBuilder.of(PersistenceBinding.class).value(UNIT_BINDING + unit).build())
                 .name(factoryName(unit))
                 .withParam(UNIT, unit).createWith(PersistenceFactoryCreator.class).disposeWith(PersistenceFactoryDisposer.class);
         }
