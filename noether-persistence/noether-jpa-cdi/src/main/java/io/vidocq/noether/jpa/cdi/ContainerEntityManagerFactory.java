@@ -7,7 +7,12 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.function.*;
 
-/** The deployment, not application code, owns a factory injected by {@code @PersistenceUnit} (§7.8). */
+/**
+ * The factory of a unit the container created: the one {@code @PersistenceUnit} injects and its contexts run on. The
+ * container closes it when the deployment stops ({@link #destroy()}). An application may close it before:
+ * {@code EntityManagerFactory.close()} makes no exception for a factory of the container, unlike
+ * {@code EntityManager.close()}, so the factory and every entity manager of the unit are then closed (BUG-20261118-86).
+ */
 public final class ContainerEntityManagerFactory implements EntityManagerFactory {
     private final EntityManagerFactory delegate;
 
@@ -16,7 +21,7 @@ public final class ContainerEntityManagerFactory implements EntityManagerFactory
     }
 
     public void destroy() { if (delegate.isOpen()) delegate.close(); }
-    @Override public void close() { throw new IllegalStateException("An application must not close a container-managed entity manager factory"); }
+    @Override public void close() { delegate.close(); }
     @Override public EntityManager createEntityManager() { return delegate.createEntityManager(); }
     @Override public EntityManager createEntityManager(Map<?,?> properties) { return delegate.createEntityManager(properties); }
     @Override public EntityManager createEntityManager(SynchronizationType synchronization) { return delegate.createEntityManager(synchronization); }
@@ -33,7 +38,10 @@ public final class ContainerEntityManagerFactory implements EntityManagerFactory
     @Override public void addNamedQuery(String name, Query query) {
         delegate.addNamedQuery(name, query instanceof ContextQuery<?> contextual ? contextual.metadata() : query);
     }
-    @Override public <T> T unwrap(Class<T> type) { return type.isInstance(this) ? type.cast(this) : delegate.unwrap(type); }
+    /** Once closed, even this facade is refused: the factory of the unit throws {@code IllegalStateException}. */
+    @Override public <T> T unwrap(Class<T> type) {
+        return type.isInstance(this) && delegate.isOpen() ? type.cast(this) : delegate.unwrap(type);
+    }
     @Override public <T> void addNamedEntityGraph(String name, EntityGraph<T> graph) { delegate.addNamedEntityGraph(name, graph); }
     @Override public <R> Map<String,TypedQueryReference<R>> getNamedQueries(Class<R> type) { return delegate.getNamedQueries(type); }
     @Override public <E> Map<String,EntityGraph<? extends E>> getNamedEntityGraphs(Class<E> type) { return delegate.getNamedEntityGraphs(type); }

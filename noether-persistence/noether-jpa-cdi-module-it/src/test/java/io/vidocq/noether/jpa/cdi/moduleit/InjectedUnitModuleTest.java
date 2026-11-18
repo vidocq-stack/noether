@@ -111,7 +111,8 @@ class InjectedUnitModuleTest {
 
             assertThat(injected.getName()).isEqualTo("xml-ledger");
             assertThat(injected.getMetamodel()).isSameAs(declared.getMetamodel());
-            assertThatThrownBy(injected::close).isInstanceOf(IllegalStateException.class);
+            injected.close();
+            assertThat(declared.isOpen()).isFalse();
         }
     }
 
