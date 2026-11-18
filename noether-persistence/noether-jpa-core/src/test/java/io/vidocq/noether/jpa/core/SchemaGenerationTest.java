@@ -41,6 +41,67 @@ class SchemaGenerationTest {
         }
     }
 
+    @Entity @Table(name = "p9_product")
+    public static class Product {
+        @Id public int id;
+        public String name;
+        public Product() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
+    }
+    @Entity public static class Hardware extends Product {
+        @Column(name = "model") public int modelNumber;
+        public Hardware() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
+    }
+
+    @Entity @Table(name = "p9_employee")
+    public static class Employee {
+        @Id @Column(name = "ID") public int id;
+        @Column(name = "FIRSTNAME") public String firstName;
+        public Employee() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
+    }
+    @Entity @Table(name = "p9_employee")
+    public static class EmployeeName {
+        @Id public int id;
+        public String firstName;
+        public EmployeeName() {
+            // Jakarta Persistence needs a no-arg constructor (§2.1)
+        }
+    }
+
+    @Test
+    void theStateASubclassAddsToASingleTableIsNullable() { // §2.12.1, BUG-20261118-66
+        try (var factory = new PersistenceConfiguration("p9-single-table").managedClass(Product.class).managedClass(Hardware.class)
+                .property("jakarta.persistence.jdbc.url", "jdbc:h2:mem:p9-single-table;DB_CLOSE_DELAY=-1")
+                .property("jakarta.persistence.schema-generation.database.action", "drop-and-create").createEntityManagerFactory()) {
+            Product product = new Product();
+            product.id = 1;
+            product.name = "plain";
+            factory.runInTransaction(em -> em.persist(product));
+            Product found = factory.callInTransaction(em -> em.find(Product.class, 1));
+            assertThat(found).isNotInstanceOf(Hardware.class);
+            assertThat(found.name).isEqualTo("plain");
+        }
+    }
+
+    @Test
+    void twoEntitiesOfOneTableShareAColumnWhoseNamesDifferInCase() { // §2.13, BUG-20261118-67
+        try (var factory = new PersistenceConfiguration("p9-shared-table").managedClass(Employee.class)
+                .managedClass(EmployeeName.class)
+                .property("jakarta.persistence.jdbc.url", "jdbc:h2:mem:p9-shared-table;DB_CLOSE_DELAY=-1")
+                .property("jakarta.persistence.schema-generation.database.action", "drop-and-create").createEntityManagerFactory()) {
+            Employee employee = new Employee();
+            employee.id = 1;
+            employee.firstName = "Ada";
+            factory.runInTransaction(em -> em.persist(employee));
+            assertThat(factory.callInTransaction(em -> em.find(EmployeeName.class, 1)).firstName).isEqualTo("Ada");
+        }
+    }
+
     @Test
     void inheritanceDiscriminatorsAndYearAreSchemaColumns() { // §2.14 and §2.8
         try (var factory = new PersistenceConfiguration("p9-inheritance").managedClass(Parent.class).managedClass(Child.class)

@@ -1893,3 +1893,40 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     war's classes at start, and each run added its listing, even an empty one. Fixed: a part without references adds
     no listing (`aDeploymentWithoutReferencesHasNoListing`, red with one empty bean before), and the type's Javadoc and
     Usage say that a container can hold several listings, which a consumer reads all.
+
+## BUG-20261118-66 — Schema generation makes the columns a subclass adds to a single table NOT NULL
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/schema-from-platform-tck`: the columns of the state a subclass adds to a single-table
+  hierarchy are nullable.
+- **Affected module**: `noether-jpa-core` (`SchemaPlan`)
+- **Symptom**: found by the Jakarta EE 11 Platform TCK for Persistence on the Vidocq runtime (H2, schema generation
+  `drop-and-create`, not the TCK DDL). `schema30.Product` is the root of a `SINGLE_TABLE` hierarchy, and its subclass
+  `HardwareProduct` maps `@Column(name = "MODEL", nullable = true) int modelNumber`. Persisting a `Product` fails:
+  `NULL not allowed for column "MODEL"`, so the data setup of 754 tests (`criteriaapi`, `query`) fails before they run.
+- **Minimal reproduction**: `SchemaGenerationTest.theStateASubclassAddsToASingleTableIsNullable` (persist the root of
+  a hierarchy whose subclass maps an `int`).
+- **Hypothesised cause**: the column of a primitive attribute is `NOT NULL` (`BasicAttribute.optional()` is false
+  for a primitive type). Jakarta Persistence 3.2 §2.12.1: in a single table, the columns of the state specific to a
+  subclass must be nullable, since the rows of the other classes leave them null.
+- **Investigations**:
+  - 2026-11-18: reproduced red with the test above, with the TCK's error.
+  - 2026-11-18: fixed. `SchemaPlan.columnDefinition` makes nullable the column of an attribute a class below the
+    root of a single-table hierarchy declares (a subclass, or a mapped superclass between them).
+
+## BUG-20261118-67 — Two entities of one table get a column twice when its names differ in case
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/schema-from-platform-tck`: an undelimited column name is compared without its case.
+- **Affected module**: `noether-jpa-core` (`SchemaPlan`)
+- **Symptom**: found by the Jakarta EE 11 Platform TCK for Persistence on the Vidocq runtime (H2, schema generation).
+  Two entities map the table `EMPLOYEE`, one with `@Column(name = "ID")`, the other with the default name `id`.
+  The deployment fails: `Duplicate column name "ID"`, on `CREATE TABLE EMPLOYEE (ID INTEGER NOT NULL, ..., id INTEGER
+  NOT NULL, ...)` (`annotations.convert`, `annotations.mapkeytemporal`, `override.entitylistener`, six classes).
+- **Minimal reproduction**: `SchemaGenerationTest.twoEntitiesOfOneTableShareAColumnWhoseNamesDifferInCase`.
+- **Hypothesised cause**: `SchemaPlan` merged the columns of a table by `Identifier`, whose equality keeps the case.
+  An undelimited name is not case-sensitive (Jakarta Persistence 3.2 §2.13; SQL folds it).
+- **Investigations**:
+  - 2026-11-18: reproduced red with the test above, with the TCK's error.
+  - 2026-11-18: fixed. The columns of a table are kept by a key that folds an undelimited name to upper case and
+    keeps a delimited one as it is (`SchemaPlan.TableColumns`).

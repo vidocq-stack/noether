@@ -35,7 +35,7 @@ final class SchemaPlan {
         Map.entry(java.time.LocalDateTime.class, JDBCType.TIMESTAMP),
         Map.entry(byte[].class, JDBCType.VARBINARY), Map.entry(Byte[].class, JDBCType.VARBINARY));
     private final MappedUnit unit;
-    private final Map<Table, LinkedHashMap<Identifier, SchemaStatement.Column>> tables = new LinkedHashMap<>();
+    private final Map<Table, TableColumns> tables = new LinkedHashMap<>();
     private final Map<Table, List<Identifier>> keys = new LinkedHashMap<>();
     private final List<SchemaStatement> sequences = new ArrayList<>();
     private final List<SchemaStatement> indexes = new ArrayList<>();
@@ -81,14 +81,14 @@ final class SchemaPlan {
         EntityStatements statements = entity.statements();
         List<EntityStatements.Column> columns = statements.columns();
         Table table = mapped.select().table();
-        var target = tables.computeIfAbsent(table, _ -> new LinkedHashMap<>());
+        var target = columns(table);
         keys.putIfAbsent(table, mapped.select().conditions());
         for (int c : mapped.selected()) {
             var column = columns.get(c);
-            target.merge(column.name(), columnDefinition(entity, mapped, column), (previous, next) -> previous);
+            target.putIfAbsent(column.name(), columnDefinition(entity, mapped, column));
         }
         for (Identifier key : mapped.select().conditions()) {
-            if (!target.containsKey(key)) {
+            if (!target.contains(key)) {
                 var first = statements.keyColumns().getFirst();
                 target.put(key, definition(key, basic(model.attributes().get(first.attribute()), first.path()), true, false));
             }
@@ -116,8 +116,28 @@ final class SchemaPlan {
             Class<?> discriminatorType = inheritance != null && inheritance.value() instanceof Number ? int.class : String.class;
             definition = new SchemaStatement.Column(column.name(),
                 discriminatorType == int.class ? JDBCType.INTEGER : JDBCType.VARCHAR, 31, 0, 0, true, false, false, null);
+        } else if (subclassState(model, model.attributes().get(column.attribute()))) {
+            definition = new SchemaStatement.Column(definition.name(), definition.type(), definition.length(),
+                definition.precision(), definition.scale(), true, definition.identity(), definition.unique(),
+                definition.definition());
         }
         return definition;
+    }
+
+    /**
+     * Whether an attribute is state a subclass adds to a single-table hierarchy. The rows of the other classes of the
+     * hierarchy leave its columns null, so they are nullable whatever the attribute maps (§2.12.1).
+     */
+    private boolean subclassState(EntityModel model, AttributeModel attribute) {
+        var inheritance = unit.inheritance(model.javaType());
+        if (inheritance == null || inheritance.joined() || inheritance.tablePerClass()) return false;
+        Class<?> root = inheritance.root().javaType();
+        return attribute.declaringClass() != root && root.isAssignableFrom(attribute.declaringClass());
+    }
+
+    /** The columns of {@code table}, created empty the first time. */
+    private TableColumns columns(Table table) {
+        return tables.computeIfAbsent(table, _ -> new TableColumns());
     }
 
     /** The tables, columns and constraints a collection of entities maps. */
@@ -128,7 +148,7 @@ final class SchemaPlan {
             case CollectionMapping.MappedBy inverse when inverse.indexUpdate() != null -> {
                 var target = unit.entity(inverse.association().targetEntity()).orElseThrow();
                 for (Table table : unit.collectionTables(target, inverse.indexUpdate().table())) {
-                    addIndex(tables.computeIfAbsent(table, _ -> new LinkedHashMap<>()), inverse.index());
+                    addIndex(columns(table), inverse.index());
                 }
             }
             case CollectionMapping.MappedBy _, CollectionMapping.Unsupported _ -> {
@@ -139,7 +159,7 @@ final class SchemaPlan {
 
     /** A collection mapped by a join table: the table, its keys, its index and its constraints. */
     private void joinTable(MappedEntity entity, CollectionMapping.JoinTable join) {
-        var columnsByName = tables.computeIfAbsent(join.table(), _ -> new LinkedHashMap<>());
+        var columnsByName = columns(join.table());
         addKeys(columnsByName, join.ownerColumns(), entity);
         addKeys(columnsByName, join.targetColumns(), unit.entity(join.association().targetEntity()).orElseThrow());
         addIndex(columnsByName, join.index());
@@ -162,7 +182,7 @@ final class SchemaPlan {
     private void foreignKeyCollection(MappedEntity entity, CollectionMapping.ForeignKey foreign) {
         var target = unit.entity(foreign.association().targetEntity()).orElseThrow();
         for (Table table : unit.collectionTables(target, foreign.table())) {
-            var columnsByName = tables.computeIfAbsent(table, _ -> new LinkedHashMap<>());
+            var columnsByName = columns(table);
             addKeys(columnsByName, foreign.ownerColumns(), entity);
             for (int k = 0; k < foreign.ownerColumns().size(); k++) {
                 Identifier name = foreign.ownerColumns().get(k);
@@ -196,7 +216,7 @@ final class SchemaPlan {
 
     /** The collection table of an element collection: its keys, index, columns and foreign keys. */
     private void elementCollection(MappedEntity entity, ElementCollectionMapping collection) {
-        var columnsByName = tables.computeIfAbsent(collection.table(), _ -> new LinkedHashMap<>());
+        var columnsByName = columns(collection.table());
         addKeys(columnsByName, collection.ownerColumns(), entity);
         addIndex(columnsByName, collection.index());
         for (var column : collection.columns()) {
@@ -272,7 +292,7 @@ final class SchemaPlan {
             columns.stream().map(c -> new SchemaStatement.IndexColumn(c, false)).toList(), true, 1, 1));
     }
 
-    private void joinNullability(Map<Identifier, SchemaStatement.Column> columns, List<Identifier> names,
+    private void joinNullability(TableColumns columns, List<Identifier> names,
             List<JoinColumnModel> joins) {
         for (int k = 0; k < names.size(); k++) {
             var column = columns.get(names.get(k));
@@ -281,7 +301,7 @@ final class SchemaPlan {
         }
     }
 
-    private void addKeys(Map<Identifier, SchemaStatement.Column> target, List<Identifier> names, MappedEntity entity) {
+    private void addKeys(TableColumns target, List<Identifier> names, MappedEntity entity) {
         var keyColumns = entity.statements().keyColumns();
         for (int i = 0; i < names.size(); i++) {
             var key = keyColumns.get(i);
@@ -290,7 +310,7 @@ final class SchemaPlan {
         }
     }
 
-    private void addIndex(Map<Identifier, SchemaStatement.Column> columns, IndexMapping index) {
+    private void addIndex(TableColumns columns, IndexMapping index) {
         if (index == null) return;
         for (int i = 0; i < index.columns().size(); i++) {
             Identifier name = index.columns().get(i);
@@ -402,7 +422,7 @@ final class SchemaPlan {
         var generator = generation.table().orElseGet(() -> new TableGeneratorModel(null, null, null, null, null, null, null, 1, 50));
         Table table = new Table(identifier(generator.table() != null ? generator.table() : "SEQUENCE"),
             identifier(generator.schema()), identifier(generator.catalog()));
-        var columns = tables.computeIfAbsent(table, _ -> new LinkedHashMap<>());
+        var columns = columns(table);
         Identifier key = identifier(generator.pkColumnName() != null ? generator.pkColumnName() : "SEQ_NAME");
         Identifier value = identifier(generator.valueColumnName() != null ? generator.valueColumnName() : "SEQ_COUNT");
         columns.put(key, new SchemaStatement.Column(key, JDBCType.VARCHAR, 255, 0, 0, false, false, false, null));
@@ -470,7 +490,7 @@ final class SchemaPlan {
         }
         statements.addAll(sequences);
         tables.forEach((table, columns) -> statements.add(SchemaStatement.table(CREATE_TABLE, table,
-            List.copyOf(columns.values()), keys.getOrDefault(table, List.of()))));
+            columns.values(), keys.getOrDefault(table, List.of()))));
         statements.addAll(indexes);
         statements.addAll(foreignKeys);
         return statements;
@@ -621,5 +641,37 @@ final class SchemaPlan {
 
     private Identifier identifier(String value) {
         return unit.identifier(value);
+    }
+
+    /**
+     * The columns of one table, in the order the schema creates them. An undelimited name is not case-sensitive
+     * (§2.13): when two entities that map one table name a column {@code ID} and {@code id}, the table has one column.
+     */
+    private static final class TableColumns {
+        private final Map<String, SchemaStatement.Column> byName = new LinkedHashMap<>();
+
+        private static String key(Identifier name) {
+            return name.quoted() ? '"' + name.name() : name.name().toUpperCase(Locale.ROOT);
+        }
+
+        SchemaStatement.Column get(Identifier name) {
+            return byName.get(key(name));
+        }
+
+        boolean contains(Identifier name) {
+            return byName.containsKey(key(name));
+        }
+
+        void put(Identifier name, SchemaStatement.Column column) {
+            byName.put(key(name), column);
+        }
+
+        void putIfAbsent(Identifier name, SchemaStatement.Column column) {
+            byName.putIfAbsent(key(name), column);
+        }
+
+        List<SchemaStatement.Column> values() {
+            return List.copyOf(byName.values());
+        }
     }
 }
