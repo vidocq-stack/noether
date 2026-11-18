@@ -85,7 +85,7 @@ import java.util.function.Function;
  * which later milestone of the roadmap delivers it, after the checks every operation shares (a closed entity
  * manager throws {@link IllegalStateException}, §7.7).
  */
-final class EntityManagerImpl implements EntityManager {
+final class EntityManagerImpl implements EntityManager, io.vidocq.noether.jpa.core.spi.QueryCopies {
 
     private static final String CACHE_RETRIEVE_MODE = "jakarta.persistence.cache.retrieveMode";
     private static final String CACHE_STORE_MODE = "jakarta.persistence.cache.storeMode";
@@ -1522,6 +1522,20 @@ final class EntityManagerImpl implements EntityManager {
         checkOpen();
         try {
             return factory.namedQueries().create(name, resultClass, flushMode, queries, this::executeNativeUpdate).jpql();
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
+    }
+
+    /** A query string or criteria query another entity manager of the unit created, created again here as it was then. */
+    @Override
+    public Query copy(Query query) {
+        checkOpen();
+        if (!(query instanceof JpqlQuery<?> created)) {
+            throw new IllegalArgumentException("Not a query string or criteria query of Noether: " + query);
+        }
+        try {
+            return created.copy(queries, flushMode);
         } catch (RuntimeException e) {
             throw failed(e);
         }

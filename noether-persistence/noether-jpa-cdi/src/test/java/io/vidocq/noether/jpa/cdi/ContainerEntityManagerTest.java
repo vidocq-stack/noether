@@ -255,6 +255,47 @@ class ContainerEntityManagerTest {
         }
     }
 
+    /** A criteria object changed after its query was created leaves that query as it was (BUG-20261118-84). */
+    @Test
+    void aCriteriaObjectChangedAfterItsQueryWasCreatedLeavesThatQueryAsItWas() throws Exception {
+        try (var factory = factory("p9-facade-criteria-snapshot")) {
+            var em = facade(factory);
+            try {
+                tm.begin();
+                for (int id = 1; id <= 3; id++) em.persist(new Record(id));
+                var builder = em.getCriteriaBuilder();
+                var select = builder.createQuery(Record.class);
+                var selected = select.from(Record.class);
+                select.select(selected).where(builder.equal(selected.get("id"), 1));
+                var first = em.createQuery(select);
+                select.where(builder.equal(selected.get("id"), 2));
+                assertThat(first.getResultList()).extracting(found -> found.id).containsExactly(1);
+                var delete = builder.createCriteriaDelete(Record.class);
+                var deleted = delete.from(Record.class);
+                delete.where(builder.lt(deleted.<Integer>get("id"), 2));
+                var removal = em.createQuery(delete);
+                delete.where(builder.lt(deleted.<Integer>get("id"), 4));
+                assertThat(removal.executeUpdate()).isEqualTo(1);
+                var update = builder.createCriteriaUpdate(Record.class);
+                var updated = update.from(Record.class);
+                update.set(updated.<String>get("description"), "after").where(builder.equal(updated.get("id"), 2));
+                var change = em.createQuery(update);
+                update.where(builder.lt(updated.<Integer>get("id"), 4));
+                assertThat(change.executeUpdate()).isEqualTo(1);
+                var two = builder.createQuery(Integer.class);
+                var second = two.from(Record.class);
+                two.select(second.<Integer>get("id")).where(builder.equal(second.get("id"), 2));
+                var three = builder.createQuery(Integer.class);
+                var third = three.from(Record.class);
+                three.select(third.<Integer>get("id")).where(builder.equal(third.get("id"), 3));
+                assertThat(em.createQuery(builder.union(two, three)).getResultList()).containsExactlyInAnyOrder(2, 3);
+                tm.rollback();
+            } finally {
+                em.destroy();
+            }
+        }
+    }
+
     private static void alias(String name, String definition) throws Exception {
         try (var connection = java.sql.DriverManager.getConnection(url(name), "sa", "");
              var statement = connection.createStatement()) {

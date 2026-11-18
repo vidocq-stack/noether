@@ -1,5 +1,6 @@
 package io.vidocq.noether.jpa.cdi;
 
+import io.vidocq.noether.jpa.core.spi.QueryCopies;
 import jakarta.persistence.*;
 import jakarta.persistence.criteria.*;
 import jakarta.persistence.metamodel.Metamodel;
@@ -130,6 +131,17 @@ public final class ContainerEntityManager implements EntityManager {
         return marking(() -> metadataWork(em -> new ContextQuery<>(this, creator, creator.apply(em))));
     }
 
+    /**
+     * A criteria query, made once as its criteria object is now, then copied into the context that runs it: a later
+     * change of that object does not reach the query (BUG-20261118-84).
+     */
+    private <T> ContextQuery<T> copied(Function<EntityManager, ? extends Query> creator) {
+        return marking(() -> metadataWork(em -> {
+            Query created = creator.apply(em);
+            return new ContextQuery<>(this, context -> context.unwrap(QueryCopies.class).copy(created), created);
+        }));
+    }
+
     private ContextStoredProcedureQuery procedure(Function<EntityManager, StoredProcedureQuery> creator) {
         return marking(() -> metadataWork(em -> new ContextStoredProcedureQuery(this, creator, creator.apply(em))));
     }
@@ -214,10 +226,10 @@ public final class ContainerEntityManager implements EntityManager {
     @Override public void setProperty(String name, Object value) { setting("property:" + name, em -> em.setProperty(name, value)); }
     @Override public Map<String,Object> getProperties() { return metadataWork(EntityManager::getProperties); }
     @Override public Query createQuery(String query) { return query(em -> em.createQuery(query)); }
-    @Override public <T> TypedQuery<T> createQuery(CriteriaQuery<T> query) { return query(em -> em.createQuery(query)); }
-    @Override public <T> TypedQuery<T> createQuery(CriteriaSelect<T> query) { return query(em -> em.createQuery(query)); }
-    @Override public Query createQuery(CriteriaUpdate<?> query) { return query(em -> em.createQuery(query)); }
-    @Override public Query createQuery(CriteriaDelete<?> query) { return query(em -> em.createQuery(query)); }
+    @Override public <T> TypedQuery<T> createQuery(CriteriaQuery<T> query) { return copied(em -> em.createQuery(query)); }
+    @Override public <T> TypedQuery<T> createQuery(CriteriaSelect<T> query) { return copied(em -> em.createQuery(query)); }
+    @Override public Query createQuery(CriteriaUpdate<?> query) { return copied(em -> em.createQuery(query)); }
+    @Override public Query createQuery(CriteriaDelete<?> query) { return copied(em -> em.createQuery(query)); }
     @Override public <T> TypedQuery<T> createQuery(String query, Class<T> cls) { return query(em -> em.createQuery(query, cls)); }
     @Override public Query createNamedQuery(String name) { return query(em -> em.createNamedQuery(name)); }
     @Override public <T> TypedQuery<T> createNamedQuery(String name, Class<T> cls) { return query(em -> em.createNamedQuery(name, cls)); }

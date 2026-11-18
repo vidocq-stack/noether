@@ -271,6 +271,22 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
         this.tupleElements = List.copyOf(tupleElements);
     }
 
+    /**
+     * This query created again for {@code runtime}, another entity manager of the unit, as it was created: the
+     * statement of a criteria query as it was then, whatever its criteria object became, and the same parameter
+     * objects; no bound value, no setting (BUG-20261118-84).
+     */
+    public JpqlQuery<X> copy(QueryRuntime runtime, FlushModeType flushMode) {
+        if (parsed != null) {
+            return new JpqlQuery<>(jpql, resultClass, flushMode, runtime);
+        }
+        Set<jakarta.persistence.criteria.ParameterExpression<?>> declared = new java.util.LinkedHashSet<>();
+        for (Parameter<?> parameter : criteriaParameters.keySet()) {
+            declared.add((jakarta.persistence.criteria.ParameterExpression<?>) parameter);
+        }
+        return new JpqlQuery<>(statement, resultClass, flushMode, runtime, declared, tupleElements);
+    }
+
     /** @param parsed the shared parse of a query string, whose translations are reused; {@code null} for {@code criteria} */
     private JpqlQuery(String jpql, QueryPlans.Parsed parsed, Ast.Statement criteria, Class<X> resultClass, FlushModeType flushMode,
             QueryRuntime runtime) {

@@ -494,6 +494,16 @@ List<String> ddl = emf.unwrap(SchemaScripts.class).createScript();
 
 A closed factory refuses both, with `IllegalStateException`, as it refuses any `unwrap`.
 
+[#query-copies]
+== Copying a query into another entity manager
+
+A container facade runs each query in the persistence context of the current transaction, which may not be the one
+that created it. `EntityManager.unwrap(QueryCopies.class).copy(query)` creates again, in that entity manager, a query
+string or criteria query another entity manager of the same unit created, as it was created: its statement, result type
+and parameter objects, without its bound values or settings. A criteria query keeps the statement its criteria object had
+when the query was created; a later change of that object does not reach the copy. `noether-jpa-cdi` copies each
+criteria query this way. `copy` refuses a native or stored procedure query with `IllegalArgumentException`.
+
 [#boundaries]
 == Mapping and loading boundaries
 

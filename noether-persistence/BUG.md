@@ -1974,3 +1974,24 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
   - 2026-11-18: reproduced red with the test above, with the TCK's error.
   - 2026-11-18: fixed. `ContextQuery.bind` binds by name, by position, or by the parameter itself: the query that
     runs is created from the same criteria query, so the parameter expression is one of its parameters.
+
+## BUG-20261118-84 — A container query sees the changes made to its criteria object after it was created
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/schema-from-platform-tck`: the container facade copies the query it created.
+- **Affected module**: `noether-jpa-cdi` (`ContainerEntityManager`), `noether-jpa-core` (`QueryCopies`)
+- **Symptom**: found by the Jakarta EE 11 Platform TCK for Persistence on the Vidocq runtime, in the `pmservlet`
+  vehicle only. `criteriaapi.CriteriaDelete` and `CriteriaUpdate` `#modifiedQueryTest` create a query from a
+  criteria object, change the criteria's `where`, then run the query: it deleted the rows of the new restriction
+  (`quantity < 500`, nine rows) instead of the rows of the restriction it was created with (`quantity < 35`, four).
+- **Minimal reproduction**:
+  `ContainerEntityManagerTest.aCriteriaObjectChangedAfterItsQueryWasCreatedLeavesThatQueryAsItWas` (a select and a
+  delete, each created, then their criteria changed, then run).
+- **Hypothesised cause**: the facade runs each query in the persistence context of the current transaction by creating
+  it again there from the same criteria object (§7.7.1), so it read that object as it was at execution. Noether's own
+  `createQuery` takes the statement of the criteria object when it is called.
+- **Investigations**:
+  - 2026-11-18: reproduced red with the test above (the select returned the row of the new restriction).
+  - 2026-11-18: fixed. Noether's entity manager implements the new SPI `QueryCopies`: it creates again a query string
+    or criteria query another entity manager of the unit created, as it was created, with the same parameter objects.
+    The facade creates a criteria query once and copies it into the context that runs it (`QueryCopiesTest`).
