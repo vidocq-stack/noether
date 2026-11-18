@@ -198,6 +198,63 @@ class ContainerEntityManagerTest {
         }
     }
 
+    /** §3.11.1: a query without a result leaves the transaction active; a positional parameter is bound by position. */
+    @Test
+    void aQueryWithoutResultLeavesTheTransactionActive() throws Exception {
+        try (var factory = factory("p9-facade-no-result")) {
+            var em = facade(factory);
+            try {
+                tm.begin();
+                var query = em.createQuery("SELECT r FROM Record r WHERE r.id = ?1", Record.class);
+                query.setParameter(query.getParameter(1, Integer.class), 7);
+                assertThatThrownBy(query::getSingleResult).isInstanceOf(NoResultException.class);
+                assertThat(registry.getRollbackOnly()).isFalse();
+                tm.rollback();
+            } finally {
+                em.destroy();
+            }
+        }
+    }
+
+    /** §7.6.1: an unsynchronized context that did not join the transaction leaves it active when a query fails. */
+    @Test
+    void aFailingQueryOfAnUnjoinedContextLeavesTheTransactionActive() throws Exception {
+        try (var factory = factory("p9-facade-unjoined")) {
+            var em = facade(factory, SynchronizationType.UNSYNCHRONIZED);
+            try {
+                tm.begin();
+                assertThatThrownBy(() -> em.createNamedQuery("no such query")).isInstanceOf(IllegalArgumentException.class);
+                assertThat(registry.getRollbackOnly()).isFalse();
+                tm.rollback();
+            } finally {
+                em.destroy();
+            }
+        }
+    }
+
+    /** §6.3.13: a criteria parameter has neither a name nor a position, and the query that runs still binds it. */
+    @Test
+    void anUnnamedCriteriaParameterIsBoundOnTheQueryThatRuns() throws Exception { // BUG-20261118-69
+        try (var factory = factory("p9-facade-criteria-parameter")) {
+            var em = facade(factory);
+            try {
+                tm.begin();
+                em.persist(new Record(1));
+                em.persist(new Record(2));
+                var builder = em.getCriteriaBuilder();
+                var criteria = builder.createQuery(Record.class);
+                var root = criteria.from(Record.class);
+                var id = builder.parameter(Integer.class);
+                criteria.select(root).where(builder.equal(root.get("id"), id));
+                var query = em.createQuery(criteria).setParameter(id, 2);
+                assertThat(query.getResultList()).extracting(found -> found.id).containsExactly(2);
+                tm.rollback();
+            } finally {
+                em.destroy();
+            }
+        }
+    }
+
     private static void alias(String name, String definition) throws Exception {
         try (var connection = java.sql.DriverManager.getConnection(url(name), "sa", "");
              var statement = connection.createStatement()) {
@@ -206,8 +263,12 @@ class ContainerEntityManagerTest {
     }
 
     private ContainerEntityManager facade(EntityManagerFactory factory) {
-        return new ContainerEntityManager(factory, registry, PersistenceContextType.TRANSACTION,
-            SynchronizationType.SYNCHRONIZED, java.util.Map.of());
+        return facade(factory, SynchronizationType.SYNCHRONIZED);
+    }
+
+    private ContainerEntityManager facade(EntityManagerFactory factory, SynchronizationType synchronization) {
+        return new ContainerEntityManager(factory, registry, PersistenceContextType.TRANSACTION, synchronization,
+            java.util.Map.of());
     }
 
     @Test

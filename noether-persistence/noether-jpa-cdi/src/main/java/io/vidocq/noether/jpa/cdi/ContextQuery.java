@@ -55,23 +55,32 @@ final class ContextQuery<X> implements TypedQuery<X> {
     @Override public int getFirstResult() { return metadata.getFirstResult(); }
     @Override public ContextQuery<X> setHint(String name, Object value) { return configure(q -> q.setHint(name, value)); }
     @Override public Map<String,Object> getHints() { return metadata.getHints(); }
+    /**
+     * Binds a parameter of the metadata query on each query that runs: by its name or its position, or by itself for a
+     * criteria parameter that has neither (§6.3.13), the query that runs being created from the same criteria query.
+     */
+    private ContextQuery<X> bind(Parameter<?> parameter, BiConsumer<Query, String> byName,
+            ObjIntConsumer<Query> byPosition, Consumer<Query> byItself) {
+        return configure(byItself, q -> {
+            if (parameter.getName() != null) byName.accept(q, parameter.getName());
+            else if (parameter.getPosition() != null) byPosition.accept(q, parameter.getPosition());
+            else byItself.accept(q);
+        });
+    }
     @Override public <T> ContextQuery<X> setParameter(Parameter<T> parameter, T value) {
-        return configure(q -> q.setParameter(parameter, value), q -> {
-            if (parameter.getName() != null) q.setParameter(parameter.getName(), value);
-            else q.setParameter(parameter.getPosition(), value);
-        });
+        return bind(parameter, (q, name) -> q.setParameter(name, value), (q, position) -> q.setParameter(position, value),
+            q -> q.setParameter(parameter, value));
     }
+    // the facade forwards the temporal overloads, deprecated since Jakarta Persistence 3.2, that the application calls
+    @SuppressWarnings("deprecation")
     @Override public ContextQuery<X> setParameter(Parameter<Calendar> parameter, Calendar value, TemporalType temporal) {
-        return configure(q -> q.setParameter(parameter, value, temporal), q -> {
-            if (parameter.getName() != null) q.setParameter(parameter.getName(), value, temporal);
-            else q.setParameter(parameter.getPosition(), value, temporal);
-        });
+        return bind(parameter, (q, name) -> q.setParameter(name, value, temporal),
+            (q, position) -> q.setParameter(position, value, temporal), q -> q.setParameter(parameter, value, temporal));
     }
+    @SuppressWarnings("deprecation")
     @Override public ContextQuery<X> setParameter(Parameter<Date> parameter, Date value, TemporalType temporal) {
-        return configure(q -> q.setParameter(parameter, value, temporal), q -> {
-            if (parameter.getName() != null) q.setParameter(parameter.getName(), value, temporal);
-            else q.setParameter(parameter.getPosition(), value, temporal);
-        });
+        return bind(parameter, (q, name) -> q.setParameter(name, value, temporal),
+            (q, position) -> q.setParameter(position, value, temporal), q -> q.setParameter(parameter, value, temporal));
     }
     @Override public ContextQuery<X> setParameter(String name, Object value) { return configure(q -> q.setParameter(name, value)); }
     @Override public ContextQuery<X> setParameter(String name, Calendar value, TemporalType temporal) { return configure(q -> q.setParameter(name, value, temporal)); }

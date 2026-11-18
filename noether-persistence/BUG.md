@@ -1954,3 +1954,23 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     creation); the facade does not. Reproduced red with the two tests above.
   - 2026-11-18: fixed. `ContainerEntityManager.marking` runs query creation, configuration and execution, and marks
     the transaction when the context is joined to it (a synchronized context in a transaction, or one that joined).
+
+## BUG-20261118-69 — A query of a container persistence context fails on an unnamed criteria parameter
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/schema-from-platform-tck`: a parameter with neither a name nor a position is bound by
+  itself on the query that runs.
+- **Affected module**: `noether-jpa-cdi` (`ContextQuery`)
+- **Symptom**: found by the Jakarta EE 11 Platform TCK for Persistence on the Vidocq runtime:
+  `core.criteriaapi.CriteriaBuilder.Client2#parameterExpressionIsNotNullTest` (both servlet vehicles) fails with
+  `NullPointerException: Cannot invoke "java.lang.Integer.intValue()" because the return value of
+  "jakarta.persistence.Parameter.getPosition()" is null`, at `ContextQuery.lambda$setParameter$0`.
+- **Minimal reproduction**: `ContainerEntityManagerTest.anUnnamedCriteriaParameterIsBoundOnTheQueryThatRuns`
+  (`builder.parameter(Integer.class)`, bound with `setParameter(parameter, value)`, then `getResultList()`).
+- **Hypothesised cause**: the facade replays each binding on the query it creates in the transaction's context, by
+  the name of the parameter or else by its position. A criteria parameter created without a name has neither
+  (Jakarta Persistence 3.2 §6.3.13).
+- **Investigations**:
+  - 2026-11-18: reproduced red with the test above, with the TCK's error.
+  - 2026-11-18: fixed. `ContextQuery.bind` binds by name, by position, or by the parameter itself: the query that
+    runs is created from the same criteria query, so the parameter expression is one of its parameters.
