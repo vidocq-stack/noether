@@ -32,7 +32,13 @@ import jakarta.persistence.PersistenceContextType;
 import jakarta.persistence.PersistenceUnit;
 import jakarta.persistence.TransactionRequiredException;
 import jakarta.transaction.TransactionManager;
+import java.io.IOException;
+import java.net.URL;
+import java.net.URLClassLoader;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -167,6 +173,112 @@ class PersistenceReferencesModuleTest {
         assertThatThrownBy(() -> container(ExtendedReference.class).close())
             .hasStackTraceContaining(ExtendedReference.class.getName())
             .hasStackTraceContaining("EXTENDED");
+    }
+
+    /**
+     * Jakarta EE 11 Platform §5.13.1.2 and §5.14.1.2: a {@code persistence-context-ref} or {@code persistence-unit-ref}
+     * of {@code web.xml} is a reference like one declared on a class (BUG-20261118-85).
+     */
+    @Test
+    void theReferencesOfWebXmlAreListedWithThoseOfTheClasses(@TempDir Path root) throws Exception {
+        webXml(root, """
+                <persistence-context-ref>
+                    <persistence-context-ref-name>persistence/web-context</persistence-context-ref-name>
+                    <persistence-unit-name>container</persistence-unit-name>
+                    <persistence-context-type>Transaction</persistence-context-type>
+                </persistence-context-ref>
+                <persistence-unit-ref>
+                    <persistence-unit-ref-name>persistence/web-factory</persistence-unit-ref-name>
+                    <persistence-unit-name>container</persistence-unit-name>
+                </persistence-unit-ref>
+            """);
+        try (var container = deployed(root, ReferencingComponent.class, Repository.class)) {
+            assertThat(container.select(PersistenceReferences.class).references())
+                .extracting(Reference::name, Reference::type)
+                .containsExactly(tuple("persistence/container", EntityManager.class),
+                    tuple("persistence/container-factory", EntityManagerFactory.class),
+                    tuple("persistence/container-unsynchronized", EntityManager.class),
+                    tuple("persistence/web-context", EntityManager.class),
+                    tuple("persistence/web-factory", EntityManagerFactory.class));
+            var manager = (EntityManager) lookup(container, reference(container, "persistence/web-context"));
+            assertThat(manager).isSameAs(lookup(container, reference(container, "persistence/container")));
+            TransactionManager tm = container.select(TransactionManager.class);
+            tm.begin();
+            try {
+                manager.persist(new Record(52));
+                assertThat(manager.isJoinedToTransaction()).isTrue();
+            } finally {
+                tm.rollback();
+            }
+            assertThat(lookup(container, reference(container, "persistence/web-factory")))
+                .isSameAs(container.select(Repository.class).factory);
+        }
+    }
+
+    @Test
+    void anExtendedReferenceOfWebXmlFailsTheDeployment(@TempDir Path root) throws Exception {
+        webXml(root, """
+                <persistence-context-ref>
+                    <persistence-context-ref-name>persistence/web-extended</persistence-context-ref-name>
+                    <persistence-unit-name>container</persistence-unit-name>
+                    <persistence-context-type>Extended</persistence-context-type>
+                </persistence-context-ref>
+            """);
+        assertThatThrownBy(() -> deployed(root, Repository.class).close())
+            .hasStackTraceContaining("persistence/web-extended")
+            .hasStackTraceContaining("EXTENDED");
+    }
+
+    @Test
+    void aReferenceOfWebXmlWithAnInjectionTargetFailsTheDeployment(@TempDir Path root) throws Exception {
+        webXml(root, """
+                <persistence-unit-ref>
+                    <persistence-unit-ref-name>persistence/web-injected</persistence-unit-ref-name>
+                    <persistence-unit-name>container</persistence-unit-name>
+                    <injection-target>
+                        <injection-target-class>com.acme.OrderServlet</injection-target-class>
+                        <injection-target-name>factory</injection-target-name>
+                    </injection-target>
+                </persistence-unit-ref>
+            """);
+        assertThatThrownBy(() -> deployed(root, Repository.class).close())
+            .hasStackTraceContaining("persistence/web-injected")
+            .hasStackTraceContaining("injection-target");
+    }
+
+    @Test
+    void aNameWebXmlAndAClassDeclareForTwoBeansFailsTheDeployment(@TempDir Path root) throws Exception {
+        webXml(root, """
+                <persistence-unit-ref>
+                    <persistence-unit-ref-name>persistence/container</persistence-unit-ref-name>
+                    <persistence-unit-name>container</persistence-unit-name>
+                </persistence-unit-ref>
+            """);
+        assertThatThrownBy(() -> deployed(root, ReferencingComponent.class).close())
+            .hasStackTraceContaining("persistence/container")
+            .hasStackTraceContaining("WEB-INF/web.xml");
+    }
+
+    /** A {@code WEB-INF/web.xml} under {@code root} that declares {@code references}. */
+    private static void webXml(Path root, String references) throws IOException {
+        Path descriptor = root.resolve("WEB-INF/web.xml");
+        Files.createDirectories(descriptor.getParent());
+        Files.writeString(descriptor, """
+            <web-app xmlns="https://jakarta.ee/xml/ns/jakartaee" version="6.1">
+            %s</web-app>
+            """.formatted(references));
+    }
+
+    /** A container started while the class loader of the deployment also finds the files under {@code root}. */
+    private static VaubanContainer deployed(Path root, Class<?>... classes) throws IOException {
+        Thread thread = Thread.currentThread();
+        ClassLoader previous = thread.getContextClassLoader();
+        try (var war = new URLClassLoader(new URL[] {root.toUri().toURL()}, previous)) {
+            thread.setContextClassLoader(war);
+            return container(classes);
+        } finally {
+            thread.setContextClassLoader(previous);
+        }
     }
 
     @Test

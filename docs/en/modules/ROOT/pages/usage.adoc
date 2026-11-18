@@ -481,6 +481,29 @@ service reads every bean of the type: a single selection is ambiguous as soon as
 * **Not covered yet:** the name of a `@PersistenceContext` or `@PersistenceUnit` on a field or a setter, and the
   default name the platform gives such an injection point, are not listed.
 
+The same references may be declared in `web.xml` instead (Jakarta EE 11 Platform §5.13.1.2, §5.14.1.2). Noether reads
+the `persistence-context-ref` and `persistence-unit-ref` elements of `WEB-INF/web.xml`, else of `META-INF/web.xml`,
+through the class loader of the deployment, as it reads `persistence.xml`, and lists them with those of the classes:
+
+[source,xml]
+----
+<persistence-context-ref>
+    <persistence-context-ref-name>persistence/library</persistence-context-ref-name>
+    <persistence-unit-name>library</persistence-unit-name>
+</persistence-context-ref>
+<persistence-unit-ref>
+    <persistence-unit-ref-name>persistence/library-factory</persistence-unit-ref-name>
+    <persistence-unit-name>library</persistence-unit-name>
+</persistence-unit-ref>
+----
+
+A reference of `web.xml` and an annotation of a class with the same name and the same configuration share one bean.
+`persistence-context-type`, `persistence-context-synchronization` and `persistence-property` are read as the
+annotation's members. An `Extended` context, a name `web.xml` and a class declare for different beans, and an
+`injection-target` fail the deployment: Noether binds the name only and injects no field, so declare
+`@PersistenceContext` or `@PersistenceUnit` on that field or setter instead. The references of a `web-fragment.xml`
+are not read.
+
 [#vidocq]
 == On Vidocq
 

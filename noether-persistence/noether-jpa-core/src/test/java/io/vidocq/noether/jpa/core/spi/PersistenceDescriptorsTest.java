@@ -22,8 +22,10 @@ package io.vidocq.noether.jpa.core.spi;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import jakarta.persistence.PersistenceContextType;
 import jakarta.persistence.PersistenceException;
 import jakarta.persistence.PersistenceUnitTransactionType;
+import jakarta.persistence.SynchronizationType;
 import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -31,6 +33,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -159,6 +162,91 @@ class PersistenceDescriptorsTest {
         String descriptor = "<!DOCTYPE persistence [<!ENTITY name \"dtd\">]>" + units("&name;");
         try (var loader = new URLClassLoader(new URL[] {root("dtd", descriptor)}, null)) {
             assertThatThrownBy(() -> PersistenceDescriptors.defaultUnitName(loader)).isInstanceOf(PersistenceException.class);
+        }
+    }
+
+    private URL web(String name, String path, String references) throws IOException {
+        Path root = directory.resolve(name);
+        Files.createDirectories(root.resolve(path).getParent());
+        Files.writeString(root.resolve(path), "<web-app xmlns=\"https://jakarta.ee/xml/ns/jakartaee\" version=\"6.1\">"
+            + "<display-name>orders</display-name>" + references + "</web-app>");
+        return root.toUri().toURL();
+    }
+
+    /** Jakarta EE 11 Platform §5.13.1.2 and §5.14.1.2, read as the schema of web.xml writes them (BUG-20261118-85). */
+    @Test
+    void theReferencesOfWebXmlAreReadWithTheirDefaults() throws IOException {
+        String references = """
+            <persistence-context-ref>
+                <description>Orders</description>
+                <persistence-context-ref-name> persistence/orders </persistence-context-ref-name>
+                <persistence-unit-name>orders</persistence-unit-name>
+                <persistence-context-type>Transaction</persistence-context-type>
+                <persistence-context-synchronization>Unsynchronized</persistence-context-synchronization>
+                <persistence-property><name>b</name><value>2</value></persistence-property>
+                <persistence-property><name>a</name><value>1</value></persistence-property>
+            </persistence-context-ref>
+            <persistence-context-ref>
+                <persistence-context-ref-name>persistence/default</persistence-context-ref-name>
+            </persistence-context-ref>
+            <persistence-unit-ref>
+                <persistence-unit-ref-name>persistence/factory</persistence-unit-ref-name>
+                <persistence-unit-name>orders</persistence-unit-name>
+                <injection-target>
+                    <injection-target-class>com.acme.OrderServlet</injection-target-class>
+                    <injection-target-name>factory</injection-target-name>
+                </injection-target>
+            </persistence-unit-ref>
+            """;
+        try (var loader = new URLClassLoader(new URL[] {web("war", "WEB-INF/web.xml", references)}, null)) {
+            assertThat(PersistenceDescriptors.references(loader)).containsExactly(
+                new PersistenceDescriptors.DescriptorReference("persistence/orders", PersistenceDescriptors.ReferenceKind.CONTEXT,
+                    "orders", PersistenceContextType.TRANSACTION, SynchronizationType.UNSYNCHRONIZED,
+                    Map.of("a", "1", "b", "2"), List.of(), "WEB-INF/web.xml"),
+                new PersistenceDescriptors.DescriptorReference("persistence/default", PersistenceDescriptors.ReferenceKind.CONTEXT,
+                    "", PersistenceContextType.TRANSACTION, SynchronizationType.SYNCHRONIZED, Map.of(), List.of(),
+                    "WEB-INF/web.xml"),
+                new PersistenceDescriptors.DescriptorReference("persistence/factory", PersistenceDescriptors.ReferenceKind.UNIT,
+                    "orders", null, null, Map.of(), List.of("com.acme.OrderServlet#factory"), "WEB-INF/web.xml"));
+        }
+    }
+
+    @Test
+    void theWebXmlOfAJarIsReadWhenTheDeploymentHasNoWebInf() throws IOException {
+        String unit = "<persistence-unit-ref><persistence-unit-ref-name>persistence/jar</persistence-unit-ref-name>"
+            + "</persistence-unit-ref>";
+        try (var jar = new URLClassLoader(new URL[] {web("jar", "META-INF/web.xml", unit)}, null)) {
+            assertThat(PersistenceDescriptors.references(jar)).extracting(PersistenceDescriptors.DescriptorReference::source)
+                .containsExactly("META-INF/web.xml");
+        }
+        try (var none = new URLClassLoader(new URL[] {directory.toUri().toURL()}, null)) {
+            assertThat(PersistenceDescriptors.references(none)).isEmpty();
+        }
+    }
+
+    @Test
+    void aReferenceOfWebXmlWithoutANameOrWithAnUnknownTypeIsRefused() throws IOException {
+        String unnamed = "<persistence-unit-ref><persistence-unit-name>orders</persistence-unit-name></persistence-unit-ref>";
+        try (var loader = new URLClassLoader(new URL[] {web("unnamed", "WEB-INF/web.xml", unnamed)}, null)) {
+            assertThatThrownBy(() -> PersistenceDescriptors.references(loader)).isInstanceOf(PersistenceException.class)
+                .hasMessageContaining("persistence-unit-ref-name").hasMessageContaining("WEB-INF/web.xml");
+        }
+        String unknown = "<persistence-context-ref><persistence-context-ref-name>persistence/x</persistence-context-ref-name>"
+            + "<persistence-context-type>Stateful</persistence-context-type></persistence-context-ref>";
+        try (var loader = new URLClassLoader(new URL[] {web("unknown", "WEB-INF/web.xml", unknown)}, null)) {
+            assertThatThrownBy(() -> PersistenceDescriptors.references(loader)).isInstanceOf(PersistenceException.class)
+                .hasMessageContaining("Stateful").hasMessageContaining("persistence/x");
+        }
+    }
+
+    @Test
+    void aWebXmlWithADtdIsRefused() throws IOException {
+        Path root = directory.resolve("web-dtd");
+        Files.createDirectories(root.resolve("WEB-INF"));
+        Files.writeString(root.resolve("WEB-INF/web.xml"), "<!DOCTYPE web-app [<!ENTITY name \"dtd\">]><web-app/>");
+        try (var loader = new URLClassLoader(new URL[] {root.toUri().toURL()}, null)) {
+            assertThatThrownBy(() -> PersistenceDescriptors.references(loader)).isInstanceOf(PersistenceException.class)
+                .hasMessageContaining("WEB-INF/web.xml");
         }
     }
 }
