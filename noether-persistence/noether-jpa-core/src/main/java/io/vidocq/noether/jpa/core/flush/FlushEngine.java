@@ -95,7 +95,8 @@ public final class FlushEngine {
     private record ReferenceWrite(Work work, EntityStatements.Reference reference) {
     }
 
-    private record CollectionKeyWrite(Work owner, CollectionMapping.ForeignKey mapping, Object index) {
+    /** What a collection of {@code owner} writes in the row of a member: a {@code ForeignKey} or a {@code MappedBy}. */
+    private record CollectionKeyWrite(Work owner, CollectionMapping mapping, Object index) {
     }
 
     private static final Comparator<Work> INSERT_ORDER = Comparator.<Work>comparingInt(w -> w.type().rank())
@@ -242,8 +243,9 @@ public final class FlushEngine {
     }
 
     /**
-     * The key a foreign-key collection gives a member being inserted, by member: nothing to find without an insert.
-     * The shared empty map becomes a map of its own with its first key.
+     * The key a foreign-key collection, or an inverse side that keeps its index in the table of its elements, gives a
+     * member being inserted, by member: nothing to find without an insert. The shared empty map becomes a map of its own
+     * with its first key.
      */
     private static Map<Object, List<CollectionKeyWrite>> collectionInserts(PersistenceContext context, List<Work> inserts,
             Set<Object> pending) {
@@ -252,37 +254,47 @@ public final class FlushEngine {
             return collectionInserts;
         }
         for (ManagedEntity entry : context.entries()) {
-            if (!ownsForeignKeyCollection(entry)) continue; // its state is not read for nothing
+            if (!ownsMemberKeyingCollection(entry)) continue; // its state is not read for nothing
             Work owner = new Work(entry, read(entry.type(), entry.instance()));
             for (CollectionMapping mapping : owner.type().statements().collections()) {
                 // not loaded: no new member to find in it
-                if (mapping instanceof CollectionMapping.ForeignKey foreign
-                        && !LazyCollection.unloaded(owner.state()[foreign.attribute()])) {
-                    collectionInserts = memberKeys(owner, foreign, pending, inserts.size(), collectionInserts);
+                if (keysItsMembers(mapping) && !LazyCollection.unloaded(owner.state()[mapping.attribute()])) {
+                    collectionInserts = memberKeys(owner, mapping, pending, inserts.size(), collectionInserts);
                 }
             }
         }
         return collectionInserts;
     }
 
-    /** Whether {@code entry} is a loaded, managed instance of an entity with a foreign-key collection. */
-    private static boolean ownsForeignKeyCollection(ManagedEntity entry) {
+    /** Whether {@code entry} is a loaded, managed instance of an entity with a collection that keys its members' rows. */
+    private static boolean ownsMemberKeyingCollection(ManagedEntity entry) {
         return !io.vidocq.noether.jpa.core.spi.LazyReference.unloaded(entry.instance())
             && entry.status() == ManagedEntity.Status.MANAGED
-            && hasForeignKeyCollection(entry.type());
+            && hasMemberKeyingCollection(entry.type());
+    }
+
+    /**
+     * Whether {@code mapping} writes columns in the row of each member as it is inserted: a foreign-key collection (its
+     * owner key and index), an inverse side its index, when it is insertable. Written with the row, a key column the
+     * database requires is never {@code NULL} first (BUG-20261118-82).
+     */
+    private static boolean keysItsMembers(CollectionMapping mapping) {
+        return mapping instanceof CollectionMapping.ForeignKey
+            || mapping instanceof CollectionMapping.MappedBy inverse && inverse.indexUpdate() != null
+                && inverse.index().insertable();
     }
 
     /** {@code collectionInserts} with the keys of the members of one collection of {@code owner} that are in {@code pending}. */
-    private static Map<Object, List<CollectionKeyWrite>> memberKeys(Work owner, CollectionMapping.ForeignKey foreign,
+    private static Map<Object, List<CollectionKeyWrite>> memberKeys(Work owner, CollectionMapping mapping,
             Set<Object> pending, int inserts, Map<Object, List<CollectionKeyWrite>> collectionInserts) {
-        Object current = owner.state()[foreign.attribute()];
+        Object current = owner.state()[mapping.attribute()];
         List<Object> members = CollectionMapping.elements(current);
         List<Object> keys = CollectionMapping.keys(current);
         for (int e = 0; e < members.size(); e++) {
             if (pending.contains(members.get(e))) {
                 if (collectionInserts.isEmpty()) collectionInserts = new IdentityHashMap<>(inserts);
                 collectionInserts.computeIfAbsent(members.get(e), _ -> new ArrayList<>())
-                    .add(new CollectionKeyWrite(owner, foreign, keys.get(e)));
+                    .add(new CollectionKeyWrite(owner, mapping, keys.get(e)));
             }
         }
         return collectionInserts;
@@ -370,10 +382,10 @@ public final class FlushEngine {
         return list;
     }
 
-    private static boolean hasForeignKeyCollection(MappedEntity type) {
+    private static boolean hasMemberKeyingCollection(MappedEntity type) {
         List<CollectionMapping> collections = type.statements().collections();
         for (int i = 0; i < collections.size(); i++) {
-            if (collections.get(i) instanceof CollectionMapping.ForeignKey) return true;
+            if (keysItsMembers(collections.get(i))) return true;
         }
         return false;
     }
@@ -557,9 +569,9 @@ public final class FlushEngine {
                 parameters.add(values[parameter.column()]);
             }
             for (CollectionKeyWrite write : writes) {
-                var foreign = write.mapping();
+                var mapping = write.mapping();
                 if (write.owner().type().statements().targetTable(work.entry().instance(),
-                        foreign.association().targetEntity(), foreign.table()).equals(table.insert().table())) {
+                        mapping.association().targetEntity(), memberTable(mapping)).equals(table.insert().table())) {
                     addCollectionKey(write, pending, columns, binders, parameters);
                 }
             }
@@ -571,17 +583,28 @@ public final class FlushEngine {
         pending.remove(work.entry().instance());
     }
 
+    /** The table of the members in which {@code mapping}, one {@link #keysItsMembers} accepts, writes. */
+    private static io.vidocq.noether.jpa.dialect.sql.Table memberTable(CollectionMapping mapping) {
+        return mapping instanceof CollectionMapping.ForeignKey foreign ? foreign.table()
+            : ((CollectionMapping.MappedBy) mapping).indexUpdate().table();
+    }
+
     /**
-     * Adds to the insert of a member of the foreign-key collection of {@code write} the owner key columns — unless the
-     * owner's row comes later and they can wait as {@code NULL} — and the index columns it writes, each column once.
+     * Adds to the insert of a member of the collection of {@code write} what it writes there, each column once: the
+     * index columns of an inverse side; the owner key columns of a foreign-key collection — unless the owner's row comes
+     * later and they can wait as {@code NULL} — and its index columns.
      */
     private static void addCollectionKey(CollectionKeyWrite write, Set<Object> pending, List<Identifier> columns,
             List<ValueBinder> binders, List<Object> parameters) {
-        var foreign = write.mapping();
+        EntityStatements statements = write.owner().type().statements();
+        if (write.mapping() instanceof CollectionMapping.MappedBy inverse) {
+            addIndex(inverse.index(), write.index(), statements, columns, binders, parameters);
+            return;
+        }
+        var foreign = (CollectionMapping.ForeignKey) write.mapping();
         boolean deferred = pending.contains(write.owner().entry().instance())
             && foreign.joins().stream().allMatch(JoinColumnModel::nullable);
-        Object[] owner = write.owner().type().statements().keyValues(
-            write.owner().type().id(write.owner().entry().instance()));
+        Object[] owner = statements.keyValues(write.owner().type().id(write.owner().entry().instance()));
         for (int k = 0; k < foreign.joins().size(); k++) {
             if (deferred || !foreign.joins().get(k).insertable() || columns.contains(foreign.ownerColumns().get(k))) continue;
             columns.add(foreign.ownerColumns().get(k));
@@ -589,13 +612,19 @@ public final class FlushEngine {
             parameters.add(owner[k]);
         }
         if (foreign.index() != null && foreign.index().insertable()) {
-            Object[] index = foreign.index().values(write.index(), write.owner().type().statements());
-            for (int k = 0; k < index.length; k++) {
-                if (columns.contains(foreign.index().columns().get(k))) continue;
-                columns.add(foreign.index().columns().get(k));
-                binders.add(foreign.index().binders().get(k));
-                parameters.add(index[k]);
-            }
+            addIndex(foreign.index(), write.index(), statements, columns, binders, parameters);
+        }
+    }
+
+    /** Adds the columns of {@code index} holding {@code key}, those not added yet. */
+    private static void addIndex(IndexMapping index, Object key, EntityStatements statements, List<Identifier> columns,
+            List<ValueBinder> binders, List<Object> parameters) {
+        Object[] values = index.values(key, statements);
+        for (int k = 0; k < values.length; k++) {
+            if (columns.contains(index.columns().get(k))) continue;
+            columns.add(index.columns().get(k));
+            binders.add(index.binders().get(k));
+            parameters.add(values[k]);
         }
     }
 

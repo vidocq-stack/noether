@@ -141,6 +141,20 @@ class IndexedCollectionTest {
         assertThat(loaded.roster()).extracting(Agent::name).containsExactly("Vidocq", "Coco");
     }
 
+    /**
+     * A key column the database requires ({@code @MapKeyColumn(nullable = false)}) is written with the row of the
+     * element: an update after the insert comes too late for a NOT NULL column (BUG-20261118-82).
+     */
+    @Test
+    void anInverseSideKeyTheDatabaseRequiresIsInTheInsertOfTheElement() throws SQLException { // §11.1.33
+        try (Statement ddl = database.createStatement()) {
+            ddl.execute("alter table Agent alter column DESK set not null");
+        }
+        bureau();
+        assertThat(scalar("select DESK from Agent where id = 12")).isEqualTo("D2");
+        assertThat(scalar("select roster_ORDER from Agent where id = 12")).isEqualTo("1");
+    }
+
     @Test
     void aReorderedListWritesItsPositionsAgain() throws SQLException { // §11.1.42
         Bureau bureau = bureau();

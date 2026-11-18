@@ -2012,3 +2012,25 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
 - **Investigations**:
   - 2026-11-18: reproduced red with the test above (`FOR SHARE NOWAIT`).
   - 2026-11-18: fixed. `H2Dialect` overrides `lock(Select.Lock, boolean)`, which both paths reach.
+
+
+## BUG-20261118-82 — The key an inverse map keeps in its elements' table is NULL in their insert
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/platform-tck-mapping-and-locks`: the insert of an element writes the key or position an
+  inverse side keeps in its row.
+- **Affected module**: `noether-jpa-core` (`FlushEngine`)
+- **Symptom**: found by the Jakarta EE 11 Platform TCK for Persistence on the Vidocq runtime (H2, schema generation).
+  `Department` maps `@OneToMany(mappedBy = "department") @MapKeyColumn(name = "OFFICE_ID", nullable = false)
+  Map<String, Employee>`; the column is in the table of `Employee` (§11.1.33), and schema generation makes it
+  `NOT NULL`. Persisting the employees of a department fails: `The insert of Employee failed: NULL not allowed for
+  column "OFFICE_ID"` (`annotations.mapkeycolumn`, `annotations.mapkeyenumerated`, 19 errors).
+- **Minimal reproduction**: `IndexedCollectionTest.anInverseSideKeyTheDatabaseRequiresIsInTheInsertOfTheElement`
+  (the `DESK` key column of an inverse map made `NOT NULL`).
+- **Hypothesised cause**: an inverse side wrote its index by an `UPDATE` after the insert of the element row, which
+  leaves the column `NULL` first. An owning foreign-key collection already writes its key in the insert of its members.
+- **Investigations**:
+  - 2026-11-18: reproduced red with the test above, with the TCK's error.
+  - 2026-11-18: fixed. `FlushEngine` gives the insert of a member the index columns of each inverse side that holds
+    it, as it gives those of a foreign-key collection (`keysItsMembers`); the update after it is unchanged.
+
