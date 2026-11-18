@@ -104,13 +104,12 @@ public final class NoetherPersistenceExtension implements BuildCompatibleExtensi
                     + " declare @PersistenceContext or @PersistenceUnit on that field or setter instead");
             }
             units.add(reference.unitName());
-            if (reference.kind() == PersistenceDescriptors.ReferenceKind.UNIT) {
-                String unit = UNIT_BINDING + reference.unitName();
-                declare(reference.name(), new Declared(PersistenceReferencesCreator.UNIT, unit, declaredBy));
-            } else {
-                contextReference(reference.name(), new Context(reference.unitName(), reference.type().name(),
-                    reference.synchronization().name(), reference.properties()), declaredBy + " declares",
-                    declaredBy);
+            switch (reference.kind()) {
+                case UNIT -> declare(reference.name(), new Declared(PersistenceReferencesCreator.UNIT,
+                    UNIT_BINDING + reference.unitName(), declaredBy));
+                case CONTEXT -> contextReference(reference.name(), new Context(reference.unitName(),
+                    reference.type().name(), reference.synchronization().name(), reference.properties()),
+                    declaredBy + " declares", declaredBy);
             }
         }
     }
