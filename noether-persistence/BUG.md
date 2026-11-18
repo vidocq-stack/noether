@@ -2034,3 +2034,18 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
   - 2026-11-18: fixed. `FlushEngine` gives the insert of a member the index columns of each inverse side that holds
     it, as it gives those of a foreign-key collection (`keysItsMembers`); the update after it is unchanged.
 
+## BUG-20261118-83 — CURRENT_TIME is an OffsetTime on H2
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/platform-tck-mapping-and-locks`: the value is converted to `java.sql.Time`.
+- **Affected module**: `noether-jpa-core` (`JpqlQuery`)
+- **Symptom**: found by the Jakarta EE 11 Platform TCK for Persistence on the Vidocq runtime (H2).
+  `CriteriaBuilder.currentTime()` is an `Expression<java.sql.Time>` (§6.3.7), and `CURRENT_TIME` a `java.sql.Time`
+  (§4.6.17.3); the result was a `java.time.OffsetTime`: `ClassCastException` in `criteriaapi.CriteriaBuilder.Client5`
+  `currentTime` (two errors).
+- **Minimal reproduction**: `JpqlExpressionTest.theCurrentDateAndTimeHaveTheTypesTheSpecificationGives`.
+- **Hypothesised cause**: H2's `CURRENT_TIME` is a `TIME WITH TIME ZONE`, which its driver reads as an `OffsetTime`;
+  the conversion to the type of the expression knew `OffsetDateTime` to `Timestamp`, not `OffsetTime` to `Time`.
+- **Investigations**:
+  - 2026-11-18: reproduced red with the test above (JPQL and criteria).
+  - 2026-11-18: fixed. `JpqlQuery.temporal` converts an `OffsetTime` to the local time it is in this JVM.

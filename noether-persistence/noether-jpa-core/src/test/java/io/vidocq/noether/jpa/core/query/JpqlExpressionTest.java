@@ -211,6 +211,24 @@ class JpqlExpressionTest {
             .setParameter(1, before.getTime(), jakarta.persistence.TemporalType.DATE).getResultList()).containsExactly("Arras");
     }
 
+    /**
+     * §4.6.17.3, §6.3.7: CURRENT_TIME is a {@code java.sql.Time}, whatever the database gives (H2: a TIME WITH TIME
+     * ZONE, read as an {@code OffsetTime}), in a query string and in a criteria query (BUG-20261118-83).
+     */
+    @Test
+    void theCurrentDateAndTimeHaveTheTypesTheSpecificationGives() {
+        assertThat(em.createQuery("SELECT CURRENT_TIME FROM Suspect s").setMaxResults(1).getSingleResult())
+            .isInstanceOf(java.sql.Time.class);
+        assertThat(em.createQuery("SELECT CURRENT_TIMESTAMP FROM Suspect s").setMaxResults(1).getSingleResult())
+            .isInstanceOf(java.sql.Timestamp.class);
+        assertThat(em.createQuery("SELECT CURRENT_DATE FROM Suspect s").setMaxResults(1).getSingleResult())
+            .isInstanceOf(java.sql.Date.class);
+        var builder = em.getCriteriaBuilder();
+        var criteria = builder.createQuery(java.sql.Time.class);
+        criteria.select(builder.currentTime()).from(Suspect.class);
+        assertThat(em.createQuery(criteria).setMaxResults(1).getSingleResult()).isInstanceOf(java.sql.Time.class);
+    }
+
     @Test
     void orderingOfNullsAndIdentifiers() { // 3.1 NULLS FIRST, 3.2 ID()
         assertThat(list("SELECT p.name FROM Player p LEFT JOIN p.team t ORDER BY t.name NULLS FIRST, p.id", String.class))

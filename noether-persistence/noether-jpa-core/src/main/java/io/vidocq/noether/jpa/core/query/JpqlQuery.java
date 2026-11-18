@@ -1150,6 +1150,9 @@ public final class JpqlQuery<X> extends AbstractQuery implements TypedQuery<X> {
             case java.time.LocalTime time when type == java.sql.Time.class -> java.sql.Time.valueOf(time);
             case java.time.LocalDateTime dateTime when type == java.sql.Timestamp.class -> java.sql.Timestamp.valueOf(dateTime);
             case java.time.OffsetDateTime dateTime when type == java.sql.Timestamp.class -> java.sql.Timestamp.from(dateTime.toInstant());
+            // a TIME WITH TIME ZONE (H2's CURRENT_TIME) as the local time it is in this JVM (BUG-20261118-83)
+            case java.time.OffsetTime time when type == java.sql.Time.class -> java.sql.Time.valueOf(time.withOffsetSameInstant(
+                java.time.OffsetDateTime.now().getOffset()).toLocalTime());
             default -> null;
         };
     }
