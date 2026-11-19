@@ -379,6 +379,15 @@ the unit's `<jta-data-source>`, or the `@Default` one. Quarkus and Jakarta EE se
 Vidocq runtime brings them. Details, including `TABLE` identifiers and connection sharing, are in
 xref:reference.adoc#cdi-jta[Reference].
 
+*A unit of another provider* is injected too. When its `<provider>` names another provider, the container hands the
+unit to that provider's `createContainerEntityManagerFactory` (Jakarta Persistence 3.2, §9.6), with the unit as
+`persistence.xml` declares it and the data sources the container resolves for it. The deployment declares the
+provider as a service of `jakarta.persistence.spi.PersistenceProvider`, in `META-INF/services` or with `provides` on
+the module path: Noether does not load a provider class by its name. A class transformer the provider adds is never
+called, since the deployment's class loader has defined the entity classes already. Outside a transaction, `unwrap`
+and `getDelegate` on a transaction-scoped entity manager reach the provider's entity manager the container keeps for
+work outside transactions.
+
 *On Vauban*, put `noether-jpa-cdi` on the annotation processor path next to `vauban-processor`, so that its build
 compatible extension runs at build time, and boot with `VaubanContainer.builder().scanClasspath()`, which reads what
 the build recorded.
