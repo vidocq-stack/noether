@@ -25,7 +25,7 @@ public final class RecordingProvider implements PersistenceProvider {
     }
 
     @Override
-    public EntityManagerFactory createContainerEntityManagerFactory(PersistenceUnitInfo unit, Map properties) {
+    public EntityManagerFactory createContainerEntityManagerFactory(PersistenceUnitInfo unit, Map<?, ?> properties) {
         LAST.set(unit);
         boolean[] open = {true};
         return (EntityManagerFactory) Proxy.newProxyInstance(RecordingProvider.class.getClassLoader(),
@@ -41,12 +41,12 @@ public final class RecordingProvider implements PersistenceProvider {
     }
 
     /** Units of a Java SE bootstrap are Noether's here: this provider declines them all. */
-    @Override public EntityManagerFactory createEntityManagerFactory(String name, Map properties) { return null; }
+    @Override public EntityManagerFactory createEntityManagerFactory(String name, Map<?, ?> properties) { return null; }
     @Override public EntityManagerFactory createEntityManagerFactory(PersistenceConfiguration configuration) { return null; }
-    @Override public boolean generateSchema(String name, Map properties) { return false; }
+    @Override public boolean generateSchema(String name, Map<?, ?> properties) { return false; }
 
     @Override
-    public void generateSchema(PersistenceUnitInfo unit, Map properties) {
+    public void generateSchema(PersistenceUnitInfo unit, Map<?, ?> properties) {
         throw new UnsupportedOperationException("generateSchema");
     }
 

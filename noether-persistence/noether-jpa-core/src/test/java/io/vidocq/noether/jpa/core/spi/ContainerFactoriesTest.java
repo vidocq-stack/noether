@@ -27,6 +27,7 @@ import jakarta.persistence.PersistenceConfiguration;
 import jakarta.persistence.PersistenceException;
 import jakarta.persistence.SharedCacheMode;
 import jakarta.persistence.ValidationMode;
+import jakarta.persistence.spi.ClassTransformer;
 import jakarta.persistence.spi.PersistenceProvider;
 import jakarta.persistence.spi.PersistenceProviderResolver;
 import jakarta.persistence.spi.PersistenceProviderResolverHolder;
@@ -80,6 +81,8 @@ class ContainerFactoriesTest {
             <persistence xmlns="https://jakarta.ee/xml/ns/persistence" version="3.2">
               <persistence-unit name="billing" transaction-type="JTA">
                 <provider>%s</provider>
+                <qualifier>com.example.Billing</qualifier>
+                <scope>jakarta.enterprise.context.RequestScoped</scope>
                 <jta-data-source>jdbc/billing</jta-data-source>
                 <mapping-file>META-INF/billing.xml</mapping-file>
                 <jar-file>billing-entities.jar</jar-file>
@@ -131,7 +134,14 @@ class ContainerFactoriesTest {
             assertThat(info.getProperties()).containsEntry("vendor.flag", "on");
             assertThat(info.getPersistenceXMLSchemaVersion()).isEqualTo("3.2");
             assertThat(info.getClassLoader()).isSameAs(loader);
-            assertThat(info.getNewTempClassLoader()).isNotNull().isNotSameAs(loader);
+            assertThat(info.getQualifierAnnotationNames()).containsExactly("com.example.Billing");
+            assertThat(info.getScopeAnnotationName()).isEqualTo("jakarta.enterprise.context.RequestScoped");
+            try (var temporary = (URLClassLoader) info.getNewTempClassLoader()) {
+                assertThat(temporary).isNotSameAs(loader);
+            }
+            ClassTransformer transformer = (definer, name, redefined, domain, bytes) -> bytes;
+            info.addTransformer(transformer);
+            assertThatThrownBy(() -> info.addTransformer(null)).isInstanceOf(NullPointerException.class);
             assertThat(recording.map).as("the bridge of Noether's own units is no property of another provider")
                 .containsEntry("vendor.extra", "x").doesNotContainKey(TransactionIntegration.PROPERTY);
         }
@@ -142,7 +152,8 @@ class ContainerFactoriesTest {
         URL root = root(billing("com.example.MissingProvider"));
         resolving(recording);
         try (var loader = new URLClassLoader(new URL[] {root}, null)) {
-            assertThatThrownBy(() -> ContainerFactories.create("billing", loader, Map.of()))
+            Map<String, Object> none = Map.of();
+            assertThatThrownBy(() -> ContainerFactories.create("billing", loader, none))
                 .isInstanceOf(PersistenceException.class)
                 .hasMessageContaining("billing")
                 .hasMessageContaining("com.example.MissingProvider")
@@ -162,16 +173,16 @@ class ContainerFactoriesTest {
         Map<Object, Object> map;
 
         @Override
-        public EntityManagerFactory createContainerEntityManagerFactory(PersistenceUnitInfo unit, Map properties) {
+        public EntityManagerFactory createContainerEntityManagerFactory(PersistenceUnitInfo unit, Map<?, ?> properties) {
             this.info = unit;
             this.map = new HashMap<Object, Object>(properties);
             return factory;
         }
 
-        @Override public EntityManagerFactory createEntityManagerFactory(String name, Map properties) { return null; }
+        @Override public EntityManagerFactory createEntityManagerFactory(String name, Map<?, ?> properties) { return null; }
         @Override public EntityManagerFactory createEntityManagerFactory(PersistenceConfiguration configuration) { return null; }
-        @Override public void generateSchema(PersistenceUnitInfo unit, Map properties) { throw new UnsupportedOperationException(); }
-        @Override public boolean generateSchema(String name, Map properties) { return false; }
+        @Override public void generateSchema(PersistenceUnitInfo unit, Map<?, ?> properties) { throw new UnsupportedOperationException(); }
+        @Override public boolean generateSchema(String name, Map<?, ?> properties) { return false; }
         @Override public ProviderUtil getProviderUtil() { throw new UnsupportedOperationException(); }
     }
 

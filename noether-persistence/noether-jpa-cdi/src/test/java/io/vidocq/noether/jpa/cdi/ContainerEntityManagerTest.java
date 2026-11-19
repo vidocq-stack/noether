@@ -330,7 +330,8 @@ class ContainerEntityManagerTest {
      */
     @Test
     void aContextIsRefusedOnAResourceLocalFactoryOnlyNotOnAFactoryThatStatesNoTransactionType() {
-        assertThatThrownBy(() -> facade(typed(PersistenceUnitTransactionType.RESOURCE_LOCAL)))
+        EntityManagerFactory resourceLocal = typed(PersistenceUnitTransactionType.RESOURCE_LOCAL);
+        assertThatThrownBy(() -> facade(resourceLocal))
             .isInstanceOf(PersistenceException.class).hasMessageContaining("requires a JTA persistence unit");
         assertThatCode(() -> facade(typed(null))).doesNotThrowAnyException();
     }
