@@ -126,6 +126,16 @@ public final class ContainerEntityManager implements EntityManager {
         return operation.apply(delegate());
     }
 
+    /**
+     * The provider's entity manager of this context, as {@code unwrap} and {@code getDelegate} reach it: outside a
+     * transaction, the one the container keeps for work outside transactions, since only persist, merge, remove,
+     * refresh, flush and lock need a transaction (§7.6.2, BUG-20261119-92).
+     */
+    private <T> T provider(Function<EntityManager, T> access) {
+        if (type == PersistenceContextType.TRANSACTION && currentTransaction() == null) return metadataWork(access);
+        return access.apply(delegate());
+    }
+
     <T> T readContext(Function<EntityManager, T> operation) { return marking(() -> read(operation)); }
     <T> T writeContext(Function<EntityManager, T> operation) { return marking(() -> operation.apply(delegate())); }
 
@@ -245,8 +255,8 @@ public final class ContainerEntityManager implements EntityManager {
     @Override public StoredProcedureQuery createStoredProcedureQuery(String name, String... mappings) { return procedure(em -> em.createStoredProcedureQuery(name, mappings)); }
     @Override public void joinTransaction() { delegate().joinTransaction(); }
     @Override public boolean isJoinedToTransaction() { checkOpen(); return currentTransaction() != null && delegate().isJoinedToTransaction(); }
-    @Override public <T> T unwrap(Class<T> cls) { checkOpen(); return cls.isInstance(this) ? cls.cast(this) : delegate().unwrap(cls); }
-    @Override public Object getDelegate() { return delegate().getDelegate(); }
+    @Override public <T> T unwrap(Class<T> cls) { checkOpen(); return cls.isInstance(this) ? cls.cast(this) : provider(em -> em.unwrap(cls)); }
+    @Override public Object getDelegate() { return provider(EntityManager::getDelegate); }
     @Override public CriteriaBuilder getCriteriaBuilder() { checkOpen(); return factory.getCriteriaBuilder(); }
     @Override public Metamodel getMetamodel() { checkOpen(); return factory.getMetamodel(); }
     @Override public <T> EntityGraph<T> createEntityGraph(Class<T> cls) { return read(em -> em.createEntityGraph(cls)); }

@@ -304,6 +304,26 @@ class ContainerEntityManagerTest {
     }
 
     /**
+     * Outside a transaction, a transaction-scoped context reaches the provider's entity manager the container keeps for
+     * work outside transactions: only persist, merge, remove, refresh, flush and lock need a transaction (§7.6.2). The
+     * Platform TCK unwraps the injected entity manager outside one ({@code ee.pluggability.contracts.jta},
+     * BUG-20261119-92).
+     */
+    @Test
+    void outsideATransactionUnwrapAndGetDelegateReachTheProvidersEntityManager() {
+        try (var factory = factory("p9-unwrap-outside")) {
+            var em = facade(factory);
+            try {
+                Object provider = em.getDelegate();
+                assertThat(provider).isNotNull().isNotSameAs(em);
+                assertThat(em.unwrap(provider.getClass())).isSameAs(provider);
+            } finally {
+                em.destroy();
+            }
+        }
+    }
+
+    /**
      * The container refuses a container-managed context on a resource-local unit, and only there: the factory of another
      * provider may state no transaction type, and the unit of {@code persistence.xml} is JTA (the Platform TCK's
      * alternate provider, {@code ee.pluggability.contracts.jta}, BUG-20261119-91).

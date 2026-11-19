@@ -2142,3 +2142,23 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
   - 2026-11-19: reproduced red with the test above (the TCK's message).
   - 2026-11-19: fixed. The context refuses a factory that answers `RESOURCE_LOCAL`, and only that one. Noether's
     factories always answer, so their checks are unchanged.
+
+## BUG-20261119-92 — unwrap and getDelegate need a transaction on a transaction-scoped context
+
+- **Date**: 2026-11-19
+- **Status**: FIXED on `feat/third-party-provider`: outside a transaction they reach the container's
+  non-transactional entity manager.
+- **Affected module**: `noether-jpa-cdi` (`ContainerEntityManager`)
+- **Symptom**: found by the Jakarta EE 11 Platform TCK for Persistence on the Vidocq runtime, once BUG-20261119-91
+  was fixed. 15 tests of `ee.pluggability.contracts.jta.Client` (`pmservlet`) call `unwrap` on the injected entity
+  manager outside a transaction, to reach the alternate provider's entity manager. They failed with
+  `TransactionRequiredException: A transaction-scoped persistence context requires an active JTA transaction`.
+- **Minimal reproduction**: `ContainerEntityManagerTest.outsideATransactionUnwrapAndGetDelegateReachTheProvidersEntityManager`.
+- **Hypothesised cause**: `unwrap` and `getDelegate` went through the context of the current transaction, which
+  requires one. Only `persist`, `merge`, `remove`, `refresh`, `flush` and `lock` need a transaction (§7.6.2).
+  GlassFish answers them outside one with a non-transactional entity manager.
+- **Investigations**:
+  - 2026-11-19: reproduced red with the test above (the TCK's message).
+  - 2026-11-19: fixed. Outside a transaction, both reach the provider's entity manager the context keeps for work
+    outside transactions (the one its queries and settings are prepared on). Within a transaction, they still reach
+    the context of that transaction.
