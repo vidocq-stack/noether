@@ -42,6 +42,7 @@
     </persistence-unit>
     <!-- Another provider than Noether (§9.1): the container hands the unit to its createContainerEntityManagerFactory. -->
     <persistence-unit name="xml-recorded" transaction-type="JTA">
+        <qualifier>io.vidocq.noether.jpa.cdi.moduleit.Recorded</qualifier>
         <provider>io.vidocq.noether.jpa.cdi.moduleit.RecordingProvider</provider>
         <jta-data-source>ledger</jta-data-source>
         <class>io.vidocq.noether.jpa.cdi.moduleit.Record</class>
