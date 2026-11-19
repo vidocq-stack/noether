@@ -4,8 +4,10 @@ import io.vidocq.mansart.transactions.cdi.MansartTransactionsProducer;
 import io.vidocq.noether.jpa.cdi.NoetherPersistenceExtension;
 import io.vidocq.vauban.core.container.VaubanContainer;
 import jakarta.persistence.EntityManager;
+import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.PersistenceException;
 import jakarta.persistence.PersistenceUnitTransactionType;
+import jakarta.persistence.spi.PersistenceUnitInfo;
 import jakarta.transaction.TransactionManager;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -146,6 +148,29 @@ class DescriptorUnitModuleTest {
             }
             try (var em = factory.createEntityManager()) {
                 assertThat(em.find(Record.class, 7)).isNotNull();
+            }
+        }
+    }
+
+    /**
+     * Jakarta Persistence 3.2, §9.1 and §9.6: a unit whose {@code <provider>} names another provider goes to that
+     * provider's {@code createContainerEntityManagerFactory}, with the data source the container resolves for its
+     * {@code jta-data-source} (BUG-20261119-90).
+     */
+    @Test
+    void aUnitNamingAnotherProviderIsCreatedByThatProviderOnTheDataSourceOfItsName() throws SQLException {
+        try (var container = container(MansartTransactionsProducer.class, DataSources.class, RecordedUnitRepository.class)) {
+            EntityManagerFactory factory = container.select(RecordedUnitRepository.class).factory;
+
+            assertThat(factory.getName()).isEqualTo("xml-recorded");
+            PersistenceUnitInfo unit = RecordingProvider.last();
+            assertThat(unit.getPersistenceUnitName()).isEqualTo("xml-recorded");
+            assertThat(unit.getPersistenceProviderClassName()).isEqualTo(RecordingProvider.class.getName());
+            assertThat(unit.getManagedClassNames()).containsExactly(Record.class.getName());
+            assertThat(unit.getProperties()).containsEntry("vendor.flag", "on");
+            try (var connection = unit.getJtaDataSource().getConnection()) {
+                assertThat(connection.getMetaData().getURL()).as("the data source bean @Named(\"ledger\")")
+                    .startsWith("jdbc:h2:mem:moduleit-ledger");
             }
         }
     }

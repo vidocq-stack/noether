@@ -1,5 +1,6 @@
 package io.vidocq.noether.jpa.cdi;
 
+import io.vidocq.noether.jpa.core.spi.ContainerFactories;
 import io.vidocq.noether.jpa.core.spi.PersistenceDescriptors;
 import io.vidocq.noether.jpa.core.spi.TransactionIntegration;
 import io.vidocq.noether.jpa.jta.SynchronizationRegistryIntegration;
@@ -11,8 +12,9 @@ import java.util.*;
 /**
  * Factory ownership is the CDI deployment's, not a static per-JVM cache. A JTA unit of {@code persistence.xml} runs on
  * the container's data source bean and transaction synchronization registry bean ({@link ContainerTransactions});
- * a resource-local unit needs neither. A {@link PersistenceUnitBootstrap} bean supplies its own data sources and gets
- * the registry's bridge.
+ * a resource-local unit needs neither. A unit whose {@code <provider>} names another provider goes to that provider's
+ * {@code createContainerEntityManagerFactory} ({@link ContainerFactories}). A {@link PersistenceUnitBootstrap} bean
+ * supplies its own data sources and gets the registry's bridge.
  */
 public final class PersistenceFactoryCreator implements SyntheticBeanCreator<EntityManagerFactory> {
     @Override public EntityManagerFactory create(Instance<Object> lookup, Parameters params) {
@@ -31,7 +33,7 @@ public final class PersistenceFactoryCreator implements SyntheticBeanCreator<Ent
             .filter(PersistenceDescriptors.UnitTransactions::jta)
             .map(transactions -> jtaProperties(lookup, name, transactions))
             .orElse(Map.of());
-        return new ContainerEntityManagerFactory(Persistence.createEntityManagerFactory(name, properties));
+        return new ContainerEntityManagerFactory(ContainerFactories.create(name, loader, properties));
     }
 
     /**

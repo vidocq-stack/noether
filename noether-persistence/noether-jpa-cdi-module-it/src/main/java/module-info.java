@@ -19,4 +19,6 @@ module io.vidocq.noether.jpa.cdi.moduleit {
     opens io.vidocq.noether.jpa.cdi.moduleit to io.vidocq.noether.jpa.core;
     // Existing Vauban APT handles application bean creation without opening business classes to the container.
     provides io.vidocq.vauban.api.VaubanComponentProvider with io.vidocq.noether.jpa.cdi.moduleit._VaubanComponents;
+    // The provider the unit xml-recorded names: the container finds it through the PersistenceProviderResolver.
+    provides jakarta.persistence.spi.PersistenceProvider with io.vidocq.noether.jpa.cdi.moduleit.RecordingProvider;
 }

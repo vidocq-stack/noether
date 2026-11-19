@@ -2095,3 +2095,33 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     skips a closed factory. Three tests asserted the refusal. `ContainerModuleTest` and `QuarkusPortabilityTest` no
     longer close the factory they share with the rest of the test. `InjectedUnitModuleTest` now closes the injected
     factory and checks that the factory `@PersistenceUnit` injects is closed with it.
+
+## BUG-20261119-90 — A unit that names another provider cannot be injected
+
+- **Date**: 2026-11-19
+- **Status**: FIXED on `feat/third-party-provider`: the container hands the unit to the provider it names.
+- **Affected module**: `noether-jpa-core` (`ContainerFactories`, `DeclaredUnit`), `noether-jpa-cdi`
+  (`PersistenceFactoryCreator`)
+- **Symptom**: found by the Jakarta EE 11 Platform TCK for Persistence on the Vidocq runtime.
+  `ee.pluggability.contracts.jta.Client` (`pmservlet`) and `ee.pluggability.contracts.resource_local.Client`
+  (`puservlet`) deploy a unit whose `<provider>` is the TCK's alternate provider, declared in
+  `META-INF/services/jakarta.persistence.spi.PersistenceProvider` of the deployment. The deployment failed:
+  `Persistence unit CTS-EM (JTA, on the pool 'jdbc/DB1') could not start: No Persistence provider for EntityManager
+  named CTS-EM`, so none of the 43 test methods ran.
+- **Minimal reproduction**: `ContainerFactoriesTest.aUnitNamingAnotherProviderGoesToItsContainerFactoryWithTheUnitItsDescriptorDeclares`,
+  `DescriptorUnitModuleTest.aUnitNamingAnotherProviderIsCreatedByThatProviderOnTheDataSourceOfItsName`.
+- **Hypothesised cause**: the container created every factory through `Persistence.createEntityManagerFactory`, the
+  Java SE bootstrap. Noether declines a unit that names another provider, and the alternate provider declines every
+  unit of a Java SE bootstrap but its own test unit. A container hands such a unit to the provider's
+  `createContainerEntityManagerFactory` with a `PersistenceUnitInfo` (§9.1, §9.6), and Noether had no
+  `PersistenceUnitInfo` of its own.
+- **Investigations**:
+  - 2026-11-19: reproduced red with both tests above (the TCK's message).
+  - 2026-11-19: fixed. `ContainerFactories.create` (core SPI) reads the unit: a `<provider>` other than Noether goes to
+    the provider of that class the `PersistenceProviderResolver` lists, through `createContainerEntityManagerFactory`.
+    Its `PersistenceUnitInfo` is the unit as `persistence.xml` declares it, with the data sources the container
+    passes as objects. Noether's transaction bridge is no property of another provider. The provider is found as a
+    service, without reflection: a provider the deployment does not declare is refused with its name. A transformer
+    is accepted and never called, since the deployment's class loader defined the entity classes already. Noether's
+    own units still start through `Persistence.createEntityManagerFactory`. `PersistenceFactoryCreator` uses it; the
+    Vidocq bootstrap needs the same call.
