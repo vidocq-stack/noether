@@ -101,7 +101,7 @@ class ContainerFactoriesTest {
     private static void resolving(PersistenceProvider... providers) {
         PersistenceProviderResolverHolder.setPersistenceProviderResolver(new PersistenceProviderResolver() {
             @Override public List<PersistenceProvider> getPersistenceProviders() { return List.of(providers); }
-            @Override public void clearCachedProviders() { }
+            @Override public void clearCachedProviders() { /* a fixed list: nothing is cached */ }
         });
     }
 
@@ -191,8 +191,8 @@ class ContainerFactoriesTest {
         @Override public Connection getConnection() { throw new UnsupportedOperationException(); }
         @Override public Connection getConnection(String user, String password) { throw new UnsupportedOperationException(); }
         @Override public PrintWriter getLogWriter() { return null; }
-        @Override public void setLogWriter(PrintWriter out) { }
-        @Override public void setLoginTimeout(int seconds) { }
+        @Override public void setLogWriter(PrintWriter out) { /* a stand-in: nothing is logged */ }
+        @Override public void setLoginTimeout(int seconds) { /* a stand-in: no timeout */ }
         @Override public int getLoginTimeout() { return 0; }
         @Override public Logger getParentLogger() { return Logger.getGlobal(); }
         @Override public <T> T unwrap(Class<T> type) { throw new UnsupportedOperationException(); }
