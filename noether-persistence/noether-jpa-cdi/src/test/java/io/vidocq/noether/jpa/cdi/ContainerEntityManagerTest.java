@@ -303,6 +303,27 @@ class ContainerEntityManagerTest {
         }
     }
 
+    /**
+     * The container refuses a container-managed context on a resource-local unit, and only there: the factory of another
+     * provider may state no transaction type, and the unit of {@code persistence.xml} is JTA (the Platform TCK's
+     * alternate provider, {@code ee.pluggability.contracts.jta}, BUG-20261119-91).
+     */
+    @Test
+    void aContextIsRefusedOnAResourceLocalFactoryOnlyNotOnAFactoryThatStatesNoTransactionType() {
+        assertThatThrownBy(() -> facade(typed(PersistenceUnitTransactionType.RESOURCE_LOCAL)))
+            .isInstanceOf(PersistenceException.class).hasMessageContaining("requires a JTA persistence unit");
+        assertThatCode(() -> facade(typed(null))).doesNotThrowAnyException();
+    }
+
+    /** A factory of another provider that states {@code type} and answers nothing else. */
+    private static EntityManagerFactory typed(PersistenceUnitTransactionType type) {
+        return (EntityManagerFactory) java.lang.reflect.Proxy.newProxyInstance(ContainerEntityManagerTest.class.getClassLoader(),
+            new Class<?>[] {EntityManagerFactory.class}, (proxy, method, arguments) -> {
+                if (method.getName().equals("getTransactionType")) return type;
+                throw new UnsupportedOperationException(method.getName());
+            });
+    }
+
     private ContainerEntityManager facade(EntityManagerFactory factory) {
         return facade(factory, SynchronizationType.SYNCHRONIZED);
     }

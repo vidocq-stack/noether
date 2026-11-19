@@ -2125,3 +2125,20 @@ Reproducible implementation defects. Status: OPEN → INVESTIGATING → FIXED �
     is accepted and never called, since the deployment's class loader defined the entity classes already. Noether's
     own units still start through `Persistence.createEntityManagerFactory`. `PersistenceFactoryCreator` uses it; the
     Vidocq bootstrap needs the same call.
+
+## BUG-20261119-91 — A container-managed context refuses a factory that states no transaction type
+
+- **Date**: 2026-11-19
+- **Status**: FIXED on `feat/third-party-provider`: only a resource-local factory is refused.
+- **Affected module**: `noether-jpa-cdi` (`ContainerEntityManager`)
+- **Symptom**: found by the Jakarta EE 11 Platform TCK for Persistence on the Vidocq runtime, once BUG-20261119-90
+  was fixed. The 18 tests of `ee.pluggability.contracts.jta.Client` (`pmservlet`) failed on the injected entity
+  manager: `A container-managed persistence context requires a JTA persistence unit`. The TCK's alternate provider
+  answers `null` to `EntityManagerFactory.getTransactionType()`, and its unit is JTA.
+- **Minimal reproduction**: `ContainerEntityManagerTest.aContextIsRefusedOnAResourceLocalFactoryOnlyNotOnAFactoryThatStatesNoTransactionType`.
+- **Hypothesised cause**: the context refused every factory that did not answer `JTA`. A factory that states no type
+  is another provider's, and the container handed it a unit of `persistence.xml` it reads as JTA.
+- **Investigations**:
+  - 2026-11-19: reproduced red with the test above (the TCK's message).
+  - 2026-11-19: fixed. The context refuses a factory that answers `RESOURCE_LOCAL`, and only that one. Noether's
+    factories always answer, so their checks are unchanged.

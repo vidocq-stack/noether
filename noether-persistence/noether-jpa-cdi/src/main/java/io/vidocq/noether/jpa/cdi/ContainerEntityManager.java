@@ -40,7 +40,9 @@ public final class ContainerEntityManager implements EntityManager {
         this.type = Objects.requireNonNull(type);
         this.synchronization = Objects.requireNonNull(synchronization);
         this.properties = Map.copyOf(properties);
-        if (factory.getTransactionType() != PersistenceUnitTransactionType.JTA) {
+        // Only a resource-local unit is refused: the factory of another provider may state no transaction type, and the
+        // unit the container hands it is JTA (BUG-20261119-91).
+        if (factory.getTransactionType() == PersistenceUnitTransactionType.RESOURCE_LOCAL) {
             throw new PersistenceException("A container-managed persistence context requires a JTA persistence unit");
         }
         if (type == PersistenceContextType.EXTENDED) extended = factory.createEntityManager(synchronization, properties);
